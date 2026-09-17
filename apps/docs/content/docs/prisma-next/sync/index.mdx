@@ -8,15 +8,15 @@ Sync keeps a browser IndexedDB database and a server database in sync, per user.
 
 - **`@prisma-next-idb/sync-extension-idb`** — browser-side. Wraps your IDB ORM client so every mutation atomically writes an outbox event alongside the model write, and gives you a worker that pushes those events to your server and pulls remote changes back.
 - **`@prisma-next-idb/sync-server`** — server-side. Given a `rootModel` (e.g. `User`), builds an authorization graph from your schema's relations and tells you, per event, what to check before applying it. Never touches a database or an HTTP framework directly — you wire it into your own routes.
-- **`@prisma-next-idb/sync-server-sql`** — server-side, optional. If your server contract is SQL (Postgres, SQLite, …), this is the execution half of `sync-server`'s checks — it actually runs the ownership walk and the row writes against a prisma-next SQL ORM client, so you don't hand-write that against your own tables.
+- **`@prisma-next-idb/sync-server-sql`** — server-side, optional. If your server contract is SQL (Postgres, SQLite, …), this is the execution half of `sync-server`'s checks — it actually runs the ownership walk and the row writes against a Prisma 8 SQL ORM client, so you don't hand-write that against your own tables.
 
 Sync is optional. A schema with neither package behaves exactly as described in [Client](/docs/prisma-next/client) and [Migrations](/docs/prisma-next/migrations).
 
 <Callout title="Prerequisite">
-  Sync builds on top of a plain Prisma Next IDB client — it doesn't replace [Quick
+  Sync builds on top of a plain Prisma 8 IDB client — it doesn't replace [Quick
   Start](/docs/prisma-next/getting-started). Every path below assumes a `schema.prisma`, a `prisma.config.ts`, and a
   bootstrapped migration chain already exist on the browser side (even "starting fresh" with sync means starting fresh
-  *with sync* — do Quick Start first if you haven't touched Prisma Next IDB at all yet).
+  *with sync* — do Quick Start first if you haven't touched Prisma 8 IDB at all yet).
 </Callout>
 
 ## Where are you starting from?
@@ -97,7 +97,7 @@ If you already have a working client from [Quick Start](/docs/prisma-next/gettin
 **Re-emit and bootstrap (or extend) migrations**, same commands as any other schema change:
 
 ```bash
-npx prisma contract emit
+npx prisma@latest contract emit
 npx prisma-next-idb migration plan   # auto-detects baseline vs. incremental
 npx prisma-next-idb migration contract-space
 npx prisma-next-idb migration preflight
@@ -167,10 +167,10 @@ export default definePrismaConfig({
 **Emit and migrate**, using the same `prisma` CLI you already use for this database, pointed at the config above:
 
 ```bash
-npx prisma contract emit --config prisma.config.postgres.ts
-npx prisma db init --config prisma.config.postgres.ts       # first time only
-npx prisma migration new --config prisma.config.postgres.ts
-npx prisma db update --config prisma.config.postgres.ts
+npx prisma@latest contract emit --config prisma.config.postgres.ts
+npx prisma@latest db init --config prisma.config.postgres.ts       # first time only
+npx prisma@latest migration new --config prisma.config.postgres.ts
+npx prisma@latest db update --config prisma.config.postgres.ts
 ```
 
 </Step>

@@ -1,10 +1,10 @@
 ---
 title: Schema & Config
-description: Write PSL and point Prisma Next at the IDB target
+description: Write PSL and point Prisma 8 at the IDB target
 icon: FileCode
 ---
 
-Prisma Next IDB reads PSL directly. No `generator` block and no Prisma Client needed.
+Prisma 8 IDB reads PSL directly. No `generator` block and no Prisma Client needed.
 
 ## Schema
 
@@ -85,22 +85,25 @@ A few rules the interpreter enforces:
 ## Config
 
 ```ts
-import { defineConfig } from "@prisma-next-idb/family-idb/config-types";
+import { definePrismaConfig } from "@prisma/cli-engine";
+import { defineConfig as ormConfig } from "@prisma-next-idb/family-idb/config-types";
 import { prismaIdbContract } from "@prisma-next-idb/family-idb/contract-psl";
 import idbFamily from "@prisma-next-idb/family-idb/control";
 import idbTarget from "@prisma-next-idb/target-idb/control";
 import idbAdapter from "@prisma-next-idb/adapter-idb/control";
 import idbDriver from "@prisma-next-idb/driver-idb/control";
 
-export default defineConfig({
-  family: idbFamily,
-  target: idbTarget,
-  adapter: idbAdapter,
-  driver: idbDriver,
-  db: { connection: ":memory:" },
-  contract: prismaIdbContract("src/prisma/schema.prisma"),
-  migrations: { dir: "migrations" },
+export default definePrismaConfig({
+  orm: ormConfig({
+    family: idbFamily,
+    target: idbTarget,
+    adapter: idbAdapter,
+    driver: idbDriver,
+    db: { connection: ":memory:" },
+    contract: prismaIdbContract("src/prisma/schema.prisma"),
+    migrations: { dir: "migrations" },
+  }),
 });
 ```
 
-`connection` is present because the Prisma Next framework requires it. The IDB target does not use it. The `prismaIdbContract` path is the source schema; `contract emit` reads it and writes `contract.json` and `contract.d.ts` alongside it.
+`connection` is present because the Prisma 8 framework requires it. The IDB target does not use it. The `prismaIdbContract` path is the source schema; `contract emit` reads it and writes `contract.json` and `contract.d.ts` alongside it.

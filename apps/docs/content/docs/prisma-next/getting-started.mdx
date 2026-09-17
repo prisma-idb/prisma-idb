@@ -15,7 +15,7 @@ npm install @prisma-next-idb/client-idb @prisma/orm-toolchain
 Install the dev tools:
 
 ```bash
-npm install --save-dev prisma @prisma/cli-engine @prisma/orm-framework \
+npm install --save-dev prisma@latest @prisma/cli-engine @prisma/orm-framework \
   @prisma-next-idb/family-idb @prisma-next-idb/target-idb \
   @prisma-next-idb/adapter-idb @prisma-next-idb/driver-idb
 ```
@@ -69,10 +69,10 @@ export default definePrismaConfig({
 
 ## Bootstrap
 
-Both CLIs are devDependencies, so `npx` resolves them locally. Run once on a fresh project:
+Run these commands once on a fresh project. `npx prisma@latest` uses the latest Prisma 8 CLI; `prisma-next-idb` is the IDB package's CLI:
 
 ```bash
-npx prisma contract emit
+npx prisma@latest contract emit
 npx prisma-next-idb migration plan
 npx prisma-next-idb migration contract-space
 npx prisma-next-idb migration preflight

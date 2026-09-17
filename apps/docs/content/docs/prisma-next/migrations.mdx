@@ -4,7 +4,7 @@ description: Plan, commit, validate, and ship IndexedDB schema changes
 icon: GitBranch
 ---
 
-Prisma Next IDB migrations are source-controlled packages. The CLI creates and validates them; the browser applies them when the client opens.
+Prisma 8 IDB migrations are source-controlled packages. The CLI creates and validates them; the browser applies them when the client opens.
 
 IndexedDB migrations are not applied by `prisma migrate` or `db update`. IndexedDB exists in the browser, so the runtime apply path is `createAutoMigratingIdbClient()`.
 
@@ -13,7 +13,7 @@ IndexedDB migrations are not applied by `prisma migrate` or `db update`. Indexed
 Run this once in a new project:
 
 ```bash
-npx prisma contract emit
+npx prisma@latest contract emit
 npx prisma-next-idb migration plan
 npx prisma-next-idb migration contract-space
 npx prisma-next-idb migration preflight
@@ -28,7 +28,7 @@ npx prisma-next-idb migration preflight
 For normal schema changes:
 
 ```bash
-npx prisma contract emit
+npx prisma@latest contract emit
 npx prisma-next-idb migration plan --name add-todo-priority
 npx prisma-next-idb migration contract-space
 npx prisma-next-idb migration preflight

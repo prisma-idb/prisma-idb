@@ -4,7 +4,7 @@ description: One schema, two projections — what reaches the browser and what s
 icon: EyeOff
 ---
 
-A syncing app runs two databases from one domain model: the server has the full schema, IndexedDB has a subset. Prisma Next IDB authors that schema once and interprets it twice, rather than maintaining a separate `client.prisma` and `server.prisma` by hand.
+A syncing app runs two databases from one domain model: the server has the full schema, IndexedDB has a subset. Prisma 8 IDB authors that schema once and interprets it twice, rather than maintaining a separate `client.prisma` and `server.prisma` by hand.
 
 This page is the reference for that projection. For the setup sequence, start at [Sync](/docs/prisma-next/sync).
 
@@ -82,10 +82,10 @@ This wraps `sqlContractWithSync` (`@prisma-next-idb/sync-server/schema`), which 
 Emit and migrate this side with the same `prisma` CLI, pointed at this config:
 
 ```bash
-npx prisma contract emit --config prisma.config.postgres.ts
-npx prisma db init --config prisma.config.postgres.ts
-npx prisma migration new --config prisma.config.postgres.ts
-npx prisma db update --config prisma.config.postgres.ts
+npx prisma@latest contract emit --config prisma.config.postgres.ts
+npx prisma@latest db init --config prisma.config.postgres.ts
+npx prisma@latest migration new --config prisma.config.postgres.ts
+npx prisma@latest db update --config prisma.config.postgres.ts
 ```
 
 See [Server](/docs/prisma-next/sync/server#schema-the-changelog-model) for the full reasoning behind the generated `Changelog` model.

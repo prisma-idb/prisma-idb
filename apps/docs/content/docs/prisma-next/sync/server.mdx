@@ -169,10 +169,10 @@ model Changelog {
 Set up and evolve this side with the same `prisma` CLI you already use for the SQL family, pointed at this config with `--config`:
 
 ```bash
-npx prisma contract emit --config prisma.config.postgres.ts
-npx prisma db init --config prisma.config.postgres.ts
-npx prisma migration new --config prisma.config.postgres.ts
-npx prisma db update --config prisma.config.postgres.ts
+npx prisma@latest contract emit --config prisma.config.postgres.ts
+npx prisma@latest db init --config prisma.config.postgres.ts
+npx prisma@latest migration new --config prisma.config.postgres.ts
+npx prisma@latest db update --config prisma.config.postgres.ts
 ```
 
 Keep this migration lineage (`migrations-postgres/`, or whatever `migrations.dir` you set) separate from the IDB side's own `migrations/app/` — they're unrelated graphs (browser IndexedDB vs. the real server), and sharing one directory would make the CLI compute nonsense `from` hashes across families.
@@ -237,7 +237,7 @@ export async function GET(req: Request) {
   }
 
   // sync-server has no opinion on this query — any client works. The kanban
-  // example runs it through the prisma-next SQL ORM built in step 2, above.
+  // example runs it through the Prisma 8 SQL ORM built in step 2, above.
   // Cursor by `id` (monotonic, index-friendly) and cap with `.take()` — see
   // Gotchas below for why an unbounded pull is a real risk, not a theoretical one.
   const ordered = db.orm.public.Changelog.where({ scopeKey })

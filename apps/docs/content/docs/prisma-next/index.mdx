@@ -1,12 +1,12 @@
 ---
-title: Prisma Next IDB
+title: Prisma 8 IDB
 description: PSL-authored IndexedDB with typed accessors and explicit migrations
 icon: Zap
 ---
 
-Prisma Next IDB is a preview IndexedDB client built on Prisma Next contracts.
+Prisma 8 IDB is a preview IndexedDB client built on Prisma 8 contracts.
 
-You write a `.prisma` schema. Prisma Next reads it directly, emits a typed contract, plans migrations, and gives the browser a runtime client that applies those migrations before opening the database.
+You write a `.prisma` schema. Prisma 8 reads it directly, emits a typed contract, plans migrations, and gives the browser a runtime client that applies those migrations before opening the database.
 
 ```prisma
 model User {
@@ -27,13 +27,13 @@ model Todo {
 
 ## Why it exists
 
-Prisma Next IDB is the migration-first path. It uses Prisma Next's planner architecture, drivers, adapters, and contract spaces instead of generator-only codegen.
+Prisma 8 IDB is the migration-first path. It uses Prisma 8's planner architecture, drivers, adapters, and contract spaces instead of generator-only codegen.
 
 That gives this version a better foundation for schema evolution: migration packages are reviewed, committed, bundled, and applied in order. It also now has its own bidirectional sync engine, built on the same contract-space foundation rather than bolted on afterward.
 
 ## Current shape
 
-- Schema source: PSL, read directly by Prisma Next
+- Schema source: PSL, read directly by Prisma 8
 - Runtime: browser IndexedDB
 - Client style: chainable typed accessors, not Prisma Client's object-argument API
 - Migrations: explicit packages under `migrations/app`, with extension packages (like sync) contributing their own independently-versioned migration spaces
