@@ -1,8 +1,8 @@
 # Maintainer guide
 
-## Releasing `@prisma-next-idb/*`
+## Releasing `@prisma-idb/*`
 
-Releases use [Changesets](https://github.com/changesets/changesets). All six packages are versioned in lockstep.
+Releases use [Changesets](https://github.com/changesets/changesets). The six core ORM packages are versioned in lockstep; the sync packages have independent versions.
 
 1. **Author a changeset** (on any branch, or directly on `main`):
 
@@ -14,13 +14,13 @@ Releases use [Changesets](https://github.com/changesets/changesets). All six pac
 
 2. **Merge to `main`.** The `release` workflow opens a **"chore: release packages"** PR that bumps versions, writes `CHANGELOG.md` entries (with PR links and contributor @-mentions), and deletes the changeset file.
 
-3. **Merge the release PR.** The workflow re-runs, finds no pending changesets, and publishes all six packages to npm with provenance attestation.
+3. **Merge the release PR.** The workflow re-runs, finds no pending changesets, and publishes the packages to npm through trusted publishing. npm generates provenance automatically.
 
 ### Dry-run
 
 ```bash
-pnpm build --filter=@prisma-next-idb/*
-pnpm --filter=@prisma-next-idb/* publish --dry-run
+pnpm build --filter="./packages/prisma-orm/*"
+pnpm --filter="./packages/prisma-orm/*" publish --dry-run
 ```
 
 Verify only `dist/` is listed for each package — not `src/` or `test/`.
@@ -32,22 +32,25 @@ Publishing uses GitHub Actions OIDC — no stored npm token needed. Configure ea
 1. Go to the package page → **Settings** → **Trusted Publisher** → **GitHub Actions**
 2. Fill in:
    - **Organization or user**: `prisma-idb`
-   - **Repository**: `idb-client-generator`
+   - **Repository**: `prisma-idb`
    - **Workflow filename**: `release.yml`
-3. Save — repeat for all six packages.
+   - **Allowed actions**: allow `npm publish`
+3. Save — repeat for every published package.
 
-> **First publish**: trusted publisher config requires the package to already exist. For the initial publish, `npm login` locally and run `pnpm --filter=@prisma-next-idb/* publish`, then immediately configure trusted publishers.
+> **First publish**: trusted publisher config requires the package to already exist. Build the packages, run `npm login` locally, and publish each new package once with `pnpm --filter <package-name> publish --access public`. Then configure its trusted publisher before the next release.
+
+Keep `id-token: write`, do not add `NPM_TOKEN` or `NODE_AUTH_TOKEN`, and keep the public repository URL in every published `package.json` synchronized with the GitHub repository name.
 
 ### Changeset PR enforcement
 
-Two things block merging a `packages/prisma-next/**` PR without a changeset:
+Two things block merging a `packages/prisma-orm/**` PR without a changeset:
 
 - **[changeset-bot](https://github.com/apps/changeset-bot)** — install on the repo once. Posts a comment on every PR with changeset status and a direct link to create one.
 - **`changeset-check.yml`** — runs `changeset status --since=origin/main` on PRs. Set **"Changeset required"** as a required status check in **Settings → Branches → main → Require status checks**.
 
 ## Releasing `packages/generator`
 
-The generator uses Changesets, the same as the `@prisma-next-idb/*` packages.
+The generator uses Changesets, the same as the `@prisma-idb/*` packages.
 
 1. **Author a changeset** (bump level reflects the nature of the change):
 

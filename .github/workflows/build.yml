@@ -14,9 +14,9 @@ jobs:
     outputs:
       generator_schema: ${{ steps.generator_schema.outputs.changed }}
       generator_sync: ${{ steps.generator_sync.outputs.changed }}
-      prisma_next_unit: ${{ steps.prisma_next_unit.outputs.changed }}
-      prisma_next_e2e: ${{ steps.prisma_next_e2e.outputs.changed }}
-      prisma_next_kanban_e2e: ${{ steps.prisma_next_kanban_e2e.outputs.changed }}
+      prisma_idb_unit: ${{ steps.prisma_idb_unit.outputs.changed }}
+      prisma_idb_e2e: ${{ steps.prisma_idb_e2e.outputs.changed }}
+      prisma_idb_kanban_e2e: ${{ steps.prisma_idb_kanban_e2e.outputs.changed }}
       generator_client: ${{ steps.generator_client.outputs.changed }}
 
     steps:
@@ -52,31 +52,31 @@ jobs:
             apps/pidb-kanban-example
             pnpm-lock.yaml
 
-      - id: prisma_next_unit
-        name: Check Prisma Next unit test paths
+      - id: prisma_idb_unit
+        name: Check Prisma 8 unit test paths
         uses: ./.github/actions/paths-changed
         with:
           paths: |
-            packages/prisma-next
-            tests/prisma-next-idb-cli
+            packages/prisma-orm
+            tests/prisma-idb-cli
             pnpm-lock.yaml
 
-      - id: prisma_next_e2e
-        name: Check Prisma Next E2E test paths
+      - id: prisma_idb_e2e
+        name: Check Prisma 8 E2E test paths
         uses: ./.github/actions/paths-changed
         with:
           paths: |
-            packages/prisma-next
-            apps/prisma-next-usage
+            packages/prisma-orm
+            apps/prisma-orm-usage
             pnpm-lock.yaml
 
-      - id: prisma_next_kanban_e2e
-        name: Check Prisma Next kanban E2E test paths
+      - id: prisma_idb_kanban_e2e
+        name: Check Prisma 8 kanban E2E test paths
         uses: ./.github/actions/paths-changed
         with:
           paths: |
-            packages/prisma-next
-            apps/prisma-next-idb-kanban-example
+            packages/prisma-orm
+            apps/prisma-idb-kanban-example
             pnpm-lock.yaml
 
   lint:
@@ -98,11 +98,11 @@ jobs:
       - name: Generate BETTER_AUTH_SECRET
         run: echo "BETTER_AUTH_SECRET=$(openssl rand -base64 32 | tr '/+=' '_-')" >> $GITHUB_ENV
 
-      - name: Build Prisma Next kanban workspace dependencies
-        run: pnpm exec turbo run build --filter="...@prisma-next-idb/kanban-example^..."
+      - name: Build Prisma 8 kanban workspace dependencies
+        run: pnpm exec turbo run build --filter="...@prisma-idb/prisma-orm-kanban-example^..."
 
-      - name: Emit Prisma Next kanban Postgres contract
-        working-directory: apps/prisma-next-idb-kanban-example
+      - name: Emit Prisma 8 kanban Postgres contract
+        working-directory: apps/prisma-idb-kanban-example
         run: pnpm contract:emit:postgres
         env:
           DATABASE_URL: "postgresql://postgres:postgres@localhost:5433/postgres"
@@ -211,9 +211,9 @@ jobs:
           path: apps/pidb-kanban-example/playwright-report/
           retention-days: 30
 
-  test-prisma-next:
+  test-prisma-idb:
     needs: changes
-    if: needs.changes.outputs.prisma_next_unit == 'true'
+    if: needs.changes.outputs.prisma_idb_unit == 'true'
     runs-on: ubuntu-latest
 
     services:
@@ -239,12 +239,12 @@ jobs:
         run: echo "DATABASE_URL=postgresql://postgres:postgres@localhost:5436/postgres" >> $GITHUB_ENV
       - uses: ./.github/actions/
 
-      - name: Run Prisma Next unit tests
-        run: pnpm test:prisma-next
+      - name: Run Prisma 8 unit tests
+        run: pnpm test:prisma-idb
 
-  test-prisma-next-e2e:
+  test-prisma-idb-e2e:
     needs: changes
-    if: needs.changes.outputs.prisma_next_e2e == 'true'
+    if: needs.changes.outputs.prisma_idb_e2e == 'true'
     timeout-minutes: 60
     runs-on: ubuntu-latest
 
@@ -253,22 +253,22 @@ jobs:
       - uses: ./.github/actions/
 
       - name: Install Playwright Browsers
-        working-directory: apps/prisma-next-usage
+        working-directory: apps/prisma-orm-usage
         run: pnpm exec playwright install --with-deps
 
-      - name: Run Prisma Next E2E tests
-        run: pnpm test:prisma-next-e2e
+      - name: Run Prisma 8 E2E tests
+        run: pnpm test:prisma-idb-e2e
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: ${{ !cancelled() }}
         with:
-          name: playwright-report-prisma-next
-          path: apps/prisma-next-usage/playwright-report/
+          name: playwright-report-prisma-idb
+          path: apps/prisma-orm-usage/playwright-report/
           retention-days: 30
 
-  test-prisma-next-kanban-e2e:
+  test-prisma-idb-kanban-e2e:
     needs: changes
-    if: needs.changes.outputs.prisma_next_kanban_e2e == 'true'
+    if: needs.changes.outputs.prisma_idb_kanban_e2e == 'true'
     timeout-minutes: 60
     runs-on: ubuntu-latest
 
@@ -297,23 +297,23 @@ jobs:
       - name: Generate BETTER_AUTH_SECRET
         run: echo "BETTER_AUTH_SECRET=$(openssl rand -base64 32 | tr '/+=' '_-')" >> $GITHUB_ENV
 
-      - name: Build Prisma Next kanban workspace dependencies
-        run: pnpm exec turbo run build --filter="...@prisma-next-idb/kanban-example^..."
+      - name: Build Prisma 8 kanban workspace dependencies
+        run: pnpm exec turbo run build --filter="...@prisma-idb/prisma-orm-kanban-example^..."
 
       - name: Emit Postgres contract
-        working-directory: apps/prisma-next-idb-kanban-example
+        working-directory: apps/prisma-idb-kanban-example
         run: pnpm contract:emit:postgres
 
       - name: Initialize Postgres schema
-        working-directory: apps/prisma-next-idb-kanban-example
+        working-directory: apps/prisma-idb-kanban-example
         run: pnpm db:init
 
       - name: Install Playwright Browsers
-        working-directory: apps/prisma-next-idb-kanban-example
+        working-directory: apps/prisma-idb-kanban-example
         run: pnpm exec playwright install --with-deps
 
-      - name: Run Prisma Next kanban E2E tests
-        run: pnpm test:prisma-next-kanban-e2e
+      - name: Run Prisma 8 kanban E2E tests
+        run: pnpm test:prisma-idb-kanban-e2e
         env:
           GOOGLE_CLIENT_ID: "placeholder"
           GOOGLE_CLIENT_SECRET: "placeholder"
@@ -321,8 +321,8 @@ jobs:
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: ${{ !cancelled() }}
         with:
-          name: playwright-report-prisma-next-kanban
-          path: apps/prisma-next-idb-kanban-example/playwright-report/
+          name: playwright-report-prisma-idb-kanban
+          path: apps/prisma-idb-kanban-example/playwright-report/
           retention-days: 30
 
   ci-required:
@@ -334,9 +334,9 @@ jobs:
       - test-generator-schema
       - test-generator-client
       - test-generator-sync
-      - test-prisma-next
-      - test-prisma-next-e2e
-      - test-prisma-next-kanban-e2e
+      - test-prisma-idb
+      - test-prisma-idb-e2e
+      - test-prisma-idb-kanban-e2e
     if: ${{ always() }}
     runs-on: ubuntu-latest
 
@@ -352,12 +352,12 @@ jobs:
           GENERATOR_CLIENT_RESULT: ${{ needs['test-generator-client'].result }}
           GENERATOR_SYNC_REQUIRED: ${{ needs.changes.outputs.generator_sync }}
           GENERATOR_SYNC_RESULT: ${{ needs['test-generator-sync'].result }}
-          PRISMA_NEXT_UNIT_REQUIRED: ${{ needs.changes.outputs.prisma_next_unit }}
-          PRISMA_NEXT_UNIT_RESULT: ${{ needs['test-prisma-next'].result }}
-          PRISMA_NEXT_E2E_REQUIRED: ${{ needs.changes.outputs.prisma_next_e2e }}
-          PRISMA_NEXT_E2E_RESULT: ${{ needs['test-prisma-next-e2e'].result }}
-          PRISMA_NEXT_KANBAN_E2E_REQUIRED: ${{ needs.changes.outputs.prisma_next_kanban_e2e }}
-          PRISMA_NEXT_KANBAN_E2E_RESULT: ${{ needs['test-prisma-next-kanban-e2e'].result }}
+          PRISMA_IDB_UNIT_REQUIRED: ${{ needs.changes.outputs.prisma_idb_unit }}
+          PRISMA_IDB_UNIT_RESULT: ${{ needs['test-prisma-idb'].result }}
+          PRISMA_IDB_E2E_REQUIRED: ${{ needs.changes.outputs.prisma_idb_e2e }}
+          PRISMA_IDB_E2E_RESULT: ${{ needs['test-prisma-idb-e2e'].result }}
+          PRISMA_IDB_KANBAN_E2E_REQUIRED: ${{ needs.changes.outputs.prisma_idb_kanban_e2e }}
+          PRISMA_IDB_KANBAN_E2E_RESULT: ${{ needs['test-prisma-idb-kanban-e2e'].result }}
         run: |
           set -euo pipefail
 
@@ -389,8 +389,8 @@ jobs:
           require_conditional_success "Generator schema tests" "$GENERATOR_SCHEMA_REQUIRED" "$GENERATOR_SCHEMA_RESULT"
           require_conditional_success "Generator client tests" "$GENERATOR_CLIENT_REQUIRED" "$GENERATOR_CLIENT_RESULT"
           require_conditional_success "Generator sync tests" "$GENERATOR_SYNC_REQUIRED" "$GENERATOR_SYNC_RESULT"
-          require_conditional_success "Prisma Next unit tests" "$PRISMA_NEXT_UNIT_REQUIRED" "$PRISMA_NEXT_UNIT_RESULT"
-          require_conditional_success "Prisma Next E2E tests" "$PRISMA_NEXT_E2E_REQUIRED" "$PRISMA_NEXT_E2E_RESULT"
-          require_conditional_success "Prisma Next kanban E2E tests" "$PRISMA_NEXT_KANBAN_E2E_REQUIRED" "$PRISMA_NEXT_KANBAN_E2E_RESULT"
+          require_conditional_success "Prisma 8 unit tests" "$PRISMA_IDB_UNIT_REQUIRED" "$PRISMA_IDB_UNIT_RESULT"
+          require_conditional_success "Prisma 8 E2E tests" "$PRISMA_IDB_E2E_REQUIRED" "$PRISMA_IDB_E2E_RESULT"
+          require_conditional_success "Prisma 8 kanban E2E tests" "$PRISMA_IDB_KANBAN_E2E_REQUIRED" "$PRISMA_IDB_KANBAN_E2E_RESULT"
 
           echo "Required CI checks are satisfied."
