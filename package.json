@@ -9,7 +9,7 @@
     "check": "pnpm check:prisma-idb-descriptors && turbo run check",
     "lint": "turbo run lint",
     "format": "turbo run format --no-cache",
-    "test": "turbo run test",
+    "test": "turbo run test --concurrency 1",
     "test:generator-client": "turbo run test --filter=@prisma-idb/usage",
     "test:generator-sync": "turbo run test --filter=@prisma-idb/kanban-example",
     "test:generator-schema": "turbo run test --filter=@prisma-idb/schema-gen-tests",

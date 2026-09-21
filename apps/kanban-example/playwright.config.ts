@@ -8,5 +8,5 @@ export default defineConfig({
   use: { baseURL: "http://localhost:4173" },
   reporter: "html",
   fullyParallel: true,
-  workers: process.env.CI ? 1 : undefined,
+  workers: 1,
 });
