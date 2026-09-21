@@ -40,14 +40,14 @@
   "devDependencies": {
     "@prisma/cli-engine": "0.2.0",
     "@prisma/orm-postgres": "8.0.0-rc.5",
-    "@types/node": "^24.10.9",
+    "@types/node": "^24.13.3",
     "@types/pg": "^8.21.0",
     "dotenv": "^17.4.2",
-    "pg": "^8.22.0",
+    "pg": "^8.23.0",
     "prisma": "8.0.0-rc.7",
     "tsdown": "^0.22.14",
     "typescript": "^6.0.3",
-    "vitest": "^4.1.10"
+    "vitest": "^4.1.11"
   },
   "publishConfig": {
     "access": "public"

@@ -49,16 +49,16 @@
     "@prisma-idb/target-idb": "workspace:*",
     "@prisma/orm-framework": "8.0.0-rc.5",
     "@prisma/orm-toolchain": "8.0.0-rc.5",
-    "zod": "^4.4.3"
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "@prisma/cli-engine": "0.2.0",
-    "@types/node": "^24.10.9",
+    "@types/node": "^24.13.3",
     "fake-indexeddb": "^6.2.5",
     "prisma": "8.0.0-rc.7",
     "tsdown": "^0.22.14",
     "typescript": "^6.0.3",
-    "vitest": "^4.1.10"
+    "vitest": "^4.1.11"
   },
   "publishConfig": {
     "access": "public"

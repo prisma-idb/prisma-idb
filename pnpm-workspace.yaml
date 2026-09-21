@@ -44,6 +44,8 @@ peerDependencyRules:
 overrides:
   "@hono/node-server@<1.19.13": ">=1.19.13"
   "@types/node": "^24.10.9"
+  cookie@<0.7.0: ^0.7.0
+  deepmerge-ts@<8.0.0: ^8.0.0
   defu@<=6.1.4: ">=6.1.5"
   "devalue@<5.6.4": ">=5.6.4"
   drizzle-orm@<0.45.2: ">=0.45.2"
@@ -54,7 +56,11 @@ overrides:
   kysely@<=0.28.13: ">=0.28.14"
   lodash-es@<=4.17.23: ">=4.18.0"
   lodash@<=4.17.23: ">=4.18.0"
+  mysql2@<3.22.0: ^3.22.0
+  mysql2@<=3.23.0: ^3.23.1
   postcss@<8.5.10: ^8.5.10
+  qs@>=2.2.5 <6.16.0: ^6.16.0
+  qs@>=6.14.2 <=6.15.3: ^6.16.0
   read-yaml-file: ^2.1.0
   "serialize-javascript@<=7.0.2": ">=7.0.3"
   sharp@<0.35.0: ^0.35.0
@@ -62,3 +68,4 @@ overrides:
   "undici@<6.24.0": ">=6.24.0"
   undici@>=7.0.0 <7.28.0: ^7.28.0
   uuid@<11.1.1: ^11.1.1
+  valibot@<=1.4.1: ^1.4.2

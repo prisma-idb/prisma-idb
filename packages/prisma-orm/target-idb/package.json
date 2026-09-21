@@ -40,11 +40,11 @@
   },
   "devDependencies": {
     "@prisma/cli-engine": "0.2.0",
-    "@types/node": "^24.10.9",
+    "@types/node": "^24.13.3",
     "fake-indexeddb": "^6.2.5",
     "tsdown": "^0.22.14",
     "typescript": "^6.0.3",
-    "vitest": "^4.1.10"
+    "vitest": "^4.1.11"
   },
   "publishConfig": {
     "access": "public"

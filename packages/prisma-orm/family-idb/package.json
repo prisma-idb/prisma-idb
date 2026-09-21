@@ -44,10 +44,10 @@
     "pathe": "^2.0.3"
   },
   "devDependencies": {
-    "@types/node": "^24.10.9",
+    "@types/node": "^24.13.3",
     "tsdown": "^0.22.14",
     "typescript": "^6.0.3",
-    "vitest": "^4.1.10"
+    "vitest": "^4.1.11"
   },
   "publishConfig": {
     "access": "public"

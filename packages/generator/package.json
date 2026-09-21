@@ -20,13 +20,13 @@
     "prepare": "tsc"
   },
   "dependencies": {
-    "@prisma/generator-helper": "^7.9.1",
+    "@prisma/generator-helper": "^7.10.0",
     "code-block-writer": "^13.0.3",
-    "prettier": "^3.9.6"
+    "prettier": "^3.9.8"
   },
   "devDependencies": {
     "@prisma/internals": "^7.9.1",
-    "@types/node": "^24.10.9",
+    "@types/node": "^24.13.3",
     "typescript": "^6.0.3"
   },
   "peerDependencies": {
