@@ -91,7 +91,16 @@ jobs:
       - name: Install base dependencies
         # PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 prevents playwright 1.x postinstall hooks
         # from running, which would otherwise delete HEAD's chromium revision as "unused".
-        run: PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 pnpm install --frozen-lockfile
+        #
+        # node_modules is wiped first: `pnpm install --frozen-lockfile` reinstalling
+        # in-place over a checkout whose workspace *membership* changed (packages/apps
+        # renamed, added, or removed vs HEAD) can leave stale resolution state that
+        # doesn't match either lockfile — reproduced by hand, e.g. as spurious
+        # implicit-any errors from a correctly-linked but misresolved type package.
+        # A full wipe forces pnpm to relink from its content-addressable store clean.
+        run: |
+          find . -name node_modules -type d -prune -exec rm -rf {} +
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 pnpm install --frozen-lockfile
 
       - name: Ensure Playwright browser is available for base
         working-directory: apps/benchmark
@@ -132,6 +141,7 @@ jobs:
       - name: Restore PR head
         run: |
           git checkout --force ${{ github.sha }}
+          find . -name node_modules -type d -prune -exec rm -rf {} +
           pnpm install --frozen-lockfile
 
       - name: Compare benchmarks
