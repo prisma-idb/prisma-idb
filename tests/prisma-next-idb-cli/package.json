@@ -2,7 +2,7 @@
   "name": "@prisma-next-idb/cli-tests",
   "version": "1.0.0",
   "private": true,
-  "description": "Regression tests for the `prisma-next-idb` CLI binary (migration plan/contract-space/preflight, config-driven path resolution). Drives the published binary via execa and asserts on stdout/stderr/exit codes/files.",
+  "description": "Regression tests for the `prisma-idb` CLI binary (migration plan/contract-space/preflight, config-driven path resolution). Drives the published binary via execa and asserts on stdout/stderr/exit codes/files.",
   "license": "MIT",
   "type": "module",
   "scripts": {

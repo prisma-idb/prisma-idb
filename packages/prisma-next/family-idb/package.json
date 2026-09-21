@@ -1,7 +1,7 @@
 {
   "name": "@prisma-next-idb/family-idb",
   "version": "0.6.0",
-  "description": "Prisma Next IDB family — control-plane descriptor and family instance (CLI/config integration)",
+  "description": "Prisma 8 IDB family — control-plane descriptor and family instance (CLI/config integration)",
   "license": "MIT",
   "files": ["dist"],
   "keywords": ["prisma", "prisma-next", "indexeddb", "offline-first", "idb", "cli"],
@@ -25,6 +25,7 @@
     "./package.json": "./package.json"
   },
   "bin": {
+    "prisma-idb": "./dist/bin/prisma-next-idb.mjs",
     "prisma-next-idb": "./dist/bin/prisma-next-idb.mjs"
   },
   "scripts": {

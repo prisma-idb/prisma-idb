@@ -122,7 +122,7 @@ pnpm add -D prisma@latest @prisma/cli-engine @prisma/orm-framework \
   @prisma-next-idb/adapter-idb @prisma-next-idb/driver-idb
 ```
 
-The usual flow is `pnpm exec prisma contract emit`, `prisma-next-idb migration plan`, `prisma-next-idb migration contract-space`, then `createAutoMigratingIdbClient({ contractSpace, dbName })` in browser code. See the [Prisma 8 IDB documentation](https://prisma-idb.dev/docs/prisma-next) for full setup.
+The usual flow is `pnpm exec prisma contract emit`, `pnpm exec prisma-idb migration plan`, `pnpm exec prisma-idb migration contract-space`, then `createAutoMigratingIdbClient({ contractSpace, dbName })` in browser code. The former `prisma-next-idb` command remains available as an alias. See the [Prisma 8 IDB documentation](https://prisma-idb.dev/docs/prisma-next) for full setup.
 
 ## Resources
 

@@ -1,8 +1,8 @@
 # `@prisma-next-idb/family-idb`
 
-> The [prisma-next](https://www.prisma.io/blog/prisma-next-call-for-extension-authors) driver + adapter + target stack for IndexedDB — offline-first, no server required.
+> The [Prisma 8](https://www.prisma.io/blog/prisma-next-call-for-extension-authors) driver + adapter + target stack for IndexedDB — offline-first, no server required.
 
-**family-idb** is the main entry point for the `@prisma-next-idb` stack. It exposes the control-plane descriptor, the family instance, and the `prisma-next-idb` CLI for code generation and config integration.
+**family-idb** is the main entry point for the `@prisma-next-idb` stack. It exposes the control-plane descriptor, the family instance, and the `prisma-idb` CLI for migration authoring and config integration. The former `prisma-next-idb` command remains an alias.
 
 ## Stack
 

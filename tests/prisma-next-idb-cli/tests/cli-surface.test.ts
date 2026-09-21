@@ -15,12 +15,12 @@
 import { describe, expect, it } from "vitest";
 import { cli, setupTmpProject } from "./_helpers";
 
-describe("prisma-next-idb (CLI surface)", () => {
+describe("prisma-idb (CLI surface)", () => {
   it("no subcommand prints help and exits 0", async () => {
     const cwd = await setupTmpProject("cli-noargs");
     const { stderr, exitCode } = await cli([], { cwd });
     expect(exitCode).toBe(0);
-    expect(stderr).toContain("prisma-next-idb");
+    expect(stderr).toContain("prisma-idb");
     expect(stderr).toContain("migration");
   });
 
@@ -28,7 +28,7 @@ describe("prisma-next-idb (CLI surface)", () => {
     const cwd = await setupTmpProject("cli-dashhelp");
     const { stdout, exitCode } = await cli(["--help"], { cwd });
     expect(exitCode).toBe(0);
-    expect(stdout).toContain("prisma-next-idb");
+    expect(stdout).toContain("prisma-idb");
     expect(stdout).toContain("migration");
   });
 

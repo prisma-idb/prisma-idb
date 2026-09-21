@@ -4,7 +4,7 @@ import { CliStructuredError } from "@prisma/cli-engine/protocol";
 import packageJson from "../../package.json" with { type: "json" };
 import { idbCommandFamily } from "./family";
 
-export const BIN_NAME = "prisma-next-idb";
+export const BIN_NAME = "prisma-idb";
 
 export const BIN_GROUPS = {
   migration: {
@@ -23,7 +23,7 @@ export function createIdbCli(): Cli {
     groups: BIN_GROUPS,
     commands: idbCommandFamily.commands,
     help: {
-      tagline: "IDB-target tooling for Prisma Next",
+      tagline: "IDB-target tooling for Prisma 8",
       description: "Migration authoring for IndexedDB projects — no live database on the Node side to consult.",
     },
   });
