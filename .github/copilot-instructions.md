@@ -15,11 +15,11 @@ You are working on a Prisma generator that creates a familiar, type-safe client 
   ```bash
   pnpm generate
   ```
-  This updates the generated clients in `apps/usage`, `apps/pidb-kanban-example`, and the `tests/generated` folder.
+  This updates the generated clients in `apps/usage`, `apps/kanban-example`, and the `tests/generated` folder.
 - **Testing**:
   - `pnpm test:generator-schema`: Validates generator output against snapshots in `tests/generator.test.ts`.
   - `pnpm test:generator-client`: Runs Playwright/Vitest tests in `apps/usage` to verify the generated client API.
-  - `pnpm test:generator-sync`: Runs full-stack sync tests in `apps/pidb-kanban-example`.
+  - `pnpm test:generator-sync`: Runs full-stack sync tests in `apps/kanban-example`.
 - **Debugging**: If the generated client is behaving unexpectedly, inspect the files in `tests/generated/prisma-idb/client/`.
 
 ## Coding Patterns & Conventions

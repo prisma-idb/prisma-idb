@@ -13,7 +13,7 @@ const gitignorePath = fileURLToPath(new URL("./.gitignore", import.meta.url));
 export default defineConfig([
   includeIgnoreFile(gitignorePath),
   { ignores: ["**/src/lib/components/ui/**"] },
-  // Prisma Next emits generated contract & migration artifacts under the
+  // Prisma 8 emits generated contract & migration artifacts under the
   // app's prisma/ and migrations/ folders. They're checked in for
   // reproducibility but shouldn't be linted (they use `{}` etc. by design).
   {
@@ -35,13 +35,13 @@ export default defineConfig([
       "**/migrations/**/*.json",
       // same artifacts, kanban example's distinct Postgres migration
       // lineage (migrations-postgres/, not migrations/ — see
-      // prisma-next.config.postgres.ts's header for why it's separate)
+      // prisma.config.postgres.ts's header for why it's separate)
       "**/migrations-postgres/**/*.d.ts",
       "**/migrations-postgres/**/*.json",
       // generated Postgres schema artifacts
       "**/schema.postgres.generated.*",
       // sync-server-sql's test fixture contract, regenerated on every
-      // `pnpm contract:emit:postgres` — see its prisma-next.config.ts
+      // `pnpm contract:emit:postgres` — see its prisma.config.ts
       "**/test/fixtures/schema.generated.*",
     ],
   },

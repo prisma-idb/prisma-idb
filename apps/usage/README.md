@@ -1,12 +1,12 @@
 # Prisma IDB Usage Example
 
-A test application for the [Prisma IndexedDB Client Generator](https://github.com/prisma-idb/idb-client-generator). This app demonstrates basic CRUD operations and serves as a validation suite for the generated client.
+A test application for the [Prisma IndexedDB Client Generator](https://github.com/prisma-idb/prisma-idb). This app demonstrates basic CRUD operations and serves as a validation suite for the generated client.
 
-**[📖 Documentation](https://prisma-idb.dev/) • [🚀 Live Kanban Demo](https://kanban.prisma-idb.dev/) • [📦 npm Package](https://www.npmjs.com/package/@prisma-idb/idb-client-generator) • [🏗️ Main Repository](https://github.com/prisma-idb/idb-client-generator)**
+**[📖 Documentation](https://prisma-idb.dev/) • [🚀 Live Kanban Demo](https://kanban.prisma-idb.dev/) • [📦 npm Package](https://www.npmjs.com/package/@prisma-idb/idb-client-generator) • [🏗️ Main Repository](https://github.com/prisma-idb/prisma-idb)**
 
 ## About This App
 
-This is an internal test application used to validate the generator output. For a complete working example with sync capabilities, see the [Kanban Example](../pidb-kanban-example/).
+This is an internal test application used to validate the generator output. For a complete working example with sync capabilities, see the [Kanban Example](../kanban-example/).
 
 ## Developing
 
@@ -40,8 +40,8 @@ npm run test
 ## Resources
 
 - [Prisma IDB Generator Documentation](https://prisma-idb.dev/)
-- [Full Kanban Example with Sync](../pidb-kanban-example/)
-- [GitHub Repository](https://github.com/prisma-idb/idb-client-generator)
+- [Full Kanban Example with Sync](../kanban-example/)
+- [GitHub Repository](https://github.com/prisma-idb/prisma-idb)
 - [npm Package](https://www.npmjs.com/package/@prisma-idb/idb-client-generator)
 
 > To deploy your app, you may need to install an [adapter](https://svelte.dev/docs/kit/adapters) for your target environment.

@@ -1,0 +1,118 @@
+// The `id`/`name`/`email` fields are also this app's domain identity (owns
+// Boards); everything else is better-auth's own required User shape — one
+// table serves both, same as this schema being the single source for both
+// the IDB client and the real server (ADR 012). `sessions`/`accounts` are
+// server-only (@idb.exclude) — the browser never needs another user's or
+// even its own session/account rows, only auth-client's own cookie-backed
+// session state.
+model User {
+  id            String    @id
+  name          String
+  // better-auth requires this and keeps it unique even for anonymous users
+  // — the anonymous() plugin always synthesizes a placeholder address
+  // (temp@<id>.<domain>) rather than leaving it unset (verified against
+  // better-auth's own plugin source).
+  email         String    @unique
+  emailVerified Boolean   @default(false)
+  image         String?
+  createdAt     DateTime  @default(now())
+  // Not `@updatedAt` — family-sql's PSL parser doesn't recognize it (see
+  // Session.updatedAt below for the full reasoning).
+  updatedAt     DateTime
+  // Set by better-auth's `anonymous()` plugin (see src/lib/server/auth.ts)
+  // — `false` by default for every user, `true` explicitly for anonymous
+  // sign-ins. Never actually left unset.
+  isAnonymous   Boolean   @default(false)
+  boards        Board[]
+  // Relations to whole-model-excluded models — ADR 013 drops these from the
+  // client contract automatically (no @idb.exclude on the relation field
+  // itself: that's IDB_EXCLUDE_ON_RELATION_FIELD_UNSUPPORTED).
+  sessions      Session[]
+  accounts      Account[]
+}
+
+// better-auth's own tables (session/account/verification) — never reach the
+// browser (@@idb.exclude): they're server-only auth state, not app data.
+// Field shapes match better-auth's built-in requirements exactly (mirrors
+// apps/kanban-example's reference schema, the old generator's version
+// of this same app).
+model Session {
+  id        String   @id
+  expiresAt DateTime
+  token     String   @unique
+  createdAt DateTime @default(now())
+  // Not `@updatedAt` (family-sql's PSL parser doesn't recognize it —
+  // `temporal.updatedAt()` would be its field-preset equivalent, but
+  // better-auth's own adapter code already sets this on every write, so a
+  // DB-level auto-update would be redundant anyway).
+  updatedAt DateTime
+  ipAddress String?
+  userAgent String?
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@idb.exclude
+}
+
+model Account {
+  id                    String    @id
+  accountId             String
+  providerId            String
+  userId                String
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime
+
+  // better-auth resolves a social account by this pair — without it, two
+  // concurrent OAuth callbacks for the same provider account could insert
+  // two rows and make later lookups non-deterministic.
+  @@unique([providerId, accountId])
+  @@idb.exclude
+}
+
+model Verification {
+  id         String   @id
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime
+
+  @@idb.exclude
+}
+
+// Server-only audit trail. Excluded wholesale — no relations to any synced
+// model, so it needs none of ADR 013's cascading FK projection (ADR 012).
+model AuditLog {
+  id        String   @id
+  action    String
+  createdAt DateTime
+
+  @@idb.exclude
+}
+
+model Board {
+  id        String   @id
+  name      String
+  createdAt DateTime
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  todos     Todo[]
+}
+
+model Todo {
+  id          String   @id
+  title       String
+  description String?
+  isCompleted Boolean
+  createdAt   DateTime
+  boardId     String
+  board       Board    @relation(fields: [boardId], references: [id], onDelete: Cascade)
+}

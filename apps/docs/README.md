@@ -1,8 +1,8 @@
 # Prisma IDB Documentation
 
-The official documentation site for the [Prisma IndexedDB Client Generator](https://github.com/prisma-idb/idb-client-generator). Built with [Next.js](https://nextjs.org/) and [Fumadocs](https://fumadocs.dev/).
+The official documentation site for the [Prisma IndexedDB Client Generator](https://github.com/prisma-idb/prisma-idb). Built with [Next.js](https://nextjs.org/) and [Fumadocs](https://fumadocs.dev/).
 
-**[📖 Live Documentation](https://prisma-idb.dev/) • [🚀 Live Demo](https://kanban.prisma-idb.dev/) • [📦 npm Package](https://www.npmjs.com/package/@prisma-idb/idb-client-generator) • [🏗️ Main Repository](https://github.com/prisma-idb/idb-client-generator)**
+**[📖 Live Documentation](https://prisma-idb.dev/) • [🚀 Live Demo](https://kanban.prisma-idb.dev/) • [📦 npm Package](https://www.npmjs.com/package/@prisma-idb/idb-client-generator) • [🏗️ Main Repository](https://github.com/prisma-idb/prisma-idb)**
 
 ## About
 
@@ -44,8 +44,8 @@ pnpm build
 
 - [Next.js Documentation](https://nextjs.org/docs)
 - [Fumadocs Documentation](https://fumadocs.dev)
-- [Prisma IDB Generator](https://github.com/prisma-idb/idb-client-generator)
+- [Prisma IDB Generator](https://github.com/prisma-idb/prisma-idb)
 
 ## Contributing
 
-To contribute to the documentation, please visit the [main repository](https://github.com/prisma-idb/idb-client-generator) and submit a pull request.
+To contribute to the documentation, please visit the [main repository](https://github.com/prisma-idb/prisma-idb) and submit a pull request.

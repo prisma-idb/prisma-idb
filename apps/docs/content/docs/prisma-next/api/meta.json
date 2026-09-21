@@ -1,6 +1,0 @@
-{
-  "title": "API",
-  "description": "Common Prisma Next IDB client methods",
-  "icon": "Braces",
-  "pages": ["index", "querying", "writing", "transactions"]
-}

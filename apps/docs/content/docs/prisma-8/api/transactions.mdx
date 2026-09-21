@@ -1,0 +1,41 @@
+---
+title: Transactions
+description: How Prisma 8 IDB groups writes
+icon: Lock
+---
+
+Most application code does not need to open transactions manually. Single writes, bulk writes, and nested relation writes create the IndexedDB transactions they need.
+
+```ts
+await db.orm.todo.create({
+  id: crypto.randomUUID(),
+  title: "Write docs",
+  done: false,
+  userId,
+});
+```
+
+## Automatic transaction cases
+
+These methods run atomically:
+
+- `create()`
+- `createAll()`
+- `update()`
+- `updateAll()`
+- `upsert()`
+- `delete()`
+- `deleteAll()`
+- nested relation creates, connects, and disconnects
+
+## Advanced scope
+
+`db.withTransaction()` exposes a low-level transaction scope for advanced integrations:
+
+```ts
+await db.withTransaction(["user", "todo"], async (scope) => {
+  // scope.execute(plan) accepts low-level IDB atomic plans.
+});
+```
+
+The high-level ORM methods do not currently accept this scope as an option. Prefer the normal ORM methods unless you are integrating with lower-level Prisma 8 IDB plan execution.

@@ -1,0 +1,113 @@
+---
+title: Quick Start
+description: Install, configure, and open the client in a new project
+icon: Rocket
+---
+
+## Installation
+
+Install the runtime packages:
+
+```bash
+npm install @prisma-idb/client-idb @prisma/orm-toolchain
+```
+
+Install the dev tools:
+
+```bash
+npm install --save-dev prisma@latest @prisma/cli-engine @prisma/orm-framework \
+  @prisma-idb/family-idb @prisma-idb/target-idb \
+  @prisma-idb/adapter-idb @prisma-idb/driver-idb
+```
+
+## Schema
+
+Create `src/prisma/schema.prisma`. No `generator` block is needed.
+
+```prisma
+model User {
+  id    String  @id
+  name  String
+  email String? @unique
+  todos Todo[]
+}
+
+model Todo {
+  id     String  @id
+  title  String
+  done   Boolean
+  userId String
+  user   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+```
+
+## Configure
+
+Create `prisma.config.ts`:
+
+```ts
+import { definePrismaConfig } from "@prisma/cli-engine";
+import { defineConfig as ormConfig } from "@prisma-idb/family-idb/config-types";
+import { prismaIdbContract } from "@prisma-idb/family-idb/contract-psl";
+import idbFamily from "@prisma-idb/family-idb/control";
+import idbTarget from "@prisma-idb/target-idb/control";
+import idbAdapter from "@prisma-idb/adapter-idb/control";
+import idbDriver from "@prisma-idb/driver-idb/control";
+
+export default definePrismaConfig({
+  orm: ormConfig({
+    family: idbFamily,
+    target: idbTarget,
+    adapter: idbAdapter,
+    driver: idbDriver,
+    db: { connection: ":memory:" },
+    contract: prismaIdbContract("src/prisma/schema.prisma"),
+    migrations: { dir: "migrations" },
+  }),
+});
+```
+
+## Bootstrap
+
+Run these commands once on a fresh project. `npx prisma@latest` uses the latest Prisma 8 CLI; `prisma-idb` is the IDB package's CLI:
+
+```bash
+npx prisma@latest contract emit
+npx prisma-idb migration plan
+npx prisma-idb migration contract-space
+npx prisma-idb migration preflight
+```
+
+This writes `contract.json`, `contract.d.ts`, `contract-space.generated.ts`, and the first migration package under `migrations/app/` (its contract snapshot lands in the shared `migrations/snapshots/<hash>/` store). Commit all of them.
+
+`prisma-idb` reads `--contract`/`--migrations-dir` from `prisma.config.ts` (`contract.output` / `migrations.dir`) — the same config `prisma contract emit` reads — so no flags are needed here even though this example keeps its contract under `src/prisma/` rather than the `src/lib/prisma/` most examples use. Pass `--contract`/`--migrations-dir`/`--config` explicitly only if you need to point at something other than what the config declares.
+
+## Open the client
+
+Create `src/db.ts`:
+
+```ts
+import { createAutoMigratingIdbClient } from "@prisma-idb/client-idb/client-auto";
+import type { IdbClient } from "@prisma-idb/client-idb/client-auto";
+import type { Contract } from "./prisma/contract";
+import { contractSpace } from "./prisma/contract-space.generated";
+
+type Db = IdbClient<Contract>;
+
+let db: Promise<Db> | null = null;
+
+export function getDb(): Promise<Db> {
+  return (db ??= createAutoMigratingIdbClient({ contractSpace, dbName: "my-app" }));
+}
+```
+
+`createAutoMigratingIdbClient` applies any pending migrations before resolving. Call `getDb()` from browser code whenever you need the client.
+
+## Next
+
+<Cards>
+  <Card title="Schema & Config" href="/docs/prisma-8/schema" />
+  <Card title="Migrations" href="/docs/prisma-8/migrations" />
+  <Card title="Client" href="/docs/prisma-8/client" />
+  <Card title="Querying" href="/docs/prisma-8/api/querying" />
+</Cards>

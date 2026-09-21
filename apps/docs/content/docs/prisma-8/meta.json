@@ -1,0 +1,20 @@
+{
+  "pages": [
+    "---Overview---",
+    "index",
+    "---Guides---",
+    "getting-started",
+    "schema",
+    "client",
+    "migrations",
+    "kanban-example",
+    "---Sync---",
+    "...sync",
+    "---Reference---",
+    "...api"
+  ],
+  "root": true,
+  "title": "Prisma 8",
+  "description": "IndexedDB client for Prisma 8 with explicit migrations",
+  "icon": "Zap"
+}

@@ -1,43 +1,43 @@
 # Contributing
 
-Thank you for considering a contribution! This repo is a pnpm monorepo managed with Turborepo. It contains two separate generator families:
+Thank you for considering a contribution! This repo is a pnpm monorepo managed with Turborepo. It contains the legacy generator and the Prisma 8 integration:
 
-| Path                     | Scope                              | Description                                  |
-| ------------------------ | ---------------------------------- | -------------------------------------------- |
-| `packages/generator`     | `@prisma-idb/idb-client-generator` | Legacy Prisma generator (stable, published)  |
-| `packages/prisma-next/*` | `@prisma-next-idb/*`               | New framework-native IDB family (6 packages) |
+| Path                    | Scope                              | Description                                 |
+| ----------------------- | ---------------------------------- | ------------------------------------------- |
+| `packages/generator`    | `@prisma-idb/idb-client-generator` | Legacy Prisma generator (stable, published) |
+| `packages/prisma-orm/*` | `@prisma-idb/*`                    | Prisma 8 IDB packages                       |
 
 ## Setup
 
 Requires Node.js ≥ 20 and pnpm.
 
 ```bash
-git clone https://github.com/prisma-idb/idb-client-generator
-cd idb-client-generator
+git clone https://github.com/prisma-idb/prisma-idb
+cd prisma-idb
 pnpm install
 ```
 
 ## Development
 
-### Working on `packages/prisma-next/*`
+### Working on `packages/prisma-orm/*`
 
-Build all six packages:
+Build all Prisma 8 packages:
 
 ```bash
-pnpm build --filter=@prisma-next-idb/*
+pnpm build --filter="./packages/prisma-orm/*"
 ```
 
 Run unit tests:
 
 ```bash
-pnpm test:prisma-next
+pnpm test:prisma-idb
 ```
 
 Run the browser E2E suite (requires Playwright browsers installed once):
 
 ```bash
-cd apps/prisma-next-usage && pnpm exec playwright install --with-deps && cd ../..
-pnpm test:prisma-next-e2e
+pnpm --dir apps/prisma-orm-usage exec playwright install --with-deps
+pnpm test:prisma-idb-e2e
 ```
 
 Type-check (catches things vitest/esbuild won't):
@@ -69,7 +69,7 @@ pnpm lint     # check
 ## Submitting a PR
 
 1. Branch from `main`, use a descriptive name (`fix/...`, `feat/...`).
-2. If your change touches a `@prisma-next-idb/*` package, add a changeset describing what changed:
+2. If your change touches a `@prisma-idb/*` package, add a changeset describing what changed:
    ```bash
    pnpm changeset
    ```

@@ -2,21 +2,17 @@
   "name": "@prisma-idb/monorepo",
   "private": true,
   "type": "module",
-  "packageManager": "pnpm@11.8.0+sha512.c1f5e7c4cb241c8f174b743851d82f42b802324afc8b0f116b96adb15aa06664948dde36960a3ba1079ba5b4b29dd0140135b94b5b5f5263592249d68e555f26",
+  "packageManager": "pnpm@12.5.1+sha512.e3f305bc784a2bc89f5ad3b6138889470fae8d2af5f36b61216ec91c2c3d64089775f9de38aac331044ea40f245cb0d5666392dfdf65824e1907ef6a2c62de5f",
   "scripts": {
     "build": "turbo run build",
     "dev": "turbo run dev --no-cache",
-    "check": "pnpm check:prisma-next-descriptors && turbo run check",
-    "check:prisma-next-descriptors": "tsx scripts/check-prisma-next-descriptor-consistency.ts",
+    "check": "pnpm check:prisma-idb-descriptors && turbo run check",
     "lint": "turbo run lint",
     "format": "turbo run format --no-cache",
-    "test": "turbo run test",
+    "test": "turbo run test --concurrency 1",
     "test:generator-client": "turbo run test --filter=@prisma-idb/usage",
     "test:generator-sync": "turbo run test --filter=@prisma-idb/kanban-example",
     "test:generator-schema": "turbo run test --filter=@prisma-idb/schema-gen-tests",
-    "test:prisma-next": "turbo run test --filter=@prisma-next-idb/adapter-idb --filter=@prisma-next-idb/client-idb --filter=@prisma-next-idb/driver-idb --filter=@prisma-next-idb/family-idb --filter=@prisma-next-idb/runtime-idb --filter=@prisma-next-idb/target-idb --filter=@prisma-next-idb/sync-server --filter=@prisma-next-idb/sync-server-sql --filter=@prisma-next-idb/cli-tests --filter=@prisma-next-idb/sync-extension-idb",
-    "test:prisma-next-e2e": "turbo run test --filter=@prisma-next-idb/usage",
-    "test:prisma-next-kanban-e2e": "turbo run test --filter=@prisma-next-idb/kanban-example",
     "test:benchmark": "turbo run test --filter=@prisma-idb/benchmark",
     "benchmark:local": "bash scripts/benchmark-local.sh",
     "test:watch": "turbo run test:watch --no-cache",
@@ -26,29 +22,33 @@
     "run:ci": "pnpm format && pnpm generate && pnpm lint && pnpm check && pnpm build",
     "prepare": "husky",
     "changeset": "changeset",
-    "version:prisma-next": "changeset version",
-    "release:prisma-next": "pnpm build --filter=@prisma-next-idb/* && changeset publish"
+    "check:prisma-idb-descriptors": "tsx scripts/check-prisma-idb-descriptor-consistency.ts",
+    "test:prisma-idb": "turbo run test --filter=@prisma-idb/adapter-idb --filter=@prisma-idb/client-idb --filter=@prisma-idb/driver-idb --filter=@prisma-idb/family-idb --filter=@prisma-idb/runtime-idb --filter=@prisma-idb/target-idb --filter=@prisma-idb/sync-server --filter=@prisma-idb/sync-server-sql --filter=@prisma-idb/cli-tests --filter=@prisma-idb/sync-extension-idb",
+    "test:prisma-idb-e2e": "turbo run test --filter=@prisma-idb/prisma-orm-usage",
+    "test:prisma-idb-kanban-e2e": "turbo run test --filter=@prisma-idb/prisma-orm-kanban-example",
+    "version:prisma-idb": "changeset version",
+    "release:prisma-idb": "pnpm build --filter=\"./packages/prisma-orm/*\" && changeset publish"
   },
   "devDependencies": {
     "@changesets/changelog-github": "^0.7.0",
     "@changesets/cli": "^2.31.1",
-    "@eslint/compat": "^2.1.0",
+    "@eslint/compat": "^2.1.1",
     "@eslint/js": "^9.39.5",
-    "@types/node": "^24.10.9",
+    "@types/node": "^24.13.6",
     "eslint": "^9.39.5",
-    "eslint-config-next": "^16.3.0",
+    "eslint-config-next": "^16.3.5",
     "eslint-config-prettier": "^10.1.8",
-    "eslint-plugin-svelte": "^3.22.0",
-    "globals": "^17.9.0",
+    "eslint-plugin-svelte": "^3.23.0",
+    "globals": "^17.12.0",
     "husky": "^9.1.7",
-    "lint-staged": "^17.3.0",
-    "prettier": "^3.9.6",
+    "lint-staged": "^17.5.1",
+    "prettier": "^3.9.8",
     "prettier-plugin-svelte": "^4.1.1",
     "prettier-plugin-tailwindcss": "^0.8.1",
-    "tsx": "^4.23.11",
-    "turbo": "^2.10.9",
+    "tsx": "^4.23.15",
+    "turbo": "^2.11.2",
     "typescript": "^6.0.3",
-    "typescript-eslint": "^8.66.0"
+    "typescript-eslint": "^8.70.0"
   },
   "lint-staged": {
     "*.{js,ts,svelte,tsx,jsx,mjs}": ["prettier --write", "eslint --fix"],
@@ -56,6 +56,6 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/prisma-idb/idb-client-generator.git"
+    "url": "git+https://github.com/prisma-idb/prisma-idb.git"
   }
 }

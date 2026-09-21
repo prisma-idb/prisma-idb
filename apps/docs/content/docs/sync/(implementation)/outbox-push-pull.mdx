@@ -26,7 +26,7 @@ This ensures:
 
 ## Outbox Event Record
 
-The outbox stores events with this structure (defined in [idb-interface.ts](https://github.com/prisma-idb/idb-client-generator/blob/fumadocs/apps/pidb-kanban-example/src/lib/prisma-idb/client/idb-interface.ts#L31)):
+The outbox stores events with this structure (defined in [idb-interface.ts](https://github.com/prisma-idb/prisma-idb/blob/fumadocs/apps/pidb-kanban-example/src/lib/prisma-idb/client/idb-interface.ts#L31)):
 
 ```typescript
 export interface OutboxEventRecord {
@@ -230,7 +230,7 @@ console.log(`Cleaned up ${deleted} old events`);
 
 ## Real Example
 
-From [pidb-kanban-example/test/demo.test.ts](https://github.com/prisma-idb/idb-client-generator/blob/fumadocs/apps/pidb-kanban-example/test/demo.test.ts#L1):
+From [pidb-kanban-example/test/demo.test.ts](https://github.com/prisma-idb/prisma-idb/blob/fumadocs/apps/pidb-kanban-example/test/demo.test.ts#L1):
 
 ```typescript
 test("syncs_create_update_delete_across_devices", async ({ pages }) => {

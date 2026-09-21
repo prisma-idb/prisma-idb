@@ -3,18 +3,18 @@
   "changelog": [
     "@changesets/changelog-github",
     {
-      "repo": "prisma-idb/idb-client-generator"
+      "repo": "prisma-idb/prisma-idb"
     }
   ],
   "commit": false,
   "fixed": [
     [
-      "@prisma-next-idb/target-idb",
-      "@prisma-next-idb/driver-idb",
-      "@prisma-next-idb/adapter-idb",
-      "@prisma-next-idb/runtime-idb",
-      "@prisma-next-idb/client-idb",
-      "@prisma-next-idb/family-idb"
+      "@prisma-idb/target-idb",
+      "@prisma-idb/driver-idb",
+      "@prisma-idb/adapter-idb",
+      "@prisma-idb/runtime-idb",
+      "@prisma-idb/client-idb",
+      "@prisma-idb/family-idb"
     ]
   ],
   "linked": [],

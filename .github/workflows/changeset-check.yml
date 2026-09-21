@@ -22,7 +22,7 @@ jobs:
         with:
           paths: |
             packages/generator
-            packages/prisma-next
+            packages/prisma-orm
             .changeset
 
       - id: should_check

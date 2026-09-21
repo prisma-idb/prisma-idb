@@ -6,7 +6,7 @@ on:
       - main
     paths:
       - "packages/generator/**"
-      - "packages/prisma-next/**"
+      - "packages/prisma-orm/**"
       - ".changeset/**"
       - ".github/workflows/release.yml"
 
@@ -37,11 +37,11 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Check prisma-next descriptors
-        run: pnpm check:prisma-next-descriptors
+      - name: Check Prisma IDB descriptors
+        run: pnpm check:prisma-idb-descriptors
 
       - name: Build packages
-        run: pnpm build --filter="./packages/prisma-next/*" --filter="./packages/generator"
+        run: pnpm build --filter="./packages/prisma-orm/*" --filter="./packages/generator"
 
       - name: Create release PR or publish
         uses: changesets/action@a45c4d594aa4e2c509dc14a9f2b3b67ba3780d0d # v1.9.0
