@@ -24,7 +24,7 @@ export function DemoSection() {
               Try the Live Demo
             </Link>
             <Link
-              href="https://github.com/prisma-idb/prisma-idb/tree/main/apps/pidb-kanban-example"
+              href="https://github.com/prisma-idb/prisma-idb/tree/main/apps/kanban-example"
               className="text-fd-foreground border-fd-border bg-fd-card hover:bg-fd-accent/10 inline-flex items-center gap-2 rounded-md border px-6 py-2.5 text-sm font-medium tracking-wide shadow-sm transition-colors"
             >
               <GitBranch className="h-3.5 w-3.5" />

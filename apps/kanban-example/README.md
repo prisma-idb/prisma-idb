@@ -102,7 +102,7 @@ model Todo {
 ### Installation
 
 ```bash
-cd apps/pidb-kanban-example
+cd apps/kanban-example
 pnpm install
 ```
 

@@ -40,4 +40,4 @@ pnpm --filter @prisma-idb/prisma-orm-kanban-example migration:preflight
 
 - Live app: https://next-kanban.prisma-idb.dev/
 - Docs: https://prisma-idb.dev/docs/prisma-8/kanban-example
-- Source: https://github.com/prisma-idb/prisma-idb/tree/main/apps/prisma-idb-kanban-example
+- Source: https://github.com/prisma-idb/prisma-idb/tree/main/apps/prisma-orm-kanban-example

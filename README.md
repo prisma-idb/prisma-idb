@@ -131,7 +131,7 @@ The usual flow is `pnpm exec prisma contract emit`, `pnpm exec prisma-idb migrat
 - [Generator on npm](https://www.npmjs.com/package/@prisma-idb/idb-client-generator)
 - [Extension family on npm](https://www.npmjs.com/package/@prisma-idb/family-idb)
 - [Generator example app](./apps/usage)
-- [Extension framework example app](./apps/prisma-idb-kanban-example)
+- [Extension framework example app](./apps/prisma-orm-kanban-example)
 
 ## Contributing
 

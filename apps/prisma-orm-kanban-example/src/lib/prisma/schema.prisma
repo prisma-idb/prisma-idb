@@ -34,7 +34,7 @@ model User {
 // better-auth's own tables (session/account/verification) — never reach the
 // browser (@@idb.exclude): they're server-only auth state, not app data.
 // Field shapes match better-auth's built-in requirements exactly (mirrors
-// apps/pidb-kanban-example's reference schema, the old generator's version
+// apps/kanban-example's reference schema, the old generator's version
 // of this same app).
 model Session {
   id        String   @id

@@ -17,7 +17,7 @@
   import SyncStatus from "./SyncStatus.svelte";
 
   const DOCS_URL = "https://prisma-idb.dev/docs/prisma-8/kanban-example";
-  const GITHUB_URL = "https://github.com/prisma-idb/prisma-idb/tree/main/apps/prisma-idb-kanban-example";
+  const GITHUB_URL = "https://github.com/prisma-idb/prisma-idb/tree/main/apps/prisma-orm-kanban-example";
 
   const kanban = getContext<KanbanStore>(KANBAN_CTX);
 

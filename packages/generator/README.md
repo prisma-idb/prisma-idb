@@ -131,7 +131,7 @@ await idb.todo.update({
 
 - [Documentation](https://prisma-idb.dev/)
 - [Live Kanban Demo](https://kanban.prisma-idb.dev/)
-- [Example App Source](https://github.com/prisma-idb/prisma-idb/tree/main/apps/pidb-kanban-example)
+- [Example App Source](https://github.com/prisma-idb/prisma-idb/tree/main/apps/kanban-example)
 - [Issue Tracker](https://github.com/prisma-idb/prisma-idb/issues)
 
 ## Contributing

@@ -95,7 +95,7 @@
           </Button>
         </a>
         <a
-          href="https://github.com/prisma-idb/prisma-idb/tree/main/apps/pidb-kanban-example"
+          href="https://github.com/prisma-idb/prisma-idb/tree/main/apps/kanban-example"
           target="_blank"
           rel="noopener noreferrer"
         >

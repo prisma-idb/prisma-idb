@@ -6,7 +6,7 @@ A test application for the [Prisma IndexedDB Client Generator](https://github.co
 
 ## About This App
 
-This is an internal test application used to validate the generator output. For a complete working example with sync capabilities, see the [Kanban Example](../pidb-kanban-example/).
+This is an internal test application used to validate the generator output. For a complete working example with sync capabilities, see the [Kanban Example](../kanban-example/).
 
 ## Developing
 
@@ -40,7 +40,7 @@ npm run test
 ## Resources
 
 - [Prisma IDB Generator Documentation](https://prisma-idb.dev/)
-- [Full Kanban Example with Sync](../pidb-kanban-example/)
+- [Full Kanban Example with Sync](../kanban-example/)
 - [GitHub Repository](https://github.com/prisma-idb/prisma-idb)
 - [npm Package](https://www.npmjs.com/package/@prisma-idb/idb-client-generator)
 
