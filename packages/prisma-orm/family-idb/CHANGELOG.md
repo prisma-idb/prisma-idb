@@ -1,5 +1,16 @@
 # @prisma-idb/family-idb
 
+## 0.6.1
+
+### Patch Changes
+
+- [#229](https://github.com/prisma-idb/prisma-idb/pull/229) [`88a3b5c`](https://github.com/prisma-idb/prisma-idb/commit/88a3b5cefb16e2940fd0b3a8d017aa41f117fbd1) Thanks [@WhyAsh5114](https://github.com/WhyAsh5114)! - Expose `prisma-idb` as the Prisma 8 IDB CLI command.
+
+- [#229](https://github.com/prisma-idb/prisma-idb/pull/229) [`a2d2d04`](https://github.com/prisma-idb/prisma-idb/commit/a2d2d0446ea91f34b68e6113be1f251beae87db1) Thanks [@WhyAsh5114](https://github.com/WhyAsh5114)! - Publish the Prisma 8 packages under the `@prisma-idb` scope.
+
+- Updated dependencies [[`a2d2d04`](https://github.com/prisma-idb/prisma-idb/commit/a2d2d0446ea91f34b68e6113be1f251beae87db1)]:
+  - @prisma-idb/target-idb@0.6.1
+
 ## 0.6.0
 
 ### Minor Changes

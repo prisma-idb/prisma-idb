@@ -1,5 +1,14 @@
 # @prisma-idb/sync-server-sql
 
+## 0.2.5
+
+### Patch Changes
+
+- [#229](https://github.com/prisma-idb/prisma-idb/pull/229) [`a2d2d04`](https://github.com/prisma-idb/prisma-idb/commit/a2d2d0446ea91f34b68e6113be1f251beae87db1) Thanks [@WhyAsh5114](https://github.com/WhyAsh5114)! - Publish the Prisma 8 packages under the `@prisma-idb` scope.
+
+- Updated dependencies [[`a2d2d04`](https://github.com/prisma-idb/prisma-idb/commit/a2d2d0446ea91f34b68e6113be1f251beae87db1)]:
+  - @prisma-idb/sync-server@0.3.1
+
 ## 0.2.4
 
 ### Patch Changes

@@ -1,6 +1,6 @@
 {
   "name": "@prisma-idb/adapter-idb",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "Prisma 8 IDB family — adapter (lowers query AST to opaque IDB plan body)",
   "license": "MIT",
   "files": ["dist"],

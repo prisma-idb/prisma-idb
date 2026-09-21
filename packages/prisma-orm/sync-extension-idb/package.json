@@ -1,6 +1,6 @@
 {
   "name": "@prisma-idb/sync-extension-idb",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Prisma 8 IDB — outbox sync extension (ORM wrapper, SyncWorker, push/pull client logic)",
   "license": "MIT",
   "files": ["dist"],
