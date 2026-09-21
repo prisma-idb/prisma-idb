@@ -1,6 +1,6 @@
 {
   "name": "@prisma-idb/target-idb",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "Prisma 8 IDB family — target pack (identity, migration runner, DDL op factories)",
   "license": "MIT",
   "files": ["dist"],

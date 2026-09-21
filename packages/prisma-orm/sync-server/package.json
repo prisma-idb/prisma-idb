@@ -1,6 +1,6 @@
 {
   "name": "@prisma-idb/sync-server",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Prisma 8 IDB — sync ownership DAG (server-side push authorization + pull scoping, ADR 014)",
   "license": "MIT",
   "files": ["dist"],

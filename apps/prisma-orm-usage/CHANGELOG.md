@@ -1,5 +1,12 @@
 # @prisma-idb/prisma-orm-usage
 
+## 0.0.10
+
+### Patch Changes
+
+- Updated dependencies [[`a2d2d04`](https://github.com/prisma-idb/prisma-idb/commit/a2d2d0446ea91f34b68e6113be1f251beae87db1)]:
+  - @prisma-idb/client-idb@0.6.1
+
 ## 0.0.9
 
 ### Patch Changes
