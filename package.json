@@ -6,17 +6,13 @@
   "scripts": {
     "build": "turbo run build",
     "dev": "turbo run dev --no-cache",
-    "check": "pnpm check:prisma-next-descriptors && turbo run check",
-    "check:prisma-next-descriptors": "tsx scripts/check-prisma-next-descriptor-consistency.ts",
+    "check": "pnpm check:prisma-idb-descriptors && turbo run check",
     "lint": "turbo run lint",
     "format": "turbo run format --no-cache",
     "test": "turbo run test",
     "test:generator-client": "turbo run test --filter=@prisma-idb/usage",
     "test:generator-sync": "turbo run test --filter=@prisma-idb/kanban-example",
     "test:generator-schema": "turbo run test --filter=@prisma-idb/schema-gen-tests",
-    "test:prisma-next": "turbo run test --filter=@prisma-next-idb/adapter-idb --filter=@prisma-next-idb/client-idb --filter=@prisma-next-idb/driver-idb --filter=@prisma-next-idb/family-idb --filter=@prisma-next-idb/runtime-idb --filter=@prisma-next-idb/target-idb --filter=@prisma-next-idb/sync-server --filter=@prisma-next-idb/sync-server-sql --filter=@prisma-next-idb/cli-tests --filter=@prisma-next-idb/sync-extension-idb",
-    "test:prisma-next-e2e": "turbo run test --filter=@prisma-next-idb/usage",
-    "test:prisma-next-kanban-e2e": "turbo run test --filter=@prisma-next-idb/kanban-example",
     "test:benchmark": "turbo run test --filter=@prisma-idb/benchmark",
     "benchmark:local": "bash scripts/benchmark-local.sh",
     "test:watch": "turbo run test:watch --no-cache",
@@ -26,8 +22,12 @@
     "run:ci": "pnpm format && pnpm generate && pnpm lint && pnpm check && pnpm build",
     "prepare": "husky",
     "changeset": "changeset",
-    "version:prisma-next": "changeset version",
-    "release:prisma-next": "pnpm build --filter=@prisma-next-idb/* && changeset publish"
+    "check:prisma-idb-descriptors": "tsx scripts/check-prisma-idb-descriptor-consistency.ts",
+    "test:prisma-idb": "turbo run test --filter=@prisma-idb/adapter-idb --filter=@prisma-idb/client-idb --filter=@prisma-idb/driver-idb --filter=@prisma-idb/family-idb --filter=@prisma-idb/runtime-idb --filter=@prisma-idb/target-idb --filter=@prisma-idb/sync-server --filter=@prisma-idb/sync-server-sql --filter=@prisma-idb/cli-tests --filter=@prisma-idb/sync-extension-idb",
+    "test:prisma-idb-e2e": "turbo run test --filter=@prisma-idb/prisma-orm-usage",
+    "test:prisma-idb-kanban-e2e": "turbo run test --filter=@prisma-idb/prisma-orm-kanban-example",
+    "version:prisma-idb": "changeset version",
+    "release:prisma-idb": "pnpm build --filter=\"./packages/prisma-orm/*\" && changeset publish"
   },
   "devDependencies": {
     "@changesets/changelog-github": "^0.7.0",
@@ -56,6 +56,6 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/prisma-idb/idb-client-generator.git"
+    "url": "git+https://github.com/prisma-idb/prisma-idb.git"
   }
 }

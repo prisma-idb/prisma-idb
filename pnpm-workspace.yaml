@@ -1,6 +1,6 @@
 packages:
   - packages/*
-  - packages/prisma-next/*
+  - packages/prisma-orm/*
   - apps/*
   - tests/*
 

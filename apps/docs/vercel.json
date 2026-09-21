@@ -1,4 +1,11 @@
 {
+  "redirects": [
+    {
+      "source": "/docs/prisma-next/:path*",
+      "destination": "/docs/prisma-8/:path*",
+      "permanent": true
+    }
+  ],
   "headers": [
     {
       "source": "/(.*)",

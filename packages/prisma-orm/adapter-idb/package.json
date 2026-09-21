@@ -1,0 +1,44 @@
+{
+  "name": "@prisma-idb/adapter-idb",
+  "version": "0.6.0",
+  "description": "Prisma 8 IDB family — adapter (lowers query AST to opaque IDB plan body)",
+  "license": "MIT",
+  "files": ["dist"],
+  "keywords": ["prisma", "prisma-8", "indexeddb", "offline-first", "idb"],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/prisma-idb/prisma-idb.git",
+    "directory": "packages/prisma-orm/adapter-idb"
+  },
+  "homepage": "https://prisma-idb.dev/",
+  "bugs": {
+    "url": "https://github.com/prisma-idb/prisma-idb/issues"
+  },
+  "type": "module",
+  "exports": {
+    "./control": "./dist/control.mjs",
+    "./runtime": "./dist/runtime.mjs",
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "build": "tsdown",
+    "dev": "tsdown --watch",
+    "check": "tsc --noEmit",
+    "test": "vitest run",
+    "lint": "prettier --check . && eslint .",
+    "format": "prettier --write ."
+  },
+  "dependencies": {
+    "@prisma-idb/driver-idb": "workspace:*",
+    "@prisma-idb/target-idb": "workspace:*",
+    "@prisma/orm-framework": "8.0.0-rc.5"
+  },
+  "devDependencies": {
+    "tsdown": "^0.22.14",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.10"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

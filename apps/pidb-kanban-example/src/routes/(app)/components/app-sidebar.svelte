@@ -72,7 +72,7 @@
             <Sidebar.MenuButton>
               {#snippet child({ props })}
                 <a
-                  href="https://github.com/prisma-idb/idb-client-generator/"
+                  href="https://github.com/prisma-idb/prisma-idb/"
                   {...props}
                   target="_blank"
                   rel="noopener noreferrer"
@@ -97,7 +97,7 @@
             <Sidebar.MenuButton>
               {#snippet child({ props })}
                 <a
-                  href="https://github.com/prisma-idb/idb-client-generator/tree/main/apps/pidb-kanban-example"
+                  href="https://github.com/prisma-idb/prisma-idb/tree/main/apps/pidb-kanban-example"
                   {...props}
                   target="_blank"
                   rel="noopener noreferrer"

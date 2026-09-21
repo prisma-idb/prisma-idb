@@ -1,0 +1,40 @@
+---
+title: API
+description: Common Prisma 8 IDB client methods
+icon: Braces
+---
+
+Reads are built with chainable methods and executed with a terminal call:
+
+```ts
+const todos = await db.orm.todo.where({ done: false }).orderBy({ title: "asc" }).all();
+```
+
+## Methods
+
+| Method                | Use                       |
+| --------------------- | ------------------------- |
+| `all()`               | Return matching rows      |
+| `first()`             | Return the first match    |
+| `findUnique(key)`     | Read by primary key       |
+| `create(data)`        | Insert one row            |
+| `createAll(data[])`   | Insert many rows          |
+| `update(patch)`       | Update the first match    |
+| `updateAll(patch)`    | Update all matches        |
+| `upsert(args)`        | Insert or update one row  |
+| `delete(key)`         | Delete by primary key     |
+| `deleteAll()`         | Delete all matches        |
+| `createCount(data[])` | Insert many, return count |
+| `updateCount(patch)`  | Update many, return count |
+| `deleteCount()`       | Delete many, return count |
+| `count()`             | Count matching rows       |
+| `aggregate(callback)` | Compute aggregate values  |
+| `groupBy(...fields)`  | Group aggregate results   |
+| `include(relation)`   | Load a relation           |
+| `select(...fields)`   | Project scalar fields     |
+
+<Cards>
+  <Card title="Querying" href="/docs/prisma-8/api/querying" />
+  <Card title="Writing" href="/docs/prisma-8/api/writing" />
+  <Card title="Transactions" href="/docs/prisma-8/api/transactions" />
+</Cards>

@@ -1,8 +1,8 @@
 # Prisma IDB - Kanban Example
 
-A fully functional **offline-first kanban board** that demonstrates the power of the [Prisma IDB generator](https://github.com/prisma-idb/idb-client-generator). Create, organize, and sync your tasks seamlessly.
+A fully functional **offline-first kanban board** that demonstrates the power of the [Prisma IDB generator](https://github.com/prisma-idb/prisma-idb). Create, organize, and sync your tasks seamlessly.
 
-**[🚀 Live Demo](https://kanban.prisma-idb.dev/) • [📖 Full Documentation](https://prisma-idb.dev/) • [📦 npm Package](https://www.npmjs.com/package/@prisma-idb/idb-client-generator) • [🏗️ Main Repository](https://github.com/prisma-idb/idb-client-generator)**
+**[🚀 Live Demo](https://kanban.prisma-idb.dev/) • [📖 Full Documentation](https://prisma-idb.dev/) • [📦 npm Package](https://www.npmjs.com/package/@prisma-idb/idb-client-generator) • [🏗️ Main Repository](https://github.com/prisma-idb/prisma-idb)**
 
 ## Features
 
@@ -173,7 +173,7 @@ Manages application state:
 ## Learning Resources
 
 - [Prisma IDB Generator](https://prisma-idb.dev/) - Complete documentation and guides
-- [Main Repository](https://github.com/prisma-idb/idb-client-generator) - Source code and issue tracking
+- [Main Repository](https://github.com/prisma-idb/prisma-idb) - Source code and issue tracking
 - [npm Package](https://www.npmjs.com/package/@prisma-idb/idb-client-generator) - Install the generator
 - [IndexedDB API](https://developer.mozilla.org/en-US/docs/Web/API/IndexedDB_API)
 - [Web Workers](https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API)
@@ -181,7 +181,7 @@ Manages application state:
 
 ## Contributing
 
-This is an example application. To contribute improvements or report issues, visit the [main repository](https://github.com/prisma-idb/idb-client-generator).
+This is an example application. To contribute improvements or report issues, visit the [main repository](https://github.com/prisma-idb/prisma-idb).
 
 ## License
 

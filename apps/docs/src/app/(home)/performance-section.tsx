@@ -9,8 +9,7 @@ const FAST_THRESHOLD_MS = 10;
 const MEDIUM_THRESHOLD_MS = 50;
 const CHART_PADDING_FACTOR = 1.2;
 const MIN_CHART_MAX_MS = 100;
-const PUBLIC_BENCHMARK_SNAPSHOT_URL =
-  "https://cdn.jsdelivr.net/gh/prisma-idb/idb-client-generator@benchmark-data/latest.json";
+const PUBLIC_BENCHMARK_SNAPSHOT_URL = "https://cdn.jsdelivr.net/gh/prisma-idb/prisma-idb@benchmark-data/latest.json";
 const NUMBER_FORMATTER = new Intl.NumberFormat("en-US");
 const SNAPSHOT_DATE_FORMATTER = new Intl.DateTimeFormat("en-US", {
   timeZone: "UTC",

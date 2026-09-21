@@ -47,11 +47,14 @@
   "homepage": "https://prisma-idb.dev/",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/prisma-idb/idb-client-generator.git"
+    "url": "git+https://github.com/prisma-idb/prisma-idb.git"
   },
   "author": "Yash Kolekar (https://whyash5114.com/)",
   "keywords": ["prisma", "generator", "indexeddb", "offline-first", "sync"],
   "bugs": {
-    "url": "https://github.com/prisma-idb/idb-client-generator/issues"
+    "url": "https://github.com/prisma-idb/prisma-idb/issues"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

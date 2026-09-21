@@ -1,0 +1,144 @@
+---
+title: Client Contracts
+description: One schema, two projections — what reaches the browser and what stays on the server
+icon: EyeOff
+---
+
+A syncing app runs two databases from one domain model: the server has the full schema, IndexedDB has a subset. Prisma 8 IDB authors that schema once and interprets it twice, rather than maintaining a separate `client.prisma` and `server.prisma` by hand.
+
+This page is the reference for that projection. For the setup sequence, start at [Sync](/docs/prisma-8/sync).
+
+## `@idb.exclude` and `@@idb.exclude`
+
+Mark a field as server-only with `@idb.exclude`, or a whole model as server-only with `@@idb.exclude`:
+
+```prisma
+model User {
+  id       String @id
+  name     String
+  password String    @idb.exclude // dropped from the client contract
+  boards   Board[]
+  sessions Session[]
+}
+
+model Session {
+  id     String @id
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@idb.exclude // whole model dropped from the client contract
+}
+```
+
+On the browser side, your IDB config strips them via `prismaIdbContract(path, { projection: "client" })`:
+
+```ts
+// prisma.config.ts (browser)
+import { definePrismaConfig } from "@prisma/cli-engine";
+import { defineConfig as ormConfig } from "@prisma-idb/family-idb/config-types";
+import { prismaIdbContract } from "@prisma-idb/family-idb/contract-psl";
+
+export default definePrismaConfig({
+  orm: ormConfig({
+    // ...
+    contract: prismaIdbContract("schema.prisma", { projection: "client" }),
+  }),
+});
+```
+
+`projection: "client"` is the only projection flag you set yourself. Its counterpart, `"full"` (the interpreter's default when you omit `projection`), just means "nothing stripped" — it isn't a second helper you hand to a server config. `prismaIdbContract` always produces an **IDB-shaped** contract, because it's the IDB family's own PSL helper.
+
+### The server side: a different family, not a different projection
+
+If your server also happens to run on the IDB family, pointing it at the same schema without the `projection` option works. But the realistic case — and the one the [sync server setup](/docs/prisma-8/sync/server) uses — is a SQL/Postgres server. Its parser doesn't understand `@idb.exclude`/`@@idb.exclude` at all and hard-errors on the unrecognized `idb` namespace, so `prismaIdbContract` (or any IDB-family helper) isn't in the picture on that side.
+
+Instead, `@prisma-idb/sync-server/postgres` exports a `defineConfig` that reads the _same_ `schema.prisma`, strips the `@idb.exclude`/`@@idb.exclude` markers as plain text, appends a SQL-flavored `Changelog` model, and hands the result straight to the SQL family's own parser — entirely in memory, no generated schema file:
+
+```ts
+// prisma.config.postgres.ts (server)
+import { definePrismaConfig } from "@prisma/cli-engine";
+import { defineConfig } from "@prisma-idb/sync-server/postgres";
+
+export default definePrismaConfig({
+  orm: defineConfig({
+    schema: "schema.prisma",
+    // Explicit: the default derives from the schema's own directory
+    // (contract.json), which collides with the IDB side's own contract.json.
+    output: "schema.postgres.generated.json",
+    db: { connection: process.env.DATABASE_URL },
+    migrations: { dir: "migrations-postgres" }, // a separate lineage from the IDB side's migrations/
+  }),
+});
+```
+
+This wraps `sqlContractWithSync` (`@prisma-idb/sync-server/schema`), which needs the core `defineConfig` (`@prisma/orm-framework/config/config-types`) wired by hand — a target's convenience wrapper like `@prisma/orm-postgres/config` only accepts a schema path, since it builds its own internal contract loader call. The Postgres facade above hides that wiring; reach for `sqlContractWithSync` directly for a non-Postgres target (see the [Server](/docs/prisma-8/sync/server#schema-the-changelog-model) page for the manual example).
+
+<Callout title="Upgrading from a hand-authored Changelog" type="warn">
+  Delete the `Changelog` model and `ChangeOperation` enum from `schema.prisma` before adopting `sqlContractWithSync` (or
+  the Postgres facade) — both are appended for you, and leaving your own declarations in place produces duplicate PSL
+  declarations, which fail contract generation.
+</Callout>
+
+Emit and migrate this side with the same `prisma` CLI, pointed at this config:
+
+```bash
+npx prisma@latest contract emit --config prisma.config.postgres.ts
+npx prisma@latest db init --config prisma.config.postgres.ts
+npx prisma@latest migration new --config prisma.config.postgres.ts
+npx prisma@latest db update --config prisma.config.postgres.ts
+```
+
+See [Server](/docs/prisma-8/sync/server#schema-the-changelog-model) for the full reasoning behind the generated `Changelog` model.
+
+Either way, the client and server sides are independent-but-related lifecycles, not two views of one graph — the IDB side has its own contract space and its own `migrations/` directory; `createAutoMigratingIdbClient` only ever sees the client-projected contract and has no knowledge the server schema exists.
+
+<Callout title="Split-package apps">
+  If your frontend and backend are separate packages, put the schema in a shared `@myapp/schema` package with two
+  subpath exports — `./client` and `./server` — so both projections stay versioned atomically. Never have the frontend
+  depend on the backend's package (or vice versa) just to reach the schema.
+</Callout>
+
+A few rules the interpreter enforces on `@idb.exclude`/`@@idb.exclude`:
+
+- The `@id` key field cannot be excluded.
+- An index cannot reference an excluded field.
+- An excluded field cannot also be `@unique`.
+- You cannot exclude a relation field directly, or an FK column backing a relation independently — only whole-model `@@idb.exclude` drops a relation (see below).
+
+## Relations that cross the boundary
+
+When a surviving model has a relation pointing at an excluded model, the relation is **dropped**, not the surviving model:
+
+```prisma
+model Todo {
+  id        String @id
+  title     String
+  sessionId String
+  session   Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+}
+
+model Session {
+  id String @id
+  @@idb.exclude
+}
+```
+
+In the client projection, `Todo.session` disappears — but `Todo.sessionId` stays, exactly as declared (nullable or not). It's still a valid domain fact, just no longer enforced or traversable locally. Dropping the scalar field too was rejected: it would silently change record shape for clients that already synced it.
+
+This applies for every cardinality — `N:1`, `1:N`, `1:1` — and to every kind of relation, required or optional. A warning is logged (not an error) whenever it happens:
+
+```
+[prisma-idb] Dropped relation "Todo.session" from the client contract: target model "Session" is excluded (ADR 013).
+```
+
+Crucially, exclusion never cascades. A model is excluded only because you wrote `@@idb.exclude` on it — never because something else points at it. There's no fixpoint loop and no transitive surprises: excluding one model can never trigger a second, unrelated exclusion.
+
+## Why this matters for sync
+
+The sync ownership DAG (see [Server](/docs/prisma-8/sync/server)) is built from exactly this client-projected contract — `clientModels` in the ownership graph is the survivor set after projection. If your `rootModel` (typically the model sync authorization is scoped by, e.g. `User`) is itself excluded, or a synced model has no path of `N:1` relations back to it, `createSyncServer` fails fast at startup rather than at request time.
+
+<Cards>
+  <Card title="Schema & Config" href="/docs/prisma-8/schema" />
+  <Card title="Sync: Client" href="/docs/prisma-8/sync/client" />
+  <Card title="Sync: Server" href="/docs/prisma-8/sync/server" />
+</Cards>

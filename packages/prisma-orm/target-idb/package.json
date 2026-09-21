@@ -1,0 +1,52 @@
+{
+  "name": "@prisma-idb/target-idb",
+  "version": "0.6.0",
+  "description": "Prisma 8 IDB family — target pack (identity, migration runner, DDL op factories)",
+  "license": "MIT",
+  "files": ["dist"],
+  "keywords": ["prisma", "prisma-8", "indexeddb", "offline-first", "idb"],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/prisma-idb/prisma-idb.git",
+    "directory": "packages/prisma-orm/target-idb"
+  },
+  "homepage": "https://prisma-idb.dev/",
+  "bugs": {
+    "url": "https://github.com/prisma-idb/prisma-idb/issues"
+  },
+  "type": "module",
+  "exports": {
+    ".": "./dist/pack.mjs",
+    "./pack": "./dist/pack.mjs",
+    "./control": "./dist/control.mjs",
+    "./runtime": "./dist/runtime.mjs",
+    "./migration": "./dist/migration.mjs",
+    "./package.json": "./package.json"
+  },
+  "main": "./dist/pack.mjs",
+  "module": "./dist/pack.mjs",
+  "scripts": {
+    "build": "tsdown",
+    "dev": "tsdown --watch",
+    "check": "tsc --noEmit",
+    "test": "vitest run",
+    "lint": "prettier --check . && eslint .",
+    "format": "prettier --write ."
+  },
+  "dependencies": {
+    "@prisma/orm-framework": "8.0.0-rc.5",
+    "@prisma/orm-toolchain": "8.0.0-rc.5",
+    "pathe": "^2.0.3"
+  },
+  "devDependencies": {
+    "@prisma/cli-engine": "0.2.0",
+    "@types/node": "^24.10.9",
+    "fake-indexeddb": "^6.2.5",
+    "tsdown": "^0.22.14",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.10"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

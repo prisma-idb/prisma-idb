@@ -370,20 +370,20 @@ importers:
         specifier: ^7.4.1
         version: 7.4.1
 
-  apps/prisma-next-idb-kanban-example:
+  apps/prisma-idb-kanban-example:
     dependencies:
-      '@prisma-next-idb/client-idb':
+      '@prisma-idb/client-idb':
         specifier: workspace:*
-        version: link:../../packages/prisma-next/client-idb
-      '@prisma-next-idb/sync-extension-idb':
+        version: link:../../packages/prisma-orm/client-idb
+      '@prisma-idb/sync-extension-idb':
         specifier: workspace:*
-        version: link:../../packages/prisma-next/sync-extension-idb
-      '@prisma-next-idb/sync-server':
+        version: link:../../packages/prisma-orm/sync-extension-idb
+      '@prisma-idb/sync-server':
         specifier: workspace:*
-        version: link:../../packages/prisma-next/sync-server
-      '@prisma-next-idb/sync-server-sql':
+        version: link:../../packages/prisma-orm/sync-server
+      '@prisma-idb/sync-server-sql':
         specifier: workspace:*
-        version: link:../../packages/prisma-next/sync-server-sql
+        version: link:../../packages/prisma-orm/sync-server-sql
       '@prisma/orm-framework':
         specifier: 8.0.0-rc.5
         version: 8.0.0-rc.5(typescript@6.0.3)
@@ -409,18 +409,18 @@ importers:
       '@playwright/test':
         specifier: ^1.62.1
         version: 1.62.1
-      '@prisma-next-idb/adapter-idb':
+      '@prisma-idb/adapter-idb':
         specifier: workspace:*
-        version: link:../../packages/prisma-next/adapter-idb
-      '@prisma-next-idb/driver-idb':
+        version: link:../../packages/prisma-orm/adapter-idb
+      '@prisma-idb/driver-idb':
         specifier: workspace:*
-        version: link:../../packages/prisma-next/driver-idb
-      '@prisma-next-idb/family-idb':
+        version: link:../../packages/prisma-orm/driver-idb
+      '@prisma-idb/family-idb':
         specifier: workspace:*
-        version: link:../../packages/prisma-next/family-idb
-      '@prisma-next-idb/target-idb':
+        version: link:../../packages/prisma-orm/family-idb
+      '@prisma-idb/target-idb':
         specifier: workspace:*
-        version: link:../../packages/prisma-next/target-idb
+        version: link:../../packages/prisma-orm/target-idb
       '@prisma/cli-engine':
         specifier: 0.2.0
         version: 0.2.0(magicast@0.5.4)
@@ -482,11 +482,11 @@ importers:
         specifier: ^8.2.1
         version: 8.2.1(@types/node@24.13.3)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.49.2)(tsx@4.23.11)(yaml@2.9.0)
 
-  apps/prisma-next-usage:
+  apps/prisma-orm-usage:
     dependencies:
-      '@prisma-next-idb/client-idb':
+      '@prisma-idb/client-idb':
         specifier: workspace:*
-        version: link:../../packages/prisma-next/client-idb
+        version: link:../../packages/prisma-orm/client-idb
       '@prisma/orm-toolchain':
         specifier: 8.0.0-rc.5
         version: 8.0.0-rc.5(@prisma/cli-engine@0.2.0(magicast@0.5.4))(magicast@0.5.4)(typanion@3.14.0)(typescript@6.0.3)(vite@8.2.1(@types/node@24.13.3)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.49.2)(tsx@4.23.11)(yaml@2.9.0))
@@ -502,19 +502,19 @@ importers:
         version: 1.30.0(svelte@5.56.8(@typescript-eslint/types@8.66.0))
       '@playwright/test':
         specifier: latest
-        version: 1.62.1
-      '@prisma-next-idb/adapter-idb':
+        version: 1.63.0
+      '@prisma-idb/adapter-idb':
         specifier: workspace:*
-        version: link:../../packages/prisma-next/adapter-idb
-      '@prisma-next-idb/driver-idb':
+        version: link:../../packages/prisma-orm/adapter-idb
+      '@prisma-idb/driver-idb':
         specifier: workspace:*
-        version: link:../../packages/prisma-next/driver-idb
-      '@prisma-next-idb/family-idb':
+        version: link:../../packages/prisma-orm/driver-idb
+      '@prisma-idb/family-idb':
         specifier: workspace:*
-        version: link:../../packages/prisma-next/family-idb
-      '@prisma-next-idb/target-idb':
+        version: link:../../packages/prisma-orm/family-idb
+      '@prisma-idb/target-idb':
         specifier: workspace:*
-        version: link:../../packages/prisma-next/target-idb
+        version: link:../../packages/prisma-orm/target-idb
       '@prisma/cli-engine':
         specifier: 0.2.0
         version: 0.2.0(magicast@0.5.4)
@@ -722,12 +722,12 @@ importers:
         specifier: ^6.0.3
         version: 6.0.3
 
-  packages/prisma-next/adapter-idb:
+  packages/prisma-orm/adapter-idb:
     dependencies:
-      '@prisma-next-idb/driver-idb':
+      '@prisma-idb/driver-idb':
         specifier: workspace:*
         version: link:../driver-idb
-      '@prisma-next-idb/target-idb':
+      '@prisma-idb/target-idb':
         specifier: workspace:*
         version: link:../target-idb
       '@prisma/orm-framework':
@@ -744,25 +744,25 @@ importers:
         specifier: ^4.1.10
         version: 4.1.10(@types/node@24.13.3)(vite@8.2.1(@types/node@24.13.3)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.49.2)(tsx@4.23.11)(yaml@2.9.0))
 
-  packages/prisma-next/client-idb:
+  packages/prisma-orm/client-idb:
     dependencies:
-      '@prisma-next-idb/adapter-idb':
+      '@prisma-idb/adapter-idb':
         specifier: workspace:*
         version: link:../adapter-idb
-      '@prisma-next-idb/driver-idb':
+      '@prisma-idb/driver-idb':
         specifier: workspace:*
         version: link:../driver-idb
-      '@prisma-next-idb/runtime-idb':
+      '@prisma-idb/runtime-idb':
         specifier: workspace:*
         version: link:../runtime-idb
-      '@prisma-next-idb/target-idb':
+      '@prisma-idb/target-idb':
         specifier: workspace:*
         version: link:../target-idb
       '@prisma/orm-framework':
         specifier: 8.0.0-rc.5
         version: 8.0.0-rc.5(typescript@6.0.3)
     devDependencies:
-      '@prisma-next-idb/family-idb':
+      '@prisma-idb/family-idb':
         specifier: workspace:*
         version: link:../family-idb
       '@prisma/cli-engine':
@@ -784,7 +784,7 @@ importers:
         specifier: ^4.1.10
         version: 4.1.10(@types/node@24.13.3)(vite@8.2.1(@types/node@24.13.3)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.49.2)(tsx@4.23.11)(yaml@2.9.0))
 
-  packages/prisma-next/driver-idb:
+  packages/prisma-orm/driver-idb:
     dependencies:
       '@prisma/orm-framework':
         specifier: 8.0.0-rc.5
@@ -803,9 +803,9 @@ importers:
         specifier: ^4.1.10
         version: 4.1.10(@types/node@24.13.3)(vite@8.2.1(@types/node@24.13.3)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.49.2)(tsx@4.23.11)(yaml@2.9.0))
 
-  packages/prisma-next/family-idb:
+  packages/prisma-orm/family-idb:
     dependencies:
-      '@prisma-next-idb/target-idb':
+      '@prisma-idb/target-idb':
         specifier: workspace:*
         version: link:../target-idb
       '@prisma/cli-engine':
@@ -837,12 +837,12 @@ importers:
         specifier: ^4.1.10
         version: 4.1.10(@types/node@24.13.3)(vite@8.2.1(@types/node@24.13.3)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.49.2)(tsx@4.23.11)(yaml@2.9.0))
 
-  packages/prisma-next/runtime-idb:
+  packages/prisma-orm/runtime-idb:
     dependencies:
-      '@prisma-next-idb/adapter-idb':
+      '@prisma-idb/adapter-idb':
         specifier: workspace:*
         version: link:../adapter-idb
-      '@prisma-next-idb/driver-idb':
+      '@prisma-idb/driver-idb':
         specifier: workspace:*
         version: link:../driver-idb
       '@prisma/orm-framework':
@@ -862,24 +862,24 @@ importers:
         specifier: ^4.1.10
         version: 4.1.10(@types/node@24.13.3)(vite@8.2.1(@types/node@24.13.3)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.49.2)(tsx@4.23.11)(yaml@2.9.0))
 
-  packages/prisma-next/sync-extension-idb:
+  packages/prisma-orm/sync-extension-idb:
     dependencies:
-      '@prisma-next-idb/adapter-idb':
+      '@prisma-idb/adapter-idb':
         specifier: workspace:*
         version: link:../adapter-idb
-      '@prisma-next-idb/client-idb':
+      '@prisma-idb/client-idb':
         specifier: workspace:*
         version: link:../client-idb
-      '@prisma-next-idb/driver-idb':
+      '@prisma-idb/driver-idb':
         specifier: workspace:*
         version: link:../driver-idb
-      '@prisma-next-idb/family-idb':
+      '@prisma-idb/family-idb':
         specifier: workspace:*
         version: link:../family-idb
-      '@prisma-next-idb/runtime-idb':
+      '@prisma-idb/runtime-idb':
         specifier: workspace:*
         version: link:../runtime-idb
-      '@prisma-next-idb/target-idb':
+      '@prisma-idb/target-idb':
         specifier: workspace:*
         version: link:../target-idb
       '@prisma/orm-framework':
@@ -914,9 +914,9 @@ importers:
         specifier: ^4.1.10
         version: 4.1.10(@types/node@24.13.3)(vite@8.2.1(@types/node@24.13.3)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.49.2)(tsx@4.23.11)(yaml@2.9.0))
 
-  packages/prisma-next/sync-server:
+  packages/prisma-orm/sync-server:
     dependencies:
-      '@prisma-next-idb/family-idb':
+      '@prisma-idb/family-idb':
         specifier: workspace:*
         version: link:../family-idb
       '@prisma/orm-family-sql':
@@ -929,7 +929,7 @@ importers:
         specifier: 8.0.0-rc.5
         version: 8.0.0-rc.5(@prisma/cli-engine@0.2.0(magicast@0.5.4))(magicast@0.5.4)(typanion@3.14.0)(typescript@6.0.3)(vite@8.2.1(@types/node@24.13.3)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.49.2)(tsx@4.23.11)(yaml@2.9.0))
     devDependencies:
-      '@prisma-next-idb/target-idb':
+      '@prisma-idb/target-idb':
         specifier: workspace:*
         version: link:../target-idb
       '@types/node':
@@ -945,9 +945,9 @@ importers:
         specifier: ^4.1.10
         version: 4.1.10(@types/node@24.13.3)(vite@8.2.1(@types/node@24.13.3)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.49.2)(tsx@4.23.11)(yaml@2.9.0))
 
-  packages/prisma-next/sync-server-sql:
+  packages/prisma-orm/sync-server-sql:
     dependencies:
-      '@prisma-next-idb/sync-server':
+      '@prisma-idb/sync-server':
         specifier: workspace:*
         version: link:../sync-server
       '@prisma/orm-framework':
@@ -985,7 +985,7 @@ importers:
         specifier: ^4.1.10
         version: 4.1.10(@types/node@24.13.3)(vite@8.2.1(@types/node@24.13.3)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.49.2)(tsx@4.23.11)(yaml@2.9.0))
 
-  packages/prisma-next/target-idb:
+  packages/prisma-orm/target-idb:
     dependencies:
       '@prisma/orm-framework':
         specifier: 8.0.0-rc.5
@@ -1016,11 +1016,11 @@ importers:
         specifier: ^4.1.10
         version: 4.1.10(@types/node@24.13.3)(vite@8.2.1(@types/node@24.13.3)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.49.2)(tsx@4.23.11)(yaml@2.9.0))
 
-  tests/prisma-next-idb-cli:
+  tests/prisma-idb-cli:
     devDependencies:
-      '@prisma-next-idb/family-idb':
+      '@prisma-idb/family-idb':
         specifier: workspace:*
-        version: link:../../packages/prisma-next/family-idb
+        version: link:../../packages/prisma-orm/family-idb
       '@prisma/cli-engine':
         specifier: 0.2.0
         version: 0.2.0(magicast@0.5.4)
@@ -1955,6 +1955,7 @@ packages:
 
   '@distilled.cloud/cloudflare-rolldown-plugin@0.15.0':
     resolution: {integrity: sha512-cBVl4Ck4Prf9/dPSvyQeGW+2CDLIKs+xbyUm/MgNOSyYDZYOLbsCnDePO4YwdvaxsT0oOZZIkSDDki2ve9DCHA==}
+    deprecated: Package no longer supported. Contact Support at https://www.npmjs.com/support for more info.
     peerDependencies:
       rolldown: ^1.1.5
       vite: ^7.0.0 || ^8.0.0
@@ -1979,6 +1980,7 @@ packages:
 
   '@distilled.cloud/cloudflare-vite-plugin@0.15.0':
     resolution: {integrity: sha512-+JYCTv/1Bqk3GRSb6e+UW61Pn2DFF68EAVvAbTYg5Z6tlztc2E7sd/pC4E2fsnAxtSMjwpFdrzlPqwQUq2HUQA==}
+    deprecated: Package no longer supported. Contact Support at https://www.npmjs.com/support for more info.
     peerDependencies:
       '@distilled.cloud/cloudflare': ^0.29.0
       '@distilled.cloud/cloudflare-runtime': 0.15.0
@@ -3071,6 +3073,11 @@ packages:
 
   '@playwright/test@1.62.1':
     resolution: {integrity: sha512-DTcUc8qii+cpHvtOwggMtBRMjKZHXYWdw8syRYu2vtzuq4Wxphqq4NfCs5Zt44L6mA8rfDfj+PHnxFc/FeK6mQ==}
+    engines: {node: '>=20'}
+    hasBin: true
+
+  '@playwright/test@1.63.0':
+    resolution: {integrity: sha512-oxMK4vllB9RK5NQ2l1pq1IfOf2AvnEuj/vYGDj0H2nMtmtZpKtCwt/l00GEO6xjGfpBNAvjovvYdCm50dRQkpQ==}
     engines: {node: '>=20'}
     hasBin: true
 
@@ -8814,8 +8821,18 @@ packages:
     engines: {node: '>=20'}
     hasBin: true
 
+  playwright-core@1.63.0:
+    resolution: {integrity: sha512-rYCsBF/M5HjUch52bbtVONEFjv6Xu8sm8h72dNlR5bzIE1fvC/bxgspzkjSfU+MweEMmPM8KJebG6nnyxo5mCg==}
+    engines: {node: '>=20'}
+    hasBin: true
+
   playwright@1.62.1:
     resolution: {integrity: sha512-0M+L3LAD8/nm554LOla9Ayx0j0tmFZ0FBcoQ7F1VuVHpM/XpiC8RcDzBQB8W5+hA8L22THxELzeF+2WcUzvcLg==}
+    engines: {node: '>=20'}
+    hasBin: true
+
+  playwright@1.63.0:
+    resolution: {integrity: sha512-+7ziBLidS4NaNCdt57SUDT+wYmmd5fmiQejUic/kb+YsYSCPyOOE9sebzMjNmQrsnNpDJqd4WHvV/8lfKfUDUg==}
     engines: {node: '>=20'}
     hasBin: true
 
@@ -9980,8 +9997,8 @@ packages:
   third-party-web@0.26.7:
     resolution: {integrity: sha512-buUzX4sXC4efFX6xg2bw6/eZsCUh8qQwSavC4D9HpONMFlRbcHhD8Je5qwYdCpViR6q0qla2wPP+t91a2vgolg==}
 
-  third-party-web@0.29.2:
-    resolution: {integrity: sha512-fegtha91tq2DHphyoiBXVHjVi2YG9zFaRnboT9C28tO1en9Y3wJsfspuy40F+u5wl3hHVbw7cnd1b67kEGHb8g==}
+  third-party-web@0.30.0:
+    resolution: {integrity: sha512-p+PfyL5U0ediGzvwPzMSdD9MnC8rHW6nWJJVLIQvqN7RsSqfaZ+7n4c9GILqH36EYR0eXB9CzAeCRnKFr/9uJg==}
 
   through@2.3.8:
     resolution: {integrity: sha512-w89qg7PI8wAdvX60bMDP+bFoD5Dvhm9oLheFp5O4a2QF0cSBGsBX4qZmadPMvVqlLJBBci+WqGGOAPvcDeNSVg==}
@@ -13075,11 +13092,15 @@ snapshots:
   '@paulirish/trace_engine@0.0.53':
     dependencies:
       legacy-javascript: 0.0.1
-      third-party-web: 0.29.2
+      third-party-web: 0.30.0
 
   '@playwright/test@1.62.1':
     dependencies:
       playwright: 1.62.1
+
+  '@playwright/test@1.63.0':
+    dependencies:
+      playwright: 1.63.0
 
   '@polka/url@1.0.0-next.29': {}
 
@@ -19503,11 +19524,17 @@ snapshots:
 
   playwright-core@1.62.1: {}
 
+  playwright-core@1.63.0: {}
+
   playwright@1.62.1:
     dependencies:
       playwright-core: 1.62.1
     optionalDependencies:
       fsevents: 2.3.2
+
+  playwright@1.63.0:
+    dependencies:
+      playwright-core: 1.63.0
 
   pluralize@8.0.0: {}
 
@@ -20938,7 +20965,7 @@ snapshots:
 
   third-party-web@0.26.7: {}
 
-  third-party-web@0.29.2: {}
+  third-party-web@0.30.0: {}
 
   through@2.3.8: {}
 

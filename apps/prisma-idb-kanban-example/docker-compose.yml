@@ -1,0 +1,25 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: prisma-idb-kanban-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: prisma_idb
+      POSTGRES_PASSWORD: prisma_idb
+      POSTGRES_DB: prisma_idb_kanban
+    ports:
+      # 5433, not 5432 — this repo's devcontainer already runs its own
+      # postgres:16 on 5432; a distinct port + volume + container name keeps
+      # this app's sync backend fully isolated from that one.
+      - "5433:5432"
+    volumes:
+      - prisma-idb-kanban-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U prisma_idb -d prisma_idb_kanban"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+
+volumes:
+  prisma-idb-kanban-pgdata:
+    name: prisma-idb-kanban-pgdata

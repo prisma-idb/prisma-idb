@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { Star } from "lucide-react";
 
-const GITHUB_URL = "https://github.com/prisma-idb/idb-client-generator";
+const GITHUB_URL = "https://github.com/prisma-idb/prisma-idb";
 
 interface FooterLink {
   label: string;

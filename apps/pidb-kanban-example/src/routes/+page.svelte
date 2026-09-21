@@ -48,7 +48,7 @@
           </svg>
         </a>
         <a
-          href="https://github.com/prisma-idb/idb-client-generator"
+          href="https://github.com/prisma-idb/prisma-idb"
           target="_blank"
           rel="noopener noreferrer"
           class="text-muted-foreground hover:text-foreground transition"
@@ -95,7 +95,7 @@
           </Button>
         </a>
         <a
-          href="https://github.com/prisma-idb/idb-client-generator/tree/main/apps/pidb-kanban-example"
+          href="https://github.com/prisma-idb/prisma-idb/tree/main/apps/pidb-kanban-example"
           target="_blank"
           rel="noopener noreferrer"
         >

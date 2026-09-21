@@ -4,7 +4,7 @@
 
 `@prisma-idb/idb-client-generator` is the npm package that generates a type-safe IndexedDB client with the Prisma-style API you already know, plus an optional sync engine for offline-first apps.
 
-**[Documentation](https://prisma-idb.dev/) · [Live Demo](https://kanban.prisma-idb.dev/) · [Repository](https://github.com/prisma-idb/idb-client-generator)**
+**[Documentation](https://prisma-idb.dev/) · [Live Demo](https://kanban.prisma-idb.dev/) · [Repository](https://github.com/prisma-idb/prisma-idb)**
 
 ---
 
@@ -131,20 +131,20 @@ await idb.todo.update({
 
 - [Documentation](https://prisma-idb.dev/)
 - [Live Kanban Demo](https://kanban.prisma-idb.dev/)
-- [Example App Source](https://github.com/prisma-idb/idb-client-generator/tree/main/apps/pidb-kanban-example)
-- [Issue Tracker](https://github.com/prisma-idb/idb-client-generator/issues)
+- [Example App Source](https://github.com/prisma-idb/prisma-idb/tree/main/apps/pidb-kanban-example)
+- [Issue Tracker](https://github.com/prisma-idb/prisma-idb/issues)
 
 ## Contributing
 
-Contributions welcome. See [CONTRIBUTING.md](https://github.com/prisma-idb/idb-client-generator/blob/main/.github/CONTRIBUTING.md).
+Contributions welcome. See [CONTRIBUTING.md](https://github.com/prisma-idb/prisma-idb/blob/main/.github/CONTRIBUTING.md).
 
 ## Security
 
-See [SECURITY.md](https://github.com/prisma-idb/idb-client-generator/blob/main/.github/SECURITY.md) for reporting vulnerabilities.
+See [SECURITY.md](https://github.com/prisma-idb/prisma-idb/blob/main/.github/SECURITY.md) for reporting vulnerabilities.
 
 ## License
 
-MIT. See [LICENSE](https://github.com/prisma-idb/idb-client-generator/blob/main/LICENSE).
+MIT. See [LICENSE](https://github.com/prisma-idb/prisma-idb/blob/main/LICENSE).
 
 ## Disclaimer
 

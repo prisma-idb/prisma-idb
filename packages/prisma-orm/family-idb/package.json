@@ -1,0 +1,55 @@
+{
+  "name": "@prisma-idb/family-idb",
+  "version": "0.6.0",
+  "description": "Prisma 8 IDB family — control-plane descriptor and family instance (CLI/config integration)",
+  "license": "MIT",
+  "files": ["dist"],
+  "keywords": ["prisma", "prisma-8", "indexeddb", "offline-first", "idb", "cli"],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/prisma-idb/prisma-idb.git",
+    "directory": "packages/prisma-orm/family-idb"
+  },
+  "homepage": "https://prisma-idb.dev/",
+  "bugs": {
+    "url": "https://github.com/prisma-idb/prisma-idb/issues"
+  },
+  "type": "module",
+  "exports": {
+    "./control": "./dist/exports/control.mjs",
+    "./pack": "./dist/exports/pack.mjs",
+    "./contract-ts": "./dist/exports/contract-ts.mjs",
+    "./contract-psl": "./dist/exports/contract-psl.mjs",
+    "./config-types": "./dist/exports/config-types.mjs",
+    "./cli": "./dist/exports/cli.mjs",
+    "./package.json": "./package.json"
+  },
+  "bin": {
+    "prisma-idb": "./dist/bin/prisma-idb.mjs"
+  },
+  "scripts": {
+    "build": "tsdown",
+    "dev": "tsdown --watch",
+    "check": "tsc --noEmit",
+    "test": "vitest run",
+    "lint": "prettier --check . && eslint .",
+    "format": "prettier --write ."
+  },
+  "dependencies": {
+    "@prisma-idb/target-idb": "workspace:*",
+    "@prisma/cli-engine": "0.2.0",
+    "@prisma/orm-framework": "8.0.0-rc.5",
+    "@prisma/orm-toolchain": "8.0.0-rc.5",
+    "fake-indexeddb": "^6.2.5",
+    "pathe": "^2.0.3"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.9",
+    "tsdown": "^0.22.14",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.10"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
