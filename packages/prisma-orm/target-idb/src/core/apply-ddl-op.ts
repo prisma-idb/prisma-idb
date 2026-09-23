@@ -1,5 +1,17 @@
 import type { ContractMarkerRecord } from "@prisma/orm-framework/contract/types";
+import type { IdbKeyPath } from "./idb-contract-types";
 import { IDB_MARKER_STORE, type IdbDdlOp } from "./migration-factories";
+
+/**
+ * `lib.dom.d.ts` types `IDBObjectStoreParameters.keyPath` / `createIndex`'s
+ * key-path parameter as `string | string[]` — a *mutable* array, whereas
+ * {@link IdbKeyPath} is `string | readonly string[]`. A readonly array isn't
+ * structurally assignable to a mutable one, so this materializes a fresh
+ * mutable copy for the DOM call; the native engine only ever reads it.
+ */
+function toDomKeyPath(keyPath: IdbKeyPath): string | string[] {
+  return typeof keyPath === "string" ? keyPath : [...keyPath];
+}
 
 /**
  * Execute a single DDL operation against an open `upgradeneeded` transaction.
@@ -31,7 +43,7 @@ export function applyOneDdlOp(db: IDBDatabase, tx: IDBTransaction, op: IdbDdlOp)
     case "createObjectStore": {
       if (db.objectStoreNames.contains(op.storeName)) return;
       db.createObjectStore(op.storeName, {
-        keyPath: op.def.keyPath,
+        keyPath: toDomKeyPath(op.def.keyPath),
         ...(op.def.autoIncrement !== undefined && { autoIncrement: op.def.autoIncrement }),
       });
       return;
@@ -44,7 +56,7 @@ export function applyOneDdlOp(db: IDBDatabase, tx: IDBTransaction, op: IdbDdlOp)
     case "createIndex": {
       const store = tx.objectStore(op.storeName);
       if (store.indexNames.contains(op.indexName)) return;
-      store.createIndex(op.indexName, op.def.keyPath, {
+      store.createIndex(op.indexName, toDomKeyPath(op.def.keyPath), {
         unique: op.def.unique,
         ...(op.def.multiEntry !== undefined && { multiEntry: op.def.multiEntry }),
       });

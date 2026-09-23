@@ -1,4 +1,5 @@
 import type { IdbIndexDefinition, IdbStoreDefinition } from "./idb-contract-types";
+import { keyPathEquals } from "./idb-contract-types";
 import {
   createIndexOp,
   createObjectStoreOp,
@@ -28,7 +29,7 @@ export type IdbSchemaDiffInput = {
  */
 function indexDefinitionsDiffer(a: IdbIndexDefinition, b: IdbIndexDefinition): boolean {
   return (
-    a.keyPath !== b.keyPath ||
+    !keyPathEquals(a.keyPath, b.keyPath) ||
     (a.unique ?? false) !== (b.unique ?? false) ||
     (a.multiEntry ?? false) !== (b.multiEntry ?? false)
   );
@@ -68,10 +69,10 @@ export function diffIdbSchema(from: IdbSchemaDiffInput | null, to: IdbSchemaDiff
   for (const [storeName, toDef] of Object.entries(toStores)) {
     const fromDef = fromStores[storeName];
     if (fromDef === undefined) continue;
-    if (fromDef.keyPath !== toDef.keyPath) {
+    if (!keyPathEquals(fromDef.keyPath, toDef.keyPath)) {
       throw new Error(
         `IDB does not support altering an existing store's keyPath. ` +
-          `Store "${storeName}" keyPath changed from "${fromDef.keyPath}" to "${toDef.keyPath}". ` +
+          `Store "${storeName}" keyPath changed from ${JSON.stringify(fromDef.keyPath)} to ${JSON.stringify(toDef.keyPath)}. ` +
           `Author a manual migration that drops and re-creates the store with the desired data flow.`
       );
     }

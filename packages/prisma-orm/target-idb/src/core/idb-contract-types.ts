@@ -13,16 +13,64 @@ export type IdbStorage<THash extends string = string> = StorageBase<THash> & {
 };
 
 /**
+ * A store or index `keyPath`: a single field name, or (for a compound primary
+ * key / compound secondary index) an ordered list of field names. Mirrors
+ * `IDBObjectStore.createObjectStore()`'s/`createIndex()`'s native `keyPath`
+ * parameter, which accepts either a string or a sequence — array `keyPath` is
+ * standard IndexedDB, not an extension (Phase 9.1/9.2).
+ *
+ * Field order is significant and is NOT normalized anywhere in this stack:
+ * `['a','b']` and `['b','a']` are different keys with different sort orders.
+ * Every construction/comparison site must preserve declaration order.
+ */
+export type IdbKeyPath = string | readonly string[];
+
+/**
+ * Normalizes a {@link IdbKeyPath} to an ordered list of field names — `"id"`
+ * becomes `["id"]`, `["a","b"]` passes through unchanged. Shared by every
+ * layer that needs to iterate a key's member fields uniformly regardless of
+ * whether the model has a single-field or compound key.
+ */
+export function keyPathFields(keyPath: IdbKeyPath): readonly string[] {
+  return typeof keyPath === "string" ? [keyPath] : keyPath;
+}
+
+/**
+ * Structural equality between two {@link IdbKeyPath} values — plain `!==`
+ * is wrong for the array case (reference inequality, not content equality).
+ * Order-sensitive: `['a','b']` and `['b','a']` are NOT equal.
+ *
+ * A bare string and a 1-element array with the same field name are
+ * deliberately NOT equal (`"id"` !== `["id"]`), even though
+ * {@link keyPathFields} normalizes both to the same member-field list for
+ * *extraction* purposes. `createObjectStore(name, {keyPath: "id"})` and
+ * `createObjectStore(name, {keyPath: ["id"]})` are genuinely different native
+ * IDB configurations — the latter always requires an array `IDBValidKey`
+ * (`store.get(["x"])`, not `store.get("x")`) — so a migration/schema-verify
+ * diff between them is a real, actionable mismatch, not a false positive to
+ * suppress.
+ */
+export function keyPathEquals(a: IdbKeyPath, b: IdbKeyPath): boolean {
+  if (Array.isArray(a) !== Array.isArray(b)) return false;
+  const af = keyPathFields(a);
+  const bf = keyPathFields(b);
+  return af.length === bf.length && af.every((field, i) => field === bf[i]);
+}
+
+/**
  * Configuration for a single IndexedDB object store.
  *
  * Mirrors the options accepted by `IDBDatabase.createObjectStore()`:
- * - `keyPath` — the property path used as the primary key (e.g. `"id"`).
+ * - `keyPath` — the property path used as the primary key (e.g. `"id"`, or
+ *   `["a", "b"]` for a compound primary key — see {@link IdbKeyPath}).
  * - `autoIncrement` — when `true` IDB auto-generates integer keys. Omit (or `false`)
  *   for client-generated keys (UUID / CUID), which is the common case for syncable models.
+ *   Native IDB rejects `autoIncrement: true` combined with an array `keyPath`
+ *   (`InvalidAccessError`) — a compound key can never be auto-generated.
  * - `indexes` — named secondary indexes on this store.
  */
 export type IdbStoreDefinition = {
-  readonly keyPath: string;
+  readonly keyPath: IdbKeyPath;
   readonly autoIncrement?: boolean;
   readonly indexes?: Record<string, IdbIndexDefinition>;
 };
@@ -30,10 +78,14 @@ export type IdbStoreDefinition = {
 /**
  * Configuration for a single secondary index on an object store.
  *
- * Mirrors the options accepted by `IDBObjectStore.createIndex()`.
+ * Mirrors the options accepted by `IDBObjectStore.createIndex()`. `keyPath`
+ * may be a compound (array) key path for a multi-field index — see
+ * {@link IdbKeyPath}. Native IDB rejects `multiEntry: true` combined with an
+ * array `keyPath` (`InvalidAccessError`) — `multiEntry` and compound indexes
+ * are distinct, mutually exclusive features.
  */
 export type IdbIndexDefinition = {
-  readonly keyPath: string;
+  readonly keyPath: IdbKeyPath;
   readonly unique: boolean;
   readonly multiEntry?: boolean;
 };
@@ -88,7 +140,7 @@ export type IdbRelationStorage = {
  */
 export type IdbModelStorage = {
   readonly storeName: string;
-  readonly keyPath: string;
+  readonly keyPath: IdbKeyPath;
   readonly relations?: Record<string, IdbRelationStorage>;
   readonly fieldDefaults?: Record<string, string | number | boolean>;
 };
