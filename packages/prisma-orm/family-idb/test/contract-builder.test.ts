@@ -435,6 +435,209 @@ describe("defineContract — IDB valid-key type validation (ADR 016)", () => {
   });
 });
 
+describe("defineContract — compound primary keys and indexes (Phase 9.1/9.2)", () => {
+  it("accepts a compound key as an ordered array", () => {
+    const contract = defineContract({
+      family: idbFamilyPack,
+      target: idbTargetPack,
+      models: {
+        Membership: {
+          store: "memberships",
+          key: ["orgId", "userId"],
+          fields: { orgId: "String", userId: "String", role: "String" },
+        },
+      },
+    });
+    expect(contract.storage.stores["memberships"]).toMatchObject({ keyPath: ["orgId", "userId"] });
+  });
+
+  it("preserves declaration order for a compound key (order-sensitive)", () => {
+    const contract = defineContract({
+      family: idbFamilyPack,
+      target: idbTargetPack,
+      models: {
+        Membership: {
+          store: "memberships",
+          key: ["userId", "orgId"],
+          fields: { orgId: "String", userId: "String" },
+        },
+      },
+    });
+    expect(contract.storage.stores["memberships"]).toMatchObject({ keyPath: ["userId", "orgId"] });
+  });
+
+  it("throws when a compound key names a field not declared in fields", () => {
+    expect(() =>
+      defineContract({
+        family: idbFamilyPack,
+        target: idbTargetPack,
+        models: {
+          Membership: {
+            store: "memberships",
+            key: ["orgId", "userId"],
+            fields: { orgId: "String" },
+          },
+        },
+      })
+    ).toThrow(/not declared in "fields"/);
+  });
+
+  it("throws when a compound key repeats a field", () => {
+    expect(() =>
+      defineContract({
+        family: idbFamilyPack,
+        target: idbTargetPack,
+        models: {
+          Membership: {
+            store: "memberships",
+            key: ["orgId", "orgId"],
+            fields: { orgId: "String" },
+          },
+        },
+      })
+    ).toThrow(/repeats a field name/);
+  });
+
+  it("throws when a compound key member is nullable", () => {
+    expect(() =>
+      defineContract({
+        family: idbFamilyPack,
+        target: idbTargetPack,
+        models: {
+          Membership: {
+            store: "memberships",
+            key: ["orgId", "userId"],
+            fields: { orgId: "String", userId: "String?" },
+          },
+        },
+      })
+    ).toThrow(/nullable/);
+  });
+
+  it("throws when a compound key member has an IDB-invalid key type", () => {
+    expect(() =>
+      defineContract({
+        family: idbFamilyPack,
+        target: idbTargetPack,
+        models: {
+          Membership: {
+            store: "memberships",
+            key: ["orgId", "active"],
+            fields: { orgId: "String", active: "Boolean" },
+          },
+        },
+      })
+    ).toThrow(/cannot use as a key/);
+  });
+
+  it("accepts a compound (multi-field) index", () => {
+    const contract = defineContract({
+      family: idbFamilyPack,
+      target: idbTargetPack,
+      models: {
+        Membership: {
+          store: "memberships",
+          key: "id",
+          fields: { id: "String", userId: "String", effectiveFrom: "DateTime" },
+          indexes: { byUserEffective: { keyPath: ["userId", "effectiveFrom"], unique: true } },
+        },
+      },
+    });
+    expect(contract.storage.stores["memberships"]!.indexes!["byUserEffective"]).toMatchObject({
+      keyPath: ["userId", "effectiveFrom"],
+      unique: true,
+    });
+  });
+
+  it("throws when a compound index names a field not declared in fields", () => {
+    expect(() =>
+      defineContract({
+        family: idbFamilyPack,
+        target: idbTargetPack,
+        models: {
+          Membership: {
+            store: "memberships",
+            key: "id",
+            fields: { id: "String", userId: "String" },
+            indexes: { byUserEffective: { keyPath: ["userId", "effectiveFrom"] } },
+          },
+        },
+      })
+    ).toThrow(/not declared in "fields"/);
+  });
+
+  it("throws when a compound index repeats a field", () => {
+    expect(() =>
+      defineContract({
+        family: idbFamilyPack,
+        target: idbTargetPack,
+        models: {
+          Membership: {
+            store: "memberships",
+            key: "id",
+            fields: { id: "String", userId: "String" },
+            indexes: { dup: { keyPath: ["userId", "userId"] } },
+          },
+        },
+      })
+    ).toThrow(/repeats a field name/);
+  });
+
+  it("throws when a compound index member has an IDB-invalid key type", () => {
+    expect(() =>
+      defineContract({
+        family: idbFamilyPack,
+        target: idbTargetPack,
+        models: {
+          Membership: {
+            store: "memberships",
+            key: "id",
+            fields: { id: "String", userId: "String", active: "Boolean" },
+            indexes: { byUserActive: { keyPath: ["userId", "active"] } },
+          },
+        },
+      })
+    ).toThrow(/cannot use as an index key/);
+  });
+
+  it("throws when multiEntry is combined with a compound keyPath (InvalidAccessError per spec)", () => {
+    expect(() =>
+      defineContract({
+        family: idbFamilyPack,
+        target: idbTargetPack,
+        models: {
+          Post: {
+            store: "posts",
+            key: "id",
+            fields: { id: "String", a: "String", b: "String" },
+            indexes: { bad: { keyPath: ["a", "b"], multiEntry: true } },
+          },
+        },
+      })
+    ).toThrow(/multiEntry.*compound|compound.*multiEntry/);
+  });
+
+  it("throws when excluding a member field of a compound key", () => {
+    expect(() =>
+      defineContract(
+        {
+          family: idbFamilyPack,
+          target: idbTargetPack,
+          models: {
+            Membership: {
+              store: "memberships",
+              key: ["orgId", "userId"],
+              fields: { orgId: "String", userId: "String" },
+              excludeFields: ["userId"],
+            },
+          },
+        },
+        { projection: "client" }
+      )
+    ).toThrow(/excludes its own key field "userId"/);
+  });
+});
+
 describe("defineContract — onUpdate and fieldDefaults storage", () => {
   it("writes onUpdate into IdbModelStorage.relations alongside onDelete", () => {
     const contract = defineContract({

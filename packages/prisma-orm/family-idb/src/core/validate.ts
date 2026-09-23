@@ -2,7 +2,20 @@ import type { Contract } from "@prisma/orm-framework/contract/types";
 import { domainModelsAtDefaultNamespace } from "@prisma/orm-framework/contract/types";
 import { ContractValidationError } from "@prisma/orm-framework/contract/contract-validation-error";
 import { validateContractDomain } from "@prisma/orm-framework/contract/validate-domain";
-import type { IdbModelStorage, IdbStorage } from "@prisma-idb/target-idb/pack";
+import type { IdbKeyPath, IdbModelStorage, IdbStorage } from "@prisma-idb/target-idb/pack";
+
+/**
+ * `true` if `keyPath` is a well-formed {@link IdbKeyPath}: a non-empty string,
+ * or a non-empty array of non-empty, pairwise-distinct field names (a
+ * compound key can't repeat a field, and every member must actually name a
+ * field — an empty string in the list is never valid).
+ */
+function isWellFormedKeyPath(keyPath: unknown): keyPath is IdbKeyPath {
+  if (typeof keyPath === "string") return keyPath !== "";
+  if (!Array.isArray(keyPath) || keyPath.length === 0) return false;
+  if (!keyPath.every((f) => typeof f === "string" && f !== "")) return false;
+  return new Set(keyPath).size === keyPath.length;
+}
 
 /** Fully-typed IDB contract after validation. */
 export type IdbContract = Contract<IdbStorage>;
@@ -14,7 +27,8 @@ export type IdbContract = Contract<IdbStorage>;
  * domain validation). Checks:
  *
  * 1. `storage.stores` is present and is an object.
- * 2. Every store has a non-empty `keyPath` string.
+ * 2. Every store has a well-formed `keyPath` (a non-empty field name, or a
+ *    non-empty array of distinct field names for a compound key).
  * 3. Every model's `storage.storeName` references an existing store.
  *
  * @throws {@link ContractValidationError} with phase `'storage'` on failure.
@@ -26,11 +40,13 @@ function validateIdbStorage(contract: Contract): void {
     throw new ContractValidationError("IDB contract must have storage.stores (an object)", "storage");
   }
 
-  // Validate each store has a keyPath.
+  // Validate each store has a well-formed keyPath (a non-empty string, or a
+  // non-empty array of distinct non-empty field names for a compound key).
   for (const [storeName, store] of Object.entries(storage.stores)) {
-    if (!store || typeof store.keyPath !== "string" || store.keyPath === "") {
+    if (!store || !isWellFormedKeyPath(store.keyPath)) {
       throw new ContractValidationError(
-        `Store "${storeName}" is missing a required non-empty keyPath string`,
+        `Store "${storeName}" is missing a required keyPath (a non-empty field name, or a non-empty array of ` +
+          "distinct field names for a compound key)",
         "storage"
       );
     }
