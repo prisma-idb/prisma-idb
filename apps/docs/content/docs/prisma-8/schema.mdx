@@ -31,9 +31,10 @@ Supported scalar types: `String`, `Int`, `Float`, `Boolean`, `DateTime`, `BigInt
 
 ## IDB rules
 
-- Each model needs one scalar `@id` field or a single-field `@@id([field])`.
-- Compound primary keys are not supported.
-- Compound indexes are not supported.
+- Each model needs one scalar `@id` field, or `@@id([a, b])` for a compound primary key. Field order matters: `[a, b]` and `[b, a]` are different keys.
+- `@@index([a, b])` and `@@unique([a, b])` create compound indexes. Repeating a field inside one is an error.
+- A compound primary key can't use `@default(autoincrement())`, and a compound index can't be `multiEntry` (IndexedDB rejects both).
+- Compound-keyed models aren't supported by sync yet — `@prisma-idb/sync-server` needs a single-field key, so keep such models out of the sync scope.
 - Relation fields must declare `@relation(fields: [...], references: [...])` on the foreign-key side.
 - Use `@@map("storeName")` to control the IndexedDB object store name. The store name is also the key under `db.orm`.
 
