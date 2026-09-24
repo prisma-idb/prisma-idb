@@ -625,6 +625,7 @@ class SyncInterceptingTransactionScope implements IdbTransactionScope {
       case "key-get":
       case "index-get":
       case "cursor-scan":
+      case "count":
         return;
       default: {
         const _exhaustive: never = plan;
