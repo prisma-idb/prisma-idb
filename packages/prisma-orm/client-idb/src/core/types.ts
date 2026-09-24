@@ -579,13 +579,21 @@ export function getStoreName(contract: IdbContract, modelName: string): string {
 
 /**
  * Extract the `keyPath` from a model's storage metadata at runtime.
- * Falls back to `"id"` (the invariant key name for all syncable IDB models).
  * A single field name for the common case; an ordered array of field names
  * for a compound primary key.
+ *
+ * @throws if the model is unknown or its storage has no `keyPath` — a
+ * validated contract always has one, so this only fires on a malformed or
+ * hand-built contract, where guessing a key name would silently read/write
+ * the wrong key.
  */
 export function getKeyPath(contract: IdbContract, modelName: string): IdbKeyPath {
   const model = domainModelsAtDefaultNamespace(contract.domain)[modelName];
-  return (model?.storage as IdbModelStorage | undefined)?.keyPath ?? "id";
+  const keyPath = (model?.storage as IdbModelStorage | undefined)?.keyPath;
+  if (keyPath === undefined) {
+    throw new Error(`Model "${modelName}" has no storage.keyPath in the contract.`);
+  }
+  return keyPath;
 }
 
 /**
