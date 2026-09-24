@@ -31,9 +31,11 @@ import {
   type SelectedRow,
   type WhereFilter,
   buildFieldToIndexMap,
+  extractKeyFromRow,
   getKeyPath,
   getRelation,
   getStoreName,
+  keyToken,
 } from "./types";
 import { createModelAccessor, type IdbModelAccessor } from "./model-accessor";
 import {
@@ -769,7 +771,7 @@ export class IdbStoreAccessorImpl<
         const rows = await scope.execute({ meta, kind: "add", storeName, record });
         return (rows[0] ?? record) as DefaultModelRow<TContract, ModelName>;
       }
-      const key = existing[keyPath] as IDBValidKey;
+      const key = extractKeyFromRow(existing, keyPath);
       await applyReferentialActionsForRowOnUpdate(scope, this.#contract, this.#modelName, existing, effectivePatch);
       const rows = await scope.execute({ meta, kind: "update", storeName, key, patch: effectivePatch });
       return (rows[0] ?? existing) as DefaultModelRow<TContract, ModelName>;
@@ -1071,7 +1073,7 @@ export class IdbStoreAccessorImpl<
     );
     for (const branchRows of branchResults) {
       for (const row of branchRows) {
-        const pk = row[keyPath];
+        const pk = keyToken(extractKeyFromRow(row, keyPath));
         if (!seen.has(pk)) {
           seen.add(pk);
           rows.push(row);

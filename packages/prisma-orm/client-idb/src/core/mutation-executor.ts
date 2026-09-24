@@ -46,8 +46,13 @@ import {
   type IdbRelationMutator,
   type MutationCreateInput,
   type MutationUpdateInput,
+  extractKeyFromRow,
+  getKeyPath,
   getStoreName,
+  keyEquals,
+  keyToken,
 } from "./types";
+import { keyPathFields } from "@prisma-idb/target-idb/pack";
 import type { IdbTransactionScope } from "@prisma-idb/driver-idb/runtime";
 
 // ── Internal types ─────────────────────────────────────────────────────────────
@@ -262,7 +267,7 @@ async function updateFirstGraph(
   if (Object.keys(scalarData).length > 0) {
     const storeName = getStoreName(contract, modelName);
     const keyPath = getKeyPath(contract, modelName);
-    const key = existingRow[keyPath] as IDBValidKey;
+    const key = extractKeyFromRow(existingRow, keyPath);
     const meta = makePlanMeta(contract);
     const patch = applyUpdateDefaults(contract.execution?.mutations.defaults, storeName, scalarData, defaultsCache);
     const rows = await scope.execute({ meta, kind: "update", storeName, key, patch });
@@ -608,13 +613,6 @@ function buildParentJoinFilter(parentValues: Map<string, unknown>): (row: Record
     pairs.every(([childField, parentValue]) => row[childField] === parentValue);
 }
 
-// ── Key path helper ───────────────────────────────────────────────────────────
-
-function getKeyPath(contract: IdbContract, modelName: string): string {
-  const model = domainModelsAtDefaultNamespace(contract.domain)[modelName];
-  return (model?.storage as { keyPath?: string } | undefined)?.keyPath ?? "id";
-}
-
 // ── Referential action helpers ────────────────────────────────────────────────
 
 /**
@@ -705,8 +703,12 @@ function getOnUpdateForRelation(
 function isDeleteEnforcementRelation(contract: IdbContract, modelName: string, def: RelationDefinition): boolean {
   if (def.cardinality === "1:N") return true;
   if (def.cardinality === "1:1") {
+    // Shared-PK 1:1: the non-owning side is the one whose *own* primary key
+    // IS the FK (localFields === the model's own keyPath, field-for-field,
+    // in order — a compound key must match the whole ordered field list, not
+    // just its first member).
     const keyPath = getKeyPath(contract, modelName);
-    return def.localFields.length > 0 && def.localFields[0] === keyPath;
+    return sameFields(def.localFields, keyPathFields(keyPath));
   }
   return false;
 }
@@ -807,7 +809,8 @@ async function validateSetDefaultPatch(
   const targetField = def.targetFields[0]!;
   const value = patch[targetField];
   const filter = (row: Record<string, unknown>): boolean =>
-    row[localField] === value && (excludeKey === undefined || row[parentKeyPath] !== excludeKey);
+    row[localField] === value &&
+    (excludeKey === undefined || !keyEquals(extractKeyFromRow(row, parentKeyPath), excludeKey));
   const found = await scope.execute({
     meta,
     kind: "cursor-scan",
@@ -911,7 +914,7 @@ export async function applyReferentialActionsForRowOnUpdate(
   visited: Set<string> = new Set()
 ): Promise<void> {
   const keyPath = getKeyPath(contract, modelName);
-  const rowKey = `${getStoreName(contract, modelName)}::${String(oldRow[keyPath])}`;
+  const rowKey = `${getStoreName(contract, modelName)}::${keyToken(extractKeyFromRow(oldRow, keyPath))}`;
   if (visited.has(rowKey)) return;
   visited.add(rowKey);
 
@@ -936,7 +939,7 @@ export async function applyReferentialActionsForRowOnUpdate(
       } as IdbAtomicPlan);
       if (found.length > 0) {
         throw new Error(
-          `Cannot update ${modelName} '${String(oldRow[keyPath])}': changing field(s) ${changedFields.join(", ")} ` +
+          `Cannot update ${modelName} '${keyToken(extractKeyFromRow(oldRow, keyPath))}': changing field(s) ${changedFields.join(", ")} ` +
             `would orphan child records on relation '${def.relationName}'. ` +
             "Use onUpdate: 'cascade', 'setNull', 'setDefault', or 'noAction'."
         );
@@ -987,7 +990,7 @@ export async function applyReferentialActionsForRowOnUpdate(
 
     if (action === "setDefault") {
       const childPatch = buildSetDefaultPatch(contract, def);
-      await validateSetDefaultPatch(scope, contract, modelName, def, childPatch, oldRow[keyPath] as IDBValidKey);
+      await validateSetDefaultPatch(scope, contract, modelName, def, childPatch, extractKeyFromRow(oldRow, keyPath));
       await scope.execute({
         meta,
         kind: "scan-write",
@@ -1158,7 +1161,7 @@ export async function executeScalarUpdateWithFkValidation(options: {
     if (!oldRow) return null;
     await applyReferentialActionsForRowOnUpdate(scope, contract, modelName, oldRow, patch);
     const keyPath = getKeyPath(contract, modelName);
-    const key = oldRow[keyPath] as IDBValidKey;
+    const key = extractKeyFromRow(oldRow, keyPath);
     const rows = await scope.execute({ meta, kind: "update", storeName, key, patch } as IdbAtomicPlan);
     return rows[0] ?? null;
   });
@@ -1226,7 +1229,7 @@ export async function executeBulkUpdateWithFkValidation(options: {
     const results: Record<string, unknown>[] = [];
     for (const oldRow of oldRows) {
       await applyReferentialActionsForRowOnUpdate(scope, contract, modelName, oldRow, patch);
-      const key = oldRow[keyPath] as IDBValidKey;
+      const key = extractKeyFromRow(oldRow, keyPath);
       const rows = await scope.execute({ meta, kind: "update", storeName, key, patch } as IdbAtomicPlan);
       const updated = rows[0];
       if (updated) results.push(updated);
@@ -1309,7 +1312,7 @@ export async function applyReferentialActionsForRow(
   visited: Set<string> = new Set()
 ): Promise<void> {
   const keyPath = getKeyPath(contract, modelName);
-  const rowKey = `${getStoreName(contract, modelName)}::${String(row[keyPath])}`;
+  const rowKey = `${getStoreName(contract, modelName)}::${keyToken(extractKeyFromRow(row, keyPath))}`;
   if (visited.has(rowKey)) return;
   visited.add(rowKey);
 
@@ -1331,7 +1334,7 @@ export async function applyReferentialActionsForRow(
       } as IdbAtomicPlan);
       if (found.length > 0) {
         throw new Error(
-          `Cannot delete ${modelName} '${String(row[keyPath])}': child records exist on relation '${def.relationName}'. ` +
+          `Cannot delete ${modelName} '${keyToken(extractKeyFromRow(row, keyPath))}': child records exist on relation '${def.relationName}'. ` +
             "Use onDelete: 'cascade', 'setNull', or 'noAction'."
         );
       }
@@ -1352,7 +1355,7 @@ export async function applyReferentialActionsForRow(
           meta,
           kind: "delete",
           storeName: def.relatedStoreName,
-          key: child[childKeyPath] as IDBValidKey,
+          key: extractKeyFromRow(child, childKeyPath),
         } as IdbAtomicPlan);
       }
       continue;
@@ -1374,7 +1377,7 @@ export async function applyReferentialActionsForRow(
 
     if (action === "setDefault") {
       const patch = buildSetDefaultPatch(contract, def);
-      await validateSetDefaultPatch(scope, contract, modelName, def, patch, row[keyPath] as IDBValidKey);
+      await validateSetDefaultPatch(scope, contract, modelName, def, patch, extractKeyFromRow(row, keyPath));
       await scope.execute({
         meta,
         kind: "scan-write",
@@ -1428,7 +1431,7 @@ export async function executeDeleteAllWithReferentialActions(options: {
     } as IdbAtomicPlan);
     for (const row of rows) {
       await applyReferentialActionsForRow(scope, contract, modelName, row);
-      const key = row[keyPath] as IDBValidKey;
+      const key = extractKeyFromRow(row, keyPath);
       await scope.execute({ meta, kind: "delete", storeName, key } as IdbAtomicPlan);
     }
     return rows;

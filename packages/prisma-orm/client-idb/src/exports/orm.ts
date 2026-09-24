@@ -20,6 +20,8 @@ export type {
   WhereFilter,
   KeyType,
   ModelKeyPath,
+  ModelKeyPathOrdered,
+  IdbKeyPath,
   CreateInput,
   MutationCreateInput,
   PatchInput,
@@ -51,7 +53,7 @@ export type {
 export type { IdbIncludeScalar } from "../core/store-state";
 
 // Store name and key path helpers
-export { getStoreName, getKeyPath } from "../core/types";
+export { getStoreName, getKeyPath, extractKeyFromRow, keyEquals, keyToken } from "../core/types";
 
 // Filter operator combinators
 export { and, or, not } from "../core/filters";

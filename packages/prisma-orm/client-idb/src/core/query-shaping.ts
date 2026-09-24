@@ -1,6 +1,7 @@
 import type { IdbFilterExpr, IdbOrExpr } from "@prisma-idb/adapter-idb/runtime";
 import { andExpr } from "@prisma-idb/adapter-idb/runtime";
 import type { IdbRowComparator } from "@prisma-idb/driver-idb/runtime";
+import type { IdbKeyPath } from "@prisma-idb/target-idb/pack";
 import { isValidIdbKey } from "./types";
 
 /** Describes an extractable indexed equality that can narrow a cursor scan. */
@@ -69,6 +70,22 @@ function isIndexableEqValue(value: unknown): boolean {
 }
 
 /**
+ * `true` when `field` is a *single-field* primary key that a lone `eq`
+ * condition can directly point-range-query (`store.get`/`openCursor(range)`
+ * against the store's own keyPath, no named index required).
+ *
+ * Deliberately `false` for a compound (array) `keyPath`, even if `field`
+ * happens to be one of its member fields — a single `eq` condition can only
+ * pin one member, not the whole compound key, so it can't drive a PK
+ * point-range scan on its own. Accelerating that case needs *all* member
+ * fields ANDed together, which is a cost-based multi-field planner decision
+ * (Phase 10 §3.2), not this peephole optimizer's job.
+ */
+function isPrimaryKeyField(field: string, keyPath: IdbKeyPath): boolean {
+  return typeof keyPath === "string" && field === keyPath;
+}
+
+/**
  * Scan the combined filter expression for the first `eq` field condition whose
  * field either has a matching IDB index (`fieldToIndexName[field]` is set) or
  * *is* the store's own primary key (`keyPath`) — a store's keyPath is always
@@ -86,13 +103,13 @@ function isIndexableEqValue(value: unknown): boolean {
 export function extractIndexEqualityHint(
   filter: IdbFilterExpr | undefined,
   fieldToIndexName: Record<string, string>,
-  keyPath: string
+  keyPath: IdbKeyPath
 ): IndexEqualityHint | null {
   if (filter === undefined) return null;
 
   if (filter.kind === "field" && filter.op === "eq") {
     const indexName = fieldToIndexName[filter.field];
-    if ((indexName !== undefined || filter.field === keyPath) && isIndexableEqValue(filter.value)) {
+    if ((indexName !== undefined || isPrimaryKeyField(filter.field, keyPath)) && isIndexableEqValue(filter.value)) {
       return { indexName, value: filter.value, remainingFilter: undefined };
     }
     return null;
@@ -104,7 +121,7 @@ export function extractIndexEqualityHint(
       const expr = flat[i]!;
       if (expr.kind === "field" && expr.op === "eq") {
         const indexName = fieldToIndexName[expr.field];
-        if ((indexName !== undefined || expr.field === keyPath) && isIndexableEqValue(expr.value)) {
+        if ((indexName !== undefined || isPrimaryKeyField(expr.field, keyPath)) && isIndexableEqValue(expr.value)) {
           const rest = flat.filter((_, j) => j !== i);
           return { indexName, value: expr.value, remainingFilter: foldRemainder(rest) };
         }
@@ -124,7 +141,7 @@ export function extractIndexEqualityHint(
 function tryExtractOrBranches(
   orNode: IdbOrExpr,
   fieldToIndexName: Record<string, string>,
-  keyPath: string,
+  keyPath: IdbKeyPath,
   remainingFilter: IdbFilterExpr | undefined
 ): IndexOrHint | null {
   if (orNode.exprs.length === 0) return null;
@@ -132,7 +149,8 @@ function tryExtractOrBranches(
   for (const expr of orNode.exprs) {
     if (expr.kind !== "field" || expr.op !== "eq") return null;
     const indexName = fieldToIndexName[expr.field];
-    if ((indexName === undefined && expr.field !== keyPath) || !isIndexableEqValue(expr.value)) return null;
+    if ((indexName === undefined && !isPrimaryKeyField(expr.field, keyPath)) || !isIndexableEqValue(expr.value))
+      return null;
     branches.push({ indexName, value: expr.value });
   }
   return { branches, remainingFilter };
@@ -152,7 +170,7 @@ function tryExtractOrBranches(
 export function extractIndexOrHint(
   filter: IdbFilterExpr | undefined,
   fieldToIndexName: Record<string, string>,
-  keyPath: string
+  keyPath: IdbKeyPath
 ): IndexOrHint | null {
   if (filter === undefined) return null;
 
