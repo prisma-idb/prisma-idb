@@ -50,8 +50,11 @@ import {
 import {
   buildRowComparator,
   combineFilterExprs,
+  clampCount,
   extractIndexEqualityHint,
   extractIndexOrHint,
+  isNativelyCountable,
+  toCountPlan,
   type IndexOrHint,
 } from "./query-shaping";
 import {
@@ -541,7 +544,23 @@ export class IdbStoreAccessorImpl<
       aggregates: toAggregateRequests(spec),
       ...(combined !== undefined ? { where: combined } : {}),
     };
-    const rows = await this.#materialize(this.#newGroupingKey(), ast);
+    const groupingKey = this.#newGroupingKey();
+
+    // When `count` is the ONLY selector no row value is ever read, so the
+    // total can come from a native count. A mixed spec (count alongside
+    // sum/avg/min/max) needs the rows regardless, so it materializes. Like
+    // the materialized path, aggregate() ignores skip/take.
+    if (Object.values(spec).every((selector) => selector.fn === "count")) {
+      const scanPlan = this.#buildScanPlan<Record<string, unknown>>(groupingKey);
+      const total = await this.#executeNativeCount(scanPlan, ast);
+      if (total !== null) {
+        const result: Record<string, number | null> = {};
+        for (const alias of Object.keys(spec)) result[alias] = total;
+        return result as IdbAggregateResult<Spec>;
+      }
+    }
+
+    const rows = await this.#materialize(groupingKey, ast);
     return computeAggregateSpec(spec, rows) as IdbAggregateResult<Spec>;
   }
 
@@ -868,26 +887,34 @@ export class IdbStoreAccessorImpl<
 
     // OR multi-scan path: count the deduped+filtered union, applying
     // skip/take pagination so count() is consistent with the non-OR path.
+    // Never native: a per-branch count() double-counts a row that matches two
+    // branches, and deduplication needs the actual primary keys.
     if (fieldToIndexMap !== undefined) {
       const keyPath = getKeyPath(this.#contract, this.#modelName);
       const orHint = extractIndexOrHint(combined, fieldToIndexMap, keyPath);
       if (orHint !== null) {
         const rows = await this.#executeOrRows(orHint, groupingKey, combined);
-        let n = rows.length;
-        if (this.#state.skip !== undefined) n = Math.max(0, n - this.#state.skip);
-        if (this.#state.take !== undefined) n = Math.min(this.#state.take, n);
-        return n;
+        return clampCount(rows.length, this.#state.skip, this.#state.take);
       }
     }
 
     const scanPlan = this.#buildScanPlan<Record<string, unknown>>(groupingKey, fieldToIndexMap);
-    // Override the AST kind for middleware introspection — the idbPlan stays cursor-scan.
+    // Middleware sees a `count` AST regardless of which physical plan runs.
     const scanAst = scanPlan.ast;
     const ast: IdbCountAst = {
       kind: "count",
       modelName: this.#modelName,
       ...(scanAst?.kind === "findMany" && scanAst.where !== undefined ? { where: scanAst.where } : {}),
     };
+
+    // Native path: when the whole `where` is captured by a key range (or
+    // there is none), ask IndexedDB to count directly — no row is
+    // deserialized. skip/take are applied to the native (unpaginated) total.
+    const nativeTotal = await this.#executeNativeCount(scanPlan, ast);
+    if (nativeTotal !== null) return clampCount(nativeTotal, this.#state.skip, this.#state.take);
+
+    // Fallback: a residual in-memory filter needs each row's value, so the
+    // rows must be materialized and counted.
     const plan: IdbQueryPlan<Record<string, unknown>> = { ...scanPlan, ast };
     let n = 0;
     for await (const _ of this.#executor.query(plan)) {
@@ -935,6 +962,24 @@ export class IdbStoreAccessorImpl<
     throw new Error(
       `include('${relation}') refinement must return the collection (for where/orderBy/take/skip) or a count() selector`
     );
+  }
+
+  /**
+   * Runs `scanPlan` as a native `count` plan when its cardinality is fully
+   * determined by a key range (no in-memory filter) — returning the
+   * *unpaginated* total — or `null` when it can't (the caller then falls back
+   * to materializing). `ast` is attached so middleware sees the caller's
+   * intent (`count` / `aggregate`) regardless of the physical plan.
+   */
+  async #executeNativeCount(scanPlan: IdbQueryPlan<Record<string, unknown>>, ast: IdbQueryAst): Promise<number | null> {
+    const body = scanPlan.idbPlan;
+    if (body.kind !== "cursor-scan" || !isNativelyCountable(body)) return null;
+    const nativePlan: IdbQueryPlan<Record<string, unknown>> = { ...scanPlan, ast, idbPlan: toCountPlan(body) };
+    let total = 0;
+    for await (const row of this.#executor.query(nativePlan)) {
+      total = (row as unknown as { count: number }).count;
+    }
+    return total;
   }
 
   /**

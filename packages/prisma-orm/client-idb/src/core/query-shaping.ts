@@ -1,6 +1,6 @@
 import type { IdbFilterExpr, IdbOrExpr } from "@prisma-idb/adapter-idb/runtime";
 import { andExpr } from "@prisma-idb/adapter-idb/runtime";
-import type { IdbRowComparator } from "@prisma-idb/driver-idb/runtime";
+import type { IdbCountPlan, IdbCursorScanPlan, IdbRowComparator } from "@prisma-idb/driver-idb/runtime";
 import type { IdbKeyPath } from "@prisma-idb/target-idb/pack";
 import { isValidIdbKey } from "./types";
 
@@ -213,4 +213,47 @@ export function buildRowComparator(orderBy: Record<string, "asc" | "desc"> | und
     }
     return 0;
   };
+}
+
+// ── Native count ──────────────────────────────────────────────────────────────
+
+/**
+ * `true` when a `cursor-scan` plan's result *cardinality* is fully determined
+ * by its store/index + key range — i.e. there is no in-memory `filter` that
+ * would need each row's value. Only then can `count()` be answered natively
+ * (`store.count(range)` / `index.count(range)`) without deserializing rows.
+ *
+ * `comparator` (ORDER BY), `direction`, `skip` and `take` don't change *which*
+ * rows match, so they don't disqualify a plan — `skip`/`take` are applied to
+ * the native total afterwards via {@link clampCount}.
+ *
+ * Safe for index scans because the equality hint that builds `range` never
+ * selects a `multiEntry` (or compound) index — `buildFieldToIndexMap` excludes
+ * them — so one record maps to at most one index entry and entries == rows.
+ */
+export function isNativelyCountable(plan: IdbCursorScanPlan): boolean {
+  return plan.filter === undefined;
+}
+
+/** Rewrites a natively-countable `cursor-scan` as the equivalent native `count` plan. */
+export function toCountPlan(plan: IdbCursorScanPlan): IdbCountPlan {
+  return {
+    meta: plan.meta,
+    kind: "count",
+    storeName: plan.storeName,
+    ...(plan.indexName !== undefined ? { indexName: plan.indexName } : {}),
+    ...(plan.range !== undefined ? { range: plan.range } : {}),
+  };
+}
+
+/**
+ * Applies `skip`/`take` to an *unpaginated* total. A paginated count is pure
+ * arithmetic on the unpaginated count — `max(0, total - skip)`, capped at
+ * `take` — so this is exact, not an approximation.
+ */
+export function clampCount(total: number, skip: number | undefined, take: number | undefined): number {
+  let n = total;
+  if (skip !== undefined) n = Math.max(0, n - skip);
+  if (take !== undefined) n = Math.min(take, n);
+  return n;
 }
