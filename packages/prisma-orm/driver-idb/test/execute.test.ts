@@ -18,6 +18,7 @@
  * Coverage:
  *   key-get     — hit, miss
  *   index-get   — match, empty
+ *   count       — store/index, ranges, empty, batch, unknown store/index
  *   cursor-scan — full, filter, skip, take, skip+take, comparator, direction
  *   add         — create-only insert
  *   put         — overwrite
@@ -32,6 +33,7 @@ import { createIDBRuntimeDriver } from "../src/exports/runtime";
 import type {
   IdbBatchPlan,
   IdbAddPlan,
+  IdbCountPlan,
   IdbCursorScanPlan,
   IdbDeletePlan,
   IdbIndexGetPlan,
@@ -170,6 +172,96 @@ describe("index-get", () => {
     };
     const rows = await executeIdbPlan(db, plan);
     expect(rows).toHaveLength(0);
+  });
+});
+
+// ── count ─────────────────────────────────────────────────────────────────────
+
+describe("count", () => {
+  let db: IDBDatabase;
+
+  beforeEach(async () => {
+    db = await openTestDb(dbName(), [USERS_STORE, POSTS_STORE]);
+    await seedStore(db, "users", [ALICE, BOB, CAROL]);
+    await seedStore(db, "posts", [
+      { id: "p1", authorId: "u1" },
+      { id: "p2", authorId: "u1" },
+      { id: "p3", authorId: "u2" },
+    ]);
+  });
+  afterEach(() => db.close());
+
+  const count = (extra: Partial<IdbCountPlan> & { storeName: string }): IdbCountPlan => ({
+    meta: META,
+    kind: "count",
+    ...extra,
+  });
+
+  it("counts every record in a store when no range is given, as a single { count } row", async () => {
+    const rows = await executeIdbPlan(db, count({ storeName: "users" }));
+    expect(rows).toEqual([{ count: 3 }]);
+  });
+
+  it("counts a primary-key range (only)", async () => {
+    expect(await executeIdbPlan(db, count({ storeName: "users", range: IDBKeyRange.only("u2") }))).toEqual([
+      { count: 1 },
+    ]);
+    expect(await executeIdbPlan(db, count({ storeName: "users", range: IDBKeyRange.only("nope") }))).toEqual([
+      { count: 0 },
+    ]);
+  });
+
+  it("counts a primary-key range (bound)", async () => {
+    const rows = await executeIdbPlan(db, count({ storeName: "users", range: IDBKeyRange.bound("u1", "u2") }));
+    expect(rows).toEqual([{ count: 2 }]);
+  });
+
+  it("counts index entries in a range via indexName (non-unique index sees duplicates)", async () => {
+    const plan = count({ storeName: "posts", indexName: "by-author", range: IDBKeyRange.only("u1") });
+    expect(await executeIdbPlan(db, plan)).toEqual([{ count: 2 }]);
+  });
+
+  it("counts every index entry when an index is given without a range", async () => {
+    expect(await executeIdbPlan(db, count({ storeName: "posts", indexName: "by-author" }))).toEqual([{ count: 3 }]);
+  });
+
+  it("returns { count: 0 } for an empty store", async () => {
+    const emptyDb = await openTestDb(dbName(), [USERS_STORE]);
+    expect(await executeIdbPlan(emptyDb, count({ storeName: "users" }))).toEqual([{ count: 0 }]);
+    emptyDb.close();
+  });
+
+  it("agrees with a cursor-scan over the same range", async () => {
+    const range = IDBKeyRange.bound("u1", "u3", false, true);
+    const [{ count: n }] = (await executeIdbPlan(db, count({ storeName: "users", range }))) as [{ count: number }];
+    const scanned = await executeIdbPlan(db, { meta: META, kind: "cursor-scan", storeName: "users", range });
+    expect(n).toBe(scanned.length);
+  });
+
+  it("runs inside a batch and keeps op order relative to writes", async () => {
+    const plan: IdbBatchPlan = {
+      meta: META,
+      kind: "batch",
+      storeNames: ["users"],
+      ops: [
+        count({ storeName: "users" }),
+        { meta: META, kind: "delete", storeName: "users", key: "u1" },
+        count({ storeName: "users" }),
+      ],
+    };
+    const rows = await executeIdbPlan(db, plan);
+    expect(rows[0]).toEqual({ count: 3 });
+    expect(rows[rows.length - 1]).toEqual({ count: 2 });
+  });
+
+  it("rejects an unknown store with STORE_NOT_FOUND", async () => {
+    await expect(executeIdbPlan(db, count({ storeName: "nope" }))).rejects.toMatchObject({
+      code: "STORE_NOT_FOUND",
+    });
+  });
+
+  it("rejects an unknown index (same synchronous NotFoundError behavior as index-get)", async () => {
+    await expect(executeIdbPlan(db, count({ storeName: "users", indexName: "no-such-index" }))).rejects.toBeDefined();
   });
 });
 

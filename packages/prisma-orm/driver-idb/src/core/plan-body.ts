@@ -193,12 +193,31 @@ export interface IdbScanWritePlan extends ExecutionPlan {
 }
 
 /**
+ * Native count via `store.count(range)` / `index.count(range)`.
+ *
+ * Used by the ORM `.count()` terminal when the whole `where` is captured by a
+ * key range (or there is no `where`), so no row needs to be deserialized or
+ * filtered in memory. Counts index *entries*, so it must not be used with a
+ * `multiEntry` index (one record can occupy several entries).
+ *
+ * Result: exactly one row, `{ count: number }` — the driver's `Row[]` result
+ * contract is unchanged; the caller unwraps `rows[0].count`.
+ */
+export interface IdbCountPlan extends ExecutionPlan {
+  readonly kind: "count";
+  readonly storeName: string;
+  readonly indexName?: string; // count via this index instead of the store's primary keys
+  readonly range?: IDBKeyRange; // omit to count every entry
+}
+
+/**
  * All single-store atomic op types — valid both standalone and inside a batch.
  */
 export type IdbAtomicPlan =
   | IdbCursorScanPlan
   | IdbKeyGetPlan
   | IdbIndexGetPlan
+  | IdbCountPlan
   | IdbAddPlan
   | IdbPutPlan
   | IdbUpdatePlan

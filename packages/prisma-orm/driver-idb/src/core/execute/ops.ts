@@ -18,6 +18,7 @@
 import type {
   IdbAddPlan,
   IdbAtomicPlan,
+  IdbCountPlan,
   IdbCursorScanPlan,
   IdbDeletePlan,
   IdbIndexGetPlan,
@@ -54,6 +55,8 @@ export function executeOpInTx(
       return execIndexGet(store, plan, onComplete, onError);
     case "cursor-scan":
       return execCursorScan(store, plan, onComplete, onError);
+    case "count":
+      return execCount(store, plan, onComplete, onError);
     case "add":
       return execAdd(store, plan, onComplete, onError);
     case "put":
@@ -108,6 +111,19 @@ function execIndexGet(store: IDBObjectStore, plan: IdbIndexGetPlan, onComplete: 
           cause: req.error,
         },
         `IDB index-get failed on "${plan.storeName}"/"${plan.indexName}": ${String(req.error)}`
+      )
+    );
+}
+
+function execCount(store: IDBObjectStore, plan: IdbCountPlan, onComplete: OnComplete, onError: OnError): void {
+  const source: IDBObjectStore | IDBIndex = plan.indexName !== undefined ? store.index(plan.indexName) : store;
+  const req = plan.range !== undefined ? source.count(plan.range) : source.count();
+  req.onsuccess = () => onComplete([{ count: req.result }]);
+  req.onerror = () =>
+    onError(
+      new IdbExecuteError(
+        { code: "COUNT_FAILED", planKind: "count", storeName: plan.storeName, cause: req.error },
+        `IDB count failed on store "${plan.storeName}"${plan.indexName !== undefined ? ` (index "${plan.indexName}")` : ""}: ${String(req.error)}`
       )
     );
 }

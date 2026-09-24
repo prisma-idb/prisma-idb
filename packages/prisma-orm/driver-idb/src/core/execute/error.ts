@@ -10,6 +10,7 @@ export type IdbExecuteErrorCode =
   | "KEY_GET_FAILED" //         store.get(key) request failed
   | "INDEX_GET_FAILED" //       store.index(name).getAll(range) request failed
   | "CURSOR_SCAN_FAILED" //     openCursor iteration failed
+  | "COUNT_FAILED" //           store.count(range) / index.count(range) request failed
   | "ADD_FAILED" //             store.add(record) request failed
   | "PUT_FAILED" //             store.put(record) request failed
   | "DELETE_FAILED" //          store.delete(key) request failed
