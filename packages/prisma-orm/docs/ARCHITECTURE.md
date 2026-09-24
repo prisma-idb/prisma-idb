@@ -83,7 +83,7 @@ The capabilities object declares what IDB can and cannot do. For example:
 - `transactionalDDL: true` — IDB's `upgradeneeded` IS a version-change transaction
 - `ddlOnlyInUpgrade: true` — DDL can ONLY happen inside `upgradeneeded` (custom IDB constraint)
 - `returning: false` — IDB has no `RETURNING` clause
-- `compoundKeys: false` — forbidden by sync ownership invariants
+- `compoundKeys: true` — the `idb` storage adapter supports compound (array) `keyPath` for both primary keys and secondary indexes (Phase 9.1/9.2). This describes the adapter itself; `@prisma-idb/sync-server`'s ownership DAG separately does not support compound-keyed models yet (`getKeyField` throws for anything but a single string `keyPath`) — that's a `sync-server`-specific limitation enforced there, not a capability of this adapter
 
 ---
 

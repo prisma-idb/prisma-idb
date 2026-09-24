@@ -46,7 +46,8 @@ import type {
   IdbPlanBody,
   IdbTransactionScope,
 } from "@prisma-idb/driver-idb/runtime";
-import { getKeyPath, getStoreName } from "@prisma-idb/client-idb/orm";
+import { extractKeyFromRow, getKeyPath, getStoreName } from "@prisma-idb/client-idb/orm";
+import type { IdbKeyPath } from "@prisma-idb/client-idb/orm";
 import { domainModelsAtDefaultNamespace } from "@prisma/orm-framework/contract/types";
 import type { OutboxEvent, OutboxWriteEntry } from "../types";
 
@@ -221,11 +222,14 @@ function serializableKey(key: IDBValidKey | IDBKeyRange): unknown {
  * Returns `undefined` when the key cannot be determined statically (e.g.
  * scan-write operations that match by filter, not by key).
  */
-function extractKey(ast: MutationAst, keyField: string): unknown {
+function extractKey(ast: MutationAst, keyPath: IdbKeyPath): unknown {
   switch (ast.kind) {
     case "create":
       // Pull key from AST data — the codec hasn't run yet so the value is the raw JS type.
-      return ast.data[keyField];
+      // A member of a compound key can legitimately be absent here (e.g. an
+      // autoIncrement-generated field) — `extractKeyFromRow` doesn't
+      // validate presence, it just reads whatever's there.
+      return extractKeyFromRow(ast.data as Record<string, unknown>, keyPath);
     case "delete":
       return ast.key;
     case "update":
@@ -440,7 +444,7 @@ export class SyncInterceptorExecutor implements IdbQueryExecutorWithTransaction 
         modelName,
         operation: "create",
         payload: record,
-        key: record[keyPath],
+        key: extractKeyFromRow(record, keyPath),
       }));
       return { plan: this.#buildBatchPlan(plan, entries), entries };
     }
@@ -572,7 +576,9 @@ class SyncInterceptingTransactionScope implements IdbTransactionScope {
     switch (plan.kind) {
       case "add": {
         const record = plan.record;
-        await this.#writeOutboxAndMeta([{ modelName, operation: "create", payload: record, key: record[keyPath] }]);
+        await this.#writeOutboxAndMeta([
+          { modelName, operation: "create", payload: record, key: extractKeyFromRow(record, keyPath) },
+        ]);
         return;
       }
       case "delete": {
@@ -591,14 +597,19 @@ class SyncInterceptingTransactionScope implements IdbTransactionScope {
         const merged = rows[0];
         if (!merged) return;
         await this.#writeOutboxAndMeta([
-          { modelName, operation: "update", payload: { patch: plan.patch, key: plan.key }, key: merged[keyPath] },
+          {
+            modelName,
+            operation: "update",
+            payload: { patch: plan.patch, key: plan.key },
+            key: extractKeyFromRow(merged, keyPath),
+          },
         ]);
         return;
       }
       case "scan-write": {
         const operation = plan.write === "delete" ? "delete" : "update";
         const entries: OutboxWriteEntry[] = rows.map((row) => {
-          const key = row[keyPath];
+          const key = extractKeyFromRow(row, keyPath);
           const payload = plan.write === "delete" ? { key } : { patch: plan.patch, key };
           return { modelName, operation, payload, key };
         });
