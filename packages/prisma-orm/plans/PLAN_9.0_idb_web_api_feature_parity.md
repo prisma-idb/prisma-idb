@@ -120,6 +120,14 @@ technically land without the other, but landing this first means Phase 10's
 FK-lookup acceleration is real key-only work from the start, not a
 value-scan that happens to also be index-restricted.
 
+> **Correction (from `PLAN_9.4`, after re-reading the call sites):** the list above
+> over-claims. `findRowByCriterion` and `findFirstByFilters` consume the returned
+> row's fields, so they can never be key-only. The genuinely existence-only
+> sites are `validateScalarFks`, the `restrict` checks, and `validateSetDefaultPatch`,
+> and those use in-memory filters — so they only go key-only when the criterion is
+> a primary-key range (the FK → PK case, done in 9.4); the rest wait for Phase 10.5.
+> `getKey()` is also a better primitive for "does any row match" than `getAllKeys`.
+
 ### 1.5 What's already in good shape (for calibration — this isn't "everything is broken")
 
 - `autoIncrement` — fully supported (`schema-ir.ts:18`, `psl-interpreter.ts`
