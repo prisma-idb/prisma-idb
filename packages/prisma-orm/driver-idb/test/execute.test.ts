@@ -18,6 +18,7 @@
  * Coverage:
  *   key-get     — hit, miss
  *   index-get   — match, empty
+ *   keys        — getKey/getAllKeys, index, ranges, take, empty, batch, unknown store/index
  *   count       — store/index, ranges, empty, batch, unknown store/index
  *   cursor-scan — full, filter, skip, take, skip+take, comparator, direction
  *   add         — create-only insert
@@ -38,6 +39,7 @@ import type {
   IdbDeletePlan,
   IdbIndexGetPlan,
   IdbKeyGetPlan,
+  IdbKeysPlan,
   IdbPutPlan,
   IdbScanWritePlan,
   IdbUpdatePlan,
@@ -172,6 +174,131 @@ describe("index-get", () => {
     };
     const rows = await executeIdbPlan(db, plan);
     expect(rows).toHaveLength(0);
+  });
+});
+
+// ── keys ──────────────────────────────────────────────────────────────────────
+
+describe("keys", () => {
+  let db: IDBDatabase;
+
+  beforeEach(async () => {
+    db = await openTestDb(dbName(), [USERS_STORE, POSTS_STORE]);
+    await seedStore(db, "users", [ALICE, BOB, CAROL]);
+    await seedStore(db, "posts", [
+      { id: "p1", authorId: "u1" },
+      { id: "p2", authorId: "u1" },
+      { id: "p3", authorId: "u2" },
+    ]);
+  });
+  afterEach(() => db.close());
+
+  const keys = (extra: Partial<IdbKeysPlan> & { storeName: string }): IdbKeysPlan => ({
+    meta: META,
+    kind: "keys",
+    ...extra,
+  });
+
+  it("take:1 + range uses getKey: one { key } row for a hit, [] for a miss", async () => {
+    const hit = await executeIdbPlan(db, keys({ storeName: "users", range: IDBKeyRange.only("u2"), take: 1 }));
+    expect(hit).toEqual([{ key: "u2" }]);
+    const miss = await executeIdbPlan(db, keys({ storeName: "users", range: IDBKeyRange.only("nope"), take: 1 }));
+    expect(miss).toEqual([]);
+  });
+
+  it("returns keys only — never the row value", async () => {
+    const [row] = await executeIdbPlan(db, keys({ storeName: "users", range: IDBKeyRange.only("u1"), take: 1 }));
+    expect(Object.keys(row!)).toEqual(["key"]);
+  });
+
+  it("take:1 without a range still works (getKey needs a query, so it falls back to getAllKeys)", async () => {
+    expect(await executeIdbPlan(db, keys({ storeName: "users", take: 1 }))).toEqual([{ key: "u1" }]);
+    const emptyDb = await openTestDb(dbName(), [USERS_STORE]);
+    expect(await executeIdbPlan(emptyDb, keys({ storeName: "users", take: 1 }))).toEqual([]);
+    emptyDb.close();
+  });
+
+  it("with no take, returns every primary key in order", async () => {
+    expect(await executeIdbPlan(db, keys({ storeName: "users" }))).toEqual([
+      { key: "u1" },
+      { key: "u2" },
+      { key: "u3" },
+    ]);
+  });
+
+  it("honours take > 1 and range bounds", async () => {
+    expect(await executeIdbPlan(db, keys({ storeName: "users", take: 2 }))).toEqual([{ key: "u1" }, { key: "u2" }]);
+    const bounded = await executeIdbPlan(db, keys({ storeName: "users", range: IDBKeyRange.lowerBound("u2") }));
+    expect(bounded).toEqual([{ key: "u2" }, { key: "u3" }]);
+  });
+
+  it("through an index, returns PRIMARY keys (not index keys)", async () => {
+    const plan = keys({ storeName: "posts", indexName: "by-author", range: IDBKeyRange.only("u1") });
+    expect(await executeIdbPlan(db, plan)).toEqual([{ key: "p1" }, { key: "p2" }]);
+    expect(await executeIdbPlan(db, { ...plan, take: 1 })).toEqual([{ key: "p1" }]);
+    expect(
+      await executeIdbPlan(
+        db,
+        keys({ storeName: "posts", indexName: "by-author", range: IDBKeyRange.only("u9"), take: 1 })
+      )
+    ).toEqual([]);
+  });
+
+  it("returns array keys for a compound primary key", async () => {
+    const compoundDb = await new Promise<IDBDatabase>((resolve, reject) => {
+      const req = indexedDB.open(dbName(), 1);
+      req.onupgradeneeded = () => req.result.createObjectStore("m", { keyPath: ["org", "user"] });
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+    await seedStore(compoundDb, "m", [
+      { org: "o1", user: "u1" },
+      { org: "o1", user: "u2" },
+    ]);
+    const hit = await executeIdbPlan(
+      compoundDb,
+      keys({ storeName: "m", range: IDBKeyRange.only(["o1", "u2"]), take: 1 })
+    );
+    expect(hit).toEqual([{ key: ["o1", "u2"] }]);
+    expect(await executeIdbPlan(compoundDb, keys({ storeName: "m" }))).toHaveLength(2);
+    compoundDb.close();
+  });
+
+  it("agrees with count() and cursor-scan over the same range", async () => {
+    const range = IDBKeyRange.bound("u1", "u3", false, true);
+    const ks = await executeIdbPlan(db, keys({ storeName: "users", range }));
+    const scanned = await executeIdbPlan(db, { meta: META, kind: "cursor-scan", storeName: "users", range });
+    const [{ count }] = (await executeIdbPlan(db, { meta: META, kind: "count", storeName: "users", range })) as [
+      { count: number },
+    ];
+    expect(ks).toHaveLength(scanned.length);
+    expect(ks).toHaveLength(count);
+  });
+
+  it("runs inside a batch and sees earlier writes in the same transaction", async () => {
+    const plan: IdbBatchPlan = {
+      meta: META,
+      kind: "batch",
+      storeNames: ["users"],
+      ops: [
+        keys({ storeName: "users", range: IDBKeyRange.only("u9"), take: 1 }),
+        { meta: META, kind: "put", storeName: "users", record: { id: "u9", name: "Zed", email: "z@e.com", score: 1 } },
+        keys({ storeName: "users", range: IDBKeyRange.only("u9"), take: 1 }),
+      ],
+    };
+    const rows = await executeIdbPlan(db, plan);
+    expect(rows[rows.length - 1]).toEqual({ key: "u9" });
+    expect(rows.filter((r) => "key" in r)).toHaveLength(1); // miss before the put, hit after
+  });
+
+  it("rejects an unknown store with STORE_NOT_FOUND", async () => {
+    await expect(executeIdbPlan(db, keys({ storeName: "nope", take: 1 }))).rejects.toMatchObject({
+      code: "STORE_NOT_FOUND",
+    });
+  });
+
+  it("rejects an unknown index (same synchronous NotFoundError behavior as index-get)", async () => {
+    await expect(executeIdbPlan(db, keys({ storeName: "users", indexName: "nope" }))).rejects.toBeDefined();
   });
 });
 

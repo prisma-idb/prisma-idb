@@ -124,6 +124,41 @@ describe("execute count", () => {
   });
 });
 
+// ── execute (keys) ────────────────────────────────────────────────────────────
+
+describe("execute keys", () => {
+  let db: IDBDatabase;
+
+  beforeEach(async () => {
+    db = await openTestDb(dbName(), [USERS]);
+  });
+  afterEach(() => db.close());
+
+  it("sees writes made earlier in the same scope and does not disturb later ops", async () => {
+    const scope = createTransactionScope(db, ["users"]);
+    const before = await scope.execute({
+      meta: META,
+      kind: "keys",
+      storeName: "users",
+      range: IDBKeyRange.only("u1"),
+      take: 1,
+    });
+    await scope.execute({ meta: META, kind: "put", storeName: "users", record: { id: "u1" } });
+    const after = await scope.execute({
+      meta: META,
+      kind: "keys",
+      storeName: "users",
+      range: IDBKeyRange.only("u1"),
+      take: 1,
+    });
+    await scope.execute({ meta: META, kind: "put", storeName: "users", record: { id: "u2" } });
+    await scope.commit();
+    expect(before).toEqual([]);
+    expect(after).toEqual([{ key: "u1" }]);
+    expect((await getAllRows(db, "users")).map((r) => r["id"])).toEqual(["u1", "u2"]);
+  });
+});
+
 // ── execute (key-get) ─────────────────────────────────────────────────────────
 
 describe("execute key-get", () => {

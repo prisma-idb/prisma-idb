@@ -211,6 +211,30 @@ export interface IdbCountPlan extends ExecutionPlan {
 }
 
 /**
+ * Key-only read via `getKey(range)` / `getAllKeys(range, count)` — returns
+ * PRIMARY keys without deserializing any row value.
+ *
+ * Meant for existence checks ("does any row match this key range?") where the
+ * caller never reads a field. Because no value is fetched, it can only
+ * express criteria that are a key range on the store's primary key or on an
+ * index — never an in-memory row filter.
+ *
+ * - `take: 1` with a `range` → `getKey(range)` (one request, no cursor).
+ * - otherwise → `getAllKeys(range, take)`; `take` omitted returns every key.
+ *
+ * Result rows: one `{ key }` per match (the primary key — an array for a
+ * compound key) or `[]` when nothing matches. Same synthetic-row convention as
+ * {@link IdbCountPlan}.
+ */
+export interface IdbKeysPlan extends ExecutionPlan {
+  readonly kind: "keys";
+  readonly storeName: string;
+  readonly indexName?: string; // resolve through this index; returned keys are still primary keys
+  readonly range?: IDBKeyRange; // omit to cover the whole store/index
+  readonly take?: number; // max keys to return (undefined = all)
+}
+
+/**
  * All single-store atomic op types — valid both standalone and inside a batch.
  */
 export type IdbAtomicPlan =
@@ -218,6 +242,7 @@ export type IdbAtomicPlan =
   | IdbKeyGetPlan
   | IdbIndexGetPlan
   | IdbCountPlan
+  | IdbKeysPlan
   | IdbAddPlan
   | IdbPutPlan
   | IdbUpdatePlan

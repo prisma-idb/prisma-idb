@@ -23,6 +23,7 @@ import type {
   IdbDeletePlan,
   IdbIndexGetPlan,
   IdbKeyGetPlan,
+  IdbKeysPlan,
   IdbPutPlan,
   IdbScanWritePlan,
   IdbUpdatePlan,
@@ -57,6 +58,8 @@ export function executeOpInTx(
       return execCursorScan(store, plan, onComplete, onError);
     case "count":
       return execCount(store, plan, onComplete, onError);
+    case "keys":
+      return execKeys(store, plan, onComplete, onError);
     case "add":
       return execAdd(store, plan, onComplete, onError);
     case "put":
@@ -126,6 +129,30 @@ function execCount(store: IDBObjectStore, plan: IdbCountPlan, onComplete: OnComp
         `IDB count failed on store "${plan.storeName}"${plan.indexName !== undefined ? ` (index "${plan.indexName}")` : ""}: ${String(req.error)}`
       )
     );
+}
+
+function execKeys(store: IDBObjectStore, plan: IdbKeysPlan, onComplete: OnComplete, onError: OnError): void {
+  const source: IDBObjectStore | IDBIndex = plan.indexName !== undefined ? store.index(plan.indexName) : store;
+  const fail = (cause: unknown) =>
+    onError(
+      new IdbExecuteError(
+        { code: "KEYS_FAILED", planKind: "keys", storeName: plan.storeName, cause },
+        `IDB keys read failed on store "${plan.storeName}"${plan.indexName !== undefined ? ` (index "${plan.indexName}")` : ""}: ${String(cause)}`
+      )
+    );
+
+  // getKey() requires a query (null/absent throws), so a range-less single-key
+  // read is expressed as getAllKeys(undefined, 1) instead.
+  if (plan.take === 1 && plan.range !== undefined) {
+    const req = source.getKey(plan.range);
+    req.onsuccess = () => onComplete(req.result === undefined ? [] : [{ key: req.result }]);
+    req.onerror = () => fail(req.error);
+    return;
+  }
+
+  const req = source.getAllKeys(plan.range, plan.take);
+  req.onsuccess = () => onComplete((req.result as IDBValidKey[]).map((key) => ({ key })));
+  req.onerror = () => fail(req.error);
 }
 
 function execCursorScan(
