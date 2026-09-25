@@ -258,3 +258,35 @@ describe("unknown store", () => {
     await expect(scope.execute(plan)).rejects.toBeInstanceOf(IdbExecuteError);
   });
 });
+
+// ── TRANSACTION_INACTIVE ──────────────────────────────────────────────────────
+
+describe("transaction inactive", () => {
+  let db: IDBDatabase;
+
+  beforeEach(async () => {
+    db = await openTestDb(dbName(), [USERS]);
+    await seedStore(db, "users", [{ id: "u1", name: "Alice" }]);
+  });
+  afterEach(() => db.close());
+
+  const get: IdbKeyGetPlan = { meta: META, kind: "key-get", storeName: "users", key: "u1" };
+
+  it("wraps a request issued after a non-IDB await as TRANSACTION_INACTIVE", async () => {
+    const scope = createTransactionScope(db, ["users"], "readonly");
+    await scope.execute(get);
+    await new Promise((r) => setTimeout(r, 0)); // tx auto-commits
+    const err = await scope.execute(get).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(IdbExecuteError);
+    expect((err as IdbExecuteError).code).toBe("TRANSACTION_INACTIVE");
+    expect((err as IdbExecuteError).message).toMatch(/ADR 005\/007/);
+    expect((err as IdbExecuteError).cause).toBeInstanceOf(DOMException);
+  });
+
+  it("still reports an unknown store as STORE_NOT_FOUND", async () => {
+    const scope = createTransactionScope(db, ["users"], "readonly");
+    const err = await scope.execute({ ...get, storeName: "nope" }).catch((e: unknown) => e);
+    expect((err as IdbExecuteError).code).toBe("STORE_NOT_FOUND");
+    await scope.commit();
+  });
+});

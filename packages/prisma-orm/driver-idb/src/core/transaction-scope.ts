@@ -20,7 +20,7 @@
  * cache middleware never fires inside a scope → reads are always fresh.
  */
 import type { IdbAtomicPlan } from "./plan-body";
-import { IdbExecuteError } from "./execute/error";
+import { IdbExecuteError, isTransactionInactiveError, transactionInactiveError } from "./execute/error";
 import { executeOpInTx } from "./execute/ops";
 
 type Row = Record<string, unknown>;
@@ -88,6 +88,10 @@ class IdbTransactionScopeImpl implements IdbTransactionScope {
       try {
         store = this.#tx.objectStore(plan.storeName);
       } catch (err) {
+        if (isTransactionInactiveError(err)) {
+          reject(transactionInactiveError(plan.kind, plan.storeName, err));
+          return;
+        }
         reject(
           new IdbExecuteError(
             { code: "STORE_NOT_FOUND", planKind: plan.kind, storeName: plan.storeName, cause: err },

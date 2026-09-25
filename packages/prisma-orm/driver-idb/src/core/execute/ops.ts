@@ -28,7 +28,7 @@ import type {
   IdbScanWritePlan,
   IdbUpdatePlan,
 } from "../plan-body";
-import { IdbExecuteError } from "./error";
+import { IdbExecuteError, isTransactionInactiveError, transactionInactiveError } from "./error";
 
 type Row = Record<string, unknown>;
 type OnComplete = (rows: Row[]) => void;
@@ -49,6 +49,17 @@ export function executeOpInTx(
   onComplete: OnComplete,
   onError: OnError
 ): void {
+  try {
+    dispatchOp(store, plan, onComplete, onError);
+  } catch (err) {
+    // Requests are issued synchronously, so a dead transaction surfaces here as a
+    // thrown DOMException. Anything else (DataError, unknown index, ...) is unchanged.
+    if (isTransactionInactiveError(err)) return onError(transactionInactiveError(plan.kind, plan.storeName, err));
+    throw err;
+  }
+}
+
+function dispatchOp(store: IDBObjectStore, plan: IdbAtomicPlan, onComplete: OnComplete, onError: OnError): void {
   switch (plan.kind) {
     case "key-get":
       return execKeyGet(store, plan, onComplete, onError);
@@ -70,6 +81,12 @@ export function executeOpInTx(
       return execDelete(store, plan, onComplete, onError);
     case "scan-write":
       return execScanWrite(store, plan, onComplete, onError);
+    default: {
+      // Unreachable for a well-typed plan; a stale driver build receiving a newer plan kind
+      // would otherwise never call onComplete/onError and hang the caller.
+      const unknown: never = plan;
+      return onError(new Error(`Unknown IDB plan kind: ${String((unknown as { kind?: unknown }).kind)}`));
+    }
   }
 }
 
