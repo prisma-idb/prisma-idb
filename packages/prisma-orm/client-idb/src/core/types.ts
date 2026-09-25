@@ -617,23 +617,50 @@ export function extractKeyFromRow(row: Record<string, unknown>, keyPath: IdbKeyP
  * containing a nested array) compare correctly too.
  */
 export function keyEquals(a: IDBValidKey, b: IDBValidKey): boolean {
+  try {
+    if (typeof indexedDB !== "undefined") return indexedDB.cmp(a, b) === 0;
+  } catch {
+    // cmp throws DataError for non-keys; fall through to structural comparison.
+  }
   if (Array.isArray(a) || Array.isArray(b)) {
     if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
     return a.every((v, i) => keyEquals(v as IDBValidKey, b[i] as IDBValidKey));
   }
+  if (a instanceof Date && b instanceof Date) return a.getTime() === b.getTime();
+  const ab = binaryBytes(a);
+  const bb = binaryBytes(b);
+  if (ab !== null || bb !== null) {
+    return ab !== null && bb !== null && ab.length === bb.length && ab.every((v, i) => v === bb[i]);
+  }
   return a === b;
+}
+
+function binaryBytes(key: unknown): Uint8Array | null {
+  if (key instanceof ArrayBuffer) return new Uint8Array(key);
+  if (ArrayBuffer.isView(key)) return new Uint8Array(key.buffer, key.byteOffset, key.byteLength);
+  return null;
+}
+
+function tokenPart(key: unknown): unknown {
+  if (Array.isArray(key)) return ["a", key.map(tokenPart)];
+  if (key instanceof Date) return ["d", key.getTime()];
+  const bytes = binaryBytes(key);
+  if (bytes !== null) return ["b", Array.from(bytes)];
+  if (typeof key === "number") return ["n", Object.is(key, -0) ? 0 : String(key)];
+  return ["s", String(key)];
 }
 
 /**
  * A stable, comparable token for a key — for `Set`/`Map` dedup keys where a
- * raw compound (array) key can't be used directly, since two arrays with
- * identical contents are never `===` / never hash the same in a `Set`.
- * Scalar keys pass through unchanged (`String(key)`, matching the dedup
- * behavior every single-field-key model already relied on before compound
- * keys existed).
+ * raw key can't be used directly (arrays, `Date`s and binary keys are never
+ * `===`/never hash the same in a `Set`). Plain string/number keys keep
+ * `String(key)` (also used in error messages); every other shape is encoded
+ * recursively with type tags so `1` vs `"1"`, equal Dates and equal bytes
+ * are distinguished/matched correctly.
  */
 export function keyToken(key: IDBValidKey): string {
-  return Array.isArray(key) ? JSON.stringify(key) : String(key);
+  if (typeof key === "string" || typeof key === "number") return String(key);
+  return JSON.stringify(tokenPart(key));
 }
 
 /**
