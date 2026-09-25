@@ -199,6 +199,10 @@ describe("keys", () => {
     ...extra,
   });
 
+  it("take:0 resolves to [] without reading", async () => {
+    expect(await executeIdbPlan(db, keys({ storeName: "users", take: 0 }))).toEqual([]);
+  });
+
   it("take:1 + range uses getKey: one { key } row for a hit, [] for a miss", async () => {
     const hit = await executeIdbPlan(db, keys({ storeName: "users", range: IDBKeyRange.only("u2"), take: 1 }));
     expect(hit).toEqual([{ key: "u2" }]);

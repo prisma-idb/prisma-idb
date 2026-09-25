@@ -150,6 +150,11 @@ function execKeys(store: IDBObjectStore, plan: IdbKeysPlan, onComplete: OnComple
     return;
   }
 
+  if (plan.take === 0) {
+    onComplete([]);
+    return;
+  }
+
   const req = source.getAllKeys(plan.range, plan.take);
   req.onsuccess = () => onComplete((req.result as IDBValidKey[]).map((key) => ({ key })));
   req.onerror = () => fail(req.error);
