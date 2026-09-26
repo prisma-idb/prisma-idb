@@ -1,31 +1,16 @@
 ---
 title: Migrations
-description: Plan, commit, validate, and ship IndexedDB schema changes
+description: Change the schema, ship the change, and check migrations in CI
 icon: GitBranch
 ---
 
-Prisma 8 IDB migrations are source-controlled packages. The CLI creates and validates them; the browser applies them when the client opens.
+A migration changes the database's object stores and indexes to match a new schema. You plan migrations on your machine and commit them. Each user's browser applies the ones it hasn't run yet the next time the app opens the database.
 
-IndexedDB migrations are not applied by `prisma migrate` or `db update`. IndexedDB exists in the browser, so the runtime apply path is `createAutoMigratingIdbClient()`.
+`prisma migrate` and `prisma db update` don't apply IndexedDB migrations, because IndexedDB only exists in the browser. `createAutoMigratingIdbClient` applies them instead.
 
-## First migration
+## Change the schema
 
-Run this once in a new project:
-
-```bash
-npx prisma@latest contract emit
-npx prisma-idb migration plan
-npx prisma-idb migration contract-space
-npx prisma-idb migration preflight
-```
-
-`migration plan` auto-detects that no migration history exists yet and creates `migrations/app/<timestamp>_baseline/` from an empty database.
-
-`--contract` / `--migrations-dir` default to whatever your `prisma.config.ts` declares (`contract.output` / `migrations.dir`) — the same config `prisma contract emit` reads. Pass `--config <path>` if it isn't at the default location, or `--contract`/`--migrations-dir` directly to override either value without touching the config at all. If your generated contract-space file should live somewhere other than colocated with `contract.json`, add `--out <path>` to `migration contract-space`.
-
-## Later schema changes
-
-For normal schema changes:
+After editing `schema.prisma`, run:
 
 ```bash
 npx prisma@latest contract emit
@@ -34,61 +19,87 @@ npx prisma-idb migration contract-space
 npx prisma-idb migration preflight
 ```
 
-Once a baseline exists, `migration plan` auto-detects the existing chain instead: it reads the head migration's contract snapshot as the from-state, diffs it against the newly emitted contract, and writes the next package under `migrations/app/` with the correct `from` hash linking it to the previous migration. `--name` is required in this case — there's no default slug once it's no longer a fresh baseline.
+1. `contract emit` updates `contract.json` and `contract.d.ts`.
+2. `migration plan` compares the new contract with the one the newest migration ends at, and writes the difference as a new package under `migrations/app/`. `--name` sets the folder name, and is required for every migration after the first.
+3. `migration contract-space` regenerates the module that bundles the migrations into your app.
+4. `migration preflight` checks that the whole chain still applies.
 
-## Package layout
+Commit the new package, the new `migrations/snapshots/` entry and the regenerated files. The next time a user opens the app, the client applies the migration before resolving.
 
-Each migration package contains:
+For a brand-new project the steps are the same without `--name`: the first migration is named `baseline`. The [Quick Start](/docs/prisma-8/getting-started#4-create-the-first-migration) walks through it.
 
-```txt
-migrations/app/20260621T0854_baseline/
-  migration.ts
-  migration.json
-  ops.json
-```
+## Destructive changes
 
-Every distinct contract is stored once per migrations root, in a shared, content-addressed store next to the packages:
+Removing a model drops its object store, and every record in that store is deleted on each user's device when the migration runs. `migration plan` warns on stderr when a migration drops a store:
 
 ```txt
-migrations/snapshots/<storageHash>/
-  contract.json
-  contract.d.ts
+Warning: this migration deletes data. When it runs in a user's browser, every record in these stores is deleted:
+  - drafts
+Check that this is intended before shipping it.
 ```
 
-`migration.ts` is the readable source. `ops.json` and `migration.json` are the artifacts the runtime consumes. `migration.json`'s `to` hash addresses the snapshot store entry used as the starting point for the next plan.
+The browser applies the migration as planned; there's no switch to skip or refuse it at run time. Review the change before you commit it. IndexedDB can hold data that exists nowhere else, such as drafts or offline changes that haven't synced yet. If you need to keep that data, stop writing to the model in one release and remove it in a later one.
 
-Commit the whole package, including `migrations/snapshots/`.
+Dropping an index loses nothing, so changing an index is always safe.
 
-## Inspect and validate
+## Check migrations in CI
 
-Preflight walks the full migration chain from an empty database to the current head against `fake-indexeddb`:
+Run preflight on every change:
 
 ```bash
 npx prisma-idb migration preflight
 ```
 
-Run this in CI to catch broken package ordering, tampered migration hashes, and DDL operations that cannot apply cleanly.
+It applies every migration, in order, to an empty in-memory IndexedDB ([`fake-indexeddb`](https://github.com/dumbmatter/fakeIndexedDB)). It fails if the chain is broken, a package was edited without regenerating its hash, or an operation can't apply. It doesn't check that the result matches the contract, and `fake-indexeddb` can differ from real browsers in edge cases, so keep testing your app in a browser too.
 
-## Manual migrations
+## Edit a migration by hand
 
-`migration plan` also gives you a scaffold you can then hand-edit:
+`migration plan` writes a readable `migration.ts` in each package. To change what a migration does, edit that file, then run it to regenerate the package's `ops.json` and `migration.json`:
 
 ```bash
-npx prisma-idb migration plan --name custom-idb-change
-# edit migrations/app/<migration-dir>/migration.ts as needed
-npx tsx migrations/app/<migration-dir>/migration.ts
+npx tsx migrations/app/<migration-folder>/migration.ts
 ```
 
-Running the file self-emits `ops.json` and `migration.json` from whatever `describe()` and `operations` you have. Re-run it after each edit. Use `tsx` or your project's TypeScript runner for this manual path.
+Run it again after every edit. Like `migration plan`, it warns if the migration drops a store. Then run `migration preflight`.
 
-## Destructive changes
+## What's in a migration package
 
-Dropping an object store or index is marked as destructive. `prisma-idb migration plan` warns when a migration drops a store, because every record in it is deleted when the migration runs in a user's browser. Review the migration before shipping it: `createAutoMigratingIdbClient()` applies it as planned. See [Client](/docs/prisma-8/client#destructive-migrations).
+```txt
+migrations/
+  app/
+    20260621T0854_baseline/
+      migration.ts      the readable source; edit this
+      ops.json          the operations the browser applies
+      migration.json    the from and to contract hashes, and a hash of the package
+  snapshots/
+    <storageHash>/
+      contract.json     the contract a migration ends at
+      contract.d.ts
+```
 
-## Extension spaces
+Each package records the contract hash it starts from and the one it ends at, so the packages form one chain from an empty database to your current schema. The next `migration plan` starts from the newest package's snapshot.
 
-Everything above describes the **app space** — your own schema's migration history under `migrations/app/`. An IDB extension (like the [sync](/docs/prisma-8/sync) extension) contributes its own **extension space**: its own object stores, its own migration chain, versioned independently of your app space.
+## Extensions
 
-You don't generate or edit an extension's migrations — the package ships them, and `createAutoMigratingIdbClient({ extensions: [...] })` applies them. At runtime, every pending space (your app space, plus each extension space) is combined into one `upgradeneeded` transaction, which also records each space's progress, so a cold start needing both still triggers exactly one version bump — not one per space. Each space's progress is tracked separately in the database's `_prisma_next_marker` store, keyed by space id (`"app"`, `"idb-sync"`, …), so an app schema change and a sync-extension update apply independently of each other.
+An extension, such as [sync](/docs/prisma-8/sync), ships its own object stores and its own chain of migrations. You don't plan or edit them. When you pass the extension to `createAutoMigratingIdbClient({ extensions })`, its pending migrations run in the same upgrade as yours, so the database changes once, not once per chain.
 
-This only matters if you're authoring an extension package yourself: `migration plan` takes a `--space <id>` flag that writes the migration package directly under `migrations/<id>/` in the extension's own repo, instead of `migrations/app/`. App consumers never pass `--space`.
+Each chain's progress is recorded separately in the `_prisma_next_marker` store, under its own id (`"app"` for yours, `"idb-sync"` for sync). An app schema change and an extension update don't affect each other.
+
+If you're writing an extension, pass `--space <id>` to `migration plan` to write its packages under `migrations/<id>/` instead of `migrations/app/`.
+
+## Command reference
+
+All three commands read `prisma.config.ts`, so the flags below are only needed to override it.
+
+| Command                    | Flag                             | Default                            | Meaning                                              |
+| -------------------------- | -------------------------------- | ---------------------------------- | ---------------------------------------------------- |
+| All                        | `--config <path>`                | `prisma.config.ts`                 | The config file.                                     |
+| `migration plan`           | `--name <slug>`                  | `baseline` for the first migration | The package's folder name. Required after the first. |
+|                            | `--space <id>`                   | `app`                              | The chain to plan. Only extension authors set this.  |
+|                            | `--contract <path>`              | The config's contract output       | The emitted `contract.json`.                         |
+|                            | `--migrations-dir <path>`        | The config's `migrations.dir`      | The migrations folder.                               |
+| `migration contract-space` | `--out <path>`                   | Next to `contract.json`            | Where to write the generated module.                 |
+|                            | `--contract`, `--migrations-dir` | As above                           |                                                      |
+| `migration preflight`      | `--migrations-dir <path>`        | The config's `migrations.dir`      |                                                      |
+
+The `prisma` CLI's read-only commands also work: `prisma migration list`, `migration status` and `migration check`. The commands that need a live database, such as `prisma db verify`, explain that IndexedDB only exists in the browser.

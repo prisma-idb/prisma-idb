@@ -1,41 +1,39 @@
 ---
-title: Client
-description: The browser-side outbox, sync worker, and tracked ORM
+title: Sync client
+description: Reference for the browser side of sync, the outbox, and the sync worker
 icon: Radio
 ---
 
-`@prisma-idb/sync-extension-idb` wraps your IDB ORM client so every mutation atomically writes an outbox event alongside the model write, then gives you a worker that drains that outbox to your server and pulls remote changes back.
-
-This page is the reference for that client. For the setup sequence — install, schema, config, opening the client — start at [Sync](/docs/prisma-8/sync).
+Reference for `@prisma-idb/sync-extension-idb`. To set it up, follow the [Sync tutorial](/docs/prisma-8/sync).
 
 ## Opening a sync client
 
-`createAutoMigratingSyncIdbClient` (from `@prisma-idb/sync-extension-idb/client`) composes migrating the database — including the sync extension's own `_idb_sync_outbox` and `_idb_sync_version_meta` stores (see [Migrations](/docs/prisma-8/migrations#extension-spaces)) via `idbSyncExtension` (from the `/control` subpath) — with opening a sync-tracked ORM client, in one call. If the database is already migrated, `createSyncIdbClient({ contract, dbName })` skips the migration step and just wraps it.
+All three functions come from `@prisma-idb/sync-extension-idb/client`.
 
-For a module-level singleton with a race-safe `reset()` on top of that — the pattern used in [Sync](/docs/prisma-8/sync#3-client-setup) and the kanban example — use `createManagedAutoSyncIdbClient` instead, from the same `/client` subpath; see [Client#managed-client](/docs/prisma-8/client#managed-client) for what "managed" buys you.
+| Function                                    | Use it when                                                                                                                                                           |
+| ------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `createManagedAutoSyncIdbClient(options)`   | Most apps. A shared client with `get()`, `close()` and `reset()`, like [`createManagedAutoIdbClient`](/docs/prisma-8/client#share-one-client-and-reset-it-on-logout). |
+| `createAutoMigratingSyncIdbClient(options)` | You manage the client's lifetime yourself. Migrates, then returns a sync client.                                                                                      |
+| `createSyncIdbClient({ contract, dbName })` | The database is already migrated.                                                                                                                                     |
 
-## Client shape
+The options are the same as `createAutoMigratingIdbClient`'s, plus `trackedModels`: an array of model names to record for sync, or `"*"` for every model, the default. Writes to other models stay local. Include `idbSyncExtension` from `@prisma-idb/sync-extension-idb/control` in `extensions`, so the database gets the sync stores, `_idb_sync_outbox` and `_idb_sync_version_meta`.
 
-| Member                     | Description                                                               |
-| -------------------------- | ------------------------------------------------------------------------- |
-| `db.orm`                   | Sync-tracked ORM — same surface as a plain `IdbClient.orm`                |
-| `db.withoutTracking(fn)`   | Runs `fn` against the raw ORM — no outbox events, no version-meta writes  |
-| `db.on("outboxwrite", cb)` | Fires once per tracked write call, after commit, with the written entries |
-| `db.createSyncWorker(...)` | Creates a `SyncWorker` bound to this client                               |
-| `db.rawClient`             | The untracked `IdbClient` — raw ORM, transactions, marker verification    |
-| `db.verifyMarker()`        | Delegates to `rawClient.verifyMarker()`                                   |
-| `db.close()`               | Delegates to `rawClient.close()`                                          |
+## Client members
 
-## The outbox pattern
+| Member                            | Description                                                                                      |
+| --------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `db.orm`                          | The same API as a plain client. Every write is also recorded for sync.                           |
+| `db.withoutTracking(fn)`          | Runs `fn(orm)` with writes that aren't recorded, so they never sync.                             |
+| `db.on("outboxwrite", cb)`        | Calls `cb` after each write commits, with the recorded changes. Returns an unsubscribe function. |
+| `db.createSyncWorker(opts)`       | Creates a [sync worker](#sync-worker) for this client.                                           |
+| `db.rawClient`                    | The underlying plain client. Writes through it aren't recorded.                                  |
+| `db.verifyMarker()`, `db.close()` | Same as on a plain client.                                                                       |
 
-Every tracked mutation (`create`, `update`, `delete`, `upsert`, and bulk variants) writes an `OutboxEvent` record in the **same IndexedDB transaction** as the model write. Either both commit, or neither does — there's no window where a model write succeeds but its outbox event is lost.
+## The outbox
 
-```ts
-await db.orm.board.create({ id: "b1", name: "My Board", userId: "u1" });
-// -> Board row + an OutboxEvent row committed together
-```
+Every write through `db.orm` also writes an event to the outbox store, in the same transaction. The two commit together or not at all, so no change is ever lost or sent without being saved.
 
-Listen for writes without re-scanning the outbox yourself:
+`"outboxwrite"` fires once per write call, after it commits: once for a `create()`, and once with every change for a `createAll()`, `updateAll()` or a delete that cascades. It never fires for a write that rolled back.
 
 ```ts
 const unsubscribe = db.on("outboxwrite", (entries) => {
@@ -43,59 +41,54 @@ const unsubscribe = db.on("outboxwrite", (entries) => {
 });
 ```
 
-`outboxwrite` fires once per write call — a single `create()` fires with one entry; a batched write (`createAll()`, `updateAll()`, a cascading delete) fires once with every entry. It only fires after the underlying transaction actually commits, so a rolled-back write never fires it.
-
-### `withoutTracking`
-
-Some writes should never produce an outbox event: temporary UI state, draft records, or records you're writing because a pull just applied them from the server. Use `withoutTracking` for those:
+Use `withoutTracking` for writes the server shouldn't receive, such as local-only drafts, or a copy of a row that came from the server:
 
 ```ts
-await db.withoutTracking((orm) => orm.localNotes.create({ id: "draft-1", body: "..." }));
+await db.withoutTracking((orm) => orm.user.upsert({ where: { id }, create: user, update: user }));
 ```
 
-## Version metadata and conflict avoidance
+## Conflicts
 
-Alongside the outbox, `_idb_sync_version_meta` tracks two things per synced record:
+For each synced record, `_idb_sync_version_meta` records two things:
 
-- **`localChangePending`** — set `true` the moment a local mutation is written, cleared only once every outbox event referencing that record has synced (or given up retrying). While `true`, an incoming pull for that record is skipped — an unsynced local write always wins over a concurrent pull.
-- **`lastAppliedChangeId`** — updated on every successful pull. A pull is skipped if it's not newer than what's already applied, so a duplicate or out-of-order pull can't regress a record.
+- **Whether a local change is waiting to be pushed.** While one is, pulls skip that record, so a local change is never overwritten before it reaches the server.
+- **The last changelog id applied to it.** A pull that isn't newer is skipped, so a repeated or out-of-order pull can't undo a newer change.
 
-You don't interact with this store directly; `SyncWorker` and `applyPull` manage it for you.
+The worker maintains this store; you don't write to it.
 
-## The sync worker
+## Sync worker
 
 ```ts
-const worker = db.createSyncWorker({
-  pushHandler: async (events, signal) =>
-    fetch("/api/sync/push", { method: "POST", body: JSON.stringify({ events }), signal }).then((r) => r.json()),
-  pullHandler: async (fromChangelogId, signal) =>
-    fetch(`/api/sync/pull?since=${fromChangelogId ?? ""}`, { signal }).then((r) => r.json()),
-});
+const worker = db.createSyncWorker({ pushHandler, pullHandler });
 worker.start();
 ```
 
-Nothing starts the worker automatically — call `start()` once you have an authenticated session and a client ready. The worker self-schedules: it runs a push-then-pull cycle every `intervalMs` (default 5s) while idle, and backs off exponentially (`backoffBaseMs` → `backoffMaxMs`, defaults 1s → 30s) after consecutive failures.
+The worker doesn't start on its own. Each cycle pushes a batch of outbox events, then pulls. It repeats every `intervalMs` while idle, and backs off after failures.
 
-| Method / property | Description                                                                        |
-| ----------------- | ---------------------------------------------------------------------------------- |
-| `start()`         | Begins the loop. No-op if already running.                                         |
-| `stop()`          | Lets an in-flight cycle finish; no new cycle starts.                               |
-| `forceSync()`     | Runs one cycle immediately, ignoring backoff, then resumes the idle timer.         |
-| `on(event, cb)`   | `"statuschange"`, `"pushcompleted"`, `"pullcompleted"` — returns an unsubscribe fn |
-| `status`          | `"idle" \| "pushing" \| "pulling" \| "error" \| "stopped"`                         |
+| Option             | Default  | Description                                                                                                                          |
+| ------------------ | -------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `pushHandler`      | Required | `(events, signal) => Promise<PushResult[]>`. Sends events to your push endpoint.                                                     |
+| `pullHandler`      | Required | `(fromChangelogId, signal) => Promise<LogWithRecord[]>`. Fetches changes after `fromChangelogId`, which is `null` on the first pull. |
+| `batchSize`        | `20`     | Outbox events pushed per cycle.                                                                                                      |
+| `intervalMs`       | `5000`   | Time between cycles while idle.                                                                                                      |
+| `backoffBaseMs`    | `1000`   | Wait after the first failed cycle. Doubles with each failure in a row.                                                               |
+| `backoffMaxMs`     | `30000`  | The longest wait between failed cycles.                                                                                              |
+| `requestTimeoutMs` | `30000`  | Aborts a handler call through its `signal` after this long.                                                                          |
 
-| Option             | Default | Description                                           |
-| ------------------ | ------- | ----------------------------------------------------- |
-| `batchSize`        | `20`    | Outbox events pushed per cycle                        |
-| `intervalMs`       | `5000`  | Idle poll interval                                    |
-| `backoffBaseMs`    | `1000`  | Backoff after the first consecutive failure           |
-| `backoffMaxMs`     | `30000` | Backoff ceiling                                       |
-| `requestTimeoutMs` | `30000` | Aborts a hung push/pull handler call via its `signal` |
+| Method or property | Description                                                                                              |
+| ------------------ | -------------------------------------------------------------------------------------------------------- |
+| `start()`          | Starts the loop. Does nothing if it's running.                                                           |
+| `stop()`           | Lets the current cycle finish, then stops.                                                               |
+| `forceSync()`      | Runs a cycle now, ignoring any backoff.                                                                  |
+| `status`           | `"idle"`, `"pushing"`, `"pulling"`, `"error"` or `"stopped"`.                                            |
+| `on(event, cb)`    | Subscribes to `"statuschange"`, `"pushcompleted"` or `"pullcompleted"`. Returns an unsubscribe function. |
 
-A typical app also reruns `worker.forceSync()` on the browser's `online` event, and calls `worker.stop()` when tearing down (e.g. on sign-out), unsubscribing any `"outboxwrite"` listeners at the same time.
+Most apps also call `forceSync()` on the browser's `online` event, and `stop()` on sign-out.
+
+The push and pull response shapes are exported as Zod schemas from `@prisma-idb/sync-extension-idb/schemas`: `pushResultSchema` and `logWithRecordSchema`.
 
 <Cards>
+  <Card title="Sync server" href="/docs/prisma-8/sync/server" />
   <Card title="Client Contracts" href="/docs/prisma-8/sync/client-contracts" />
-  <Card title="Server" href="/docs/prisma-8/sync/server" />
   <Card title="Kanban Example" href="/docs/prisma-8/kanban-example" />
 </Cards>

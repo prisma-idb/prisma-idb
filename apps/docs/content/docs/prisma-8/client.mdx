@@ -1,10 +1,14 @@
 ---
 title: Client
-description: Open an auto-migrating IndexedDB client for browser code
+description: Open the database in the browser, share one client, and wipe local data on logout
 icon: Database
 ---
 
-`createAutoMigratingIdbClient` takes a bundled `contractSpace` and opens the database, applying any pending migrations before resolving.
+This page shows how to open the client in common situations. For a first setup, follow the [Quick Start](/docs/prisma-8/getting-started).
+
+## Open the database
+
+`createAutoMigratingIdbClient` opens the database, applies any pending migrations, and resolves to a client. Cache the promise so the database opens once:
 
 ```ts
 import { createAutoMigratingIdbClient } from "@prisma-idb/client-idb/client-auto";
@@ -12,35 +16,58 @@ import type { IdbClient } from "@prisma-idb/client-idb/client-auto";
 import type { Contract } from "./prisma/contract";
 import { contractSpace } from "./prisma/contract-space.generated";
 
-type Db = IdbClient<Contract>;
+let db: Promise<IdbClient<Contract>> | null = null;
 
-let db: Promise<Db> | null = null;
-
-export function getDb(): Promise<Db> {
+export function getDb(): Promise<IdbClient<Contract>> {
   return (db ??= createAutoMigratingIdbClient({ contractSpace, dbName: "my-app" }));
 }
 ```
 
-The promise is cached so the database only opens once. Call `getDb()` from any browser-side code.
+`dbName` is the IndexedDB database name. Use a different name to keep separate databases in the same browser, for example one per tenant.
 
-## Destructive migrations
+The client applies every pending migration as it was planned, including ones that delete data. Review those when you plan them; see [Destructive changes](/docs/prisma-8/migrations#destructive-changes).
 
-The client applies every pending migration exactly as it was planned, including ones that drop object stores or indexes. There is no runtime switch to skip or refuse them: skipping would leave the database out of step with its contract, and refusing would stop the app from opening.
+## Share one client and reset it on logout
 
-Review destructive changes when you plan them instead. `prisma-idb migration plan` warns when a migration drops a store. Local IndexedDB may hold data that exists only on the user's device, such as drafts, cached state or offline work, so make sure that data can be discarded before you ship the migration.
+`createManagedAutoIdbClient` wraps the same options in a singleton with a safe `reset()`. Use it when the app needs to wipe local data, for example so a different account signing in on the same browser never sees the previous user's rows.
 
-## Client shape
+```ts
+import { createManagedAutoIdbClient } from "@prisma-idb/client-idb/client-auto";
 
-| Property / method       | Description                                           |
-| ----------------------- | ----------------------------------------------------- |
-| `db.orm`                | Typed model accessors                                 |
-| `db.verifyMarker()`     | Check that the open database matches the contract     |
-| `db.withTransaction(…)` | Low-level transaction scope for advanced integrations |
-| `db.close()`            | Close the underlying IndexedDB connection             |
+const managedDb = createManagedAutoIdbClient({ contractSpace, dbName: "my-app" });
 
-## Extensions
+export const getDb = () => managedDb.get();
+export const closeDb = () => managedDb.close();
+export const resetDb = () => managedDb.reset(); // call on sign-out
+```
 
-An IDB extension contributes its own object stores and its own independently-versioned migration history, applied alongside your app schema in the same `upgradeneeded` transaction. Pass one or more via `extensions`:
+| Method    | Does                                                                                                          |
+| --------- | ------------------------------------------------------------------------------------------------------------- |
+| `get()`   | Opens the database on the first call and returns the same client after that. Concurrent calls share one open. |
+| `close()` | Closes the client, if one is open.                                                                            |
+| `reset()` | Closes the client and deletes the database.                                                                   |
+
+`reset()` is safe to call at any time. It waits for an open that's in progress before deleting, and a `get()` called during a reset waits for the delete to finish, then opens a fresh database.
+
+Using sync? Use `createManagedAutoSyncIdbClient` from `@prisma-idb/sync-extension-idb/client` instead. It works the same way. See [Sync](/docs/prisma-8/sync).
+
+### Wrap a different factory
+
+`createManagedAutoIdbClient` is `createManagedIdbClient` with the factory already chosen. To wrap something else, such as `createIdbClient` on a database you migrate yourself, use `createManagedIdbClient`:
+
+```ts
+import { createIdbClient, createManagedIdbClient } from "@prisma-idb/client-idb/client";
+
+const managedDb = createManagedIdbClient(() => createIdbClient({ contract, dbName: "my-app" }), {
+  dbName: "my-app", // must match the factory's dbName
+});
+```
+
+`createManagedIdbClient` only uses its own `dbName` to delete the database in `reset()`. Nothing checks that it matches the factory's. If they differ, `get()` still opens the right database, but `reset()` deletes a different one and your data stays. Prefer `createManagedAutoIdbClient` unless you need a custom factory.
+
+## Add an extension
+
+An extension adds its own object stores and ships its own migrations. Pass it in `extensions`, and its migrations run together with yours when the database opens:
 
 ```ts
 import { createAutoMigratingIdbClient } from "@prisma-idb/client-idb/client-auto";
@@ -53,46 +80,16 @@ const db = await createAutoMigratingIdbClient({
 });
 ```
 
-`@prisma-idb/sync-extension-idb` is the first real extension — see [Sync](/docs/prisma-8/sync). You never author or generate an extension's migrations yourself; the package ships them and versions them independently of your app's own migration history.
+You don't plan or edit an extension's migrations. The sync extension is currently the only one; see [Sync](/docs/prisma-8/sync).
 
-## Managed client
+## Client reference
 
-`createManagedAutoIdbClient` combines `createAutoMigratingIdbClient` with a module-level singleton and a race-safe `reset()` for wiping local data, e.g. on logout — the auto-migrate options (`contractSpace`, `dbName`, …) go in once:
-
-```ts
-import { createManagedAutoIdbClient } from "@prisma-idb/client-idb/client-auto";
-
-const managedDb = createManagedAutoIdbClient({ contractSpace, dbName: "my-app" });
-
-export const getDb = () => managedDb.get();
-export const closeDb = () => managedDb.close();
-export const resetDb = () => managedDb.reset();
-```
-
-| Method    | Description                                                                |
-| --------- | -------------------------------------------------------------------------- |
-| `get()`   | Opens on first call and caches the result; concurrent calls share one open |
-| `close()` | Closes the cached client, if any                                           |
-| `reset()` | Closes and deletes the database, waiting out any in-flight `get()` first   |
-
-`reset()` never races a concurrent `get()` — a delete is guaranteed not to run while a connection is still opening, and a `get()` called during a reset waits for the wipe to finish before opening a fresh connection. The kanban example uses this for sign-out, so a different account signing in on the same browser never sees the previous session's local data.
-
-Using sync? `@prisma-idb/sync-extension-idb/client` exports the same wrapper pre-wired to `createAutoMigratingSyncIdbClient` instead, as `createManagedAutoSyncIdbClient` — see [Sync](/docs/prisma-8/sync).
-
-### Wrapping a different factory
-
-`createManagedAutoIdbClient` is `createManagedIdbClient` pre-wired to `createAutoMigratingIdbClient`, so `dbName` only has to be written once. If you need to wrap something else — `createIdbClient` directly, or your own composition — reach for `createManagedIdbClient` itself:
-
-```ts
-import { createManagedIdbClient } from "@prisma-idb/client-idb/client";
-import { createIdbClient } from "@prisma-idb/client-idb/client";
-
-const managedDb = createManagedIdbClient(() => createIdbClient({ contract, dbName: "my-app" }), {
-  dbName: "my-app", // must match the factory's own dbName — see below
-});
-```
-
-`createManagedIdbClient`'s `dbName` is used for exactly one thing — `reset()`'s `deleteDatabase` call. It's never passed into `open()` for you, and nothing checks the two agree: if they drift apart (a typo, or the same string duplicated across a refactor), `get()` still opens the right database, but `reset()` silently deletes the wrong one — or nothing — while the real data stays put. `createManagedAutoIdbClient` exists specifically to make that mistake impossible for the common case; prefer it unless you have a genuine reason to compose things yourself.
+| Member                           | Description                                                                                   |
+| -------------------------------- | --------------------------------------------------------------------------------------------- |
+| `db.orm`                         | One accessor per model, such as `db.orm.todo`. See [API](/docs/prisma-8/api).                 |
+| `db.verifyMarker()`              | Resolves to `true` when the database's schema matches the contract.                           |
+| `db.withTransaction(stores, fn)` | Runs low-level plans in one transaction. See [Transactions](/docs/prisma-8/api/transactions). |
+| `db.close()`                     | Closes the connection.                                                                        |
 
 <Cards>
   <Card title="Querying" href="/docs/prisma-8/api/querying" />
