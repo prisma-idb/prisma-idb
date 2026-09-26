@@ -594,24 +594,26 @@ export class IdbStoreAccessorImpl<
       return row as DefaultModelRow<TContract, ModelName>;
     }
 
-    if (hasScalarFkFields(this.#contract, this.#modelName, record)) {
-      const row = await executeScalarCreateWithFkValidation({
-        executor: requireTransactionExecutor(this.#executor),
-        contract: this.#contract,
-        modelName: this.#modelName,
-        data: record,
-      });
-      return row as DefaultModelRow<TContract, ModelName>;
-    }
-
-    const groupingKey = this.#newGroupingKey();
-    const meta = this.#planMeta(groupingKey);
+    // Apply defaults before deciding whether foreign keys need checking: a
+    // default can fill in a foreign key the caller left out.
     const withDefaults = applyCreateDefaults(
       this.#contract.execution?.mutations.defaults,
       this.#storeName,
       record,
       createMutationDefaultsCache()
     );
+    if (hasScalarFkFields(this.#contract, this.#modelName, withDefaults)) {
+      const row = await executeScalarCreateWithFkValidation({
+        executor: requireTransactionExecutor(this.#executor),
+        contract: this.#contract,
+        modelName: this.#modelName,
+        data: withDefaults,
+      });
+      return row as DefaultModelRow<TContract, ModelName>;
+    }
+
+    const groupingKey = this.#newGroupingKey();
+    const meta = this.#planMeta(groupingKey);
     const ast: IdbCreateAst = { kind: "create", modelName: this.#modelName, data: withDefaults };
     const plan: IdbQueryPlan<Record<string, unknown>> = {
       meta,
@@ -764,19 +766,23 @@ export class IdbStoreAccessorImpl<
     // upsert.
     const exec = requireTransactionExecutor(this.#executor);
     // Defaults are applied here, before store-name collection, rather than
-    // inside the transaction: `collectOnUpdateEnforcementStoreNames` only
-    // sees fields present in the patch it's given, and an `onUpdate` mutation
-    // default can add a field that wasn't in the caller's raw patch — if that
-    // field also happens to be a relation's local field, collecting stores
-    // from the raw patch would under-declare the transaction's store list.
-    // Applying defaults first (a pure function of the patch + static contract
-    // config, no row read needed) and reusing the same result throughout
-    // keeps enforcement, store collection, and the actual write looking at
-    // one consistent effective patch.
+    // inside the transaction: a default can add a field that isn't in the
+    // caller's raw data, and if that field is a foreign key or a field that
+    // children reference, collecting stores from the raw data would
+    // under-declare the transaction's store list. Applying defaults first (a
+    // pure function of the data + static contract config, no row read needed)
+    // and reusing the result throughout keeps FK checks, enforcement, store
+    // collection and the actual write looking at the same values.
     const effectivePatch = applyUpdateDefaults(
       executionDefaults,
       storeName,
       patchRecord,
+      createMutationDefaultsCache()
+    );
+    const createWithDefaults = applyCreateDefaults(
+      executionDefaults,
+      storeName,
+      createRecord,
       createMutationDefaultsCache()
     );
     const { storeNames: onUpdateStoreNames } = collectOnUpdateEnforcementStoreNames(
@@ -790,20 +796,19 @@ export class IdbStoreAccessorImpl<
       ...new Set([
         storeName,
         ...onUpdateStoreNames,
-        ...collectScalarFkStoreNames(this.#contract, this.#modelName, createRecord),
-        ...collectScalarFkStoreNames(this.#contract, this.#modelName, patchRecord),
+        ...collectScalarFkStoreNames(this.#contract, this.#modelName, createWithDefaults),
+        ...collectScalarFkStoreNames(this.#contract, this.#modelName, effectivePatch),
       ]),
     ];
     return withMutationScope(exec, storeNames, async (scope) => {
       const found = await scope.execute({ meta, kind: "cursor-scan", storeName, filter: matches, take: 1 });
       const existing = found[0];
       if (existing === undefined) {
-        await validateScalarFks(scope, this.#contract, this.#modelName, createRecord);
-        const record = applyCreateDefaults(executionDefaults, storeName, createRecord, createMutationDefaultsCache());
-        const rows = await scope.execute({ meta, kind: "add", storeName, record });
-        return (rows[0] ?? record) as DefaultModelRow<TContract, ModelName>;
+        await validateScalarFks(scope, this.#contract, this.#modelName, createWithDefaults);
+        const rows = await scope.execute({ meta, kind: "add", storeName, record: createWithDefaults });
+        return (rows[0] ?? createWithDefaults) as DefaultModelRow<TContract, ModelName>;
       }
-      await validateScalarFks(scope, this.#contract, this.#modelName, patchRecord, existing);
+      await validateScalarFks(scope, this.#contract, this.#modelName, effectivePatch, existing);
       const key = extractKeyFromRow(existing, keyPath);
       await applyReferentialActionsForRowOnUpdate(scope, this.#contract, this.#modelName, existing, effectivePatch);
       const rows = await scope.execute({ meta, kind: "update", storeName, key, patch: effectivePatch });
@@ -812,28 +817,29 @@ export class IdbStoreAccessorImpl<
   }
 
   createAll(data: CreateInput<TContract, ModelName>[]): AsyncIterableResult<DefaultModelRow<TContract, ModelName>> {
-    const rowsData = data as Record<string, unknown>[];
-    if (rowsData.some((row) => hasScalarFkFields(this.#contract, this.#modelName, row))) {
+    // One shared cache for the whole batch — every row in a single createAll()
+    // call gets the same generated `temporal.updatedAt()` timestamp, matching
+    // SQL's 'query'-stability semantics for the same generator. Defaults are
+    // applied before deciding whether foreign keys need checking, because a
+    // default can fill in a foreign key.
+    const defaultsCache = createMutationDefaultsCache();
+    const executionDefaults = this.#contract.execution?.mutations.defaults;
+    const records = data.map((d) =>
+      applyCreateDefaults(executionDefaults, this.#storeName, d as Record<string, unknown>, defaultsCache)
+    );
+    if (records.some((row) => hasScalarFkFields(this.#contract, this.#modelName, row))) {
       const executor = requireTransactionExecutor(this.#executor);
       const contract = this.#contract;
       const modelName = this.#modelName;
       return new AsyncIterableResult(
         (async function* (): AsyncGenerator<DefaultModelRow<TContract, ModelName>, void, unknown> {
-          const rows = await executeScalarCreateAllWithFkValidation({ executor, contract, modelName, data: rowsData });
+          const rows = await executeScalarCreateAllWithFkValidation({ executor, contract, modelName, data: records });
           for (const row of rows) yield row as DefaultModelRow<TContract, ModelName>;
         })()
       );
     }
     const groupingKey = this.#newGroupingKey();
     const meta = this.#planMeta(groupingKey);
-    // One shared cache for the whole batch — every row in a single createAll()
-    // call gets the same generated `temporal.updatedAt()` timestamp, matching
-    // SQL's 'query'-stability semantics for the same generator.
-    const defaultsCache = createMutationDefaultsCache();
-    const executionDefaults = this.#contract.execution?.mutations.defaults;
-    const records = data.map((d) =>
-      applyCreateDefaults(executionDefaults, this.#storeName, d as Record<string, unknown>, defaultsCache)
-    );
     const ast: IdbCreateAllAst = { kind: "createAll", modelName: this.#modelName, data: records };
     const plan: IdbQueryPlan<Record<string, unknown>> = {
       meta,

@@ -1629,3 +1629,149 @@ describe("upsert — requires a transaction-capable executor", () => {
     ).rejects.toThrow(/requires an executor with transaction support/i);
   });
 });
+
+// ── Foreign keys set by defaults and by nested writes ─────────────────────────
+
+// Post.authorId defaults to "system" on create; Post.editorId is set to
+// "system" on every update. Both are foreign keys to User.
+const defaultedFkContract = (() => {
+  const base = defineContract({
+    family: idbFamilyPack,
+    target: idbTargetPack,
+    models: {
+      User: {
+        store: "users",
+        key: "id",
+        fields: { id: "String" },
+        relations: {
+          posts: { to: "Post", cardinality: "1:N", on: { local: ["id"], target: ["authorId"] } },
+        },
+      },
+      Post: {
+        store: "posts",
+        key: "id",
+        fields: { id: "String", authorId: "String", editorId: "String?", title: "String?" },
+        relations: {
+          author: { to: "User", cardinality: "N:1", on: { local: ["authorId"], target: ["id"] } },
+          editor: { to: "User", cardinality: "N:1", on: { local: ["editorId"], target: ["id"] } },
+          comments: { to: "Comment", cardinality: "1:N", on: { local: ["id"], target: ["postId"] } },
+        },
+      },
+      Comment: {
+        store: "comments",
+        key: "id",
+        fields: { id: "String", postId: "String" },
+        relations: {
+          post: { to: "Post", cardinality: "N:1", on: { local: ["postId"], target: ["id"] } },
+        },
+      },
+    },
+  });
+  const literal = (value: string) => ({ kind: "generator" as const, id: "literal", params: { value } });
+  return {
+    ...base,
+    execution: {
+      mutations: {
+        defaults: [
+          { ref: { namespace: "__unbound__", table: "posts", column: "authorId" }, onCreate: literal("system") },
+          { ref: { namespace: "__unbound__", table: "posts", column: "editorId" }, onUpdate: literal("system") },
+        ],
+      },
+    },
+  } as unknown as typeof base;
+})();
+
+type NestedAccessor = LooseAccessor & {
+  where(w: Record<string, unknown>): { update(p: Record<string, unknown>): Promise<unknown> };
+};
+type Mutator = { create(rows: Record<string, unknown>[]): unknown };
+
+describe("scalar FK validation — values from defaults and nested writes", () => {
+  let db: IDBDatabase;
+  let orm: Record<string, NestedAccessor>;
+
+  beforeEach(async () => {
+    const name = nextDbName();
+    db = await openTestDbWithStores(name, { users: "id", posts: "id", comments: "id" });
+    const executor = new TestExecutorWithTransaction(createIDBRuntimeDriver(name).create());
+    orm = idbOrm({ contract: defaultedFkContract, executor }) as unknown as Record<string, NestedAccessor>;
+    await orm["users"]!.create({ id: "u1" });
+  });
+  afterEach(() => db.close());
+
+  it("create: checks a foreign key filled in by a default", async () => {
+    await expect(orm["posts"]!.create({ id: "p1" })).rejects.toThrow(/FK violation on relation 'author'.*id='system'/);
+    await orm["users"]!.create({ id: "system" });
+    await orm["posts"]!.create({ id: "p1" });
+    expect((await getAllRows(db, "posts"))[0]?.["authorId"]).toBe("system");
+  });
+
+  it("createAll: checks a foreign key filled in by a default", async () => {
+    await expect(orm["posts"]!.createAll([{ id: "p1", authorId: "u1" }, { id: "p2" }]).toArray()).rejects.toThrow(
+      /FK violation on relation 'author'/
+    );
+    expect(await getAllRows(db, "posts")).toHaveLength(0);
+  });
+
+  it("upsert: checks a foreign key filled in by a default on either branch", async () => {
+    await expect(orm["posts"]!.upsert({ where: { id: "p1" }, create: { id: "p1" }, update: {} })).rejects.toThrow(
+      /FK violation on relation 'author'/
+    );
+    await orm["posts"]!.create({ id: "p1", authorId: "u1" });
+    await expect(
+      orm["posts"]!.upsert({ where: { id: "p1" }, create: { id: "p1", authorId: "u1" }, update: { title: "t" } })
+    ).rejects.toThrow(/FK violation on relation 'editor'/);
+  });
+
+  it("update and updateAll: check a foreign key filled in by an onUpdate default", async () => {
+    await orm["posts"]!.create({ id: "p1", authorId: "u1" });
+    await expect(orm["posts"]!.where({ id: "p1" }).update({ title: "t" })).rejects.toThrow(
+      /FK violation on relation 'editor'/
+    );
+    await expect(orm["posts"]!.updateAll({ title: "t" }).toArray()).rejects.toThrow(
+      /FK violation on relation 'editor'/
+    );
+    await orm["users"]!.create({ id: "system" });
+    await orm["posts"]!.where({ id: "p1" }).update({ title: "t" });
+    expect((await getAllRows(db, "posts"))[0]?.["editorId"]).toBe("system");
+  });
+
+  it("nested create: checks the parent row's own foreign keys", async () => {
+    await expect(
+      orm["posts"]!.create({
+        id: "p1",
+        authorId: "ghost",
+        comments: (c: Mutator) => c.create([{ id: "c1" }]),
+      })
+    ).rejects.toThrow(/FK violation on relation 'author'/);
+    expect(await getAllRows(db, "posts")).toHaveLength(0);
+    expect(await getAllRows(db, "comments")).toHaveLength(0);
+  });
+
+  it("nested update: checks foreign keys in the patch", async () => {
+    await orm["users"]!.create({ id: "system" });
+    await orm["posts"]!.create({ id: "p1", authorId: "u1" });
+    await expect(
+      orm["posts"]!.where({ id: "p1" }).update({
+        authorId: "ghost",
+        comments: (c: Mutator) => c.create([{ id: "c1" }]),
+      })
+    ).rejects.toThrow(/FK violation on relation 'author'/);
+    expect((await getAllRows(db, "posts"))[0]?.["authorId"]).toBe("u1");
+    expect(await getAllRows(db, "comments")).toHaveLength(0);
+  });
+
+  it("nested update: applies onUpdate referential actions", async () => {
+    await orm["users"]!.create({ id: "system" });
+    await orm["posts"]!.create({ id: "p1", authorId: "u1" });
+    await orm["comments"]!.create({ id: "c1", postId: "p1" });
+    // Comment.post has no onUpdate, so it defaults to restrict.
+    await expect(
+      orm["posts"]!.where({ id: "p1" }).update({
+        id: "p2",
+        comments: (c: Mutator) => c.create([{ id: "c2" }]),
+      })
+    ).rejects.toThrow(/Cannot update Post 'p1'/);
+    expect((await getAllRows(db, "posts")).map((p) => p["id"])).toEqual(["p1"]);
+  });
+});

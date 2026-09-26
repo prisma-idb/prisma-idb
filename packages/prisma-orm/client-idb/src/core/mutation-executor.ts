@@ -176,7 +176,7 @@ export async function executeNestedCreateMutation(options: {
 }): Promise<Record<string, unknown>> {
   const { executor, contract, modelName, data } = options;
   const record = data as Record<string, unknown>;
-  const storeNames = collectStoreNames(contract, modelName, record);
+  const storeNames = collectStoreNames(contract, modelName, record, "create");
   const defaultsCache = createMutationDefaultsCache();
   return withMutationScope(executor, storeNames, (scope) =>
     createGraph(scope, contract, modelName, record, defaultsCache)
@@ -192,7 +192,7 @@ export async function executeNestedUpdateMutation(options: {
 }): Promise<Record<string, unknown> | null> {
   const { executor, contract, modelName, filters, data } = options;
   const record = data as Record<string, unknown>;
-  const storeNames = collectStoreNames(contract, modelName, record);
+  const storeNames = collectStoreNames(contract, modelName, record, "update");
   const defaultsCache = createMutationDefaultsCache();
   return withMutationScope(executor, storeNames, (scope) =>
     updateFirstGraph(scope, contract, modelName, filters, record, defaultsCache)
@@ -201,14 +201,52 @@ export async function executeNestedUpdateMutation(options: {
 
 // ── Store name collection ─────────────────────────────────────────────────────
 
-function collectStoreNames(contract: IdbContract, modelName: string, data: Record<string, unknown>): string[] {
-  const stores = new Set([getStoreName(contract, modelName)]);
+/**
+ * Every store a nested write may touch: the model's own store, each related
+ * store a relation callback writes to, and the parent stores that foreign-key
+ * checks read, for the model and for each related model. An update also
+ * declares the stores its `onUpdate` referential actions may touch.
+ *
+ * Parent stores are declared for every foreign key, not only the ones `data`
+ * sets, because a nested write can set foreign keys through `connect()` or
+ * through a default.
+ */
+function collectStoreNames(
+  contract: IdbContract,
+  modelName: string,
+  data: Record<string, unknown>,
+  kind: "create" | "update"
+): string[] {
+  const stores = new Set([getStoreName(contract, modelName), ...fkParentStoreNames(contract, modelName)]);
+  const scalarData: Record<string, unknown> = {};
+  const relationNames = new Set<string>();
   for (const def of getRelationDefinitions(contract, modelName)) {
+    relationNames.add(def.relationName);
     if (def.relationName in data && isRelationMutationCallback(data[def.relationName])) {
       stores.add(def.relatedStoreName);
+      for (const store of fkParentStoreNames(contract, def.relatedModelName)) stores.add(store);
     }
   }
+  if (kind === "update") {
+    for (const [field, value] of Object.entries(data)) {
+      if (!relationNames.has(field)) scalarData[field] = value;
+    }
+    const patch = applyUpdateDefaults(
+      contract.execution?.mutations.defaults,
+      getStoreName(contract, modelName),
+      scalarData,
+      createMutationDefaultsCache()
+    );
+    for (const store of collectOnUpdateEnforcementStoreNames(contract, modelName, patch).storeNames) stores.add(store);
+  }
   return [...stores];
+}
+
+/** The stores of every parent `modelName` has a foreign key to. */
+function fkParentStoreNames(contract: IdbContract, modelName: string): string[] {
+  return getRelationDefinitions(contract, modelName)
+    .filter((def) => def.cardinality === "N:1")
+    .map((def) => def.relatedStoreName);
 }
 
 // ── Graph operations ──────────────────────────────────────────────────────────
@@ -272,6 +310,8 @@ async function updateFirstGraph(
     const key = extractKeyFromRow(existingRow, keyPath);
     const meta = makePlanMeta(contract);
     const patch = applyUpdateDefaults(contract.execution?.mutations.defaults, storeName, scalarData, defaultsCache);
+    await validateScalarFks(scope, contract, modelName, patch, existingRow);
+    await applyReferentialActionsForRowOnUpdate(scope, contract, modelName, existingRow, patch);
     const rows = await scope.execute({ meta, kind: "update", storeName, key, patch });
     const updated = rows[0];
     if (updated) parentRow = updated;
@@ -539,6 +579,7 @@ async function insertSingleRow(
   const storeName = getStoreName(contract, modelName);
   const meta = makePlanMeta(contract);
   const record = applyCreateDefaults(contract.execution?.mutations.defaults, storeName, data, defaultsCache);
+  await validateScalarFks(scope, contract, modelName, record);
   const rows = await scope.execute({ meta, kind: "add", storeName, record });
   return rows[0] ?? record;
 }
@@ -1200,11 +1241,19 @@ export async function executeScalarCreateWithFkValidation(options: {
   data: Record<string, unknown>;
 }): Promise<Record<string, unknown>> {
   const { executor, contract, modelName, data } = options;
-  const storeNames = collectScalarFkStoreNames(contract, modelName, data);
-  return withMutationScope(executor, storeNames, async (scope) => {
-    await validateScalarFks(scope, contract, modelName, data);
-    return insertSingleRow(scope, contract, modelName, data, createMutationDefaultsCache());
-  });
+  // Apply defaults first, so the transaction declares the parent store of a
+  // foreign key that a default fills in. `insertSingleRow` checks the result.
+  const defaultsCache = createMutationDefaultsCache();
+  const record = applyCreateDefaults(
+    contract.execution?.mutations.defaults,
+    getStoreName(contract, modelName),
+    data,
+    defaultsCache
+  );
+  const storeNames = collectScalarFkStoreNames(contract, modelName, record);
+  return withMutationScope(executor, storeNames, (scope) =>
+    insertSingleRow(scope, contract, modelName, record, defaultsCache)
+  );
 }
 
 /**
@@ -1219,13 +1268,16 @@ export async function executeScalarCreateAllWithFkValidation(options: {
   data: readonly Record<string, unknown>[];
 }): Promise<Record<string, unknown>[]> {
   const { executor, contract, modelName, data } = options;
-  const storeNames = [...new Set(data.flatMap((row) => collectScalarFkStoreNames(contract, modelName, row)))];
+  const defaultsCache = createMutationDefaultsCache();
+  const storeName = getStoreName(contract, modelName);
+  const records = data.map((row) =>
+    applyCreateDefaults(contract.execution?.mutations.defaults, storeName, row, defaultsCache)
+  );
+  const storeNames = [...new Set(records.flatMap((row) => collectScalarFkStoreNames(contract, modelName, row)))];
   return withMutationScope(executor, storeNames, async (scope) => {
-    const defaultsCache = createMutationDefaultsCache();
     const inserted: Record<string, unknown>[] = [];
-    for (const row of data) {
-      await validateScalarFks(scope, contract, modelName, row);
-      inserted.push(await insertSingleRow(scope, contract, modelName, row, defaultsCache));
+    for (const record of records) {
+      inserted.push(await insertSingleRow(scope, contract, modelName, record, defaultsCache));
     }
     return inserted;
   });
@@ -1260,22 +1312,24 @@ export async function executeScalarUpdateWithFkValidation(options: {
   data: Record<string, unknown>;
 }): Promise<Record<string, unknown> | null> {
   const { executor, contract, modelName, filters, data } = options;
-  const { storeNames, enforcesOnUpdate } = collectUpdateStoreNames(contract, modelName, data);
-  const needsRowForFks = fkCheckNeedsExistingRow(contract, modelName, data);
+  const storeName = getStoreName(contract, modelName);
+  // Apply defaults first, so the checks and the store list see every field
+  // the write sets, including one an `onUpdate` default fills in.
+  const patch = applyUpdateDefaults(
+    contract.execution?.mutations.defaults,
+    storeName,
+    data,
+    createMutationDefaultsCache()
+  );
+  const { storeNames, enforcesOnUpdate } = collectUpdateStoreNames(contract, modelName, patch);
+  const needsRowForFks = fkCheckNeedsExistingRow(contract, modelName, patch);
   return withMutationScope(executor, storeNames, async (scope) => {
-    if (!needsRowForFks) await validateScalarFks(scope, contract, modelName, data);
-    const storeName = getStoreName(contract, modelName);
+    if (!needsRowForFks) await validateScalarFks(scope, contract, modelName, patch);
     const meta = makePlanMeta(contract);
     const combined =
       filters.length === 0 ? undefined : filters.length === 1 ? filters[0]! : { kind: "and" as const, exprs: filters };
     const filter =
       combined !== undefined ? (row: Record<string, unknown>): boolean => evaluateFilter(combined, row) : undefined;
-    const patch = applyUpdateDefaults(
-      contract.execution?.mutations.defaults,
-      storeName,
-      data,
-      createMutationDefaultsCache()
-    );
 
     if (!enforcesOnUpdate && !needsRowForFks) {
       const rows = await scope.execute({
@@ -1302,7 +1356,7 @@ export async function executeScalarUpdateWithFkValidation(options: {
     } as IdbAtomicPlan);
     const oldRow = oldRows[0];
     if (!oldRow) return null;
-    if (needsRowForFks) await validateScalarFks(scope, contract, modelName, data, oldRow);
+    if (needsRowForFks) await validateScalarFks(scope, contract, modelName, patch, oldRow);
     if (enforcesOnUpdate) await applyReferentialActionsForRowOnUpdate(scope, contract, modelName, oldRow, patch);
     const keyPath = getKeyPath(contract, modelName);
     const key = extractKeyFromRow(oldRow, keyPath);
@@ -1336,22 +1390,24 @@ export async function executeBulkUpdateWithFkValidation(options: {
   data: Record<string, unknown>;
 }): Promise<Record<string, unknown>[]> {
   const { executor, contract, modelName, filters, data } = options;
-  const { storeNames, enforcesOnUpdate } = collectUpdateStoreNames(contract, modelName, data);
-  const needsRowForFks = fkCheckNeedsExistingRow(contract, modelName, data);
+  const storeName = getStoreName(contract, modelName);
+  // Apply defaults first, so the checks and the store list see every field
+  // the write sets, including one an `onUpdate` default fills in.
+  const patch = applyUpdateDefaults(
+    contract.execution?.mutations.defaults,
+    storeName,
+    data,
+    createMutationDefaultsCache()
+  );
+  const { storeNames, enforcesOnUpdate } = collectUpdateStoreNames(contract, modelName, patch);
+  const needsRowForFks = fkCheckNeedsExistingRow(contract, modelName, patch);
   return withMutationScope(executor, storeNames, async (scope) => {
-    if (!needsRowForFks) await validateScalarFks(scope, contract, modelName, data);
-    const storeName = getStoreName(contract, modelName);
+    if (!needsRowForFks) await validateScalarFks(scope, contract, modelName, patch);
     const meta = makePlanMeta(contract);
     const combined =
       filters.length === 0 ? undefined : filters.length === 1 ? filters[0]! : { kind: "and" as const, exprs: filters };
     const filter =
       combined !== undefined ? (row: Record<string, unknown>): boolean => evaluateFilter(combined, row) : undefined;
-    const patch = applyUpdateDefaults(
-      contract.execution?.mutations.defaults,
-      storeName,
-      data,
-      createMutationDefaultsCache()
-    );
 
     if (!enforcesOnUpdate && !needsRowForFks) {
       return scope.execute({
@@ -1373,7 +1429,7 @@ export async function executeBulkUpdateWithFkValidation(options: {
     const keyPath = getKeyPath(contract, modelName);
     const results: Record<string, unknown>[] = [];
     for (const oldRow of oldRows) {
-      if (needsRowForFks) await validateScalarFks(scope, contract, modelName, data, oldRow);
+      if (needsRowForFks) await validateScalarFks(scope, contract, modelName, patch, oldRow);
       if (enforcesOnUpdate) await applyReferentialActionsForRowOnUpdate(scope, contract, modelName, oldRow, patch);
       const key = extractKeyFromRow(oldRow, keyPath);
       const rows = await scope.execute({ meta, kind: "update", storeName, key, patch } as IdbAtomicPlan);

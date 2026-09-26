@@ -11,7 +11,7 @@ IndexedDB has no foreign-key constraints, so the client enforces them itself:
 - **Every write that sets a foreign key checks that the parent exists.**
 - **Every delete and update runs the relation's referential action** (`cascade`, `setNull`, `setDefault`, `restrict` or `noAction`), in the same transaction.
 
-The actions are stored in the IndexedDB target's own storage metadata, not in the framework's shared relation type. Both actions default to `restrict`, and `noAction` behaves like `restrict`. That is what Postgres does with the same Prisma 8 schema, so a synced app's client and server allow the same changes.
+The actions are stored in the IndexedDB target's own storage metadata, not in the framework's shared relation type. Both actions default to `restrict`, and `noAction` behaves like `restrict`. Postgres's default for the same Prisma 8 schema is `NO ACTION`, which rejects the same changes, so a synced app's client and server allow the same changes.
 
 ## Context
 
@@ -48,7 +48,9 @@ These types live in `target-idb/src/core/idb-contract-types.ts`. You set the act
 
 ### 2. Check foreign keys on every write
 
-When `create()`, `createAll()`, `update()`, `updateAll()` or either branch of `upsert()` sets a foreign key, the client checks, inside the write's transaction, that the referenced parent exists. If it doesn't, the transaction aborts with an error naming the relation and the missing values.
+When `create()`, `createAll()`, `update()`, `updateAll()` or either branch of `upsert()` sets a foreign key, the client checks, inside the write's transaction, that the referenced parent exists. If it doesn't, the transaction aborts with an error naming the relation and the missing values. Nested writes are checked the same way: the row being written and every row a relation callback creates.
+
+- **The check sees the row as it's written, after defaults.** A foreign key filled in by `@default(...)`, or by an `onUpdate` default, is checked like one the caller set.
 
 - **A compound foreign key is checked as one tuple.** A single parent row must match every field. Checking the fields one at a time could pass with each value taken from a different parent. When an update sets only some fields of a compound key, the client reads the row first and takes the other fields from it.
 - **A key with any `null` field isn't checked**, like SQL's default `MATCH SIMPLE`.
@@ -68,7 +70,7 @@ When a record is deleted, the client finds every relation whose children point a
 | `restrict` (default) | The delete fails if any children exist.                                   |
 | `noAction`           | Same as `restrict`.                                                       |
 
-The same happens on `update()`, using `onUpdate`, when the update changes a value that children refer to. The client compares the old and new values, so including an unchanged field in the patch doesn't trigger anything. The default `onUpdate` is `restrict`. Declare `onUpdate: Cascade` to copy the new value to the children instead.
+The same happens on `update()`, including a nested update, using `onUpdate`, when the update changes a value that children refer to. The client compares the old and new values, so including an unchanged field in the patch doesn't trigger anything. The default `onUpdate` is `restrict`. Declare `onUpdate: Cascade` to copy the new value to the children instead.
 
 ### Why the defaults match Postgres, not Prisma 7
 
