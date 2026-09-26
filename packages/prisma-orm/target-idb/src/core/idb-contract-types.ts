@@ -116,14 +116,14 @@ export type IdbMutationDefaultGeneratorId = "timestampNow" | "literal" | "uuidv4
 /**
  * Per-relation storage metadata attached to {@link IdbModelStorage}.
  *
- * `onUpdate`'s default (when omitted) is `'cascade'`, unlike `onDelete`'s
- * `'restrict'` default — matching Prisma's own documented behavior:
- * propagating a changed referenced value to children is normally safe,
- * unlike deleting the row those children point to.
+ * Both actions default to `'restrict'` when omitted, and `'noAction'`
+ * behaves like `'restrict'`. That matches what Postgres does with the same
+ * Prisma 8 schema (no clause, so `NO ACTION`), so a synced app's client and
+ * server agree on which changes are allowed.
  */
 export type IdbRelationStorage = {
   readonly onDelete?: IdbReferentialAction; // default: 'restrict'
-  readonly onUpdate?: IdbReferentialAction; // default: 'cascade'
+  readonly onUpdate?: IdbReferentialAction; // default: 'restrict'
 };
 
 /**
