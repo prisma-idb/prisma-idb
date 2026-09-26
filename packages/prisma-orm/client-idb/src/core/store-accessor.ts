@@ -70,17 +70,20 @@ import { loadRelation } from "./relation-loader";
 import {
   applyReferentialActionsForRowOnUpdate,
   collectOnUpdateEnforcementStoreNames,
+  collectScalarFkStoreNames,
   executeBulkUpdateWithFkValidation,
   executeDeleteAllWithReferentialActions,
   executeDeleteWithReferentialActions,
   executeNestedCreateMutation,
   executeNestedUpdateMutation,
+  executeScalarCreateAllWithFkValidation,
   executeScalarCreateWithFkValidation,
   executeScalarUpdateWithFkValidation,
   hasEnforceableChildRelations,
   hasNestedMutationCallbacks,
   hasScalarFkFields,
   requireTransactionExecutor,
+  validateScalarFks,
 } from "./mutation-executor";
 import { withMutationScope } from "./mutation-scope";
 
@@ -781,15 +784,26 @@ export class IdbStoreAccessorImpl<
       this.#modelName,
       effectivePatch
     );
-    const storeNames = [...new Set([storeName, ...onUpdateStoreNames])];
+    // Either branch may set foreign keys, and which one runs isn't known until
+    // the row is looked up, so declare the parent stores both would read.
+    const storeNames = [
+      ...new Set([
+        storeName,
+        ...onUpdateStoreNames,
+        ...collectScalarFkStoreNames(this.#contract, this.#modelName, createRecord),
+        ...collectScalarFkStoreNames(this.#contract, this.#modelName, patchRecord),
+      ]),
+    ];
     return withMutationScope(exec, storeNames, async (scope) => {
       const found = await scope.execute({ meta, kind: "cursor-scan", storeName, filter: matches, take: 1 });
       const existing = found[0];
       if (existing === undefined) {
+        await validateScalarFks(scope, this.#contract, this.#modelName, createRecord);
         const record = applyCreateDefaults(executionDefaults, storeName, createRecord, createMutationDefaultsCache());
         const rows = await scope.execute({ meta, kind: "add", storeName, record });
         return (rows[0] ?? record) as DefaultModelRow<TContract, ModelName>;
       }
+      await validateScalarFks(scope, this.#contract, this.#modelName, patchRecord, existing);
       const key = extractKeyFromRow(existing, keyPath);
       await applyReferentialActionsForRowOnUpdate(scope, this.#contract, this.#modelName, existing, effectivePatch);
       const rows = await scope.execute({ meta, kind: "update", storeName, key, patch: effectivePatch });
@@ -798,6 +812,18 @@ export class IdbStoreAccessorImpl<
   }
 
   createAll(data: CreateInput<TContract, ModelName>[]): AsyncIterableResult<DefaultModelRow<TContract, ModelName>> {
+    const rowsData = data as Record<string, unknown>[];
+    if (rowsData.some((row) => hasScalarFkFields(this.#contract, this.#modelName, row))) {
+      const executor = requireTransactionExecutor(this.#executor);
+      const contract = this.#contract;
+      const modelName = this.#modelName;
+      return new AsyncIterableResult(
+        (async function* (): AsyncGenerator<DefaultModelRow<TContract, ModelName>, void, unknown> {
+          const rows = await executeScalarCreateAllWithFkValidation({ executor, contract, modelName, data: rowsData });
+          for (const row of rows) yield row as DefaultModelRow<TContract, ModelName>;
+        })()
+      );
+    }
     const groupingKey = this.#newGroupingKey();
     const meta = this.#planMeta(groupingKey);
     // One shared cache for the whole batch — every row in a single createAll()

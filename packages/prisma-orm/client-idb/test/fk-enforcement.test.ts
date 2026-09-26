@@ -5,7 +5,7 @@
  *   restrict (default) — throws when children exist; succeeds when none
  *   cascade           — deletes children in the same transaction
  *   setNull           — nulls child FK fields in the same transaction
- *   noAction          — deletes parent, leaves children untouched
+ *   noAction          — behaves like restrict, as NO ACTION does in SQL
  *   setDefault        — throws (unsupported)
  *   deleteAll cascade — cascade propagates for every deleted parent
  *   deleteCount       — inherits enforcement from deleteAll
@@ -20,6 +20,19 @@ import { createIDBRuntimeDriver, type IdbRuntimeDriverInstance } from "@prisma-i
 import type { IdbQueryPlan } from "@prisma-idb/adapter-idb/runtime";
 import { idbOrm } from "../src/exports/orm";
 import type { IdbQueryExecutor, IdbQueryExecutorWithTransaction } from "../src/exports/orm";
+
+/** Untyped view of an accessor, for fixtures whose rows aren't worth typing. */
+type LooseAccessor = {
+  create(d: Record<string, unknown>): Promise<unknown>;
+  createAll(d: Record<string, unknown>[]): { toArray(): Promise<unknown[]> };
+  upsert(args: {
+    where: Record<string, unknown>;
+    create: Record<string, unknown>;
+    update: Record<string, unknown>;
+  }): Promise<unknown>;
+  where(w: Record<string, unknown>): { update(p: Record<string, unknown>): Promise<unknown> };
+  updateAll(p: Record<string, unknown>): { toArray(): Promise<unknown[]> };
+};
 
 // ── Test executor ─────────────────────────────────────────────────────────────
 
@@ -69,7 +82,7 @@ function openTestDb(name: string): Promise<IDBDatabase> {
 }
 
 /** Like {@link openTestDb}, but with an arbitrary set of stores (name → keyPath). Used by multi-hop/self-referential fixtures. */
-function openTestDbWithStores(name: string, stores: Record<string, string>): Promise<IDBDatabase> {
+function openTestDbWithStores(name: string, stores: Record<string, string | string[]>): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const req = indexedDB.open(name, 1);
     req.onupgradeneeded = () => {
@@ -324,16 +337,15 @@ describe("delete — noAction", () => {
   });
   afterEach(() => db.close());
 
-  it("deletes parent and leaves children with dangling FK", async () => {
+  // Postgres rejects this delete for the same schema (NO ACTION only defers
+  // the check), so the client must too, or a synced app diverges.
+  it("behaves like restrict: refuses to delete a parent that has children", async () => {
     const orm = idbOrm({ contract: noActionContract, executor });
     await orm["users"]!.create({ id: "u1", name: "Alice" } as never);
     await orm["posts"]!.create({ id: "p1", title: "Post", authorId: "u1" } as never);
-    await orm["users"]!.delete("u1" as never);
-    expect(await getAllRows(db, "users")).toHaveLength(0);
-    // Posts still exist with the now-dangling authorId.
-    const posts = await getAllRows(db, "posts");
-    expect(posts).toHaveLength(1);
-    expect(posts[0]?.["authorId"]).toBe("u1");
+    await expect(orm["users"]!.delete("u1" as never)).rejects.toThrow(/child records exist/);
+    expect(await getAllRows(db, "users")).toHaveLength(1);
+    expect(await getAllRows(db, "posts")).toHaveLength(1);
   });
 });
 
@@ -464,30 +476,199 @@ const compoundFkContract = defineContract({
   },
 });
 
+// Users are keyed by a compound primary key declared as [orgId, id]; the
+// relation lists the same fields in the other order, so the key-only lookup
+// has to reorder the values into key order.
+const compoundPkParentContract = defineContract({
+  family: idbFamilyPack,
+  target: idbTargetPack,
+  models: {
+    User: { store: "users", key: ["orgId", "id"], fields: { orgId: "String", id: "String", name: "String" } },
+    Post: {
+      store: "posts",
+      key: "id",
+      fields: { id: "String", authorId: "String", authorOrgId: "String", title: "String" },
+      relations: {
+        author: { to: "User", cardinality: "N:1", on: { local: ["authorId", "authorOrgId"], target: ["id", "orgId"] } },
+      },
+    },
+  },
+});
+
 describe("scalar FK validation — compound (multi-field)", () => {
   let db: IDBDatabase;
   let executor: TestExecutorWithTransaction;
+  let orm: Record<string, LooseAccessor>;
 
   beforeEach(async () => {
     const name = nextDbName();
     db = await openTestDb(name);
     executor = new TestExecutorWithTransaction(createIDBRuntimeDriver(name).create());
+    orm = idbOrm({ contract: compoundFkContract, executor }) as unknown as Record<string, LooseAccessor>;
+    await orm["users"]!.create({ id: "u1", orgId: "org-A", name: "Alice" });
+    await orm["users"]!.create({ id: "u2", orgId: "org-B", name: "Bob" });
   });
   afterEach(() => db.close());
 
-  it("refuses to create a row with a compound scalar FK instead of validating each field independently", async () => {
-    const orm = idbOrm({ contract: compoundFkContract, executor });
-    await orm["users"]!.create({ id: "u1", orgId: "org-A", name: "Alice" } as never);
-    await orm["users"]!.create({ id: "u2", orgId: "org-B", name: "Bob" } as never);
+  it("accepts a create whose whole tuple matches one parent", async () => {
+    await orm["posts"]!.create({ id: "p1", postOrgId: "org-A", authorId: "u1", title: "Post" });
+    expect(await getAllRows(db, "posts")).toHaveLength(1);
+  });
 
-    // No single User has both orgId="org-A" AND id="u2" — validating each
-    // field independently would incorrectly let this through (org-A matches
-    // u1, u2 matches u2), silently persisting a value assembled from two
-    // different parent rows.
-    await expect(
-      orm["posts"]!.create({ id: "p1", postOrgId: "org-A", authorId: "u2", title: "Post" } as never)
-    ).rejects.toThrow(/compound.*not supported/i);
+  // Each value matches *some* User (org-A is u1's, u2 is Bob), but no single
+  // User has both. Checking the fields one at a time would let this through.
+  it("rejects a tuple assembled from two different parents", async () => {
+    await expect(orm["posts"]!.create({ id: "p1", postOrgId: "org-A", authorId: "u2", title: "Post" })).rejects.toThrow(
+      /FK violation on relation 'author': no User with orgId='org-A', id='u2'/
+    );
     expect(await getAllRows(db, "posts")).toHaveLength(0);
+  });
+
+  it("doesn't check a tuple with a null field, like SQL's MATCH SIMPLE", async () => {
+    await orm["posts"]!.create({ id: "p1", postOrgId: null, authorId: "nobody", title: "Post" });
+    expect(await getAllRows(db, "posts")).toHaveLength(1);
+  });
+
+  it("update: checks a partly-set key against the row's other key field", async () => {
+    await orm["posts"]!.create({ id: "p1", postOrgId: "org-A", authorId: "u1", title: "Post" });
+    // p1 stays in org-A, and u2 isn't in org-A.
+    await expect(orm["posts"]!.where({ id: "p1" }).update({ authorId: "u2" })).rejects.toThrow(/FK violation/);
+    expect((await getAllRows(db, "posts"))[0]?.["authorId"]).toBe("u1");
+    // Moving both fields together is fine.
+    await orm["posts"]!.where({ id: "p1" }).update({ authorId: "u2", postOrgId: "org-B" });
+    expect((await getAllRows(db, "posts"))[0]?.["authorId"]).toBe("u2");
+  });
+
+  it("updateAll: checks each row's tuple and writes nothing if one fails", async () => {
+    await orm["users"]!.create({ id: "u3", orgId: "org-A", name: "Carol" });
+    await orm["posts"]!.create({ id: "p1", postOrgId: "org-A", authorId: "u1", title: "A" });
+    await orm["posts"]!.create({ id: "p2", postOrgId: "org-B", authorId: "u2", title: "B" });
+    // u3 is in org-A: fine for p1, a violation for p2.
+    await expect(orm["posts"]!.updateAll({ authorId: "u3" }).toArray()).rejects.toThrow(/FK violation/);
+    expect((await getAllRows(db, "posts")).map((p) => p["authorId"]).sort()).toEqual(["u1", "u2"]);
+  });
+
+  it("uses a key-only lookup for a compound primary key declared in a different order", async () => {
+    const name = nextDbName();
+    const keyedDb = await openTestDbWithStores(name, { users: ["orgId", "id"], posts: "id" });
+    const keyedExecutor = new TestExecutorWithTransaction(createIDBRuntimeDriver(name).create());
+    const keyed = idbOrm({ contract: compoundPkParentContract, executor: keyedExecutor }) as unknown as Record<
+      string,
+      LooseAccessor
+    >;
+    try {
+      await keyed["users"]!.create({ orgId: "org-A", id: "u1", name: "Alice" });
+      await keyed["posts"]!.create({ id: "p1", authorId: "u1", authorOrgId: "org-A", title: "ok" });
+      await expect(
+        keyed["posts"]!.create({ id: "p2", authorId: "u1", authorOrgId: "org-B", title: "bad" })
+      ).rejects.toThrow(/FK violation/);
+      expect(await getAllRows(keyedDb, "posts")).toHaveLength(1);
+    } finally {
+      keyedDb.close();
+    }
+  });
+});
+
+const compoundSetDefaultContract = defineContract({
+  family: idbFamilyPack,
+  target: idbTargetPack,
+  models: {
+    User: {
+      store: "users",
+      key: "id",
+      fields: { id: "String", orgId: "String", name: "String" },
+      relations: {
+        posts: {
+          to: "Post",
+          cardinality: "1:N",
+          on: { local: ["orgId", "id"], target: ["postOrgId", "authorId"] },
+          onDelete: "setDefault",
+        },
+      },
+    },
+    Post: {
+      store: "posts",
+      key: "id",
+      fields: { id: "String", postOrgId: "String", authorId: "String", title: "String" },
+      fieldDefaults: { postOrgId: "org-S", authorId: "system" },
+    },
+  },
+});
+
+describe("delete — setDefault on a compound relation", () => {
+  let db: IDBDatabase;
+  let orm: Record<string, LooseAccessor & { delete(k: unknown): Promise<unknown> }>;
+
+  beforeEach(async () => {
+    const name = nextDbName();
+    db = await openTestDb(name);
+    const executor = new TestExecutorWithTransaction(createIDBRuntimeDriver(name).create());
+    orm = idbOrm({ contract: compoundSetDefaultContract, executor }) as unknown as typeof orm;
+    await orm["users"]!.create({ id: "u1", orgId: "org-A", name: "Alice" });
+    await orm["posts"]!.create({ id: "p1", postOrgId: "org-A", authorId: "u1", title: "Post" });
+  });
+  afterEach(() => db.close());
+
+  it("re-points children at the default tuple when one parent matches all of it", async () => {
+    await orm["users"]!.create({ id: "system", orgId: "org-S", name: "System" });
+    await orm["users"]!.delete("u1");
+    const post = (await getAllRows(db, "posts"))[0];
+    expect([post?.["postOrgId"], post?.["authorId"]]).toEqual(["org-S", "system"]);
+  });
+
+  it("refuses when the default tuple matches no single parent", async () => {
+    // A "system" user exists, but in the wrong org.
+    await orm["users"]!.create({ id: "system", orgId: "org-X", name: "System" });
+    await expect(orm["users"]!.delete("u1")).rejects.toThrow(/does not reference a real row/);
+    expect(await getAllRows(db, "users")).toHaveLength(2);
+  });
+});
+
+describe("scalar FK validation — createAll and upsert", () => {
+  let db: IDBDatabase;
+  let orm: Record<string, LooseAccessor>;
+
+  beforeEach(async () => {
+    const name = nextDbName();
+    db = await openTestDb(name);
+    const executor = new TestExecutorWithTransaction(createIDBRuntimeDriver(name).create());
+    orm = idbOrm({ contract: compoundFkContract, executor }) as unknown as Record<string, LooseAccessor>;
+    await orm["users"]!.create({ id: "u1", orgId: "org-A", name: "Alice" });
+  });
+  afterEach(() => db.close());
+
+  it("createAll checks every row and writes none if one fails", async () => {
+    const rows = [
+      { id: "p1", postOrgId: "org-A", authorId: "u1", title: "ok" },
+      { id: "p2", postOrgId: "org-A", authorId: "ghost", title: "bad" },
+    ];
+    await expect(orm["posts"]!.createAll(rows).toArray()).rejects.toThrow(/FK violation/);
+    expect(await getAllRows(db, "posts")).toHaveLength(0);
+
+    expect(await orm["posts"]!.createAll(rows.slice(0, 1)).toArray()).toHaveLength(1);
+  });
+
+  it("upsert checks the create branch", async () => {
+    await expect(
+      orm["posts"]!.upsert({
+        where: { id: "p1" },
+        create: { id: "p1", postOrgId: "org-A", authorId: "ghost", title: "bad" },
+        update: {},
+      })
+    ).rejects.toThrow(/FK violation/);
+    expect(await getAllRows(db, "posts")).toHaveLength(0);
+  });
+
+  it("upsert checks the update branch, using the existing row for a partly-set key", async () => {
+    await orm["posts"]!.create({ id: "p1", postOrgId: "org-A", authorId: "u1", title: "ok" });
+    await expect(
+      orm["posts"]!.upsert({
+        where: { id: "p1" },
+        create: { id: "p1", postOrgId: "org-A", authorId: "u1", title: "ok" },
+        update: { authorId: "ghost" },
+      })
+    ).rejects.toThrow(/FK violation/);
+    expect((await getAllRows(db, "posts"))[0]?.["authorId"]).toBe("u1");
   });
 });
 
@@ -745,6 +926,7 @@ const selfReferentialCascadeContract = defineContract({
           cardinality: "1:N",
           on: { local: ["id"], target: ["managerId"] },
           onDelete: "cascade",
+          onUpdate: "cascade",
         },
       },
     },
@@ -1123,17 +1305,45 @@ describe("onUpdate — noAction", () => {
   });
   afterEach(() => db.close());
 
-  it("updates the parent and leaves children with a now-dangling FK", async () => {
+  it("behaves like restrict: refuses to change a value children refer to", async () => {
     const orm = idbOrm({ contract: onUpdateNoActionContract, executor });
     await orm["users"]!.create({ id: "u1", slug: "alice", name: "Alice" } as never);
     await orm["posts"]!.create({ id: "p1", authorSlug: "alice", title: "Post" } as never);
 
-    await orm["users"]!.where({ id: "u1" } as never).update({ slug: "alice2" } as never);
+    await expect(orm["users"]!.where({ id: "u1" } as never).update({ slug: "alice2" } as never)).rejects.toThrow(
+      /would orphan child records/
+    );
 
-    const users = await getAllRows(db, "users");
-    expect(users[0]?.["slug"]).toBe("alice2");
-    const posts = await getAllRows(db, "posts");
-    expect(posts[0]?.["authorSlug"]).toBe("alice");
+    expect((await getAllRows(db, "users"))[0]?.["slug"]).toBe("alice");
+    expect((await getAllRows(db, "posts"))[0]?.["authorSlug"]).toBe("alice");
+  });
+
+  // Prisma 8 emits no ON UPDATE clause for an undeclared action, so Postgres
+  // uses NO ACTION. The client's default must match.
+  it("an undeclared onUpdate defaults to restrict", async () => {
+    const undeclared = defineContract({
+      family: idbFamilyPack,
+      target: idbTargetPack,
+      models: {
+        User: {
+          store: "users",
+          key: "id",
+          fields: { id: "String", slug: "String", name: "String" },
+          relations: { posts: { to: "Post", cardinality: "1:N", on: { local: ["slug"], target: ["authorSlug"] } } },
+        },
+        Post: { store: "posts", key: "id", fields: { id: "String", authorSlug: "String", title: "String" } },
+      },
+    });
+    const orm = idbOrm({ contract: undeclared, executor });
+    await orm["users"]!.create({ id: "u1", slug: "alice", name: "Alice" } as never);
+    await orm["posts"]!.create({ id: "p1", authorSlug: "alice", title: "Post" } as never);
+
+    await expect(orm["users"]!.where({ id: "u1" } as never).update({ slug: "alice2" } as never)).rejects.toThrow(
+      /would orphan child records/
+    );
+    // Changing a field no child refers to is still allowed.
+    await orm["users"]!.where({ id: "u1" } as never).update({ name: "Alicia" } as never);
+    expect((await getAllRows(db, "users"))[0]?.["name"]).toBe("Alicia");
   });
 });
 
