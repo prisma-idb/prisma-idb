@@ -28,6 +28,7 @@ import {
 } from "../src/core/migration-factories";
 import { IdbMigrationPlanner, contractToIdbSchema } from "../src/core/migration-planner";
 import { IdbMigrationRunner, openAndUpgrade, readMarker } from "../src/core/migration-runner";
+import type { IdbDdlOp } from "../src/core/migration-factories";
 import { IdbMigrationControlDriverDescriptor, extractMigrationDriver } from "../src/core/migration-driver";
 import type { IdbSchemaDiffInput } from "../src/core/schema-diff";
 import type { MigrationOperationPolicy } from "@prisma/orm-framework/components/control";
@@ -566,13 +567,12 @@ describe("openAndUpgrade", () => {
     db.close();
   });
 
-  // Regression for PLAN Issue #25 / ADR 002: the two-phase marker write leaves a
-  // window where the schema is advanced but the marker still points at the old
-  // hash (tab killed between the version-change commit and the marker `put`). On
-  // recovery the chain walk re-collects the already-applied ops and replays them.
-  // applyOneDdlOp must be idempotent or the version-change tx aborts and wedges
-  // the DB forever. This replays the full baseline op set at a higher version.
-  it("re-applying already-applied ops is idempotent (crash-recovery replay)", async () => {
+  // A database whose schema is ahead of its marker (for example one left by an
+  // older build that wrote the marker in a separate transaction) replays ops
+  // that already ran. Without the existence guards in applyOneDdlOp,
+  // createObjectStore/createIndex would throw ConstraintError and abort every
+  // later upgrade.
+  it("re-applying already-applied ops is a no-op", async () => {
     const name = dbName();
     const ops = diffIdbSchema(null, {
       stores: {
@@ -581,8 +581,7 @@ describe("openAndUpgrade", () => {
     });
     await openAndUpgrade({ factory: indexedDB, dbName: name, targetVersion: 1, ops });
 
-    // Replay the identical ops at a bumped version — simulates a recovery run
-    // after the marker write was lost. Must NOT throw ConstraintError.
+    // Replay the identical ops at a bumped version. Must not throw ConstraintError.
     await expect(openAndUpgrade({ factory: indexedDB, dbName: name, targetVersion: 2, ops })).resolves.toBeTypeOf(
       "number"
     );
@@ -598,9 +597,8 @@ describe("openAndUpgrade", () => {
     db.close();
   });
 
-  // Dropping a store/index that is already gone must also be a no-op so a
-  // destructive migration can likewise be replayed after a lost marker write.
-  it("re-applying drops is idempotent", async () => {
+  // Dropping a store that is already gone must also be a no-op.
+  it("re-applying drops is a no-op", async () => {
     const name = dbName();
     await openAndUpgrade({
       factory: indexedDB,
@@ -616,9 +614,86 @@ describe("openAndUpgrade", () => {
     ).resolves.toBeTypeOf("number");
   });
 
-  // ADR 010: combined multi-space apply passes N markers to a single
-  // openAndUpgrade call instead of calling it N times.
-  describe("markers (ADR 010 — combined multi-space apply)", () => {
+  describe("schema changes and markers commit together", () => {
+    async function openExisting(name: string): Promise<IDBDatabase> {
+      return new Promise<IDBDatabase>((res, rej) => {
+        const req = indexedDB.open(name);
+        req.onsuccess = (e) => res((e.target as IDBOpenDBRequest).result);
+        req.onerror = (e) => rej((e.target as IDBOpenDBRequest).error);
+      });
+    }
+
+    it("writes the marker in the upgrade itself", async () => {
+      const name = dbName();
+      await openAndUpgrade({
+        factory: indexedDB,
+        dbName: name,
+        targetVersion: 1,
+        ops: [createMarkerStoreOp(), createObjectStoreOp("users", { keyPath: "id" })],
+        markers: [{ space: "app", storageHash: "sha256:v1" }],
+      });
+
+      const db = await openExisting(name);
+      expect(db.version).toBe(1);
+      expect((await readMarker(db, "app"))?.storageHash).toBe("sha256:v1");
+      db.close();
+    });
+
+    it("a failing op rolls back the schema and writes no marker", async () => {
+      const name = dbName();
+      const indexOnMissingStore: IdbDdlOp = {
+        kind: "createIndex",
+        id: "index.missing.byThing.create",
+        label: 'Create index "byThing" on "missing"',
+        operationClass: "additive",
+        storeName: "missing",
+        indexName: "byThing",
+        def: { keyPath: "thing", unique: false },
+      };
+      await expect(
+        openAndUpgrade({
+          factory: indexedDB,
+          dbName: name,
+          targetVersion: 1,
+          ops: [createMarkerStoreOp(), createObjectStoreOp("users", { keyPath: "id" }), indexOnMissingStore],
+          markers: [{ space: "app", storageHash: "sha256:v1" }],
+        })
+      ).rejects.toMatchObject({ name: "NotFoundError" });
+
+      const db = await openExisting(name);
+      expect(db.objectStoreNames.contains("users")).toBe(false);
+      expect(await readMarker(db, "app")).toBeNull();
+      db.close();
+    });
+
+    it("a missing marker store fails the upgrade and rolls back the schema", async () => {
+      const name = dbName();
+      await openAndUpgrade({
+        factory: indexedDB,
+        dbName: name,
+        targetVersion: 1,
+        ops: [createObjectStoreOp("users", { keyPath: "id" })],
+      });
+
+      await expect(
+        openAndUpgrade({
+          factory: indexedDB,
+          dbName: name,
+          targetVersion: 2,
+          ops: [createObjectStoreOp("posts", { keyPath: "id" })],
+          markers: [{ space: "app", storageHash: "sha256:v2" }],
+        })
+      ).rejects.toThrow(/_prisma_next_marker/);
+
+      const db = await openExisting(name);
+      expect(db.version).toBe(1);
+      expect(db.objectStoreNames.contains("posts")).toBe(false);
+      db.close();
+    });
+  });
+
+  // A multi-space apply passes every space's marker to one openAndUpgrade call.
+  describe("markers for several contract spaces", () => {
     it("writes multiple markers from a single openAndUpgrade call", async () => {
       const name = dbName();
       const ops = [

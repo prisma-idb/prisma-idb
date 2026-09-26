@@ -244,8 +244,8 @@ export const createPostsByAuthorIdIndexOp = {
 /**
  * A genuinely-broken op: create an index on a store that was never created.
  * The apply path calls `tx.objectStore("does-not-exist")`, which throws
- * NotFoundError. (Dropping a non-existent store is NOT a failure — the DDL
- * apply path is idempotent for crash-recovery replay; see ADR 002 / Issue #25.)
+ * NotFoundError. (Dropping a non-existent store is NOT a failure, because
+ * each DDL op skips itself when there's nothing to do.)
  */
 export const indexOnMissingStoreOp = {
   kind: "createIndex",

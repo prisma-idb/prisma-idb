@@ -71,9 +71,9 @@ export interface AutoMigrateClientOptions<TContract extends IdbContract> {
    * Additional contract spaces from IDB extensions.
    *
    * Every space with pending work — the application space plus each
-   * extension — is applied together in one combined `upgradeneeded`
-   * transaction and one batched marker-write transaction (ADR 010). Each
-   * space still gets its own marker row in `_prisma_next_marker`.
+   * extension — is applied together in one `upgradeneeded` transaction,
+   * which also writes every space's marker. Each space still gets its own
+   * marker row in `_prisma_next_marker`.
    */
   readonly extensions?: ReadonlyArray<IdbExtensionSpace>;
 }
@@ -153,9 +153,9 @@ function mergePolicy(p?: MigrationPolicy): Required<MigrationPolicy> {
  * The migration loop. Exported for tests.
  *
  * Collects pending ops from the app space and every extension space, then
- * applies all of them in a single combined `upgradeneeded` transaction
- * (one IDB version bump total) followed by one batched marker-write
- * transaction covering every space that migrated. See ADR 010 for details.
+ * applies all of them in a single `upgradeneeded` transaction (one IDB
+ * version bump total). The same transaction writes the marker of every
+ * space that migrated, so schema changes and markers commit together.
  *
  * @internal Prefer {@link createAutoMigratingIdbClient}.
  */
@@ -256,18 +256,15 @@ export async function autoMigrate(input: {
   if (pendingPerSpace.length === 0) return;
 
   // Combine every pending space into ONE upgradeneeded transaction (one IDB
-  // version bump total) and ONE batched marker-write transaction (ADR 010).
-  // This gives true cross-space atomicity — a failure partway through no
-  // longer leaves some spaces migrated and others not — and cuts the number
-  // of versionchange/blocked cycles a multi-tab user hits on cold start from
-  // N (one per space) to 1.
+  // version bump total), which also writes every space's marker. A failure
+  // partway through rolls back all spaces' schema changes and markers, and a
+  // multi-tab user hits one versionchange/blocked cycle on cold start instead
+  // of one per space.
   //
-  // DDL op order within the combined transaction is extensions
-  // (alphabetical-by-spaceId) first, app-space last, matching upstream
-  // ADR 212's convention. That ordering is safe here specifically because
-  // marker writes happen in the separate phase-2 transaction below, which
-  // only runs after every space's DDL — including the app space's
-  // `_prisma_next_marker` creation — has already committed in phase 1.
+  // DDL op order is extensions (alphabetical by spaceId) first, app space
+  // last, matching upstream ADR 212's convention. That's safe even though the
+  // app space creates `_prisma_next_marker`: openAndUpgrade writes the
+  // markers only after every op has run.
   const orderedPending = [...pendingPerSpace].sort((a, b) => {
     if (a.spaceId === APP_SPACE_ID) return 1;
     if (b.spaceId === APP_SPACE_ID) return -1;

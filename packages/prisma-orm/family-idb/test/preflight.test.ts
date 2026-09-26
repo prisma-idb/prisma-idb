@@ -86,9 +86,9 @@ const createPosts = {
 
 // A genuinely-broken op: create an index on a store that was never created.
 // `applyOneDdlOp` calls `tx.objectStore("missing-store")`, which throws
-// NotFoundError. (Note: dropping a non-existent store is NOT a failure — the
-// DDL apply path is idempotent for crash-recovery replay, see ADR 002 / Issue
-// #25 — so we exercise a real structural break here instead.)
+// NotFoundError. (Dropping a non-existent store is NOT a failure, because
+// each DDL op skips itself when there's nothing to do, so we exercise a real
+// structural break here instead.)
 const indexOnMissingStore = {
   kind: "createIndex",
   id: "index.missing-store.byThing.create",
