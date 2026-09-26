@@ -1,54 +1,93 @@
-# ADR 017 — Native IndexedDB Feature Parity
+# ADR 017: Native IndexedDB features
 
-## Context
+- **Status:** Accepted
+- **Date:** 2026-09-25
+- **Area:** Driver, ORM
 
-Phase 9 audited the IndexedDB Web API against what the IDB family actually emits and calls (`plans/PLAN_9.0_idb_web_api_feature_parity.md`). The audit found four real gaps and one hardening need; this ADR records what was decided, what was deliberately deferred, and why. Sub-plans: `PLAN_9.3_native_count.md`, `PLAN_9.4_key_only_reads.md`.
+## Summary
+
+An audit of the IndexedDB API against what these packages actually use found four gaps. This ADR records what we now use and what we deliberately left out:
+
+- **Compound keys and indexes.** Stores and indexes can be keyed on several fields.
+- **Native `count()`.** Used only when it gives exactly the same answer as counting rows.
+- **Key-only reads.** Used for checks that only ask whether a row exists.
+- **Clear errors for inactive transactions.** A request on an already-finished transaction now gets its own error code.
 
 ## Decision
 
-### 1. Compound primary keys and compound indexes are supported natively (9.1, 9.2)
+### 1. Compound primary keys and indexes
 
-`@@id([a, b])`, `@@unique([a, b])` and `@@index([a, b])` map to array `keyPath`s (`createObjectStore(name, { keyPath: [...] })` / `createIndex(name, [...])`). The earlier rejection ("IDB does not support compound primary keys") was wrong and is removed.
+`@@id([a, b])`, `@@unique([a, b])` and `@@index([a, b])` now map to IndexedDB's array key paths: `createObjectStore(name, { keyPath: [...] })` and `createIndex(name, [...])`. An earlier version of the schema interpreter rejected compound keys, saying IndexedDB doesn't support them. That was wrong, and the rejection is gone.
 
-- `IdbKeyPath = string | readonly string[]`. Key construction goes through `extractKeyFromRow`; key comparison and dedup go through `keyEquals`/`keyToken` (Date/binary/nested-array aware, using `indexedDB.cmp` when available).
-- `getKeyPath` throws when a model has no `storage.keyPath` — the old silent `"id"` fallback was removed (it hid contract errors).
-- **Compound ≠ `multiEntry`.** A compound index composes several fields into one key; `multiEntry` explodes one array field into many entries. Orthogonal.
-- Compound/`multiEntry` indexes are excluded from the single-field equality-hint map (`buildFieldToIndexMap`). A lone `eq` cannot pin a compound key; accelerating them is a planner decision (Phase 10).
+- **Key paths.** A key path is `IdbKeyPath = string | readonly string[]`. Field order matters: `["a", "b"]` and `["b", "a"]` are different keys.
+- **Building and comparing keys.** Keys are built from a row with `extractKeyFromRow`. They are compared with `keyEquals` and turned into `Map`/`Set` keys with `keyToken`. Both handle `Date`, binary and array keys by value, and `keyEquals` uses `indexedDB.cmp` when it's available.
+- **No silent fallback.** `getKeyPath` throws when a model has no `storage.keyPath`. It used to fall back to `"id"`, which hid broken contracts.
+- **Compound is not `multiEntry`.** A compound index combines several fields into one key. A `multiEntry` index turns one array field into several entries. They are separate features, and IndexedDB rejects combining them.
+- **No single-field acceleration.** Compound and `multiEntry` indexes aren't used to speed up single-field equality filters. One `eq` condition can't pin a whole compound key. Using them well is a job for a future query planner.
 
-### 2. Native `count()` is used only when entries == rows (9.3)
+### 2. Native `count()`, only when entries equal rows
 
-`IdbCountPlan` (`store.count(range)` / `index.count(range)`) backs the ORM `.count()` terminal and count-only `aggregate()`, **only** when there is no in-memory filter and the path can't double-count (no OR union, no `multiEntry`/compound index). `skip`/`take` are applied arithmetically to the native total (`clampCount`). Everything else stays a materialized scan. Result rows are synthetic (`[{ count }]`) so the driver keeps ADR 006's collect-then-yield contract.
+`count()` and a count-only `aggregate()` use IndexedDB's own `store.count(range)` or `index.count(range)` through a new `IdbCountPlan`. They do so only when the result is guaranteed to match counting the rows:
 
-### 3. Key-only reads are used where only existence matters (9.4)
+- **No in-memory filter.** The whole `where` must be expressed as a key range.
+- **No OR query.** Counting each branch separately would count a row twice if it matched two branches.
+- **No `multiEntry` or compound index.** One record can have several entries in a `multiEntry` index.
 
-`IdbKeysPlan` (`getKey(range)` for `take: 1`, else `getAllKeys(range, take)`; rows `[{ key }]`/`[]`). Wired only to lookups that are "does a row whose own single-field primary key equals V exist": FK validation (create/update), the `setDefault` default-exists check, and `restrict` on a shared-PK 1:1. Lookups that consume row values (cascade, `setNull`, upsert, non-PK targets) stay `cursor-scan`. Side effect: the key-only path compares by IDB key equality, fixing a false "FK violation" for `DateTime`-keyed parents (`===` on two equal `Date`s). `getAllKeys` has no consumer yet (Phase 10.5).
+`skip` and `take` are applied to the native total arithmetically (`clampCount`), which gives the same result. Everything else still reads and counts the rows.
 
-### 4. Dead-transaction failures are diagnosable (9.5)
+The driver returns the count as a single row, `[{ count }]`, so its result shape stays the same ([ADR 006](ADR%20006%20-%20Collect%20then%20Yield%20Full%20Row%20Materialization.md)).
 
-The implicit-auto-commit design (ADR 005) is sound but its failure mode was a bare `DOMException`. Now:
+### 3. Key-only reads where only existence matters
 
-- `TransactionInactiveError`/`InvalidStateError` thrown by request issuance or `objectStore()` become `IdbExecuteError` with code `TRANSACTION_INACTIVE` and a message pointing at ADR 005/007 (`executeOpInTx`, `IdbTransactionScope.execute`, batch runner). Previously `objectStore()` on a finished transaction was misreported as `STORE_NOT_FOUND`.
-- `executeOpInTx` has a `default` case, so an unknown plan kind (e.g. a stale driver build) errors instead of hanging.
-- Real-browser Playwright coverage (Chromium + WebKit, `apps/prisma-orm-usage/tests/fkEnforcement/cascade-transaction-lifetime.spec.ts`): 3-level cascade, wide fanout, rollback after a multi-store delete chain, and `TRANSACTION_INACTIVE` surfacing. The rollback test uses raw delete plans shaped like a cascade because the demo contract has no operation that fails mid-cascade.
+A new `IdbKeysPlan` reads primary keys without loading records. It uses `getKey(range)` when `take` is 1, and `getAllKeys(range, take)` otherwise. It returns `[{ key }]`, or `[]` when nothing matches.
 
-### Deliberately deferred
+It is used only for "does a row with this primary key exist?":
 
-| Feature                                                   | Why deferred                                                                                                                                 |
-| --------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `cursor.continuePrimaryKey` (keyset pagination)           | No call site needs it; revisit if Phase 10 benchmarks show `skip`-heavy pagination is costly.                                                |
-| `IDBTransaction.durability`                               | No evidence commit latency matters; needs Tier 2 benchmark evidence first.                                                                   |
-| `indexedDB.databases()`, `navigator.storage.*`            | Host/environment APIs, not query surface.                                                                                                    |
-| Explicit `transaction.commit()`                           | Implicit commit verified safe (§4); explicit commit changes nothing.                                                                         |
-| Range-operator/compound-index acceleration, cost-based OR | Planner work — Phase 10.                                                                                                                     |
-| `getAllKeys` consumers, non-PK key-only FK lookups        | Need Phase 10.5's index routing.                                                                                                             |
-| `db.transaction()` JSDoc warning                          | The ergonomic API isn't wired to the public client yet; it must carry the "only await IDB-request-resolving promises" warning when it ships. |
+- foreign-key checks on every write, including compound keys that reference a compound primary key,
+- `setDefault`'s check that the default value's parent exists,
+- `restrict` on a 1:1 relation where the child's primary key is also its foreign key.
+
+Lookups that need the row's values, such as `cascade`, `setNull` and references to non-key fields, still scan records.
+
+The key-only path compares by IndexedDB key equality. This fixed a false "FK violation" for parents keyed by a `DateTime`, where two equal `Date` objects are never `===`. The joins that later follow those foreign keys, in referential actions and `include()`, now compare the same way ([ADR 009](ADR%20009%20-%20FK%20Validation%20and%20Referential%20Action%20Enforcement.md)).
+
+Nothing uses `getAllKeys` yet.
+
+### 4. Clear errors when a transaction is no longer active
+
+Letting IndexedDB commit transactions automatically is still the right design ([ADR 005](ADR%20005%20-%20Event-Driven%20Execution%20No%20Async%20Await.md)). But when code breaks the rule, the error used to be a bare `DOMException`. Now:
+
+- **A dedicated error code.** A `TransactionInactiveError` or `InvalidStateError` thrown when issuing a request or calling `objectStore()` becomes an `IdbExecuteError` with the code `TRANSACTION_INACTIVE`, and a message explaining the auto-commit rule. This applies in single operations, batches and `IdbTransactionScope.execute`.
+- **No more misleading `STORE_NOT_FOUND`.** Calling `objectStore()` on a finished transaction used to be reported that way.
+- **No hang on an unknown plan kind.** The driver's dispatcher has a `default` case, so an unknown plan kind, for example from an outdated driver build, fails with an error instead of never completing.
+- **Real-browser tests.** `apps/prisma-orm-usage/tests/fkEnforcement/cascade-transaction-lifetime.spec.ts` runs in Chromium and WebKit. It covers a three-level cascade, a wide fan-out, rollback after a chain of deletes across stores, and the `TRANSACTION_INACTIVE` error. The rollback test uses hand-built delete plans, because the demo contract has no operation that fails part-way through a cascade.
+
+### Deliberately left out
+
+| Feature                                                          | Why                                                                                                |
+| ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `cursor.continuePrimaryKey` (keyset pagination)                  | Nothing needs it yet. Worth revisiting if benchmarks show `skip`-heavy pagination is slow.         |
+| `IDBTransaction.durability`                                      | No evidence that commit latency matters. Needs benchmarks first.                                   |
+| `indexedDB.databases()`, `navigator.storage`                     | These are environment APIs, not part of querying.                                                  |
+| Explicit `transaction.commit()`                                  | Automatic commit is safe (section 4), so an explicit commit would change nothing.                  |
+| Range and compound-index acceleration, cost-based OR             | Needs a query planner.                                                                             |
+| Consumers of `getAllKeys`, key-only reads for non-key references | These need a way to route a lookup through the right index, which the query planner would provide. |
 
 ## Consequences
 
-- Any Prisma schema with `@@id`/`@@unique`/`@@index` over several fields can target IDB (unblocks the MyFit schema).
-- Plan-kind additions have a fixed ripple: `plan-body.ts`, `execute/ops.ts`, an error code, `sync-executor.ts`'s exhaustive switch, and the driver's runtime type export. `client-idb` resolves `driver-idb` from `dist`, so rebuild it before running client tests.
-- Native count has a real-browser parity risk that is only covered by fake-indexeddb unit tests today.
+- **More schemas can target IndexedDB.** Any schema with multi-field `@@id`, `@@unique` or `@@index` now works, including the MyFit app's.
+- **Adding a plan kind touches five places:**
+  - `plan-body.ts`,
+  - `execute/ops.ts`,
+  - a new error code,
+  - the exhaustive switch in `sync-extension-idb`'s `sync-executor.ts`,
+  - the driver's runtime type exports.
+- **`client-idb` tests use the built driver.** `client-idb` imports `driver-idb` from its `dist` folder, so rebuild the driver before running them.
+- **Native count is only tested in `fake-indexeddb`.** We haven't yet checked it against real browsers.
 
 ## Related
 
-ADR 005 (no async inside transactions), ADR 006 (collect-then-yield), ADR 007 (two transaction APIs), ADR 009 (referential actions).
+- [ADR 005](ADR%20005%20-%20Event-Driven%20Execution%20No%20Async%20Await.md): no `await` inside transactions.
+- [ADR 006](ADR%20006%20-%20Collect%20then%20Yield%20Full%20Row%20Materialization.md): the driver's result shape.
+- [ADR 007](ADR%20007%20-%20Two%20Transaction%20APIs.md): the manual transaction API.
+- [ADR 009](ADR%20009%20-%20FK%20Validation%20and%20Referential%20Action%20Enforcement.md): foreign-key checks and referential actions.

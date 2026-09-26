@@ -1,60 +1,66 @@
-# ADR 004 — Driver Isolation via IdbRowFilter Closure Boundary
+# ADR 004: Driver isolation via a row-filter function
+
+- **Status:** Accepted
+- **Date:** 2026-05-24
+- **Area:** Package boundaries
+
+## Summary
+
+A cursor-scan plan carries its filter as a plain function, `IdbRowFilter = (row) => boolean`, rather than as a filter expression. The ORM builds that function from the filter expression before the plan reaches the driver. So `driver-idb` never imports the query layer, and it has no dependencies on the other IndexedDB packages.
 
 ## Context
 
-The driver (`driver-idb`) is the lowest-level package — it opens IDB connections, executes plans, and yields rows. It has no opinion about queries. Above it, the adapter (`adapter-idb`) owns the filter expression AST (`IdbFilterExpr`) and the evaluation logic (`evaluateFilter()`).
+`driver-idb` is the lowest-level package. It opens connections, runs plans and returns rows. It has no knowledge of queries. The filter expression type (`IdbFilterExpr`) and `evaluateFilter()` live higher up, in `adapter-idb` ([ADR 003](ADR%20003%20-%20Plain%20Frozen%20Objects%20for%20Filter%20AST.md)).
 
-When the ORM layer builds a cursor-scan plan that includes a filter (e.g. `where({ active: true })`), the filter must get from the ORM down to the driver's cursor loop. There are two ways to do this:
+When the ORM builds a cursor scan with a filter, such as `where({ active: true })`, the filter has to reach the driver's cursor loop. There are two options:
 
-1. **Pass the AST:** The `IdbCursorScanPlan` carries `filter?: IdbFilterExpr`. The driver imports `evaluateFilter` from `adapter-idb` to interpret it.
-2. **Pass a closure:** The `IdbCursorScanPlan` carries `filter?: IdbRowFilter` where `IdbRowFilter = (row: Record<string, unknown>) => boolean`. The adapter builds the closure before the plan reaches the driver.
+1. **Pass the expression.** The plan carries `filter?: IdbFilterExpr`, and the driver imports `evaluateFilter` to run it.
+2. **Pass a function.** The plan carries `filter?: IdbRowFilter`, a function built before the plan reaches the driver.
 
 ## Decision
 
-Use the closure boundary. The driver's plan type carries `filter?: IdbRowFilter` — an opaque predicate function. `adapter-idb` builds the closure by calling `evaluateFilter(expr, row)` when the plan is being assembled. The driver never imports anything from `adapter-idb`.
+Pass a function. `IdbRowFilter` is defined in `driver-idb` itself, so the driver needs no imports to describe it. `client-idb` wraps the filter expression in a function when it builds the plan:
 
 ```ts
-// In adapter-idb (plan assembly):
-const filter: IdbRowFilter = expr ? (row) => evaluateFilter(expr, row) : undefined;
-const plan: IdbCursorScanPlan = { kind: 'cursor-scan', storeName, filter, ... };
+// client-idb, when building the plan:
+const filter = expr ? (row) => evaluateFilter(expr, row) : undefined;
+const plan: IdbCursorScanPlan = { kind: "cursor-scan", storeName, filter /* ... */ };
 
-// In driver-idb (cursor execution):
-if (plan.filter && !plan.filter(row)) continue; // driver has no idea what IdbFilterExpr is
+// driver-idb, in the cursor loop. It doesn't know what an IdbFilterExpr is:
+if (plan.filter && !plan.filter(row)) continue;
 ```
 
-## Why the closure boundary is correct
+### Why
 
-**Package dependency direction.** The established dependency graph is:
+- **Dependencies point one way.** The IndexedDB packages depend on each other like this:
 
-```
-driver-idb → (nothing in this family)
-adapter-idb → target-idb
-runtime-idb → adapter-idb, driver-idb
-client-idb → target-idb, adapter-idb, driver-idb
-```
+  ```
+  driver-idb  → (no IndexedDB packages)
+  target-idb  → (no IndexedDB packages)
+  adapter-idb → driver-idb, target-idb
+  runtime-idb → adapter-idb, driver-idb
+  client-idb  → adapter-idb, driver-idb, runtime-idb, target-idb
+  ```
 
-If the driver imported `evaluateFilter` from `adapter-idb`, the dependency direction would be reversed: `driver-idb → adapter-idb`. This would couple the lowest-level executor to the query layer, making it impossible to use the driver without the full adapter stack.
+  If the driver imported `evaluateFilter`, it would depend on `adapter-idb`, which already depends on the driver. The lowest layer would then be tied to the query layer.
 
-**The driver's contract is execution, not interpretation.** The driver's job is: open a transaction, walk a cursor, apply a predicate, yield rows. It does not need to know whether that predicate came from a filter expression, a stored query, a hardcoded lambda, or anything else. The predicate is a black box to the driver.
+- **The driver runs predicates. It doesn't interpret them.** Its job is to open a transaction, walk a cursor, apply a predicate and return rows. Where the predicate came from doesn't matter to it.
+- **A smaller driver.** The driver could later be used on its own, for example with a different query layer or in a service worker, without pulling in the adapter.
+- **Plans are visibly local.** Functions can't be serialized: `JSON.stringify`, `structuredClone` and `postMessage` all reject them. A plan holding a function is clearly meant to run where it was built, not to be sent to a worker or stored.
 
-**Bundle boundary.** In a future where the driver is distributed as a smaller, standalone package (e.g. for use with a different query layer or in a service worker), the absence of `adapter-idb` as a dependency keeps the driver's bundle minimal.
+## Alternatives considered
 
-**Serialization boundary (secondary benefit).** Functions in JavaScript are not serializable — `JSON.stringify`, `structuredClone`, and `postMessage` all reject them. `IdbFilterExpr` is a plain frozen object and would be serializable. By keeping `filter` as a function on the plan, the plan is intentionally non-serializable. This makes it visible in the type system that plans are ephemeral, execution-local objects that are not meant to be transmitted over a `MessageChannel`, stored in `localStorage`, or sent to a Web Worker without an explicit serialization protocol.
-
-## What we deliberately did not do
-
-**Putting `IdbFilterExpr` in `IdbCursorScanPlan`:** Both approaches put a filter field in the plan — the difference is whose type appears there. `IdbCursorScanPlan` lives in `driver-idb`. If it declared `filter?: IdbFilterExpr`, `driver-idb` would need to import `IdbFilterExpr` from `adapter-idb` just to write the type, creating a `driver-idb → adapter-idb` dependency. `IdbRowFilter` is defined in `driver-idb` itself (`(row: Record<string, unknown>) => boolean`) — no import needed. The closure is the mechanism that lets the adapter's evaluation logic travel downward without the adapter's type crossing the package boundary with it.
-
-**Putting `evaluateFilter` in a shared package:** We considered moving filter evaluation to a package between driver and adapter so both could import it. This creates a new package dependency just to avoid a closure, which is more complexity than the closure introduces.
+- **Put `IdbFilterExpr` in the plan type.** `IdbCursorScanPlan` is defined in `driver-idb`, so the driver would have to import the expression type from `adapter-idb`. That creates the dependency this ADR avoids. Rejected.
+- **Move `evaluateFilter` into a new shared package** that both the driver and the adapter could import. That adds a package just to avoid passing a function. Rejected.
 
 ## Consequences
 
-- `driver-idb` has zero dependencies on `adapter-idb`. This is verified by the package dependency graph.
-- The sort comparator follows the same pattern: `IdbRowComparator = (a, b) => number`. The driver applies it with `rows.sort(plan.comparator)` without knowing how the comparator was built.
-- Testing the driver in isolation is straightforward — pass arbitrary `IdbRowFilter` lambdas without needing to build `IdbFilterExpr` nodes.
+- `driver-idb` has no dependencies on the other IndexedDB packages, as its `package.json` shows.
+- Sorting works the same way: `IdbRowComparator = (a, b) => number`. The driver calls `rows.sort(plan.comparator)` without knowing how the comparator was built.
+- Driver tests can pass any function as a filter, with no need to build filter expressions.
+- A plan can't be logged or inspected as data. To see what a plan filters on, look at the query AST that travels alongside it (`IdbQueryPlan.ast`).
 
 ## Related
 
-- `driver-idb/src/core/plan-body.ts` — `IdbRowFilter` and `IdbRowComparator` type definitions
-- `adapter-idb/src/core/idb-adapter.ts` — where the closure is built during `lower()`
-- [ADR 003](ADR%20003%20-%20Plain%20Frozen%20Objects%20for%20Filter%20AST.md) — the filter expression AST design
+- `driver-idb/src/core/plan-body.ts`: `IdbRowFilter` and `IdbRowComparator`.
+- `client-idb/src/core/store-accessor.ts`: where most filter functions are built.

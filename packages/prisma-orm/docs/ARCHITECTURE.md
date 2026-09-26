@@ -359,16 +359,13 @@ User's app
               │
               ├── 1. open IDB at its current local version; read _prisma_next_marker[space="app"]
               ├── 2. if marker.storageHash === contractSpace.headRef.hash, fast-path return
-              ├── 3. otherwise walkChain(marker → headRef.hash), collecting ops with policy filter
-              │     │
-              │     └── refuse if destructive ops dropped and policy.onDestructive === "refuse"
+              ├── 3. otherwise walkChain(marker → headRef.hash), collecting every pending op
               │
               ├── 4. close, reopen at db.version + 1 → upgradeneeded fires
-              │     └── target-idb/migration ← applyOneDdlOp(db, tx, op) for each pending op
+              │     ├── target-idb/migration ← applyOneDdlOp(db, tx, op) for each pending op
+              │     └── write the new marker to _prisma_next_marker[space="app"] in the same tx
               │
-              ├── 5. write the new marker to _prisma_next_marker[space="app"] in a fresh tx
-              │
-              └── 6. hand back createIdbClient({ contract: contractSpace.contractJson, dbName })
+              └── 5. hand back createIdbClient({ contract: contractSpace.contractJson, dbName })
 ```
 
 ### Runtime plane (user calls `db.orm.users.all()` or `db.orm.users.create({…})`)

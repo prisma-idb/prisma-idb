@@ -1,52 +1,44 @@
-# ADR 003 — Plain Frozen Objects for Filter AST
+# ADR 003: Plain frozen objects for the filter AST
+
+- **Status:** Accepted
+- **Date:** 2026-05-24
+- **Area:** Query layer
+
+## Summary
+
+Query filters (`IdbFilterExpr`) are plain, frozen objects with a `kind` field, not class instances. A single recursive function, `evaluateFilter(expr, row)`, evaluates them. The upstream SQL and Mongo ORMs use class-based nodes because they compile filters into query languages. IndexedDB filters run as plain JavaScript over each row, so the classes would add structure with no benefit.
 
 ## Context
 
-The upstream framework (SQL ORM lane, Mongo ORM lane) uses class-based frozen AST nodes for query expression trees, following the three-layer polymorphic IR pattern: framework interface → family abstract base → target concrete class. Each node has a constructor that calls `freezeNode(this)`, and lowering is done via visitor dispatch (switch on `node.kind` or a method override).
+The upstream framework builds query expressions from classes. There is a framework interface, an abstract base class per family, and a concrete class per target. Each node freezes itself in its constructor, and a visitor walks the tree to compile it.
 
-We need a filter expression AST for the IDB ORM (`IdbFilterExpr`) that supports:
+The IndexedDB ORM needs filters that support:
 
-- Scalar comparisons: `eq`, `neq`, `gt`, `lt`, `gte`, `lte`, `in`, `notIn`
-- String ops: `contains`, `startsWith`, `endsWith`
-- Boolean combinators: `and`, `or`, `not`
-- Null checks: `isNull`, `isNotNull`
-
-The question is whether to follow the class-based IR pattern or use a simpler representation.
+- comparisons: `eq`, `neq`, `gt`, `lt`, `gte`, `lte`, `in`, `notIn`
+- string matching: `contains`, `startsWith`, `endsWith`
+- combinators: `and`, `or`, `not`
+- null checks: `isNull`, `isNotNull`
 
 ## Decision
 
-Use plain frozen objects with a discriminated union (`kind` field) instead of class-based nodes.
+Represent each filter node as a frozen object, discriminated by `kind`:
 
 ```ts
-// Produced by factory helpers like fieldFilter(), andExpr(), orExpr()
-Object.freeze({ kind: 'field', field: 'name', op: 'contains', value: 'Alice' })
-Object.freeze({ kind: 'and', exprs: Object.freeze([...]) })
+// Built by helpers such as fieldFilter(), andExpr() and orExpr()
+Object.freeze({ kind: "field", field: "name", op: "contains", value: "Alice" });
+Object.freeze({ kind: "and", exprs: Object.freeze([...]) });
 ```
 
-Evaluation is a single recursive function `evaluateFilter(expr, row)` rather than a visitor.
-
-### Why this is right for IDB
-
-**No codec trait-gating.** The SQL ORM gates certain operators by codec traits — for example, `gt`/`lt` are only available on fields with the `numeric` or `order` trait. This is because SQL lowering needs to know whether to emit `>` or `ARRAY_CONTAINS >` or something else depending on the column type. IDB stores native JS values, so the comparison is always `<`/`>`/`<=`/`>=` on the raw field value. There are no traits to gate on. Every operator is available on every field.
-
-**Evaluation is in-memory JS, not compilation.** The SQL filter AST is compiled to SQL; visitor dispatch is the natural shape for a compiler. IDB filter evaluation is a recursive JS function that reads `row[field]` and applies JS operators. A `switch(expr.kind)` inside one function is simpler and more readable than a class hierarchy with overridden methods.
-
-**JSON-serializable by default.** Plain frozen objects serialize to JSON without any custom `toJSON()` methods or external serializers. This matters for Phase 7 (outbox sync): the outbox needs to transmit filter expressions to the server so it knows which rows the client is tracking. With plain objects, serialization is free.
-
-**No extension packs for IDB operators.** The SQL ORM must be extensible because adapters (pgvector, PostGIS) contribute new operators that require new AST node types and new lowering logic. IDB has no such extension system — operators are JS primitives. Adding a new operator means adding a string to `IdbFilterOp` and a new case in `evaluateFilter`. Both approaches require the same effort, but plain objects don't require a new class and don't require all visitors to be updated.
-
-## Compile-time safety
-
-The `IdbFilterExpr` discriminated union provides the same exhaustiveness checking as class hierarchies when used in `switch` statements with TypeScript's `never` guard:
+Evaluate them with one function that switches on `kind`. TypeScript still checks that every case is handled:
 
 ```ts
 function evaluateFilter(expr: IdbFilterExpr, row: Record<string, unknown>): boolean {
   switch (expr.kind) {
-    case 'field': ...
-    case 'and': ...
-    case 'or': ...
-    case 'not': ...
-    case 'null-check': ...
+    case "field": ...
+    case "and": ...
+    case "or": ...
+    case "not": ...
+    case "null-check": ...
     default: {
       const _exhaustive: never = expr;
       throw new Error(`Unknown filter kind: ${(_exhaustive as IdbFilterExpr).kind}`);
@@ -55,22 +47,30 @@ function evaluateFilter(expr: IdbFilterExpr, row: Record<string, unknown>): bool
 }
 ```
 
-Adding a new variant to `IdbFilterExpr` without updating `evaluateFilter` is a compile error, same as with a class visitor.
+Adding a variant to `IdbFilterExpr` without handling it in `evaluateFilter` is a compile error, just as it would be with a visitor.
 
-## What we deliberately did not do
+### Why this fits IndexedDB
 
-**Class-based nodes with `freezeNode(this)`:** Would require a constructor per node type, a `kind` discriminant on each class, and a visitor interface for lowering. This adds abstraction overhead with no payoff in IDB's evaluation model.
+- **Filters are evaluated, not compiled.** A visitor suits a compiler that turns a tree into SQL. `evaluateFilter` just reads `row[field]` and compares it with the filter's value. One `switch` is easier to read than a class hierarchy.
+- **Every operator works on every field.** The SQL ORM only offers some operators on some column types. For example, `gt` needs a type with an ordering, because the generated SQL depends on the column type. IndexedDB can compare any of its key types, so there is nothing to restrict.
+- **No operator extensions.** SQL adapters such as pgvector add operators, which need new node types and new compile logic. IndexedDB has no such extension system. Adding an operator means adding a string to `IdbFilterOp` and a case to `evaluateFilter`.
+- **They serialize to JSON as they are.** No `toJSON()` methods or custom serializers are needed. We expected sync to send filters to the server. It ended up scoping data by ownership instead ([ADR 014](ADR%20014%20-%20Sync%20Ownership%20DAG.md)), so nothing depends on this today.
 
-**Codec trait-gating on operators:** Limiting operators by field type (e.g. only `numeric` fields get `gt`/`lt`) is an ergonomic feature that the upstream SQL ORM provides. IDB's evaluation uses JS semantics for all comparisons — a `gt` on a string field is legal JS (`"b" > "a"` is `true`). We let users write what they mean and let JS semantics apply, consistent with how the rest of the IDB layer works.
+## Alternatives considered
 
-## Future considerations
+- **Class-based nodes that freeze themselves**, as upstream does. This needs a constructor per node type and a visitor interface, which adds abstraction for no gain here. Rejected.
+- **Restricting operators by field type**, as the SQL ORM does. Every value IndexedDB can store as a key has an order, so every comparison has an answer. We let users write what they mean. Rejected.
+- **Plain JavaScript operators (`===`, `>`).** This was the first implementation. Values read back from IndexedDB are fresh objects, so `===` never matched two equal `Date`s or byte arrays. A filter on an unindexed `DateTime` field then returned nothing, while the same filter on an indexed field worked through a key range. Replaced.
 
-If a future extension pack contributes a new IDB operator (e.g. a GeoJSON `withinBounds` for a hypothetical spatial extension), it can add a new `IdbFilterOp` string and a new case in `evaluateFilter`. The discriminated union extends naturally. The outbox serialization path remains unchanged because new variants are still plain JSON-safe objects.
+## Consequences
+
+- New operators are cheap to add: one string in `IdbFilterOp`, one case in `evaluateFilter`.
+- A future extension could add an operator the same way, for example a spatial `withinBounds`, without changing the representation.
+- Comparisons match IndexedDB's key comparison (`compareFieldValues` and `fieldValuesEqual` in `target-idb/src/core/key-compare.ts`). A filter gives the same answer whether it runs in memory or through an index key range. Values that aren't valid keys, such as booleans, fall back to JavaScript's operators.
 
 ## Related
 
-- `adapter-idb/src/core/idb-filter-expr.ts` — the AST types and factory helpers
-- `adapter-idb/src/core/filter-eval.ts` — `evaluateFilter()` implementation
-- `client-idb/src/core/model-accessor.ts` — the `IdbModelAccessor` proxy that builds filter exprs
-- Upstream vendor pattern: `three-layer-polymorphic-ir.md` — the pattern we chose not to follow
-- [ADR 004](ADR%20004%20-%20Driver%20Isolation%20via%20Row%20Filter%20Closure.md) — why the driver never sees `IdbFilterExpr` directly
+- `adapter-idb/src/core/idb-filter-expr.ts`: the types and the helper functions that build them.
+- `adapter-idb/src/core/filter-eval.ts`: `evaluateFilter`.
+- `client-idb/src/core/model-accessor.ts`: builds filters from ORM calls.
+- [ADR 004](ADR%20004%20-%20Driver%20Isolation%20via%20Row%20Filter%20Closure.md): why the driver never sees these objects directly.
