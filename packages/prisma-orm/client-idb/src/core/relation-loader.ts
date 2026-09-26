@@ -6,7 +6,7 @@ import type { IdbRowFilter } from "@prisma-idb/driver-idb/runtime";
 import type { IdbQueryExecutor } from "./executor";
 import { buildRowComparator, combineFilterExprs } from "./query-shaping";
 import type { IncludeEntry } from "./store-state";
-import { getIndexForField, getKeyPath, isValidIdbKey } from "./types";
+import { fieldValueToken, getIndexForField, getKeyPath, isValidIdbKey } from "./types";
 import type { IdbContract } from "./types";
 
 /**
@@ -73,11 +73,13 @@ export async function loadRelation(
 
   const isScalar = entry.kind === "scalar";
 
-  // Collect all distinct local-field values to drive the in-memory filter.
-  const localValues = new Set<unknown>();
+  // Collect all distinct local-field values to drive the in-memory filter,
+  // keyed by `fieldValueToken` so equal Date/binary values collapse (and match
+  // related rows' freshly-deserialized values below).
+  const localValues = new Map<unknown, unknown>();
   for (const row of rows) {
     const v = row[localField];
-    if (v !== undefined && v !== null) localValues.add(v);
+    if (v !== undefined && v !== null) localValues.set(fieldValueToken(v), v);
   }
 
   // Short-circuit: if all local values are null/undefined, attach empties.
@@ -122,7 +124,7 @@ export async function loadRelation(
     // IDBKeyRange.only() throws DataError for invalid keys (boolean, NaN,
     // plain objects, etc.). Such values cannot be stored as IndexedDB keys,
     // so no related rows can match — filter them out before building plans.
-    const validValues = Array.from(localValues).filter(isValidIdbKey);
+    const validValues = Array.from(localValues.values()).filter(isValidIdbKey);
 
     // One index (or, for a PK target, store-keyspace) scan per distinct FK
     // value — independent, so run concurrently.
@@ -151,7 +153,8 @@ export async function loadRelation(
     relatedRows = [];
     // No index: full store scan with an in-memory FK membership + refined-where filter.
     const filter: IdbRowFilter = (row: Record<string, unknown>): boolean =>
-      localValues.has(row[capturedForeignField]) && (refinedWhere === undefined || evaluateFilter(refinedWhere, row));
+      localValues.has(fieldValueToken(row[capturedForeignField])) &&
+      (refinedWhere === undefined || evaluateFilter(refinedWhere, row));
     const plan: IdbQueryPlan<Record<string, unknown>> = {
       meta: planMeta,
       idbPlan: { meta: planMeta, kind: "cursor-scan", storeName: relatedStoreName, filter },
@@ -167,7 +170,7 @@ export async function loadRelation(
     // Group related rows by their foreignField value.
     const grouped = new Map<unknown, Record<string, unknown>[]>();
     for (const rrow of relatedRows) {
-      const gk = rrow[capturedForeignField];
+      const gk = fieldValueToken(rrow[capturedForeignField]);
       const group = grouped.get(gk) ?? [];
       group.push(rrow);
       grouped.set(gk, group);
@@ -177,7 +180,7 @@ export async function loadRelation(
       // Scalar reducer (Phase 6.5: count) — attach the per-parent child count.
       return rows.map((row) => ({
         ...row,
-        [relName]: (grouped.get(row[localField]) ?? []).length,
+        [relName]: (grouped.get(fieldValueToken(row[localField])) ?? []).length,
       }));
     }
 
@@ -186,7 +189,7 @@ export async function loadRelation(
     const skip = entry.state.skip ?? 0;
     const take = entry.state.take;
     return rows.map((row) => {
-      let group = grouped.get(row[localField]) ?? [];
+      let group = grouped.get(fieldValueToken(row[localField])) ?? [];
       if (comparator !== undefined) group = [...group].sort(comparator);
       if (skip > 0 || take !== undefined) {
         group = group.slice(skip, take !== undefined ? skip + take : undefined);
@@ -199,10 +202,10 @@ export async function loadRelation(
   // A refined `where` that excludes the related row yields `null` here.
   const indexed = new Map<unknown, Record<string, unknown>>();
   for (const rrow of relatedRows) {
-    indexed.set(rrow[capturedForeignField], rrow);
+    indexed.set(fieldValueToken(rrow[capturedForeignField]), rrow);
   }
   return rows.map((row) => ({
     ...row,
-    [relName]: indexed.get(row[localField]) ?? null,
+    [relName]: indexed.get(fieldValueToken(row[localField])) ?? null,
   }));
 }

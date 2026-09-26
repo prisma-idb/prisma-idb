@@ -110,9 +110,7 @@ export type WhereFilter<TContract, ModelName extends string> = {
  * field name (NOT an ordered tuple — see {@link ModelKeyPathOrdered} for the
  * order-preserving form `KeyType` needs).
  *
- * Used at the type level to exclude every key field from `CreateInput` — a
- * plain union is exactly what `Omit`/`Pick` need, and order doesn't matter
- * for that purpose.
+ * A plain union is what `Omit`/`Pick` need, where order doesn't matter.
  */
 export type ModelKeyPath<TContract, ModelName extends string> = ModelName extends keyof ModelsOf<TContract>
   ? ModelsOf<TContract>[ModelName] extends { storage: { keyPath: infer P } }
@@ -189,10 +187,6 @@ export type KeyType<TContract, ModelName extends string> =
 
 // ── Create input ──────────────────────────────────────────────────────────────
 
-/** The keyPath field when it exists in the resolved input row (may be absent for models with no typed maps). */
-type KeyPathField<TContract, ModelName extends string> = ModelKeyPath<TContract, ModelName> &
-  keyof ResolvedInputRow<TContract, ModelName>;
-
 /** The object store name for a model, extracted from `contract.domain...storage.storeName` (used to match `execution.mutations.defaults[].ref.table`). */
 type ModelStoreName<TContract, ModelName extends string> = ModelName extends keyof ModelsOf<TContract>
   ? ModelsOf<TContract>[ModelName] extends { readonly storage: { readonly storeName: infer S } }
@@ -201,6 +195,37 @@ type ModelStoreName<TContract, ModelName extends string> = ModelName extends key
       : never
     : never
   : never;
+
+/** Whether the model's object store has `autoIncrement: true` in `contract.storage.stores` (set by `@default(autoincrement())`). */
+type IsAutoIncrementStore<TContract, ModelName extends string> = TContract extends {
+  readonly storage: { readonly stores: infer Stores };
+}
+  ? ModelStoreName<TContract, ModelName> extends keyof Stores
+    ? Stores[ModelStoreName<TContract, ModelName>] extends { readonly autoIncrement: true }
+      ? true
+      : false
+    : false
+  : false;
+
+/**
+ * The primary key field `create()` may omit because IDB generates it: the
+ * key of a *single-field*-key model whose store has `autoIncrement: true`.
+ * IDB's key generator is numeric-only and never runs without
+ * `autoIncrement` — an absent key then makes `add()` throw `DataError` —
+ * and it can't fill a compound key (`autoIncrement` + array `keyPath` is
+ * rejected). App-generated keys (`uuid()`/`cuid()`) are covered separately
+ * by {@link FieldsWithCreateDefault}; any other key must be supplied.
+ */
+type OptionalKeyPathField<TContract, ModelName extends string> =
+  IsAutoIncrementStore<TContract, ModelName> extends true
+    ? ModelKeyPathOrdered<TContract, ModelName> extends readonly [infer Single extends string]
+      ? Single
+      : never
+    : never;
+
+/** {@link OptionalKeyPathField}, narrowed to a key that actually exists on the resolved input row (may be absent for models with no typed maps). */
+type KeyPathField<TContract, ModelName extends string> = OptionalKeyPathField<TContract, ModelName> &
+  keyof ResolvedInputRow<TContract, ModelName>;
 
 /** The flattened `execution.mutations.defaults` array type, or `never` for a contract with no execution section. */
 type ExecutionDefaultsOf<TContract> = TContract extends {
@@ -228,14 +253,14 @@ type DefaultedInputField<TContract, ModelName extends string> = FieldsWithCreate
   keyof ResolvedInputRow<TContract, ModelName>;
 
 /**
- * Input shape for `create()`: the full input row with the primary key field
- * made optional (IDB can generate keys via `autoIncrement`, or clients may
- * omit the key when using `cuid()` / `uuid()` at the application layer), and
- * every other field with an `onCreate` execution default also made optional.
+ * Input shape for `create()`: the full input row with an `autoIncrement`
+ * primary key made optional (see {@link OptionalKeyPathField}), and every
+ * field with an `onCreate` execution default — including a `uuid()`/`cuid()`
+ * key — also made optional. Any other key field stays required.
  */
 export type CreateInput<TContract, ModelName extends string> = Omit<
   ResolvedInputRow<TContract, ModelName>,
-  ModelKeyPath<TContract, ModelName> | FieldsWithCreateDefault<TContract, ModelName>
+  OptionalKeyPathField<TContract, ModelName> | FieldsWithCreateDefault<TContract, ModelName>
 > &
   Partial<
     Pick<
@@ -661,6 +686,28 @@ function tokenPart(key: unknown): unknown {
 export function keyToken(key: IDBValidKey): string {
   if (typeof key === "string" || typeof key === "number") return String(key);
   return JSON.stringify(tokenPart(key));
+}
+
+/**
+ * Equality for two relation/FK field values, as IndexedDB would match them.
+ * Plain `===` for primitives and `null`/`undefined`; key equality for
+ * object-shaped keys (`Date`, binary, arrays), which are never `===` once read
+ * back from IDB — e.g. a `DateTime` FK against its parent's `DateTime` key.
+ */
+export function fieldValuesEqual(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) return false;
+  return isValidIdbKey(a) && isValidIdbKey(b) && keyEquals(a, b);
+}
+
+/**
+ * A `Map`/`Set` key for a relation/FK field value: primitives pass through
+ * unchanged, object-shaped keys (`Date`, binary, arrays) become a {@link keyToken}
+ * string so equal values collapse to the same entry.
+ */
+export function fieldValueToken(value: unknown): unknown {
+  if (typeof value === "object" && value !== null && isValidIdbKey(value)) return `\u0000${keyToken(value)}`;
+  return value;
 }
 
 /**

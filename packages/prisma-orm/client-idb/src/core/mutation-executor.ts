@@ -47,6 +47,7 @@ import {
   type MutationCreateInput,
   type MutationUpdateInput,
   extractKeyFromRow,
+  fieldValuesEqual,
   getKeyPath,
   getStoreName,
   isValidIdbKey,
@@ -611,7 +612,7 @@ function buildCriterionFilter(criterion: Record<string, unknown>): (row: Record<
 function buildParentJoinFilter(parentValues: Map<string, unknown>): (row: Record<string, unknown>) => boolean {
   const pairs = [...parentValues.entries()];
   return (row: Record<string, unknown>): boolean =>
-    pairs.every(([childField, parentValue]) => row[childField] === parentValue);
+    pairs.every(([childField, parentValue]) => fieldValuesEqual(row[childField], parentValue));
 }
 
 // ── Referential action helpers ────────────────────────────────────────────────
@@ -789,7 +790,7 @@ function buildChildFilterFromRow(
 ): (child: Record<string, unknown>) => boolean {
   const pairs = def.localFields.map((lf, i) => ({ childField: def.targetFields[i]!, parentValue: row[lf] }));
   return (child: Record<string, unknown>): boolean =>
-    pairs.every(({ childField, parentValue }) => child[childField] === parentValue);
+    pairs.every(({ childField, parentValue }) => fieldValuesEqual(child[childField], parentValue));
 }
 
 /** Reads a field's literal `@default(...)` value from `IdbModelStorage.fieldDefaults`, if declared. */
@@ -883,7 +884,7 @@ async function validateSetDefaultPatch(
     exists = foundKey !== undefined && (excludeKey === undefined || !keyEquals(foundKey, excludeKey));
   } else {
     const filter = (row: Record<string, unknown>): boolean =>
-      row[localField] === value &&
+      fieldValuesEqual(row[localField], value) &&
       (excludeKey === undefined || !keyEquals(extractKeyFromRow(row, parentKeyPath), excludeKey));
     const found = await scope.execute({
       meta,
@@ -997,7 +998,7 @@ export async function applyReferentialActionsForRowOnUpdate(
   const meta = makePlanMeta(contract);
   for (const def of getRelationDefinitions(contract, modelName)) {
     if (!isDeleteEnforcementRelation(contract, modelName, def)) continue;
-    const changedFields = def.localFields.filter((f) => f in patch && patch[f] !== oldRow[f]);
+    const changedFields = def.localFields.filter((f) => f in patch && !fieldValuesEqual(patch[f], oldRow[f]));
     if (changedFields.length === 0) continue;
 
     const action = getOnUpdateForRelation(contract, modelName, def);
@@ -1136,7 +1137,7 @@ async function validateScalarFks(
     if (range !== null) {
       exists = (await firstKeyInRange(scope, meta, def.relatedStoreName, range)) !== undefined;
     } else {
-      const filter = (row: Record<string, unknown>): boolean => row[targetField] === value;
+      const filter = (row: Record<string, unknown>): boolean => fieldValuesEqual(row[targetField], value);
       const plan: IdbCursorScanPlan = {
         meta,
         kind: "cursor-scan",
