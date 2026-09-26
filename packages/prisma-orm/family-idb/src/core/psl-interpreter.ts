@@ -189,7 +189,7 @@ export type ContractProjection = "full" | "client";
  */
 export function warnDroppedRelation(modelName: string, relationName: string, targetModel: string): void {
   console.warn(
-    `[prisma-idb] Dropped relation "${modelName}.${relationName}" from the client contract: target model "${targetModel}" is excluded (ADR 013).`
+    `[prisma-idb] Dropped relation "${modelName}.${relationName}" from the client contract: target model "${targetModel}" is excluded. The relation's scalar fields are kept.`
   );
 }
 
@@ -495,7 +495,7 @@ function interpretModel(
       if (excludedLocalField !== undefined) {
         diagnostics.push({
           code: "IDB_CANNOT_EXCLUDE_RELATION_FIELD",
-          message: `Field "${model.name}.${excludedLocalField}" backs relation "${model.name}.${field.name}" and cannot be excluded independently — field-level FK exclusion isn't supported (ADR 013's cascade only covers whole-model @@idb.exclude). Exclude the whole model instead, or remove the exclusion.`,
+          message: `Field "${model.name}.${excludedLocalField}" backs relation "${model.name}.${field.name}" and cannot be excluded independently — only a whole-model @@idb.exclude can drop a relation. Exclude the whole model instead, or remove the exclusion.`,
           sourceId,
           span: field.span,
         });
@@ -509,7 +509,7 @@ function interpretModel(
       if (excludedTargetField !== undefined) {
         diagnostics.push({
           code: "IDB_CANNOT_EXCLUDE_RELATION_FIELD",
-          message: `Field "${field.typeName}.${excludedTargetField}" is referenced by relation "${model.name}.${field.name}" and cannot be excluded independently — field-level FK exclusion isn't supported (ADR 013's cascade only covers whole-model @@idb.exclude). Exclude the whole model instead, or remove the exclusion.`,
+          message: `Field "${field.typeName}.${excludedTargetField}" is referenced by relation "${model.name}.${field.name}" and cannot be excluded independently — only a whole-model @@idb.exclude can drop a relation. Exclude the whole model instead, or remove the exclusion.`,
           sourceId,
           span: field.span,
         });
