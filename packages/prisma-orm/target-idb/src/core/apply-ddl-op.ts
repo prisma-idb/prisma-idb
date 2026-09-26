@@ -203,9 +203,11 @@ export function openAndUpgrade(input: {
       if (blockedTimer !== undefined) clearTimeout(blockedTimer);
     };
 
-    // An error thrown inside `upgradeneeded` aborts the upgrade, but the open
-    // request then fails with a generic `AbortError`. Keep the original error
-    // so the caller sees what actually went wrong.
+    // An error inside `upgradeneeded` aborts the upgrade, but the open request
+    // then fails with a generic `AbortError`. Keep the original error so the
+    // caller sees what actually went wrong: either one thrown while applying
+    // the ops, or the transaction's own error when a request fails later,
+    // such as a marker `put` hitting a quota or constraint error.
     let upgradeError: unknown;
 
     request.onupgradeneeded = (event) => {
@@ -216,6 +218,9 @@ export function openAndUpgrade(input: {
         reject(new Error("IDB: upgradeneeded fired with null version-change transaction"));
         return;
       }
+      tx.addEventListener("abort", () => {
+        upgradeError ??= tx.error ?? undefined;
+      });
       try {
         for (const op of input.ops) {
           input.onOperationStart?.(op);

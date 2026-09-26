@@ -2,7 +2,12 @@ import { copyFile, mkdir, readdir, readFile, rename, rm, writeFile } from "node:
 import { randomBytes } from "node:crypto";
 import type { Contract } from "@prisma/orm-framework/contract/types";
 import type { IdbMigrationPlanWithAuthoring } from "@prisma-idb/target-idb/migration";
-import { IdbMigrationPlanner, contractToIdbSchema, renderMigrationTs } from "@prisma-idb/target-idb/migration";
+import {
+  IdbMigrationPlanner,
+  contractToIdbSchema,
+  deletedDataWarning,
+  renderMigrationTs,
+} from "@prisma-idb/target-idb/migration";
 import { keepInternalSpecifiers } from "@prisma/orm-framework/components/emission";
 import { computeMigrationHash } from "@prisma/orm-toolchain/migration-tools/hash";
 import { formatMigrationDirName } from "@prisma/orm-toolchain/migration-tools/io";
@@ -323,24 +328,10 @@ async function planIncremental(ctx: SharedCtx, existingDirs: readonly string[]):
   return 0;
 }
 
-/**
- * The browser applies every planned op without asking, so this is the one
- * place the developer hears that a migration deletes data. Only dropping a
- * store deletes records; dropping an index loses nothing that can't be
- * rebuilt, so it isn't listed.
- */
+/** Warns on stderr when the migration drops a store; see {@link deletedDataWarning}. */
 function warnAboutDeletedData(ctx: SharedCtx, ops: readonly unknown[]): void {
-  const droppedStores = ops
-    .filter((op): op is { kind: "dropObjectStore"; storeName: string } => {
-      return (op as { kind?: unknown }).kind === "dropObjectStore";
-    })
-    .map((op) => op.storeName);
-  if (droppedStores.length === 0) return;
-  ctx.err(
-    "\nWarning: this migration deletes data. When it runs in a user's browser, every record in these stores is deleted:\n" +
-      droppedStores.map((store) => `  - ${store}\n`).join("") +
-      "Check that this is intended before shipping it.\n"
-  );
+  const warning = deletedDataWarning(ops);
+  if (warning !== undefined) ctx.err(warning);
 }
 
 interface WritePackageInput {

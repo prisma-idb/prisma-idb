@@ -639,6 +639,27 @@ describe("openAndUpgrade", () => {
       db.close();
     });
 
+    it("rejects with the transaction's error when a marker write fails after the ops", async () => {
+      const name = dbName();
+      // A unique index on storageHash makes the second marker's put fail
+      // asynchronously, after onupgradeneeded has returned.
+      await expect(
+        openAndUpgrade({
+          factory: indexedDB,
+          dbName: name,
+          targetVersion: 1,
+          ops: [
+            createMarkerStoreOp(),
+            createIndexOp("_prisma_next_marker", "byHash", { keyPath: "storageHash", unique: true }),
+          ],
+          markers: [
+            { space: "app", storageHash: "sha256:same" },
+            { space: "ext", storageHash: "sha256:same" },
+          ],
+        })
+      ).rejects.toMatchObject({ name: "ConstraintError" });
+    });
+
     it("a failing op rolls back the schema and writes no marker", async () => {
       const name = dbName();
       const indexOnMissingStore: IdbDdlOp = {
