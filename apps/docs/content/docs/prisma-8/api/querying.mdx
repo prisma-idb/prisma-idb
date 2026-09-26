@@ -1,62 +1,74 @@
 ---
 title: Querying
-description: Read rows with filters, ordering, pagination, includes, and aggregates
+description: Filters, sorting, pagination, relations, counts and aggregates
 icon: Search
 ---
 
-## All rows
+## Read rows
 
 ```ts
 const todos = await db.orm.todo.all();
 ```
 
-`all()` returns an async iterable result. You can await it as an array or call `.toArray()`.
+`all()` returns every matching row. You can await it for an array, call `.toArray()`, or iterate it:
 
 ```ts
-const todos = await db.orm.todo.where({ done: false }).all().toArray();
+for await (const todo of db.orm.todo.where({ done: false }).all()) {
+  console.log(todo.title);
+}
 ```
 
-## Find by primary key
+`first()` returns the first matching row, or `null`:
+
+```ts
+const next = await db.orm.todo.where({ done: false }).orderBy({ title: "asc" }).first();
+```
+
+`findUnique()` reads one row by primary key and returns `null` when there's none. For a compound key, pass the values as an array, in the order the key declares them:
 
 ```ts
 const user = await db.orm.user.findUnique("user_1");
+const member = await db.orm.membership.findUnique(["org_1", "user_1"]); // @@id([orgId, userId])
 ```
-
-`findUnique()` takes the primary key value directly and returns `null` when no row exists.
-
-## First match
-
-```ts
-const firstOpenTodo = await db.orm.todo.where({ done: false }).first();
-```
-
-`first()` returns `null` when no row matches.
 
 ## Filtering
 
-Use shorthand equality filters for common cases:
+Pass an object to match fields by equality. Every field must match:
 
 ```ts
-const openTodos = await db.orm.todo.where({ done: false, userId: "user_1" }).all();
+const mine = await db.orm.todo.where({ done: false, userId: "user_1" }).all();
+const noEmail = await db.orm.user.where({ email: null }).all(); // email is null
 ```
 
-Use callback filters for operators:
+Pass a function to use operators. It receives each field of the model:
 
 ```ts
-const recent = await db.orm.todo.where((todo) => todo.title.contains("release")).all();
+const releases = await db.orm.todo.where((todo) => todo.title.contains("release")).all();
 ```
 
-Available field operators include `eq`, `neq`, `gt`, `gte`, `lt`, `lte`, `in`, `notIn`, `contains`, `startsWith`, `endsWith`, `isNull`, and `isNotNull`.
+| Operator                                      | Matches when the field…                                              |
+| --------------------------------------------- | -------------------------------------------------------------------- |
+| `eq(v)`, `neq(v)`                             | equals, or doesn't equal, `v`.                                       |
+| `gt(v)`, `gte(v)`, `lt(v)`, `lte(v)`          | is greater or less than `v`.                                         |
+| `in(values)`, `notIn(values)`                 | is, or isn't, one of `values`.                                       |
+| `contains(s)`, `startsWith(s)`, `endsWith(s)` | is a string containing, starting or ending with `s`. Case-sensitive. |
+| `isNull()`, `isNotNull()`                     | is, or isn't, `null`.                                                |
 
-Logical helpers are exported from `@prisma-idb/client-idb/orm`:
+Combine conditions with `and`, `or` and `not` from `@prisma-idb/client-idb/orm`:
 
 ```ts
-import { and, or } from "@prisma-idb/client-idb/orm";
+import { and, not, or } from "@prisma-idb/client-idb/orm";
 
 const todos = await db.orm.todo
-  .where((todo) => or(todo.title.contains("release"), and(todo.done.eq(false), todo.userId.eq("user_1"))))
+  .where((todo) => or(todo.title.contains("release"), and(todo.done.eq(false), not(todo.userId.eq("user_1")))))
   .all();
 ```
+
+Calling `where()` more than once adds conditions: a row must match all of them.
+
+`DateTime` and `Bytes` values compare by value, so `eq(new Date("2026-01-01"))` matches a stored date at that moment. Comparing values of different types follows IndexedDB's key order: numbers, then dates, then strings, then binary values.
+
+Equality filters on an indexed field or the primary key use the index. Other filters read every row in the store and test each one.
 
 ## Sorting and pagination
 
@@ -64,61 +76,67 @@ const todos = await db.orm.todo
 const page = await db.orm.todo.orderBy({ title: "asc" }).skip(20).take(10).all();
 ```
 
+- `orderBy` takes one or more fields, each `"asc"` or `"desc"`. Later fields break ties. Calling `orderBy` again replaces the sort.
+- `null` sorts after every other value, or before them when descending.
+- Without `orderBy`, rows come back in primary-key order, or index order when the query uses an index.
+
 ## Select
 
+Return only some scalar fields. The result type narrows to match:
+
 ```ts
-const summaries = await db.orm.todo.select("id", "title").all();
+const titles = await db.orm.todo.select("id", "title").all();
+// { id: string; title: string }[]
 ```
 
 ## Include relations
 
+`include()` adds a related model to each row. A to-one relation becomes a row or `null`; a to-many relation becomes an array.
+
 ```ts
-const todos = await db.orm.todo.include("user").all();
+const todos = await db.orm.todo.include("user").all(); // todo.user: User | null
+const users = await db.orm.user.include("todos").all(); // user.todos: Todo[]
 ```
 
-Refine included to-many relations:
+Pass a function to filter, sort or limit a to-many relation. These apply per parent, so `take(5)` gives each user up to five todos:
 
 ```ts
 const users = await db.orm.user.include("todos", (todos) => todos.where({ done: false }).take(5)).all();
 ```
 
-Count an included to-many relation:
+Return `count()` from the function to get the number of related rows instead:
 
 ```ts
-const users = await db.orm.user.include("todos", (todos) => todos.count()).all();
+const users = await db.orm.user.include("todos", (todos) => todos.count()).all(); // user.todos: number
 ```
+
+Each included relation is loaded with one batched read, however many parent rows there are.
 
 ## Count
 
 ```ts
-const count = await db.orm.todo.where({ done: false }).count();
+const open = await db.orm.todo.where({ done: false }).count();
 ```
 
-`skip()` and `take()` affect `count()`. If you need the total matching rows, count before adding pagination.
+`count()` applies `skip` and `take`, unlike SQL's `COUNT`. To get the total for a paginated list, count before adding them.
 
 ## Aggregates
-
-```ts
-const stats = await db.orm.todo.aggregate((agg) => ({
-  total: agg.count(),
-}));
-```
-
-Numeric fields can use `sum`, `avg`, `min`, and `max`:
 
 ```ts
 const stats = await db.orm.task.aggregate((agg) => ({
   total: agg.count(),
   avgPriority: agg.avg("priority"),
+  maxPriority: agg.max("priority"),
 }));
 ```
+
+`count()` counts rows. `sum`, `avg`, `min` and `max` take a numeric field.
 
 ## Group by
 
 ```ts
-const byUser = await db.orm.todo.groupBy("userId").aggregate((agg) => ({
-  total: agg.count(),
-}));
+const perUser = await db.orm.todo.groupBy("userId").aggregate((agg) => ({ total: agg.count() }));
+// [{ userId: "user_1", total: 3 }, { userId: "user_2", total: 1 }]
 ```
 
-`groupBy()` returns one aggregate row per distinct group key.
+`groupBy()` returns one row per distinct combination of the grouping fields, with the aggregates you ask for.

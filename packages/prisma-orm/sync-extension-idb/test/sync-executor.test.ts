@@ -120,6 +120,25 @@ describe("SyncInterceptorExecutor", () => {
     expect(outbox).toHaveLength(0);
   });
 
+  it("count() is an untracked read — native or materialized — and never writes an outbox row", async () => {
+    const { client } = await createTestSyncClient();
+    const users = asAccessors(client.orm)["users"]!;
+    await users.create({ id: "u1", name: "Alice" });
+    await users.create({ id: "u2", name: "Bob" });
+
+    const outboxBefore = await scanAll(client, "_idb_sync_outbox");
+    const calls: number[] = [];
+    client.on("outboxwrite", () => calls.push(1));
+
+    expect(await users.count()).toBe(2); // whole-store: native `count` plan
+    expect(await users.where({ id: "u1" }).count()).toBe(1); // PK point range: native
+    expect(await users.where({ name: "Bob" }).count()).toBe(1); // unindexed: materialized
+    expect(await users.where({ id: "u1" }).skip(1).count()).toBe(0);
+
+    expect(calls).toHaveLength(0);
+    expect(await scanAll(client, "_idb_sync_outbox")).toEqual(outboxBefore);
+  });
+
   it("writes a delete outbox event with a statically-known key", async () => {
     const { client } = await createTestSyncClient();
     const users = asAccessors(client.orm)["users"]!;

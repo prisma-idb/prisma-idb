@@ -1,41 +1,32 @@
 ---
 title: Schema & Config
-description: Write PSL and point Prisma 8 at the IDB target
+description: Which Prisma schema features IndexedDB supports, and what prisma.config.ts contains
 icon: FileCode
 ---
 
-Prisma 8 IDB reads PSL directly. No `generator` block and no Prisma Client needed.
+This page lists what a Prisma schema can contain when it targets IndexedDB, and what each field in `prisma.config.ts` does. For a first setup, follow the [Quick Start](/docs/prisma-8/getting-started) instead.
 
-## Schema
+## Scalar types
 
-```prisma
-model User {
-  id    String  @id
-  name  String
-  email String? @unique
-  todos Todo[]
-}
+| Prisma type | JavaScript value | Notes                                                |
+| ----------- | ---------------- | ---------------------------------------------------- |
+| `String`    | `string`         |                                                      |
+| `Int`       | `number`         |                                                      |
+| `Float`     | `number`         |                                                      |
+| `Boolean`   | `boolean`        | Can't be a key or indexed. See [Indexes](#indexes).  |
+| `DateTime`  | `Date`           | Compared and sorted by time, not by object identity. |
+| `BigInt`    | `bigint`         | Can't be a key or indexed.                           |
+| `Decimal`   | `string`         |                                                      |
+| `Json`      | any JSON value   | Can't be a key or indexed.                           |
+| `Bytes`     | `Uint8Array`     | Compared and sorted byte by byte.                    |
 
-model Todo {
-  id     String  @id
-  title  String
-  done   Boolean
-  userId String
-  user   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+Add `?` to make a field optional. Its value is then `null` when it isn't set.
 
-  @@index([userId], name: "byUser")
-}
-```
+## Models and stores
 
-Supported scalar types: `String`, `Int`, `Float`, `Boolean`, `DateTime`, `BigInt`, `Decimal`, `Json`, `Bytes`.
+Each model becomes an IndexedDB object store. The store is named after the model with its first letter lowercased, so `model TodoItem` is stored in `todoItem`. The same name is the model's key on the client: `db.orm.todoItem`.
 
-## IDB rules
-
-- Each model needs one scalar `@id` field or a single-field `@@id([field])`.
-- Compound primary keys are not supported.
-- Compound indexes are not supported.
-- Relation fields must declare `@relation(fields: [...], references: [...])` on the foreign-key side.
-- Use `@@map("storeName")` to control the IndexedDB object store name. The store name is also the key under `db.orm`.
+Use `@@map` to choose a different name:
 
 ```prisma
 model Todo {
@@ -50,60 +41,83 @@ model Todo {
 const todos = await db.orm.todos.all();
 ```
 
-## Client-only fields and models
+## Primary keys
 
-If you sync a schema to a server (see [Sync](/docs/prisma-8/sync)), some fields or models should never reach the browser: password hashes, session tokens, internal audit tables. Mark them with the IDB-family PSL attributes `@idb.exclude` (field) and `@@idb.exclude` (model):
+Every model needs a primary key.
+
+- `@id` on one field, or `@@id([a, b])` for a compound key.
+- Key fields must be `String`, `Int`, `Float`, `DateTime`, `Decimal` or `Bytes`, the types IndexedDB can use as keys.
+- In a compound key, order matters: `@@id([a, b])` and `@@id([b, a])` are different keys. `findUnique()` and `delete()` take the values in the order you declared them.
+- `@default(autoincrement())` is supported on a single-field `Int` key, not on a compound key.
+
+## Indexes
+
+| Attribute          | Creates                      |
+| ------------------ | ---------------------------- |
+| `@unique`          | A unique index on one field. |
+| `@@unique([a, b])` | A unique compound index.     |
+| `@@index([a])`     | A non-unique index.          |
+| `@@index([a, b])`  | A non-unique compound index. |
+
+Pass `name:` to choose an index's name, for example `@@index([userId], name: "byUser")`. Without one, the name is the field names joined with `_`, plus `_unique` for a unique index. A field can't appear twice in one index.
+
+Like keys, indexed fields must be `String`, `Int`, `Float`, `DateTime`, `Decimal` or `Bytes`. IndexedDB silently leaves other values out of an index, so `contract emit` rejects an index on a `Boolean`, `BigInt` or `Json` field.
+
+Queries use an index automatically for equality filters on an indexed field.
+
+## Defaults
+
+| Attribute                                           | Sets the field to                                               |
+| --------------------------------------------------- | --------------------------------------------------------------- |
+| `@default("text")`, `@default(0)`, `@default(true)` | That literal value, on create.                                  |
+| `@default(now())`                                   | The current time, on create.                                    |
+| `@default(uuid())`                                  | A random UUID v4, on create. `uuid(7)` gives a UUID v7.         |
+| `@default(cuid())`                                  | A CUID2, on create.                                             |
+| `@default(autoincrement())`                         | The next number, assigned by IndexedDB. Single `Int` keys only. |
+| `@updatedAt`                                        | The current time, on create and on every update.                |
+
+A default only applies when the field is left out. It also counts as setting the field: a foreign key filled in by a default is checked like one you set yourself.
+
+## Relations
+
+Declare relations the usual way, with `@relation(fields: [...], references: [...])` on the side that holds the foreign key.
 
 ```prisma
-model User {
-  id       String @id
-  name     String
-  password String @idb.exclude // dropped from the client contract
-  boards   Board[]
-  sessions Session[]
-}
-
-model Session {
+model Todo {
   id     String @id
   userId String
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@idb.exclude // whole model dropped from the client contract
 }
 ```
 
-Your IDB config (`prismaIdbContract(path, { projection: "client" })`) strips these before the browser ever sees them. That's the only projection flag you touch on the client side — `"full"` is just the interpreter's default (nothing stripped), not a second thing you feed to a server config.
+- One-to-many, many-to-one and one-to-one relations are supported. Many-to-many relations aren't; use an explicit join model.
+- Compound foreign keys are supported: `@relation(fields: [orgId, userId], references: [orgId, id])`.
+- `onDelete` and `onUpdate` accept `Cascade`, `SetNull`, `SetDefault`, `Restrict` and `NoAction`. **Both default to `Restrict`.** `NoAction` behaves like `Restrict`.
 
-If your server is also on the IDB family, you'd point it at the same schema without the `projection` option. But the realistic case — and what the [sync](/docs/prisma-8/sync) server setup demonstrates — is a SQL/Postgres server, which can't parse `@idb.exclude` at all (its parser hard-errors on the unrecognized namespace). For that you don't touch `projection` here — see [Client Contracts](/docs/prisma-8/sync/client-contracts) for the `sqlContractWithSync` helper that handles it, and what happens to a relation that points at an excluded model.
+IndexedDB has no foreign keys of its own, so the client enforces them. See [Foreign keys and referential actions](/docs/prisma-8/api/writing#foreign-keys-and-referential-actions) for exactly what it checks.
 
-A few rules the interpreter enforces:
+## Server-only fields and models
 
-- The `@id` field cannot be `@idb.exclude`d.
-- An index cannot reference an excluded field.
-- An excluded field cannot also be `@unique`.
+When you [sync](/docs/prisma-8/sync) with a server, mark fields and models that must never reach the browser with `@idb.exclude` (a field) or `@@idb.exclude` (a model). The browser's contract leaves them out when your config sets `projection: "client"`:
+
+```ts
+contract: prismaIdbContract("src/prisma/schema.prisma", { projection: "client" }),
+```
+
+[Client Contracts](/docs/prisma-8/sync/client-contracts) explains the rules, including what happens to a relation that points at an excluded model.
 
 ## Config
 
-```ts
-import { definePrismaConfig } from "@prisma/cli-engine";
-import { defineConfig as ormConfig } from "@prisma-idb/family-idb/config-types";
-import { prismaIdbContract } from "@prisma-idb/family-idb/contract-psl";
-import idbFamily from "@prisma-idb/family-idb/control";
-import idbTarget from "@prisma-idb/target-idb/control";
-import idbAdapter from "@prisma-idb/adapter-idb/control";
-import idbDriver from "@prisma-idb/driver-idb/control";
+`prisma.config.ts` wraps an `orm` section built with `defineConfig` from `@prisma-idb/family-idb/config-types`. The [Quick Start](/docs/prisma-8/getting-started#3-configure-the-clis) shows a complete file.
 
-export default definePrismaConfig({
-  orm: ormConfig({
-    family: idbFamily,
-    target: idbTarget,
-    adapter: idbAdapter,
-    driver: idbDriver,
-    db: { connection: ":memory:" },
-    contract: prismaIdbContract("src/prisma/schema.prisma"),
-    migrations: { dir: "migrations" },
-  }),
-});
-```
+| Field            | Value for IndexedDB                                          | What it does                                                                                  |
+| ---------------- | ------------------------------------------------------------ | --------------------------------------------------------------------------------------------- |
+| `family`         | `@prisma-idb/family-idb/control`                             | The database family.                                                                          |
+| `target`         | `@prisma-idb/target-idb/control`                             | The target within the family. Carries the migration planner.                                  |
+| `adapter`        | `@prisma-idb/adapter-idb/control`                            | Maps Prisma types to how IndexedDB stores them.                                               |
+| `driver`         | `@prisma-idb/driver-idb/control`                             | Required by the framework. No CLI command can reach a browser database, so this is a stub.    |
+| `db.connection`  | Any string, such as `":memory:"`                             | Required by the framework, unused. The database name is chosen in the browser, with `dbName`. |
+| `contract`       | `prismaIdbContract("path/to/schema.prisma", { projection })` | The schema to read. `contract emit` writes `contract.json` and `contract.d.ts` next to it.    |
+| `migrations.dir` | `"migrations"`                                               | Where `prisma-idb migration plan` writes migration packages.                                  |
 
-`connection` is present because the Prisma 8 framework requires it. The IDB target does not use it. The `prismaIdbContract` path is the source schema; `contract emit` reads it and writes `contract.json` and `contract.d.ts` alongside it.
+Both `prisma` and `prisma-idb` read this file, so neither needs `--contract` or `--migrations-dir` flags. Pass `--config <path>` if the file isn't in the project root.

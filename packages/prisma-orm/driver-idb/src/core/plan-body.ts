@@ -193,12 +193,56 @@ export interface IdbScanWritePlan extends ExecutionPlan {
 }
 
 /**
+ * Native count via `store.count(range)` / `index.count(range)`.
+ *
+ * Used by the ORM `.count()` terminal when the whole `where` is captured by a
+ * key range (or there is no `where`), so no row needs to be deserialized or
+ * filtered in memory. Counts index *entries*, so it must not be used with a
+ * `multiEntry` index (one record can occupy several entries).
+ *
+ * Result: exactly one row, `{ count: number }` — the driver's `Row[]` result
+ * contract is unchanged; the caller unwraps `rows[0].count`.
+ */
+export interface IdbCountPlan extends ExecutionPlan {
+  readonly kind: "count";
+  readonly storeName: string;
+  readonly indexName?: string; // count via this index instead of the store's primary keys
+  readonly range?: IDBKeyRange; // omit to count every entry
+}
+
+/**
+ * Key-only read via `getKey(range)` / `getAllKeys(range, count)` — returns
+ * PRIMARY keys without deserializing any row value.
+ *
+ * Meant for existence checks ("does any row match this key range?") where the
+ * caller never reads a field. Because no value is fetched, it can only
+ * express criteria that are a key range on the store's primary key or on an
+ * index — never an in-memory row filter.
+ *
+ * - `take: 1` with a `range` → `getKey(range)` (one request, no cursor).
+ * - otherwise → `getAllKeys(range, take)`; `take` omitted returns every key.
+ *
+ * Result rows: one `{ key }` per match (the primary key — an array for a
+ * compound key) or `[]` when nothing matches. Same synthetic-row convention as
+ * {@link IdbCountPlan}.
+ */
+export interface IdbKeysPlan extends ExecutionPlan {
+  readonly kind: "keys";
+  readonly storeName: string;
+  readonly indexName?: string; // resolve through this index; returned keys are still primary keys
+  readonly range?: IDBKeyRange; // omit to cover the whole store/index
+  readonly take?: number; // max keys to return (undefined = all)
+}
+
+/**
  * All single-store atomic op types — valid both standalone and inside a batch.
  */
 export type IdbAtomicPlan =
   | IdbCursorScanPlan
   | IdbKeyGetPlan
   | IdbIndexGetPlan
+  | IdbCountPlan
+  | IdbKeysPlan
   | IdbAddPlan
   | IdbPutPlan
   | IdbUpdatePlan

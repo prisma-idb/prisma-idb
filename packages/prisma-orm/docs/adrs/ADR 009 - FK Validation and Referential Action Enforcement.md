@@ -1,101 +1,106 @@
-# ADR 009 — FK Validation and Referential Action Enforcement in IDB
+# ADR 009: Foreign keys and referential actions
+
+- **Status:** Accepted
+- **Date:** 2026-06-05
+- **Area:** ORM
+
+## Summary
+
+IndexedDB has no foreign-key constraints, so the client enforces them itself:
+
+- **Every write that sets a foreign key checks that the parent exists.**
+- **Every delete and update runs the relation's referential action** (`cascade`, `setNull`, `setDefault`, `restrict` or `noAction`), in the same transaction.
+
+The actions are stored in the IndexedDB target's own storage metadata, not in the framework's shared relation type. Both actions default to `restrict`, and `noAction` behaves like `restrict`. Postgres's default for the same Prisma 8 schema is `NO ACTION`, which rejects the same changes, so a synced app's client and server allow the same changes.
 
 ## Context
 
-IndexedDB is a key-value store with no native FK constraint mechanism. There is no `ON DELETE CASCADE` at the engine level — orphaned FK references are silently permitted. This is the same situation MongoDB is in. SQL targets in the framework sidestep the problem entirely: they generate DDL `ON DELETE …` clauses and let the database engine enforce referential integrity.
+IndexedDB stores records by key and has no concept of a foreign key. Nothing stops a record from pointing at a parent that doesn't exist, and there is no `ON DELETE CASCADE`. MongoDB is in the same position. SQL targets avoid the problem by generating `ON DELETE …` clauses and letting the database enforce them.
 
-The framework's base `ContractReferenceRelation` type carries only join metadata (`to`, `cardinality`, `on: { localFields, targetFields }`). There is no `onDelete` or `onUpdate` field. This is intentional — the contract IR is storage-agnostic; referential actions are a storage-layer concern. For SQL targets, `onDelete` lives in the SQL storage layer's FK metadata (`fk: { onDelete: 'cascade' }` in `SqlModelStorage`). IDB needs its own equivalent.
+The framework's relation type, `ContractReferenceRelation`, only describes the join: `to`, `cardinality` and `on: { localFields, targetFields }`. It has no `onDelete` or `onUpdate`. That's deliberate: referential actions belong to the storage layer. SQL keeps them in its own storage metadata (`SqlModelStorage`), and IndexedDB needs an equivalent.
 
-Two separate gaps existed before this decision:
+Before this decision there were two gaps:
 
-1. **Scalar FK writes were not validated.** `db.posts.create({ userId: "nonexistent" })` succeeded silently with a dangling FK. Only the nested write `connect()` path validated FK existence.
-
-2. **`delete()` had no referential action enforcement.** Deleting a parent left all child records with dangling FK values pointing to a non-existent record.
+1. **Plain foreign-key writes weren't checked.** `db.posts.create({ userId: "nonexistent" })` succeeded and left a dangling reference. Only nested `connect()` checked that the parent existed.
+2. **`delete()` ignored relations.** Deleting a parent left its children pointing at a record that no longer existed.
 
 ## Decision
 
-### 1. Store referential action metadata in `IdbModelStorage`
-
-Add a `relations` field to `IdbModelStorage` (in `target-idb/src/core/idb-contract-types.ts`):
+### 1. Store referential actions in `IdbModelStorage`
 
 ```ts
 export type IdbReferentialAction = "cascade" | "setNull" | "setDefault" | "restrict" | "noAction";
 
 export type IdbRelationStorage = {
-  readonly onDelete?: IdbReferentialAction; // default: 'restrict'
+  readonly onDelete?: IdbReferentialAction; // default: "restrict"
+  readonly onUpdate?: IdbReferentialAction; // default: "restrict"
 };
 
 export type IdbModelStorage = {
   readonly storeName: string;
-  readonly keyPath: string;
-  readonly relations?: Record<string, IdbRelationStorage>;
+  readonly keyPath: IdbKeyPath;
+  readonly relations?: Record<string, IdbRelationStorage>; // keyed by relation name
+  readonly fieldDefaults?: Record<string, string | number | boolean>; // for setDefault
 };
 ```
 
-(As originally decided — see the "Consequences" section below for the shipped shape: `IdbRelationStorage` also gained `onUpdate?`, and `IdbModelStorage` gained `fieldDefaults?: Record<string, string | number | boolean>` to back `setDefault`.)
+These types live in `target-idb/src/core/idb-contract-types.ts`. You set the actions with `@relation(onDelete: ..., onUpdate: ...)` in a Prisma schema, or `onDelete`/`onUpdate` on a relation in the TypeScript contract builder.
 
-This mirrors the SQL pattern: FK behavior lives in target-specific storage metadata, not in the target-agnostic contract IR. The `relations` key matches the relation name in `model.relations` so the ORM can cross-reference them.
+### 2. Check foreign keys on every write
 
-`RelationDef` in `family-idb/src/core/contract-builder.ts` gains an optional `onDelete?` field, and `defineContract()` writes it into `IdbModelStorage.relations` at contract build time.
+When `create()`, `createAll()`, `update()`, `updateAll()` or either branch of `upsert()` sets a foreign key, the client checks, inside the write's transaction, that the referenced parent exists. If it doesn't, the transaction aborts with an error naming the relation and the missing values. Nested writes are checked the same way: the row being written and every row a relation callback creates.
 
-### 2. Enforce FK existence on all mutation paths (not just `connect()`)
+- **The check sees the row as it's written, after defaults.** A foreign key filled in by `@default(...)`, or by an `onUpdate` default, is checked like one the caller set.
 
-Scalar creates and updates that set FK fields (N:1 relation `localFields` that are present in the write payload) are validated inside a `withMutationScope` transaction:
+- **A compound foreign key is checked as one tuple.** A single parent row must match every field. Checking the fields one at a time could pass with each value taken from a different parent. When an update sets only some fields of a compound key, the client reads the row first and takes the other fields from it.
+- **A key with any `null` field isn't checked**, like SQL's default `MATCH SIMPLE`.
+- **A reference to the parent's primary key is a key-only lookup**, even for a compound primary key. It never loads the parent record. Other references scan the parent store. Both compare values the way IndexedDB compares keys, so two equal `Date` values match even though they are different objects. See [ADR 017](ADR%20017%20-%20Native%20IndexedDB%20Feature%20Parity.md).
 
-- Collect all N:1 relations on the model where `localFields` intersect with the write payload and the value is non-null.
-- For each, scan the related store for a matching record.
-- If not found, abort the transaction with a descriptive error.
+Writes that don't touch any foreign key take the ordinary write path, with no extra reads.
 
-When no FK fields are being written (no N:1 relations or all FK fields are null/absent), the existing plain `put` path runs unchanged — no overhead.
+### 3. Run referential actions on deletes and updates
 
-### 3. Enforce referential actions on `delete()` / `deleteAll()` / `deleteCount()`
+When a record is deleted, the client finds every relation whose children point at it and applies that relation's `onDelete`:
 
-When a delete is requested, walk the contract's relations to find all child models (1:N relations where the child's `localFields` point to the deleting model's `keyPath`). For each, read `IdbModelStorage.relations[relName].onDelete`:
+| Action               | What happens to the children                                              |
+| -------------------- | ------------------------------------------------------------------------- |
+| `cascade`            | They are deleted too.                                                     |
+| `setNull`            | Their foreign-key fields are set to `null`.                               |
+| `setDefault`         | Their foreign-key fields are set to the field's declared `@default(...)`. |
+| `restrict` (default) | The delete fails if any children exist.                                   |
+| `noAction`           | Same as `restrict`.                                                       |
 
-| Action               | Behaviour                                                                               |
-| -------------------- | --------------------------------------------------------------------------------------- |
-| `cascade`            | Delete all matching child records in the same multi-store transaction                   |
-| `setNull`            | Update all matching children: set the FK field(s) to `null`                             |
-| `setDefault`         | Update all matching children: set the FK field(s) to their default values               |
-| `restrict` (default) | Abort if any matching children exist; throw a descriptive error                         |
-| `noAction`           | Proceed without touching child records — caller accepts responsibility for orphaned FKs |
+The same happens on `update()`, including a nested update, using `onUpdate`, when the update changes a value that children refer to. The client compares the old and new values, so including an unchanged field in the patch doesn't trigger anything. The default `onUpdate` is `restrict`. Declare `onUpdate: Cascade` to copy the new value to the children instead.
 
-All actions run inside a single `withMutationScope` transaction spanning the parent and all affected child stores, collected at parse time from the contract relation graph — the same mechanism Phase 6.4 uses for nested writes.
+### Why the defaults match Postgres, not Prisma 7
 
-## Why `IdbModelStorage` and not `ContractReferenceRelation`
+Prisma 7 defaulted `onUpdate` to `cascade`, and `onDelete` to `setNull` for optional relations. Prisma 8 emits no `ON DELETE` or `ON UPDATE` clause for an action you don't declare, so Postgres uses `NO ACTION`, which rejects the change. SQL's `NO ACTION` differs from `RESTRICT` only in when it checks: at the end of the statement rather than immediately.
 
-The framework's `ContractReferenceRelation` is owned by the framework package and shared across all families and targets. Adding `onDelete` there would either require upstreaming an IDB-specific concept to the framework, or creating a divergent fork of the type. Both are wrong.
+A syncing app builds its client and server contracts from one schema ([ADR 012](ADR%20012%20-%20Client%20Contract%20Subsetting.md)). If the client cascaded where the server refused, a local change would succeed, then fail on push, and the two sides would disagree for good. Refusing on the client makes the problem visible when the user makes the change.
 
-`IdbModelStorage` is the IDB target's own storage metadata — it already holds `storeName` and `keyPath` (IDB-specific fields that have no SQL equivalent). Adding relation storage metadata there is the correct layering: the IDB target describes how its storage behaves, parallel to how `SqlModelStorage` describes SQL FK constraint behaviour.
+Each action runs inside one `withMutationScope` transaction that covers the parent's store and every store the action could touch. The store list is worked out from the contract before the transaction opens, as IndexedDB requires ([ADR 007](ADR%20007%20-%20Two%20Transaction%20APIs.md)).
 
-## Why enforce on all mutation paths
+## Why `IdbModelStorage`, not `ContractReferenceRelation`
 
-`connect()` already validates FK existence because the nested write executor looks up the referenced row. But scalar writes bypass the nested write executor entirely — `db.posts.create({ userId: "..." })` issues a plain `put`. A user writing directly to FK fields gets no safety without this change.
+`ContractReferenceRelation` belongs to the framework and is shared by every database family. Adding `onDelete` to it would mean either pushing a storage concern into the framework, or forking the type. Neither is right.
 
-The contract has all the information needed: N:1 relations declare exactly which local fields are FK fields and which target model/store they reference.
+`IdbModelStorage` is the IndexedDB target's own description of its storage. It already holds IndexedDB-only fields such as `storeName` and `keyPath`. Referential actions fit there, the same way SQL keeps them in `SqlModelStorage`.
 
 ## Consequences
 
-- **Default action is `restrict`** — a delete that would orphan child records throws by default. Callers must explicitly opt in to `'cascade'`, `'setNull'`, or `'noAction'`; silence never permits dangling FKs.
-- **`onDelete: 'noAction'` explicitly disables enforcement.** Use when the caller accepts responsibility for orphaned records (e.g. soft-delete patterns, deferred cleanup).
-- **Specifying `onDelete: 'cascade'` makes deletes self-cleaning.** The delete automatically propagates to child records in the same transaction.
-- **`deleteAll()` and `deleteCount()`** apply referential actions per deleted row inside the same multi-store `withMutationScope` transaction.
-- **Scalar FK validation adds a read per N:1 relation per write** when FK fields are being set. This is minimal overhead given IDB's in-process, in-memory-backed execution model.
-- **Recursive (multi-hop) cascade is implemented.** `applyReferentialActionsForRow` reads each matched child, recurses into that child's own `onDelete` relations, then deletes it — so a chain like `User --cascade--> Post --cascade--> Comment` is fully torn down, not just the first hop. `collectDeleteStoreNames` walks the same cascade edges transitively to declare every store the transaction might touch up front (a hard IDB requirement). Both walks are cycle-safe (model-level guard for the static store collector, row-level guard for the row executor), so a self-referential or mutually-cascading model doesn't hang or stack-overflow. `setNull`/`setDefault` remain leaf actions — the child row survives, so recursion never continues past them. One consequence: a cascade no longer collapses into a single `scan-write` outbox firing — each cascaded row is now read then deleted individually (needed so a deeper cascade can be enforced per row), so sync tracks one `outboxwrite` firing per cascaded row instead of one firing for the whole batch.
-- **`onUpdate` referential actions are implemented**, mirroring `onDelete`'s storage/parsing/enforcement shape (`IdbRelationStorage.onUpdate`, `@relation(onUpdate: ...)` in PSL, `RelationDef.onUpdate` in the TS DSL). Unlike `onDelete`, `onUpdate`'s default (when neither side of a relation declares one) is `'cascade'`, matching Prisma's own documented default — propagating a changed referenced value to children is normally safe, unlike deleting the row those children point to. Enforcement only fires when a write's patch actually changes a value other relations reference (compared against the row's pre-image, not merely field presence in the patch), which required restructuring `update()`/`updateAll()`/`updateCount()` to read the matching row(s) before writing when `onUpdate` enforcement could apply — the existing blind `scan-write` fast path is unchanged when it can't. `upsert()`'s update arm gets the same enforcement; its create arm not validating scalar FKs is a pre-existing gap outside this scope (see below).
-- **`setDefault` is implemented** for both `onDelete` and `onUpdate`. `IdbModelStorage.fieldDefaults` (populated only from a literal `@default(...)` — never a generator like `uuid()`/`now()`, matching Prisma's own restriction that `SetDefault` may only target a scalar default) holds each field's default value; `setDefault` resets the child's own FK field to it. A target field with no declared default throws a precise error rather than silently no-op'ing. **The default value is also validated against the parent's own store before it's written** (`validateSetDefaultPatch`) — a real database only makes `SET DEFAULT` safe because its FK constraint re-checks the new value transactionally; without an equivalent check here, `setDefault` would silently reintroduce the dangling-FK problem this whole ADR exists to close (e.g. `authorId: "system"` with no `id: "system"` row would otherwise write a dangling reference undetected). Refuses (throws) rather than validates incorrectly for compound (multi-field) relations, mirroring `validateScalarFks`'s same restriction.
-- **Known gap, out of scope for this work:** `upsert()`'s _create_ arm never validates scalar FKs even on the atomic path. Predates this work and is not addressed here.
-- **`upsert()` requires a transaction-capable executor unconditionally**, matching `update`/`updateAll`/`deleteAll` (which already required one unconditionally, regardless of what the write touches). `create`/`delete` remain conditional — they only require a transaction when the write actually touches nested relations, scalar FK fields, or enforceable child relations; a plain scalar `create`/`delete` still works on a bare executor. `upsert()` previously kept a non-atomic two-step fallback for a bare `IdbQueryExecutor` (no `.transaction()`) so the `./orm` "any executor" contract held for it too — but that fallback couldn't run referential-action enforcement (it isn't a transaction), so a cascade-triggering `upsert()` on a bare executor would silently skip it. Since the project has no external consumers yet, the fallback was deleted rather than patched: `requireTransactionExecutor()` now rejects a bare executor immediately, unconditionally, same as `update`/`updateAll`/`deleteAll`. The now-unreachable plan-level `IdbUpsertAst` node was deleted for the same reason `IdbNestedCreateAst`/`IdbNestedUpdateAst` were (see the note beside `IdbQueryAst` in `adapter-idb/src/core/idb-query-ast.ts`) — `upsert()` runs entirely inside `withMutationScope`, which bypasses the plan/AST layer by design.
-
-## Implementation — see Phase 6.8 in PLAN.md; the recursive-cascade/`onUpdate`/`setDefault` follow-up work is captured in the "Consequences" section above
+- **Deletes and key changes are safe by default.** With the default `restrict`, a change that would leave dangling children throws. You opt in to `cascade`, `setNull` or `setDefault`.
+- **There is no way to turn enforcement off** for a relation. Postgres has none either. An earlier version treated `noAction` as "don't enforce", which let the client delete rows the server would refuse to.
+- **`deleteAll()`, `deleteCount()`, `updateAll()` and `updateCount()`** apply the actions row by row, inside the same transaction.
+- **Foreign-key checks cost one read per relation per write**, and only when the write sets a foreign key. For a primary-key reference, that read fetches only the key.
+- **Cascades follow the whole chain.** For `User → Post → Comment`, deleting a user deletes its posts and their comments. Each child is read, its own relations are handled, then it is deleted. The walk is cycle-safe, so self-referencing or mutually cascading models don't loop. `setNull` and `setDefault` stop the walk, because the child survives.
+- **Cascaded deletes are tracked one row at a time.** Because each child is read and deleted individually, sync records one outbox write per cascaded row, not one for the whole batch.
+- **`setDefault` needs a literal default.** `IdbModelStorage.fieldDefaults` only holds literal `@default(...)` values, never generators such as `uuid()` or `now()`. Prisma has the same restriction. If a child's foreign-key field has no default, `setDefault` throws.
+- **`setDefault` checks the default too.** Before writing it, the client checks that a parent with that value exists, matching every field of a compound relation. Without this, `setDefault` could itself create a dangling reference, for example setting `authorId` to `"system"` when no `"system"` user exists. A real database gets this for free, because its foreign-key constraint re-checks the new value.
+- **`upsert()` needs a transaction-capable executor**, like `update()`, `updateAll()` and `deleteAll()`. `create()` and `delete()` only need one when the write actually involves relations or foreign keys.
+- **`createAll()` with foreign keys runs in one transaction**, checking and inserting each row in turn. If one row fails, none are written.
 
 ## Related
 
-- `target-idb/src/core/idb-contract-types.ts` — `IdbModelStorage`, `IdbReferentialAction` (to be added)
-- `family-idb/src/core/contract-builder.ts` — `RelationDef.onDelete` (to be added)
-- `client-idb/src/core/mutation-executor.ts` — scalar FK validation + delete referential action enforcement (to be added)
-- `client-idb/src/core/store-accessor.ts:569` — `delete()` (to be updated)
-- `vendor/.../domain-types.ts` — `ContractReferenceRelation` (framework type, read-only for us)
-- SQL analog: `vendor/.../postgres/src/core/migrations/operations/constraints.ts` — `ON DELETE` DDL generation
-- ADR 007 — `withMutationScope` is the transaction mechanism used for enforcement
-- [PLAN.md § Phase 6.8](../../PLAN.md#phase-68--fk-validation-and-referential-action-enforcement)
+- `target-idb/src/core/idb-contract-types.ts`: `IdbModelStorage`, `IdbRelationStorage`, `IdbReferentialAction`.
+- `family-idb/src/core/contract-builder.ts` and `psl-interpreter.ts`: where `onDelete`/`onUpdate` are read from the schema.
+- `client-idb/src/core/mutation-executor.ts`: `validateScalarFks`, `parentExists`, `enforcedAction`, `applyReferentialActionsForRow`, `applyReferentialActionsForRowOnUpdate`, `validateSetDefaultPatch`.

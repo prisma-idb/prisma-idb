@@ -5,6 +5,7 @@ export type { CodecTypes } from "../core/codec-types";
 export type {
   IdbContractWithTypeMaps,
   IdbIndexDefinition,
+  IdbKeyPath,
   IdbModelStorage,
   IdbMutationDefaultGeneratorId,
   IdbReferentialAction,
@@ -16,3 +17,4 @@ export type {
   ExtractIdbFieldOutputTypes,
   ExtractIdbFieldInputTypes,
 } from "../core/idb-contract-types";
+export { keyPathEquals, keyPathFields } from "../core/idb-contract-types";

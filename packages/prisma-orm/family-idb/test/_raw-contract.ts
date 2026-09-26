@@ -4,9 +4,9 @@ import { UNBOUND_DOMAIN_NAMESPACE_ID } from "@prisma/orm-framework/contract/type
 import type { IdbStorage } from "@prisma-idb/target-idb/pack";
 
 type RawStoreSpec = {
-  keyPath: string;
+  keyPath: string | readonly string[];
   autoIncrement?: boolean;
-  indexes?: Record<string, { keyPath: string; unique: boolean; multiEntry?: boolean }>;
+  indexes?: Record<string, { keyPath: string | readonly string[]; unique: boolean; multiEntry?: boolean }>;
 };
 
 /**

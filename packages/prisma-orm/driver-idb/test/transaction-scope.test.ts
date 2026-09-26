@@ -96,6 +96,69 @@ describe("execute put", () => {
   });
 });
 
+// ── execute (count) ───────────────────────────────────────────────────────────
+
+describe("execute count", () => {
+  let db: IDBDatabase;
+
+  beforeEach(async () => {
+    db = await openTestDb(dbName(), [USERS]);
+  });
+  afterEach(() => db.close());
+
+  it("sees writes made earlier in the same scope", async () => {
+    const scope = createTransactionScope(db, ["users"]);
+    await scope.execute({ meta: META, kind: "put", storeName: "users", record: { id: "u1" } });
+    await scope.execute({ meta: META, kind: "put", storeName: "users", record: { id: "u2" } });
+    const rows = await scope.execute({ meta: META, kind: "count", storeName: "users" });
+    await scope.commit();
+    expect(rows).toEqual([{ count: 2 }]);
+  });
+
+  it("does not disturb later ops in the scope", async () => {
+    const scope = createTransactionScope(db, ["users"]);
+    await scope.execute({ meta: META, kind: "count", storeName: "users" });
+    await scope.execute({ meta: META, kind: "put", storeName: "users", record: { id: "u1" } });
+    await scope.commit();
+    expect(await getAllRows(db, "users")).toEqual([{ id: "u1" }]);
+  });
+});
+
+// ── execute (keys) ────────────────────────────────────────────────────────────
+
+describe("execute keys", () => {
+  let db: IDBDatabase;
+
+  beforeEach(async () => {
+    db = await openTestDb(dbName(), [USERS]);
+  });
+  afterEach(() => db.close());
+
+  it("sees writes made earlier in the same scope and does not disturb later ops", async () => {
+    const scope = createTransactionScope(db, ["users"]);
+    const before = await scope.execute({
+      meta: META,
+      kind: "keys",
+      storeName: "users",
+      range: IDBKeyRange.only("u1"),
+      take: 1,
+    });
+    await scope.execute({ meta: META, kind: "put", storeName: "users", record: { id: "u1" } });
+    const after = await scope.execute({
+      meta: META,
+      kind: "keys",
+      storeName: "users",
+      range: IDBKeyRange.only("u1"),
+      take: 1,
+    });
+    await scope.execute({ meta: META, kind: "put", storeName: "users", record: { id: "u2" } });
+    await scope.commit();
+    expect(before).toEqual([]);
+    expect(after).toEqual([{ key: "u1" }]);
+    expect((await getAllRows(db, "users")).map((r) => r["id"])).toEqual(["u1", "u2"]);
+  });
+});
+
 // ── execute (key-get) ─────────────────────────────────────────────────────────
 
 describe("execute key-get", () => {
@@ -193,5 +256,37 @@ describe("unknown store", () => {
     const scope = createTransactionScope(db, ["users"]);
     const plan: IdbPutPlan = { meta: META, kind: "put", storeName: "nonexistent", record: { id: "x1" } };
     await expect(scope.execute(plan)).rejects.toBeInstanceOf(IdbExecuteError);
+  });
+});
+
+// ── TRANSACTION_INACTIVE ──────────────────────────────────────────────────────
+
+describe("transaction inactive", () => {
+  let db: IDBDatabase;
+
+  beforeEach(async () => {
+    db = await openTestDb(dbName(), [USERS]);
+    await seedStore(db, "users", [{ id: "u1", name: "Alice" }]);
+  });
+  afterEach(() => db.close());
+
+  const get: IdbKeyGetPlan = { meta: META, kind: "key-get", storeName: "users", key: "u1" };
+
+  it("wraps a request issued after a non-IDB await as TRANSACTION_INACTIVE", async () => {
+    const scope = createTransactionScope(db, ["users"], "readonly");
+    await scope.execute(get);
+    await new Promise((r) => setTimeout(r, 0)); // tx auto-commits
+    const err = await scope.execute(get).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(IdbExecuteError);
+    expect((err as IdbExecuteError).code).toBe("TRANSACTION_INACTIVE");
+    expect((err as IdbExecuteError).message).toMatch(/ADR 005\/007/);
+    expect((err as IdbExecuteError).cause).toBeInstanceOf(DOMException);
+  });
+
+  it("still reports an unknown store as STORE_NOT_FOUND", async () => {
+    const scope = createTransactionScope(db, ["users"], "readonly");
+    const err = await scope.execute({ ...get, storeName: "nope" }).catch((e: unknown) => e);
+    expect((err as IdbExecuteError).code).toBe("STORE_NOT_FOUND");
+    await scope.commit();
   });
 });

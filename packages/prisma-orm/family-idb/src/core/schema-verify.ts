@@ -3,6 +3,7 @@ import {
   type SchemaDiffIssue,
   type VerifyDatabaseSchemaResult,
 } from "@prisma/orm-framework/components/control";
+import { keyPathEquals } from "@prisma-idb/target-idb/pack";
 import type { IdbContract } from "./validate";
 import type { IdbIndexIR, IdbSchemaIR, IdbStoreIR } from "./schema-ir";
 
@@ -150,7 +151,7 @@ function countStatuses(nodes: readonly SchemaVerificationNode[]): {
 
 function verifyIndex(
   indexName: string,
-  contractIndex: { keyPath: string; unique: boolean; multiEntry?: boolean },
+  contractIndex: { keyPath: IdbIndexIR["keyPath"]; unique: boolean; multiEntry?: boolean },
   actualIndex: IdbIndexIR | undefined,
   storeName: string,
   storePath: string,
@@ -173,8 +174,8 @@ function verifyIndex(
   const children: SchemaVerificationNode[] = [];
 
   // keyPath
-  if (contractIndex.keyPath !== actualIndex.keyPath) {
-    const msg = `Index "${indexName}" keyPath mismatch: expected "${contractIndex.keyPath}", got "${actualIndex.keyPath}"`;
+  if (!keyPathEquals(contractIndex.keyPath, actualIndex.keyPath)) {
+    const msg = `Index "${indexName}" keyPath mismatch: expected ${JSON.stringify(contractIndex.keyPath)}, got ${JSON.stringify(actualIndex.keyPath)}`;
     issues.push({
       kind: "index_mismatch",
       table: storeName,
@@ -265,9 +266,9 @@ function verifyIndex(
 function verifyStore(
   storeName: string,
   contractStore: {
-    keyPath: string;
+    keyPath: IdbStoreIR["keyPath"];
     autoIncrement?: boolean;
-    indexes?: Record<string, { keyPath: string; unique: boolean; multiEntry?: boolean }>;
+    indexes?: Record<string, { keyPath: IdbIndexIR["keyPath"]; unique: boolean; multiEntry?: boolean }>;
   },
   actualStore: IdbStoreIR | undefined,
   strict: boolean,
@@ -284,8 +285,8 @@ function verifyStore(
   const children: SchemaVerificationNode[] = [];
 
   // keyPath
-  if (contractStore.keyPath !== actualStore.keyPath) {
-    const msg = `Store "${storeName}" keyPath mismatch: expected "${contractStore.keyPath}", got "${actualStore.keyPath}"`;
+  if (!keyPathEquals(contractStore.keyPath, actualStore.keyPath)) {
+    const msg = `Store "${storeName}" keyPath mismatch: expected ${JSON.stringify(contractStore.keyPath)}, got ${JSON.stringify(actualStore.keyPath)}`;
     issues.push({ kind: "primary_key_mismatch", table: storeName, message: msg, path: [storeName] });
     children.push(
       failNode(
@@ -423,9 +424,9 @@ export function verifyIdbSchema(
       stores: Record<
         string,
         {
-          keyPath: string;
+          keyPath: IdbStoreIR["keyPath"];
           autoIncrement?: boolean;
-          indexes?: Record<string, { keyPath: string; unique: boolean; multiEntry?: boolean }>;
+          indexes?: Record<string, { keyPath: IdbIndexIR["keyPath"]; unique: boolean; multiEntry?: boolean }>;
         }
       >;
     }

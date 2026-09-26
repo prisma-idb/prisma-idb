@@ -46,8 +46,15 @@ import {
   type IdbRelationMutator,
   type MutationCreateInput,
   type MutationUpdateInput,
+  extractKeyFromRow,
+  fieldValuesEqual,
+  getKeyPath,
   getStoreName,
+  isValidIdbKey,
+  keyEquals,
+  keyToken,
 } from "./types";
+import { keyPathFields, type IdbKeyPath } from "@prisma-idb/target-idb/pack";
 import type { IdbTransactionScope } from "@prisma-idb/driver-idb/runtime";
 
 // ── Internal types ─────────────────────────────────────────────────────────────
@@ -169,7 +176,7 @@ export async function executeNestedCreateMutation(options: {
 }): Promise<Record<string, unknown>> {
   const { executor, contract, modelName, data } = options;
   const record = data as Record<string, unknown>;
-  const storeNames = collectStoreNames(contract, modelName, record);
+  const storeNames = collectStoreNames(contract, modelName, record, "create");
   const defaultsCache = createMutationDefaultsCache();
   return withMutationScope(executor, storeNames, (scope) =>
     createGraph(scope, contract, modelName, record, defaultsCache)
@@ -185,7 +192,7 @@ export async function executeNestedUpdateMutation(options: {
 }): Promise<Record<string, unknown> | null> {
   const { executor, contract, modelName, filters, data } = options;
   const record = data as Record<string, unknown>;
-  const storeNames = collectStoreNames(contract, modelName, record);
+  const storeNames = collectStoreNames(contract, modelName, record, "update");
   const defaultsCache = createMutationDefaultsCache();
   return withMutationScope(executor, storeNames, (scope) =>
     updateFirstGraph(scope, contract, modelName, filters, record, defaultsCache)
@@ -194,14 +201,52 @@ export async function executeNestedUpdateMutation(options: {
 
 // ── Store name collection ─────────────────────────────────────────────────────
 
-function collectStoreNames(contract: IdbContract, modelName: string, data: Record<string, unknown>): string[] {
-  const stores = new Set([getStoreName(contract, modelName)]);
+/**
+ * Every store a nested write may touch: the model's own store, each related
+ * store a relation callback writes to, and the parent stores that foreign-key
+ * checks read, for the model and for each related model. An update also
+ * declares the stores its `onUpdate` referential actions may touch.
+ *
+ * Parent stores are declared for every foreign key, not only the ones `data`
+ * sets, because a nested write can set foreign keys through `connect()` or
+ * through a default.
+ */
+function collectStoreNames(
+  contract: IdbContract,
+  modelName: string,
+  data: Record<string, unknown>,
+  kind: "create" | "update"
+): string[] {
+  const stores = new Set([getStoreName(contract, modelName), ...fkParentStoreNames(contract, modelName)]);
+  const scalarData: Record<string, unknown> = {};
+  const relationNames = new Set<string>();
   for (const def of getRelationDefinitions(contract, modelName)) {
+    relationNames.add(def.relationName);
     if (def.relationName in data && isRelationMutationCallback(data[def.relationName])) {
       stores.add(def.relatedStoreName);
+      for (const store of fkParentStoreNames(contract, def.relatedModelName)) stores.add(store);
     }
   }
+  if (kind === "update") {
+    for (const [field, value] of Object.entries(data)) {
+      if (!relationNames.has(field)) scalarData[field] = value;
+    }
+    const patch = applyUpdateDefaults(
+      contract.execution?.mutations.defaults,
+      getStoreName(contract, modelName),
+      scalarData,
+      createMutationDefaultsCache()
+    );
+    for (const store of collectOnUpdateEnforcementStoreNames(contract, modelName, patch).storeNames) stores.add(store);
+  }
   return [...stores];
+}
+
+/** The stores of every parent `modelName` has a foreign key to. */
+function fkParentStoreNames(contract: IdbContract, modelName: string): string[] {
+  return getRelationDefinitions(contract, modelName)
+    .filter((def) => def.cardinality === "N:1")
+    .map((def) => def.relatedStoreName);
 }
 
 // ── Graph operations ──────────────────────────────────────────────────────────
@@ -262,9 +307,11 @@ async function updateFirstGraph(
   if (Object.keys(scalarData).length > 0) {
     const storeName = getStoreName(contract, modelName);
     const keyPath = getKeyPath(contract, modelName);
-    const key = existingRow[keyPath] as IDBValidKey;
+    const key = extractKeyFromRow(existingRow, keyPath);
     const meta = makePlanMeta(contract);
     const patch = applyUpdateDefaults(contract.execution?.mutations.defaults, storeName, scalarData, defaultsCache);
+    await validateScalarFks(scope, contract, modelName, patch, existingRow);
+    await applyReferentialActionsForRowOnUpdate(scope, contract, modelName, existingRow, patch);
     const rows = await scope.execute({ meta, kind: "update", storeName, key, patch });
     const updated = rows[0];
     if (updated) parentRow = updated;
@@ -532,6 +579,7 @@ async function insertSingleRow(
   const storeName = getStoreName(contract, modelName);
   const meta = makePlanMeta(contract);
   const record = applyCreateDefaults(contract.execution?.mutations.defaults, storeName, data, defaultsCache);
+  await validateScalarFks(scope, contract, modelName, record);
   const rows = await scope.execute({ meta, kind: "add", storeName, record });
   return rows[0] ?? record;
 }
@@ -605,14 +653,7 @@ function buildCriterionFilter(criterion: Record<string, unknown>): (row: Record<
 function buildParentJoinFilter(parentValues: Map<string, unknown>): (row: Record<string, unknown>) => boolean {
   const pairs = [...parentValues.entries()];
   return (row: Record<string, unknown>): boolean =>
-    pairs.every(([childField, parentValue]) => row[childField] === parentValue);
-}
-
-// ── Key path helper ───────────────────────────────────────────────────────────
-
-function getKeyPath(contract: IdbContract, modelName: string): string {
-  const model = domainModelsAtDefaultNamespace(contract.domain)[modelName];
-  return (model?.storage as { keyPath?: string } | undefined)?.keyPath ?? "id";
+    pairs.every(([childField, parentValue]) => fieldValuesEqual(row[childField], parentValue));
 }
 
 // ── Referential action helpers ────────────────────────────────────────────────
@@ -662,9 +703,17 @@ function getReferentialActionForRelation(
   contract: IdbContract,
   modelName: string,
   def: RelationDefinition,
-  kind: ReferentialActionKind,
-  defaultAction: IdbReferentialAction
-): IdbReferentialAction {
+  kind: ReferentialActionKind
+): EnforcedReferentialAction {
+  return enforcedAction(findDeclaredAction(contract, modelName, def, kind));
+}
+
+function findDeclaredAction(
+  contract: IdbContract,
+  modelName: string,
+  def: RelationDefinition,
+  kind: ReferentialActionKind
+): IdbReferentialAction | undefined {
   const direct = getStoredAction(contract, modelName, def.relationName, kind);
   if (direct !== undefined) return direct;
 
@@ -677,38 +726,118 @@ function getReferentialActionForRelation(
     if (inverseAction !== undefined) return inverseAction;
   }
 
-  return defaultAction;
+  return undefined;
+}
+
+/** A referential action after defaults are applied and `noAction` is resolved. */
+type EnforcedReferentialAction = Exclude<IdbReferentialAction, "noAction">;
+
+/**
+ * Applies the default and resolves `noAction`, matching what Postgres does
+ * with the same schema, so a synced app behaves the same on both sides:
+ *
+ * - An undeclared action defaults to `restrict`, for `onDelete` and
+ *   `onUpdate` alike. Prisma 8 emits no `ON DELETE`/`ON UPDATE` clause for an
+ *   undeclared action, and the database default is `NO ACTION`.
+ * - `noAction` behaves like `restrict`. In SQL, `NO ACTION` also rejects the
+ *   change; it only defers the check to the end of the statement, which makes
+ *   no difference here.
+ */
+function enforcedAction(declared: IdbReferentialAction | undefined): EnforcedReferentialAction {
+  return declared === undefined || declared === "noAction" ? "restrict" : declared;
 }
 
 function getOnDeleteForDeleteRelation(
   contract: IdbContract,
   modelName: string,
   def: RelationDefinition
-): IdbReferentialAction {
-  return getReferentialActionForRelation(contract, modelName, def, "onDelete", "restrict");
+): EnforcedReferentialAction {
+  return getReferentialActionForRelation(contract, modelName, def, "onDelete");
 }
 
-/**
- * `onUpdate`'s default (when neither side declares one) is `cascade`, unlike
- * `onDelete`'s `restrict` default — this matches Prisma's own documented
- * behavior: propagating a changed referenced value to children is normally
- * safe, unlike deleting the row those children point to.
- */
 function getOnUpdateForRelation(
   contract: IdbContract,
   modelName: string,
   def: RelationDefinition
-): IdbReferentialAction {
-  return getReferentialActionForRelation(contract, modelName, def, "onUpdate", "cascade");
+): EnforcedReferentialAction {
+  return getReferentialActionForRelation(contract, modelName, def, "onUpdate");
 }
 
 function isDeleteEnforcementRelation(contract: IdbContract, modelName: string, def: RelationDefinition): boolean {
   if (def.cardinality === "1:N") return true;
   if (def.cardinality === "1:1") {
+    // Shared-PK 1:1: the non-owning side is the one whose *own* primary key
+    // IS the FK (localFields === the model's own keyPath, field-for-field,
+    // in order — a compound key must match the whole ordered field list, not
+    // just its first member).
     const keyPath = getKeyPath(contract, modelName);
-    return def.localFields.length > 0 && def.localFields[0] === keyPath;
+    return sameFields(def.localFields, keyPathFields(keyPath));
   }
   return false;
+}
+
+// ── Key-only existence lookups ────────────────────────────────────────────────
+
+/**
+ * An `IDBKeyRange` for the lookup "does `modelName` have a row whose `field`
+ * equals `value`?" — but ONLY when `field` is that model's own single-field
+ * primary key (so the answer is a pure key lookup that needs no row value)
+ * and `value` is a legal IDB key. `null` otherwise, and the caller keeps its
+ * value-materializing `cursor-scan`.
+ *
+ * Deliberately `null` for a compound primary key even if `field` is one of its
+ * members (one member can't pin the whole key), and for any non-key field
+ * (that needs an index-resolution step — Phase 10.5's shared primitive, not
+ * this helper's job). `IDBKeyRange.only` throws `DataError` on invalid keys
+ * (`null`, `NaN`, booleans, …), hence the guard.
+ */
+function pkEqualityRange(contract: IdbContract, modelName: string, field: string, value: unknown): IDBKeyRange | null {
+  if (typeof IDBKeyRange === "undefined") return null;
+  const keyPath = getKeyPath(contract, modelName);
+  if (typeof keyPath !== "string" || keyPath !== field) return null;
+  if (!isValidIdbKey(value)) return null;
+  return IDBKeyRange.only(value);
+}
+
+/**
+ * Resolves to the first primary key in `storeName` within `range`, or
+ * `undefined` — one `getKey` request, no row deserialized.
+ */
+async function firstKeyInRange(
+  scope: IdbTransactionScope,
+  meta: PlanMeta,
+  storeName: string,
+  range: IDBKeyRange
+): Promise<IDBValidKey | undefined> {
+  const rows = await scope.execute({ meta, kind: "keys", storeName, range, take: 1 } as IdbAtomicPlan);
+  return rows[0]?.["key"] as IDBValidKey | undefined;
+}
+
+/**
+ * `true` if any child row matches the relation against `parentRow`'s values —
+ * the existence check behind `restrict`. Key-only when the relation's single
+ * child field is the child model's own primary key (a shared-PK 1:1); a
+ * value-materializing `cursor-scan` (`take: 1`) otherwise.
+ */
+async function childExists(
+  scope: IdbTransactionScope,
+  contract: IdbContract,
+  meta: PlanMeta,
+  def: RelationDefinition,
+  parentRow: Record<string, unknown>
+): Promise<boolean> {
+  if (def.targetFields.length === 1) {
+    const range = pkEqualityRange(contract, def.relatedModelName, def.targetFields[0]!, parentRow[def.localFields[0]!]);
+    if (range !== null) return (await firstKeyInRange(scope, meta, def.relatedStoreName, range)) !== undefined;
+  }
+  const found = await scope.execute({
+    meta,
+    kind: "cursor-scan",
+    storeName: def.relatedStoreName,
+    filter: buildChildFilterFromRow(def, parentRow),
+    take: 1,
+  } as IdbAtomicPlan);
+  return found.length > 0;
 }
 
 /**
@@ -722,7 +851,7 @@ function buildChildFilterFromRow(
 ): (child: Record<string, unknown>) => boolean {
   const pairs = def.localFields.map((lf, i) => ({ childField: def.targetFields[i]!, parentValue: row[lf] }));
   return (child: Record<string, unknown>): boolean =>
-    pairs.every(({ childField, parentValue }) => child[childField] === parentValue);
+    pairs.every(({ childField, parentValue }) => fieldValuesEqual(child[childField], parentValue));
 }
 
 /** Reads a field's literal `@default(...)` value from `IdbModelStorage.fieldDefaults`, if declared. */
@@ -770,10 +899,8 @@ function buildSetDefaultPatch(contract: IdbContract, def: RelationDefinition): R
  * part of the transaction (it's the model literally being written), so no
  * store-list changes are needed to call this.
  *
- * Refuses (throws) rather than validates incorrectly for compound (multi-
- * field) relations, for the same reason `validateScalarFks` does: each
- * field's default is resolved independently, so there's no guarantee the
- * combination corresponds to a single real row.
+ * A compound relation is checked as one tuple: a single parent row must
+ * match every field's default.
  *
  * `excludeKey`, when given, excludes the parent row currently being
  * deleted/updated from the existence scan. That row is still physically
@@ -792,34 +919,17 @@ async function validateSetDefaultPatch(
   patch: Record<string, unknown>,
   excludeKey?: IDBValidKey
 ): Promise<void> {
-  if (def.localFields.length > 1) {
-    throw new Error(
-      `setDefault referential action on relation '${def.relationName}' cannot validate a compound (multi-field) ` +
-        "default: each field's default is resolved independently, so there is no guarantee the combination " +
-        "corresponds to a single real row."
-    );
-  }
+  const values = def.targetFields.map((f) => patch[f]);
+  // A default of null leaves no reference to check.
+  if (values.some((v) => v === null || v === undefined)) return;
 
   const meta = makePlanMeta(contract);
-  const parentStoreName = getStoreName(contract, modelName);
-  const parentKeyPath = getKeyPath(contract, modelName);
-  const localField = def.localFields[0]!;
-  const targetField = def.targetFields[0]!;
-  const value = patch[targetField];
-  const filter = (row: Record<string, unknown>): boolean =>
-    row[localField] === value && (excludeKey === undefined || row[parentKeyPath] !== excludeKey);
-  const found = await scope.execute({
-    meta,
-    kind: "cursor-scan",
-    storeName: parentStoreName,
-    filter,
-    take: 1,
-  } as IdbAtomicPlan);
-  if (found.length === 0) {
+  const exists = await parentExists(scope, contract, meta, modelName, def.localFields, values, excludeKey);
+  if (!exists) {
     throw new Error(
       `setDefault referential action on relation '${def.relationName}' would set ` +
-        `'${def.relatedModelName}.${targetField}' to '${String(value)}', but no ${modelName} with ` +
-        `${localField}='${String(value)}' exists — the declared default does not reference a real row.`
+        `${def.relatedModelName} to ${describeTuple(def.targetFields, values)}, but no ${modelName} with ` +
+        `${describeTuple(def.localFields, values)} exists — the declared default does not reference a real row.`
     );
   }
 }
@@ -859,7 +969,6 @@ export function collectOnUpdateEnforcementStoreNames(
     for (const def of getRelationDefinitions(contract, mName)) {
       if (!isDeleteEnforcementRelation(contract, mName, def)) continue;
       const action = getOnUpdateForRelation(contract, mName, def);
-      if (action === "noAction") continue;
       stores.add(def.relatedStoreName);
       if (action === "cascade") walkCascadeChain(def.relatedModelName);
     }
@@ -870,7 +979,6 @@ export function collectOnUpdateEnforcementStoreNames(
     if (!isDeleteEnforcementRelation(contract, modelName, def)) continue;
     if (!def.localFields.some((f) => f in data)) continue;
     const action = getOnUpdateForRelation(contract, modelName, def);
-    if (action === "noAction") continue;
     enforces = true;
     stores.add(def.relatedStoreName);
     if (action === "cascade") walkCascadeChain(def.relatedModelName);
@@ -911,34 +1019,26 @@ export async function applyReferentialActionsForRowOnUpdate(
   visited: Set<string> = new Set()
 ): Promise<void> {
   const keyPath = getKeyPath(contract, modelName);
-  const rowKey = `${getStoreName(contract, modelName)}::${String(oldRow[keyPath])}`;
+  const rowKey = `${getStoreName(contract, modelName)}::${keyToken(extractKeyFromRow(oldRow, keyPath))}`;
   if (visited.has(rowKey)) return;
   visited.add(rowKey);
 
   const meta = makePlanMeta(contract);
   for (const def of getRelationDefinitions(contract, modelName)) {
     if (!isDeleteEnforcementRelation(contract, modelName, def)) continue;
-    const changedFields = def.localFields.filter((f) => f in patch && patch[f] !== oldRow[f]);
+    const changedFields = def.localFields.filter((f) => f in patch && !fieldValuesEqual(patch[f], oldRow[f]));
     if (changedFields.length === 0) continue;
 
     const action = getOnUpdateForRelation(contract, modelName, def);
-    if (action === "noAction") continue;
 
     const childFilter = buildChildFilterFromRow(def, oldRow);
 
     if (action === "restrict") {
-      const found = await scope.execute({
-        meta,
-        kind: "cursor-scan",
-        storeName: def.relatedStoreName,
-        filter: childFilter,
-        take: 1,
-      } as IdbAtomicPlan);
-      if (found.length > 0) {
+      if (await childExists(scope, contract, meta, def, oldRow)) {
         throw new Error(
-          `Cannot update ${modelName} '${String(oldRow[keyPath])}': changing field(s) ${changedFields.join(", ")} ` +
+          `Cannot update ${modelName} '${keyToken(extractKeyFromRow(oldRow, keyPath))}': changing field(s) ${changedFields.join(", ")} ` +
             `would orphan child records on relation '${def.relationName}'. ` +
-            "Use onUpdate: 'cascade', 'setNull', 'setDefault', or 'noAction'."
+            "Update or remove those children first, or declare onUpdate: Cascade, SetNull or SetDefault on the relation."
         );
       }
       continue;
@@ -987,7 +1087,7 @@ export async function applyReferentialActionsForRowOnUpdate(
 
     if (action === "setDefault") {
       const childPatch = buildSetDefaultPatch(contract, def);
-      await validateSetDefaultPatch(scope, contract, modelName, def, childPatch, oldRow[keyPath] as IDBValidKey);
+      await validateSetDefaultPatch(scope, contract, modelName, def, childPatch, extractKeyFromRow(oldRow, keyPath));
       await scope.execute({
         meta,
         kind: "scan-write",
@@ -1017,7 +1117,11 @@ export function hasScalarFkFields(contract: IdbContract, modelName: string, data
   return false;
 }
 
-function collectScalarFkStoreNames(contract: IdbContract, modelName: string, data: Record<string, unknown>): string[] {
+export function collectScalarFkStoreNames(
+  contract: IdbContract,
+  modelName: string,
+  data: Record<string, unknown>
+): string[] {
   const stores = new Set([getStoreName(contract, modelName)]);
   for (const def of getRelationDefinitions(contract, modelName)) {
     if (def.cardinality !== "N:1") continue;
@@ -1027,50 +1131,107 @@ function collectScalarFkStoreNames(contract: IdbContract, modelName: string, dat
   return [...stores];
 }
 
-async function validateScalarFks(
+/**
+ * Checks that every foreign key `data` sets points at an existing parent row,
+ * inside the write's transaction.
+ *
+ * A compound foreign key is checked as one tuple: a single parent row must
+ * match every field. Checking the fields one at a time could pass with each
+ * value taken from a different parent. When `data` sets only some fields of a
+ * compound key, the rest come from `existingRow`, the row being updated.
+ * Callers must pass it in that case; see {@link fkCheckNeedsExistingRow}.
+ *
+ * A key with any `null` field isn't checked, like SQL's default `MATCH SIMPLE`.
+ */
+export async function validateScalarFks(
   scope: IdbTransactionScope,
   contract: IdbContract,
   modelName: string,
-  data: Record<string, unknown>
+  data: Record<string, unknown>,
+  existingRow?: Record<string, unknown>
 ): Promise<void> {
   const meta = makePlanMeta(contract);
   for (const def of getRelationDefinitions(contract, modelName)) {
     if (def.cardinality !== "N:1") continue;
-    const touched = def.localFields.some((f) => f in data && data[f] !== null && data[f] !== undefined);
-    if (!touched) continue;
+    if (!def.localFields.some((f) => f in data)) continue;
+    const values = def.localFields.map((f) => (f in data ? data[f] : existingRow?.[f]));
+    if (values.some((v) => v === null || v === undefined)) continue;
 
-    if (def.localFields.length > 1) {
-      // Validating each field of a compound FK independently would check
-      // "does *some* row have this orgId" and "does *some* row have this
-      // userId" as two separate queries — both can pass even when no single
-      // parent row satisfies the full tuple, silently persisting a value
-      // assembled from two different parent rows. Refuse outright rather
-      // than validate incorrectly: a correct fix also needs the row's other,
-      // untouched FK fields (not available here on a partial update patch)
-      // to know the intended full tuple.
+    const exists = await parentExists(scope, contract, meta, def.relatedModelName, def.targetFields, values);
+    if (!exists) {
       throw new Error(
-        `FK violation on relation '${def.relationName}': compound (multi-field) scalar FK validation is not supported`
-      );
-    }
-
-    const localField = def.localFields[0]!;
-    const targetField = def.targetFields[0]!;
-    const value = data[localField];
-    const filter = (row: Record<string, unknown>): boolean => row[targetField] === value;
-    const plan: IdbCursorScanPlan = {
-      meta,
-      kind: "cursor-scan",
-      storeName: def.relatedStoreName,
-      filter,
-      take: 1,
-    };
-    const rows = await scope.execute(plan as IdbAtomicPlan);
-    if (rows.length === 0) {
-      throw new Error(
-        `FK violation on relation '${def.relationName}': no ${def.relatedModelName} with ${targetField}='${String(value)}'`
+        `FK violation on relation '${def.relationName}': no ${def.relatedModelName} with ${describeTuple(def.targetFields, values)}`
       );
     }
   }
+}
+
+/**
+ * `true` when `data` sets some, but not all, fields of a compound foreign
+ * key. Checking it then needs the rest of the key from the row being
+ * updated, so the update has to read each row before writing it.
+ */
+function fkCheckNeedsExistingRow(contract: IdbContract, modelName: string, data: Record<string, unknown>): boolean {
+  return getRelationDefinitions(contract, modelName).some((def) => {
+    if (def.cardinality !== "N:1") return false;
+    const set = def.localFields.filter((f) => f in data).length;
+    return set > 0 && set < def.localFields.length;
+  });
+}
+
+/**
+ * Does `parentModel` have a row whose `fields` equal `values`, pairwise?
+ *
+ * When `fields` are exactly the parent's primary key (in any order), this is
+ * one key-only lookup. Otherwise it scans the parent store, comparing values
+ * the way IndexedDB compares keys. `excludeKey` leaves out one parent row,
+ * for checks that run while that row is being deleted or changed.
+ */
+async function parentExists(
+  scope: IdbTransactionScope,
+  contract: IdbContract,
+  meta: PlanMeta,
+  parentModel: string,
+  fields: readonly string[],
+  values: readonly unknown[],
+  excludeKey?: IDBValidKey
+): Promise<boolean> {
+  const storeName = getStoreName(contract, parentModel);
+  const keyPath = getKeyPath(contract, parentModel);
+  const range = primaryKeyRange(keyPath, fields, values);
+  if (range !== null) {
+    // A primary key matches at most one row.
+    const foundKey = await firstKeyInRange(scope, meta, storeName, range);
+    return foundKey !== undefined && (excludeKey === undefined || !keyEquals(foundKey, excludeKey));
+  }
+  const filter = (row: Record<string, unknown>): boolean =>
+    fields.every((f, i) => fieldValuesEqual(row[f], values[i])) &&
+    (excludeKey === undefined || !keyEquals(extractKeyFromRow(row, keyPath), excludeKey));
+  const found = await scope.execute({ meta, kind: "cursor-scan", storeName, filter, take: 1 } as IdbAtomicPlan);
+  return found.length > 0;
+}
+
+/**
+ * An `IDBKeyRange` for "the row whose primary key is `values`", when `fields`
+ * are exactly the key's fields (in any order) and every value is a valid
+ * IndexedDB key. `null` otherwise, and the caller scans instead.
+ */
+function primaryKeyRange(
+  keyPath: IdbKeyPath,
+  fields: readonly string[],
+  values: readonly unknown[]
+): IDBKeyRange | null {
+  if (typeof IDBKeyRange === "undefined") return null;
+  const keyFields = keyPathFields(keyPath);
+  if (keyFields.length !== fields.length || !keyFields.every((f) => fields.includes(f))) return null;
+  const ordered = keyFields.map((f) => values[fields.indexOf(f)]);
+  if (!ordered.every((v) => isValidIdbKey(v))) return null;
+  return IDBKeyRange.only(typeof keyPath === "string" ? (ordered[0] as IDBValidKey) : (ordered as IDBValidKey[]));
+}
+
+/** `id='u1'`, or `orgId='a', id='u1'` for a compound key. */
+function describeTuple(fields: readonly string[], values: readonly unknown[]): string {
+  return fields.map((f, i) => `${f}='${String(values[i])}'`).join(", ");
 }
 
 export async function executeScalarCreateWithFkValidation(options: {
@@ -1080,10 +1241,45 @@ export async function executeScalarCreateWithFkValidation(options: {
   data: Record<string, unknown>;
 }): Promise<Record<string, unknown>> {
   const { executor, contract, modelName, data } = options;
-  const storeNames = collectScalarFkStoreNames(contract, modelName, data);
+  // Apply defaults first, so the transaction declares the parent store of a
+  // foreign key that a default fills in. `insertSingleRow` checks the result.
+  const defaultsCache = createMutationDefaultsCache();
+  const record = applyCreateDefaults(
+    contract.execution?.mutations.defaults,
+    getStoreName(contract, modelName),
+    data,
+    defaultsCache
+  );
+  const storeNames = collectScalarFkStoreNames(contract, modelName, record);
+  return withMutationScope(executor, storeNames, (scope) =>
+    insertSingleRow(scope, contract, modelName, record, defaultsCache)
+  );
+}
+
+/**
+ * `createAll()` for rows that set foreign keys: checks every row's foreign
+ * keys and inserts it, all in one transaction, so one bad row writes nothing.
+ * The batch shares one defaults cache, like the plain `createAll()` path.
+ */
+export async function executeScalarCreateAllWithFkValidation(options: {
+  executor: IdbQueryExecutorWithTransaction;
+  contract: IdbContract;
+  modelName: string;
+  data: readonly Record<string, unknown>[];
+}): Promise<Record<string, unknown>[]> {
+  const { executor, contract, modelName, data } = options;
+  const defaultsCache = createMutationDefaultsCache();
+  const storeName = getStoreName(contract, modelName);
+  const records = data.map((row) =>
+    applyCreateDefaults(contract.execution?.mutations.defaults, storeName, row, defaultsCache)
+  );
+  const storeNames = [...new Set(records.flatMap((row) => collectScalarFkStoreNames(contract, modelName, row)))];
   return withMutationScope(executor, storeNames, async (scope) => {
-    await validateScalarFks(scope, contract, modelName, data);
-    return insertSingleRow(scope, contract, modelName, data, createMutationDefaultsCache());
+    const inserted: Record<string, unknown>[] = [];
+    for (const record of records) {
+      inserted.push(await insertSingleRow(scope, contract, modelName, record, defaultsCache));
+    }
+    return inserted;
   });
 }
 
@@ -1116,23 +1312,26 @@ export async function executeScalarUpdateWithFkValidation(options: {
   data: Record<string, unknown>;
 }): Promise<Record<string, unknown> | null> {
   const { executor, contract, modelName, filters, data } = options;
-  const { storeNames, enforcesOnUpdate } = collectUpdateStoreNames(contract, modelName, data);
+  const storeName = getStoreName(contract, modelName);
+  // Apply defaults first, so the checks and the store list see every field
+  // the write sets, including one an `onUpdate` default fills in.
+  const patch = applyUpdateDefaults(
+    contract.execution?.mutations.defaults,
+    storeName,
+    data,
+    createMutationDefaultsCache()
+  );
+  const { storeNames, enforcesOnUpdate } = collectUpdateStoreNames(contract, modelName, patch);
+  const needsRowForFks = fkCheckNeedsExistingRow(contract, modelName, patch);
   return withMutationScope(executor, storeNames, async (scope) => {
-    await validateScalarFks(scope, contract, modelName, data);
-    const storeName = getStoreName(contract, modelName);
+    if (!needsRowForFks) await validateScalarFks(scope, contract, modelName, patch);
     const meta = makePlanMeta(contract);
     const combined =
       filters.length === 0 ? undefined : filters.length === 1 ? filters[0]! : { kind: "and" as const, exprs: filters };
     const filter =
       combined !== undefined ? (row: Record<string, unknown>): boolean => evaluateFilter(combined, row) : undefined;
-    const patch = applyUpdateDefaults(
-      contract.execution?.mutations.defaults,
-      storeName,
-      data,
-      createMutationDefaultsCache()
-    );
 
-    if (!enforcesOnUpdate) {
+    if (!enforcesOnUpdate && !needsRowForFks) {
       const rows = await scope.execute({
         meta,
         kind: "scan-write",
@@ -1146,7 +1345,8 @@ export async function executeScalarUpdateWithFkValidation(options: {
     }
 
     // Read-before-write: onUpdate enforcement needs the pre-image to know
-    // whether a locally-referenced field's value is actually changing.
+    // whether a locally-referenced field's value is actually changing, and a
+    // partly-set compound foreign key needs the row's other key fields.
     const oldRows = await scope.execute({
       meta,
       kind: "cursor-scan",
@@ -1156,9 +1356,10 @@ export async function executeScalarUpdateWithFkValidation(options: {
     } as IdbAtomicPlan);
     const oldRow = oldRows[0];
     if (!oldRow) return null;
-    await applyReferentialActionsForRowOnUpdate(scope, contract, modelName, oldRow, patch);
+    if (needsRowForFks) await validateScalarFks(scope, contract, modelName, patch, oldRow);
+    if (enforcesOnUpdate) await applyReferentialActionsForRowOnUpdate(scope, contract, modelName, oldRow, patch);
     const keyPath = getKeyPath(contract, modelName);
-    const key = oldRow[keyPath] as IDBValidKey;
+    const key = extractKeyFromRow(oldRow, keyPath);
     const rows = await scope.execute({ meta, kind: "update", storeName, key, patch } as IdbAtomicPlan);
     return rows[0] ?? null;
   });
@@ -1189,23 +1390,26 @@ export async function executeBulkUpdateWithFkValidation(options: {
   data: Record<string, unknown>;
 }): Promise<Record<string, unknown>[]> {
   const { executor, contract, modelName, filters, data } = options;
-  const { storeNames, enforcesOnUpdate } = collectUpdateStoreNames(contract, modelName, data);
+  const storeName = getStoreName(contract, modelName);
+  // Apply defaults first, so the checks and the store list see every field
+  // the write sets, including one an `onUpdate` default fills in.
+  const patch = applyUpdateDefaults(
+    contract.execution?.mutations.defaults,
+    storeName,
+    data,
+    createMutationDefaultsCache()
+  );
+  const { storeNames, enforcesOnUpdate } = collectUpdateStoreNames(contract, modelName, patch);
+  const needsRowForFks = fkCheckNeedsExistingRow(contract, modelName, patch);
   return withMutationScope(executor, storeNames, async (scope) => {
-    await validateScalarFks(scope, contract, modelName, data);
-    const storeName = getStoreName(contract, modelName);
+    if (!needsRowForFks) await validateScalarFks(scope, contract, modelName, patch);
     const meta = makePlanMeta(contract);
     const combined =
       filters.length === 0 ? undefined : filters.length === 1 ? filters[0]! : { kind: "and" as const, exprs: filters };
     const filter =
       combined !== undefined ? (row: Record<string, unknown>): boolean => evaluateFilter(combined, row) : undefined;
-    const patch = applyUpdateDefaults(
-      contract.execution?.mutations.defaults,
-      storeName,
-      data,
-      createMutationDefaultsCache()
-    );
 
-    if (!enforcesOnUpdate) {
+    if (!enforcesOnUpdate && !needsRowForFks) {
       return scope.execute({
         meta,
         kind: "scan-write",
@@ -1225,8 +1429,9 @@ export async function executeBulkUpdateWithFkValidation(options: {
     const keyPath = getKeyPath(contract, modelName);
     const results: Record<string, unknown>[] = [];
     for (const oldRow of oldRows) {
-      await applyReferentialActionsForRowOnUpdate(scope, contract, modelName, oldRow, patch);
-      const key = oldRow[keyPath] as IDBValidKey;
+      if (needsRowForFks) await validateScalarFks(scope, contract, modelName, patch, oldRow);
+      if (enforcesOnUpdate) await applyReferentialActionsForRowOnUpdate(scope, contract, modelName, oldRow, patch);
+      const key = extractKeyFromRow(oldRow, keyPath);
       const rows = await scope.execute({ meta, kind: "update", storeName, key, patch } as IdbAtomicPlan);
       const updated = rows[0];
       if (updated) results.push(updated);
@@ -1239,16 +1444,13 @@ export async function executeBulkUpdateWithFkValidation(options: {
 
 /**
  * Returns true if the model has at least one child relation (1:N or parent-side
- * 1:1) whose `onDelete` action requires enforcement (anything except `noAction`).
- * Since the default is `restrict`, any model with 1:N/1:1 relations that do not
- * explicitly set `noAction` returns true.
+ * 1:1). Every such relation has an `onDelete` action to enforce: `noAction`
+ * behaves like `restrict`, which is also the default.
  */
 export function hasEnforceableChildRelations(contract: IdbContract, modelName: string): boolean {
-  for (const def of getRelationDefinitions(contract, modelName)) {
-    if (!isDeleteEnforcementRelation(contract, modelName, def)) continue;
-    if (getOnDeleteForDeleteRelation(contract, modelName, def) !== "noAction") return true;
-  }
-  return false;
+  return getRelationDefinitions(contract, modelName).some((def) =>
+    isDeleteEnforcementRelation(contract, modelName, def)
+  );
 }
 
 /**
@@ -1273,7 +1475,6 @@ export function collectDeleteStoreNames(contract: IdbContract, modelName: string
     for (const def of getRelationDefinitions(contract, mName)) {
       if (!isDeleteEnforcementRelation(contract, mName, def)) continue;
       const action = getOnDeleteForDeleteRelation(contract, mName, def);
-      if (action === "noAction") continue;
       stores.add(def.relatedStoreName);
       if (action === "cascade") walk(def.relatedModelName);
     }
@@ -1309,7 +1510,7 @@ export async function applyReferentialActionsForRow(
   visited: Set<string> = new Set()
 ): Promise<void> {
   const keyPath = getKeyPath(contract, modelName);
-  const rowKey = `${getStoreName(contract, modelName)}::${String(row[keyPath])}`;
+  const rowKey = `${getStoreName(contract, modelName)}::${keyToken(extractKeyFromRow(row, keyPath))}`;
   if (visited.has(rowKey)) return;
   visited.add(rowKey);
 
@@ -1317,22 +1518,14 @@ export async function applyReferentialActionsForRow(
   for (const def of getRelationDefinitions(contract, modelName)) {
     if (!isDeleteEnforcementRelation(contract, modelName, def)) continue;
     const action = getOnDeleteForDeleteRelation(contract, modelName, def);
-    if (action === "noAction") continue;
 
     const childFilter = buildChildFilterFromRow(def, row);
 
     if (action === "restrict") {
-      const found = await scope.execute({
-        meta,
-        kind: "cursor-scan",
-        storeName: def.relatedStoreName,
-        filter: childFilter,
-        take: 1,
-      } as IdbAtomicPlan);
-      if (found.length > 0) {
+      if (await childExists(scope, contract, meta, def, row)) {
         throw new Error(
-          `Cannot delete ${modelName} '${String(row[keyPath])}': child records exist on relation '${def.relationName}'. ` +
-            "Use onDelete: 'cascade', 'setNull', or 'noAction'."
+          `Cannot delete ${modelName} '${keyToken(extractKeyFromRow(row, keyPath))}': child records exist on relation '${def.relationName}'. ` +
+            "Delete those children first, or declare onDelete: Cascade, SetNull or SetDefault on the relation."
         );
       }
       continue;
@@ -1352,7 +1545,7 @@ export async function applyReferentialActionsForRow(
           meta,
           kind: "delete",
           storeName: def.relatedStoreName,
-          key: child[childKeyPath] as IDBValidKey,
+          key: extractKeyFromRow(child, childKeyPath),
         } as IdbAtomicPlan);
       }
       continue;
@@ -1374,7 +1567,7 @@ export async function applyReferentialActionsForRow(
 
     if (action === "setDefault") {
       const patch = buildSetDefaultPatch(contract, def);
-      await validateSetDefaultPatch(scope, contract, modelName, def, patch, row[keyPath] as IDBValidKey);
+      await validateSetDefaultPatch(scope, contract, modelName, def, patch, extractKeyFromRow(row, keyPath));
       await scope.execute({
         meta,
         kind: "scan-write",
@@ -1428,7 +1621,7 @@ export async function executeDeleteAllWithReferentialActions(options: {
     } as IdbAtomicPlan);
     for (const row of rows) {
       await applyReferentialActionsForRow(scope, contract, modelName, row);
-      const key = row[keyPath] as IDBValidKey;
+      const key = extractKeyFromRow(row, keyPath);
       await scope.execute({ meta, kind: "delete", storeName, key } as IdbAtomicPlan);
     }
     return rows;

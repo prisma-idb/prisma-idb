@@ -8,6 +8,8 @@ export type {
   IdbBatchPlan,
   IdbAddPlan,
   IdbCursorScanPlan,
+  IdbCountPlan,
+  IdbKeysPlan,
   IdbKeyGetPlan,
   IdbIndexGetPlan,
   IdbPutPlan,

@@ -20,7 +20,7 @@ export const migrationPlanCommand = defineIdbCommand({
         placeholder: "slug",
       }),
       space: flag.string({
-        brief: 'Contract-space id (default: "app"). See ADR 212 for extension-space migrations.',
+        brief: 'Contract-space id (default: "app"). Only extension authors set this.',
         placeholder: "id",
       }),
       contract: flag.string({

@@ -11,6 +11,7 @@
  * - `--dry-run` prints both files to stdout and writes nothing
  * - Preserves `createdAt` and other CLI-owned metadata fields across re-runs
  * - `--help` prints usage and writes nothing
+ * - Warns on stderr when the migration drops a store
  */
 
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
@@ -19,7 +20,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { IdbMigration } from "../src/core/idb-migration";
-import { createObjectStoreOp, type IdbDdlOp } from "../src/core/migration-factories";
+import { createObjectStoreOp, dropObjectStoreOp, type IdbDdlOp } from "../src/core/migration-factories";
 
 vi.mock("@prisma/orm-toolchain/migration-tools/migration", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@prisma/orm-toolchain/migration-tools/migration")>();
@@ -40,6 +41,15 @@ class BaselineMigration extends IdbMigration {
   }
   override get operations(): readonly IdbDdlOp[] {
     return [createObjectStoreOp("users", { keyPath: "id" })];
+  }
+}
+
+class DropMigration extends IdbMigration {
+  override describe() {
+    return { from: "sha256:test-from-hash", to: "sha256:test-to-hash" };
+  }
+  override get operations(): readonly IdbDdlOp[] {
+    return [dropObjectStoreOp("drafts")];
   }
 }
 
@@ -143,6 +153,22 @@ describe("MigrationCLI", () => {
     await MigrationCLI.run(migrationFileUrl, BaselineMigration);
     const secondMeta = JSON.parse(readFileSync(metaPath, "utf-8")) as { createdAt: string };
     expect(secondMeta.createdAt).toBe("2026-01-01T00:00:00.000Z");
+  });
+
+  it("warns on stderr when the migration drops a store, and not otherwise", async () => {
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      process.argv = ["node", "/migration.ts", "--dry-run"];
+      await MigrationCLI.run(migrationFileUrl, BaselineMigration);
+      expect(stderr).not.toHaveBeenCalled();
+
+      await MigrationCLI.run(migrationFileUrl, DropMigration);
+      const warning = stderr.mock.calls.map(([chunk]) => String(chunk)).join("");
+      expect(warning).toContain("this migration deletes data");
+      expect(warning).toContain("  - drafts\n");
+    } finally {
+      stderr.mockRestore();
+    }
   });
 
   it("--help prints usage and writes no files", async () => {

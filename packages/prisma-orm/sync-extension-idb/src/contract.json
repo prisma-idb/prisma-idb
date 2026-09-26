@@ -175,6 +175,7 @@
   },
   "capabilities": {
     "idb": {
+      "compoundKeys": true,
       "ddlOnlyInUpgrade": true,
       "transactionalDDL": true
     }

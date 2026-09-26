@@ -65,11 +65,43 @@ describe("evaluateFilter — field operators", () => {
     expect(evaluateFilter(fieldFilter("bio", "gt", "x"), ALICE)).toBe(false); // bio === null
   });
 
-  it("in / notIn use strict equality per element", () => {
+  it("in / notIn match any element", () => {
     expect(evaluateFilter(fieldFilter("name", "in", ["Alice", "Bob"]), ALICE)).toBe(true);
     expect(evaluateFilter(fieldFilter("name", "in", ["Bob", "Carol"]), ALICE)).toBe(false);
     expect(evaluateFilter(fieldFilter("name", "notIn", ["Bob", "Carol"]), ALICE)).toBe(true);
     expect(evaluateFilter(fieldFilter("name", "notIn", ["Alice"]), ALICE)).toBe(false);
+  });
+
+  // Values read back from IndexedDB are fresh objects, so `===` never matches
+  // two equal Dates or byte arrays. These must compare by value, the way an
+  // index key range would.
+  describe("Date and binary values compare by value", () => {
+    const at = (iso: string) => new Date(iso);
+    const row = { id: "e1", startsAt: at("2026-01-01T00:00:00Z"), hash: new Uint8Array([1, 2, 3]) };
+
+    it("eq / neq on an equal but distinct Date", () => {
+      expect(evaluateFilter(fieldFilter("startsAt", "eq", at("2026-01-01T00:00:00Z")), row)).toBe(true);
+      expect(evaluateFilter(fieldFilter("startsAt", "neq", at("2026-01-01T00:00:00Z")), row)).toBe(false);
+      expect(evaluateFilter(fieldFilter("startsAt", "eq", at("2026-01-02T00:00:00Z")), row)).toBe(false);
+    });
+
+    it("in / notIn on Dates", () => {
+      expect(evaluateFilter(fieldFilter("startsAt", "in", [at("2026-01-01T00:00:00Z")]), row)).toBe(true);
+      expect(evaluateFilter(fieldFilter("startsAt", "notIn", [at("2026-01-01T00:00:00Z")]), row)).toBe(false);
+    });
+
+    it("gt / gte / lt / lte on Dates", () => {
+      const same = at("2026-01-01T00:00:00Z");
+      expect(evaluateFilter(fieldFilter("startsAt", "gte", same), row)).toBe(true);
+      expect(evaluateFilter(fieldFilter("startsAt", "lte", same), row)).toBe(true);
+      expect(evaluateFilter(fieldFilter("startsAt", "gt", same), row)).toBe(false);
+      expect(evaluateFilter(fieldFilter("startsAt", "lt", at("2026-02-01T00:00:00Z")), row)).toBe(true);
+    });
+
+    it("eq on equal bytes", () => {
+      expect(evaluateFilter(fieldFilter("hash", "eq", new Uint8Array([1, 2, 3])), row)).toBe(true);
+      expect(evaluateFilter(fieldFilter("hash", "eq", new Uint8Array([1, 2, 4])), row)).toBe(false);
+    });
   });
 
   it("contains / startsWith / endsWith coerce both sides to strings", () => {

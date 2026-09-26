@@ -125,3 +125,22 @@ export function createMarkerStoreOp(): CreateObjectStoreOp {
     def: { keyPath: MARKER_KEYPATH },
   };
 }
+
+/**
+ * The warning to show when a migration drops object stores, or `undefined`
+ * when it drops none. The browser applies every planned op without asking,
+ * so planning or re-emitting a migration is where the developer hears that
+ * it deletes data. Dropping an index loses nothing that can't be rebuilt, so
+ * indexes aren't listed.
+ */
+export function deletedDataWarning(ops: readonly unknown[]): string | undefined {
+  const droppedStores = ops
+    .filter((op): op is DropObjectStoreOp => (op as { kind?: unknown }).kind === "dropObjectStore")
+    .map((op) => op.storeName);
+  if (droppedStores.length === 0) return undefined;
+  return (
+    "\nWarning: this migration deletes data. When it runs in a user's browser, every record in these stores is deleted:\n" +
+    droppedStores.map((store) => `  - ${store}\n`).join("") +
+    "Check that this is intended before shipping it.\n"
+  );
+}

@@ -1,37 +1,54 @@
 ---
 title: API
-description: Common Prisma 8 IDB client methods
+description: Every method on a model accessor
 icon: Braces
 ---
 
-Reads are built with chainable methods and executed with a terminal call:
+Each model has an accessor on `db.orm`, such as `db.orm.todo`. You build a query by chaining methods, then run it with a terminal method:
 
 ```ts
-const todos = await db.orm.todo.where({ done: false }).orderBy({ title: "asc" }).all();
+const todos = await db.orm.todo.where({ done: false }).orderBy({ title: "asc" }).take(10).all();
 ```
 
-## Methods
+Chaining returns a new accessor and never changes the one you started from, so you can reuse a partial query.
 
-| Method                | Use                       |
-| --------------------- | ------------------------- |
-| `all()`               | Return matching rows      |
-| `first()`             | Return the first match    |
-| `findUnique(key)`     | Read by primary key       |
-| `create(data)`        | Insert one row            |
-| `createAll(data[])`   | Insert many rows          |
-| `update(patch)`       | Update the first match    |
-| `updateAll(patch)`    | Update all matches        |
-| `upsert(args)`        | Insert or update one row  |
-| `delete(key)`         | Delete by primary key     |
-| `deleteAll()`         | Delete all matches        |
-| `createCount(data[])` | Insert many, return count |
-| `updateCount(patch)`  | Update many, return count |
-| `deleteCount()`       | Delete many, return count |
-| `count()`             | Count matching rows       |
-| `aggregate(callback)` | Compute aggregate values  |
-| `groupBy(...fields)`  | Group aggregate results   |
-| `include(relation)`   | Load a relation           |
-| `select(...fields)`   | Project scalar fields     |
+## Chaining methods
+
+| Method                       | Does                                                                  | Details                                                       |
+| ---------------------------- | --------------------------------------------------------------------- | ------------------------------------------------------------- |
+| `where(filter)`              | Keeps rows that match. Calling it again adds another condition (AND). | [Filtering](/docs/prisma-8/api/querying#filtering)            |
+| `orderBy(spec)`              | Sorts the results.                                                    | [Sorting](/docs/prisma-8/api/querying#sorting-and-pagination) |
+| `skip(n)`, `take(n)`         | Skips `n` rows, or returns at most `n`.                               | [Sorting](/docs/prisma-8/api/querying#sorting-and-pagination) |
+| `include(relation, refine?)` | Loads a related model into each row.                                  | [Relations](/docs/prisma-8/api/querying#include-relations)    |
+| `select(...fields)`          | Returns only these scalar fields.                                     | [Select](/docs/prisma-8/api/querying#select)                  |
+| `groupBy(...fields)`         | Groups rows for `aggregate()`.                                        | [Group by](/docs/prisma-8/api/querying#group-by)              |
+
+## Reading
+
+| Method                | Returns                                                                            |
+| --------------------- | ---------------------------------------------------------------------------------- |
+| `all()`               | Every matching row. Await it, or iterate it with `for await`.                      |
+| `first()`             | The first matching row, or `null`.                                                 |
+| `findUnique(key)`     | The row with this primary key, or `null`. Ignores `where`, `include` and `select`. |
+| `count()`             | The number of matching rows, after `skip` and `take`.                              |
+| `aggregate(callback)` | Counts, sums, averages, minimums and maximums.                                     |
+
+## Writing
+
+| Method                | Does                                                    | Returns                      |
+| --------------------- | ------------------------------------------------------- | ---------------------------- |
+| `create(data)`        | Inserts a row. Fails if the primary key exists.         | The new row.                 |
+| `createAll(data[])`   | Inserts rows in one transaction.                        | The new rows.                |
+| `createCount(data[])` | Same as `createAll`.                                    | How many rows were inserted. |
+| `update(patch)`       | Updates the first matching row.                         | The updated row, or `null`.  |
+| `updateAll(patch)`    | Updates every matching row.                             | The updated rows.            |
+| `updateCount(patch)`  | Same as `updateAll`.                                    | How many rows were updated.  |
+| `upsert(args)`        | Updates the row matching `where`, or creates one.       | The row.                     |
+| `delete(key)`         | Deletes the row with this primary key. Ignores `where`. | Nothing.                     |
+| `deleteAll()`         | Deletes every matching row.                             | The deleted rows.            |
+| `deleteCount()`       | Same as `deleteAll`.                                    | How many rows were deleted.  |
+
+Every write runs in one IndexedDB transaction, including the foreign-key checks and referential actions it triggers. See [Writing](/docs/prisma-8/api/writing).
 
 <Cards>
   <Card title="Querying" href="/docs/prisma-8/api/querying" />

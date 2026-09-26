@@ -49,6 +49,7 @@ export {
   createIndexOp,
   dropIndexOp,
   isIdbDdlOp,
+  deletedDataWarning,
 } from "../core/migration-factories";
 
 export type { IdbDdlOp, CreateObjectStoreOp, DropObjectStoreOp, CreateIndexOp, DropIndexOp };

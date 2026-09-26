@@ -10,6 +10,7 @@ import { UNBOUND_DOMAIN_NAMESPACE_ID, crossRef } from "@prisma/orm-framework/con
 import type { FieldSymbol, ModelSymbol, SymbolTable } from "@prisma/orm-framework/psl-parser";
 import type {
   IdbIndexDefinition,
+  IdbKeyPath,
   IdbModelStorage,
   IdbMutationDefaultGeneratorId,
   IdbReferentialAction,
@@ -188,7 +189,7 @@ export type ContractProjection = "full" | "client";
  */
 export function warnDroppedRelation(modelName: string, relationName: string, targetModel: string): void {
   console.warn(
-    `[prisma-idb] Dropped relation "${modelName}.${relationName}" from the client contract: target model "${targetModel}" is excluded (ADR 013).`
+    `[prisma-idb] Dropped relation "${modelName}.${relationName}" from the client contract: target model "${targetModel}" is excluded. The relation's scalar fields are kept.`
   );
 }
 
@@ -250,7 +251,7 @@ const IDB_EXCLUDE_ATTR = "idb.exclude";
 interface InterpretedModel {
   readonly modelName: string;
   readonly storeName: string;
-  readonly keyPath: string;
+  readonly keyPath: IdbKeyPath;
   readonly indexes: Record<string, IdbIndexDefinition>;
   readonly fields: Record<string, ContractField>;
   readonly relations: Record<
@@ -293,9 +294,13 @@ function interpretModel(
   const mapAttr = model.attributes.find((a) => a.name === "map");
   const storeName = parseStringArg(findPositionalArg(mapAttr?.args ?? [])) ?? lowerFirst(model.name);
 
-  // Find the keyPath: @id field-level attribute OR @@id([field]) model-level
-  let keyPath: string | undefined;
-  let idFieldName: string | undefined;
+  // Find the keyPath: @id field-level attribute OR @@id([field, ...]) model-level.
+  // `idFieldNames` is always the ordered list of key member fields (length 1
+  // for the common single-field case); `keyPath` collapses to a bare string
+  // for that common case and stays an array only for a genuine compound key,
+  // matching how every other single-field model in this codebase is authored.
+  let keyPath: IdbKeyPath | undefined;
+  let idFieldNames: string[] | undefined;
 
   const idModelAttr = model.attributes.find((a) => a.name === "id");
   if (idModelAttr) {
@@ -309,24 +314,24 @@ function interpretModel(
       });
       return undefined;
     }
-    if (fields.length > 1) {
+    if (new Set(fields).size !== fields.length) {
       diagnostics.push({
-        code: "IDB_NO_COMPOUND_KEY",
-        message: `Model "${model.name}" @@id([${fields.join(", ")}]) declares a compound key. IDB does not support compound primary keys — use a single @id field instead.`,
+        code: "IDB_INVALID_ID",
+        message: `Model "${model.name}" @@id([${fields.join(", ")}]) repeats a field name.`,
         sourceId,
         span: idModelAttr.span,
       });
       return undefined;
     }
-    idFieldName = fields[0];
-    keyPath = fields[0];
+    idFieldNames = fields;
+    keyPath = fields.length === 1 ? fields[0]! : fields;
   }
 
   const idFields = modelFields.filter((f) => hasFieldAttribute(f, "id"));
   if (idFields.length > 1) {
     diagnostics.push({
       code: "IDB_MULTIPLE_ID_FIELDS",
-      message: `Model "${model.name}" declares @id on multiple fields (${idFields.map((f) => f.name).join(", ")}). Only one @id field is allowed.`,
+      message: `Model "${model.name}" declares @id on multiple fields (${idFields.map((f) => f.name).join(", ")}). Only one @id field is allowed — for a compound primary key, use @@id([${idFields.map((f) => f.name).join(", ")}]) instead.`,
       sourceId,
       span: model.span,
     });
@@ -342,24 +347,25 @@ function interpretModel(
       });
       return undefined;
     }
-    idFieldName = idFields[0]!.name;
+    idFieldNames = [idFields[0]!.name];
     keyPath = idFields[0]!.name;
   }
 
-  if (keyPath === undefined) {
+  if (keyPath === undefined || idFieldNames === undefined) {
     diagnostics.push({
       code: "IDB_MISSING_ID",
-      message: `Model "${model.name}" has no @id field. Add @id to exactly one scalar field.`,
+      message: `Model "${model.name}" has no @id field. Add @id to exactly one scalar field, or @@id([...]) for a compound key.`,
       sourceId,
       span: model.span,
     });
     return undefined;
   }
 
-  if (excludedFieldNames.has(keyPath)) {
+  const excludedKeyField = idFieldNames.find((f) => excludedFieldNames.has(f));
+  if (excludedKeyField !== undefined) {
     diagnostics.push({
       code: "IDB_CANNOT_EXCLUDE_KEY_FIELD",
-      message: `Field "${model.name}.${keyPath}" is the model's @id key and cannot be marked @idb.exclude — the client contract needs a primary key for every included model.`,
+      message: `Field "${model.name}.${excludedKeyField}" is part of the model's primary key and cannot be marked @idb.exclude — the client contract needs a primary key for every included model.`,
       sourceId,
       span: model.span,
     });
@@ -369,7 +375,8 @@ function interpretModel(
   // ── Build indexes ────────────────────────────────────────────────────────────
   const indexes: Record<string, IdbIndexDefinition> = {};
 
-  // @@index([fields]) model attribute
+  // @@index([fields]) / @@unique([fields]) model attribute — `fields` may be
+  // a single field or an ordered list for a compound (multi-field) index.
   for (const attr of model.attributes) {
     if (attr.name !== "index" && attr.name !== "unique") continue;
     const isUnique = attr.name === "unique";
@@ -384,28 +391,30 @@ function interpretModel(
       });
       continue;
     }
-    if (fields.length > 1) {
+    if (new Set(fields).size !== fields.length) {
       diagnostics.push({
-        code: "IDB_COMPOUND_INDEX_UNSUPPORTED",
-        message: `Model "${model.name}" @@${attr.name}([${fields.join(", ")}]) declares a compound index. IDB compound indexes are not yet supported — use a single-field index.`,
+        code: "IDB_INVALID_INDEX",
+        message: `Model "${model.name}" @@${attr.name}([${fields.join(", ")}]) repeats a field name.`,
         sourceId,
         span: attr.span,
       });
       continue;
     }
-    const field = fields[0]!;
-    if (excludedFieldNames.has(field)) {
+    const excludedField = fields.find((f) => excludedFieldNames.has(f));
+    if (excludedField !== undefined) {
       diagnostics.push({
         code: "IDB_INDEX_ON_EXCLUDED_FIELD",
-        message: `Model "${model.name}" @@${attr.name}([${field}]) references "${field}", which is marked @idb.exclude. Remove the index or the exclusion.`,
+        message: `Model "${model.name}" @@${attr.name}([${fields.join(", ")}]) references "${excludedField}", which is marked @idb.exclude. Remove the index or the exclusion.`,
         sourceId,
         span: attr.span,
       });
       continue;
     }
     const nameRaw = findNamedArg(attr.args, "name") ?? findNamedArg(attr.args, "map");
-    const indexName = parseStringArg(nameRaw) ?? (isUnique ? `${field}_unique` : field);
-    indexes[indexName] = { keyPath: field, unique: isUnique };
+    const defaultName = fields.length === 1 ? fields[0]! : fields.join("_");
+    const indexName = parseStringArg(nameRaw) ?? (isUnique ? `${defaultName}_unique` : defaultName);
+    const keyPath: IdbKeyPath = fields.length === 1 ? fields[0]! : fields;
+    indexes[indexName] = { keyPath, unique: isUnique };
   }
 
   // ── Walk fields ──────────────────────────────────────────────────────────────
@@ -419,7 +428,7 @@ function interpretModel(
 
   for (const field of modelFields) {
     // Skip the @id field's optional marker — keyPath fields cannot be nullable in IDB
-    if (field.name === idFieldName && field.optional) {
+    if (idFieldNames.includes(field.name) && field.optional) {
       diagnostics.push({
         code: "IDB_NULLABLE_ID",
         message: `Field "${model.name}.${field.name}" is marked as @id but is optional (?). The primary key cannot be nullable.`,
@@ -486,7 +495,7 @@ function interpretModel(
       if (excludedLocalField !== undefined) {
         diagnostics.push({
           code: "IDB_CANNOT_EXCLUDE_RELATION_FIELD",
-          message: `Field "${model.name}.${excludedLocalField}" backs relation "${model.name}.${field.name}" and cannot be excluded independently — field-level FK exclusion isn't supported (ADR 013's cascade only covers whole-model @@idb.exclude). Exclude the whole model instead, or remove the exclusion.`,
+          message: `Field "${model.name}.${excludedLocalField}" backs relation "${model.name}.${field.name}" and cannot be excluded independently — only a whole-model @@idb.exclude can drop a relation. Exclude the whole model instead, or remove the exclusion.`,
           sourceId,
           span: field.span,
         });
@@ -500,7 +509,7 @@ function interpretModel(
       if (excludedTargetField !== undefined) {
         diagnostics.push({
           code: "IDB_CANNOT_EXCLUDE_RELATION_FIELD",
-          message: `Field "${field.typeName}.${excludedTargetField}" is referenced by relation "${model.name}.${field.name}" and cannot be excluded independently — field-level FK exclusion isn't supported (ADR 013's cascade only covers whole-model @@idb.exclude). Exclude the whole model instead, or remove the exclusion.`,
+          message: `Field "${field.typeName}.${excludedTargetField}" is referenced by relation "${model.name}.${field.name}" and cannot be excluded independently — only a whole-model @@idb.exclude can drop a relation. Exclude the whole model instead, or remove the exclusion.`,
           sourceId,
           span: field.span,
         });
@@ -619,10 +628,10 @@ function interpretModel(
         });
         continue;
       }
-      if (field.name === idFieldName) {
+      if (idFieldNames.includes(field.name)) {
         diagnostics.push({
           code: "IDB_TEMPORAL_UPDATED_AT_ON_KEY_FIELD",
-          message: `Field "${model.name}.${field.name}" is the model's @id key and cannot be temporal.updatedAt() — an auto-managed timestamp cannot also be the primary key.`,
+          message: `Field "${model.name}.${field.name}" is part of the model's primary key and cannot be temporal.updatedAt() — an auto-managed timestamp cannot also be (part of) the primary key.`,
           sourceId,
           span: field.span,
         });
@@ -674,10 +683,10 @@ function interpretModel(
     }
 
     if (updatedAtAttr) {
-      if (field.name === idFieldName) {
+      if (idFieldNames.includes(field.name)) {
         diagnostics.push({
           code: "IDB_TEMPORAL_UPDATED_AT_ON_KEY_FIELD",
-          message: `Field "${model.name}.${field.name}" is the model's @id key and cannot be @updatedAt — an auto-managed timestamp cannot also be the primary key.`,
+          message: `Field "${model.name}.${field.name}" is part of the model's primary key and cannot be @updatedAt — an auto-managed timestamp cannot also be (part of) the primary key.`,
           sourceId,
           span: field.span,
         });
@@ -751,10 +760,19 @@ function interpretModel(
         }
 
         if (call.name === "autoincrement") {
-          if (field.name !== idFieldName) {
+          if (!idFieldNames.includes(field.name)) {
             diagnostics.push({
               code: "IDB_AUTOINCREMENT_NOT_ON_KEY_FIELD",
               message: `Field "${model.name}.${field.name}" uses @default(autoincrement()) but is not the model's @id key. IndexedDB only generates keys for the primary key field.`,
+              sourceId,
+              span: defaultAttr.span,
+            });
+            continue;
+          }
+          if (idFieldNames.length > 1) {
+            diagnostics.push({
+              code: "IDB_AUTOINCREMENT_ON_COMPOUND_KEY",
+              message: `Field "${model.name}.${field.name}" uses @default(autoincrement()) but is part of a compound primary key (@@id([${idFieldNames.join(", ")}])). IndexedDB rejects autoIncrement combined with a compound key (InvalidAccessError) — use a single-field @id if you need autoincrement().`,
               sourceId,
               span: defaultAttr.span,
             });
@@ -828,25 +846,29 @@ function interpretModel(
     return type?.kind === "scalar" ? type.codecId : undefined;
   };
 
-  const keyFieldCodec = scalarCodecOf(keyPath);
-  if (keyFieldCodec !== undefined && !isValidIdbKeyCodec(keyFieldCodec)) {
+  for (const keyField of idFieldNames) {
+    const keyFieldCodec = scalarCodecOf(keyField);
+    if (keyFieldCodec === undefined || isValidIdbKeyCodec(keyFieldCodec)) continue;
     diagnostics.push({
       code: "IDB_INVALID_KEY_TYPE",
-      message: `Model "${model.name}" @id field "${keyPath}" has type "${keyFieldCodec}", which IndexedDB cannot use as a key. Every write would throw (DataError extracting the primary key). Use String, Int, Float, DateTime, Decimal, or Bytes instead.`,
+      message: `Model "${model.name}" @id field "${keyField}" has type "${keyFieldCodec}", which IndexedDB cannot use as a key. Every write would throw (DataError extracting the primary key). Use String, Int, Float, DateTime, Decimal, or Bytes instead.`,
       sourceId,
-      span: modelFields.find((f) => f.name === keyPath)?.span ?? model.span,
+      span: modelFields.find((f) => f.name === keyField)?.span ?? model.span,
     });
   }
 
   for (const [indexName, idx] of Object.entries(indexes)) {
-    const fieldCodec = scalarCodecOf(idx.keyPath);
-    if (fieldCodec === undefined || isValidIdbKeyCodec(fieldCodec)) continue;
-    diagnostics.push({
-      code: "IDB_INVALID_INDEX_KEY_TYPE",
-      message: `Model "${model.name}" index "${indexName}" is keyed on "${idx.keyPath}" (type "${fieldCodec}"), which IndexedDB cannot use as an index key. Records are silently omitted from the index on write, and any query against it throws at runtime. Use String, Int, Float, DateTime, Decimal, or Bytes instead.`,
-      sourceId,
-      span: modelFields.find((f) => f.name === idx.keyPath)?.span ?? model.span,
-    });
+    const idxFields = typeof idx.keyPath === "string" ? [idx.keyPath] : idx.keyPath;
+    for (const idxField of idxFields) {
+      const fieldCodec = scalarCodecOf(idxField);
+      if (fieldCodec === undefined || isValidIdbKeyCodec(fieldCodec)) continue;
+      diagnostics.push({
+        code: "IDB_INVALID_INDEX_KEY_TYPE",
+        message: `Model "${model.name}" index "${indexName}" is keyed on "${idxField}" (type "${fieldCodec}"), which IndexedDB cannot use as an index key. Records are silently omitted from the index on write, and any query against it throws at runtime. Use String, Int, Float, DateTime, Decimal, or Bytes instead.`,
+        sourceId,
+        span: modelFields.find((f) => f.name === idxField)?.span ?? model.span,
+      });
+    }
   }
 
   return {
@@ -874,7 +896,9 @@ function interpretModel(
  * SQL family. It handles IDB-specific constraints:
  *
  * - No namespace blocks (IDB has a single implicit `__unbound__` namespace)
- * - No compound primary keys (IDB `keyPath` must be a single field)
+ * - Compound primary keys (`@@id([a, b])`) and compound secondary indexes
+ *   (`@@index([a, b])`/`@@unique([a, b])`) lower to an array `keyPath`,
+ *   matching native `createObjectStore`/`createIndex` sequence support
  * - Relations are FK-side (`@relation`) + backrelation list fields
  * - Indexes map directly to `IDBObjectStore.createIndex()` calls
  *

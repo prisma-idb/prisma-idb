@@ -92,10 +92,11 @@ export const defaultGetKeyField: GetKeyField = (contract, modelName) => {
   const model = domainModelsAtDefaultNamespace(contract.domain)[modelName];
   const keyPath = (model?.storage as { readonly keyPath?: unknown } | undefined)?.keyPath;
   if (typeof keyPath !== "string") {
-    throw new Error(
-      `Model "${modelName}" has no string storage.keyPath in the contract. ` +
-        `This contract's storage shape isn't IDB's — pass a getKeyField option to createSyncServer.`
-    );
+    const hint = Array.isArray(keyPath)
+      ? "This model has a compound primary key (an array keyPath) — sync-server does not support compound-key " +
+        "models yet. Pass a getKeyField option to createSyncServer, or keep this model out of the sync scope."
+      : "This contract's storage shape isn't IDB's — pass a getKeyField option to createSyncServer.";
+    throw new Error(`Model "${modelName}" has no single string storage.keyPath in the contract. ${hint}`);
   }
   return keyPath;
 };
