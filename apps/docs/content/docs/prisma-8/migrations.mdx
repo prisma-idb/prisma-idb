@@ -83,7 +83,7 @@ Running the file self-emits `ops.json` and `migration.json` from whatever `descr
 
 ## Destructive changes
 
-Dropping an object store or index is marked as destructive. By default, `createAutoMigratingIdbClient()` refuses to apply them so a deploy cannot silently wipe local user data. Review the migration carefully before opting in — see [Client](/docs/prisma-8/client#destructive-migrations).
+Dropping an object store or index is marked as destructive. `prisma-idb migration plan` warns when a migration drops a store, because every record in it is deleted when the migration runs in a user's browser. Review the migration before shipping it: `createAutoMigratingIdbClient()` applies it as planned. See [Client](/docs/prisma-8/client#destructive-migrations).
 
 ## Extension spaces
 

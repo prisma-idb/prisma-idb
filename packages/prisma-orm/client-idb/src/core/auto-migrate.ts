@@ -1,9 +1,5 @@
 import type { Contract } from "@prisma/orm-framework/contract/types";
-import type {
-  ContractSpace,
-  MigrationOperationClass,
-  MigrationPackage,
-} from "@prisma/orm-framework/components/control";
+import type { ContractSpace, MigrationPackage } from "@prisma/orm-framework/components/control";
 import { APP_SPACE_ID } from "@prisma/orm-framework/components/control";
 import type { IdbExtensionSpace } from "@prisma-idb/family-idb/control";
 // Browser-safe (WebCrypto) hash — the framework's `@prisma/orm-toolchain/migration-tools/hash`
@@ -14,36 +10,6 @@ import { computeMigrationHash } from "./migration-hash";
 import { isIdbDdlOp, openAndUpgrade, readMarker, type IdbDdlOp } from "@prisma-idb/target-idb/runtime";
 import { createIdbClient, type IdbClient } from "./idb-client";
 import type { IdbContract } from "./types";
-
-// ── Public policy types ──────────────────────────────────────────────────────
-
-/**
- * Migration policy for the browser-side apply path.
- *
- * Two knobs:
- *
- * - `allowedOperationClasses`: filter applied to each op's `operationClass`.
- *   Defaults to `['additive', 'widening']`. Anything outside this set is
- *   dropped before the upgrade transaction opens.
- * - `onDestructive`: what to do if the planner emitted a destructive op
- *   that the filter just dropped. `'refuse'` (default) throws so the user
- *   sees the situation; `'allow'` re-includes destructive ops.
- *
- * Default is **safe**: a contract change that drops a store will refuse to
- * apply unless the developer opts in. A user's local IDB can hold months
- * of accumulated state (drafts, offline queue, cached content) and the
- * spec explicitly calls out the silent-data-loss risk if destructive ops
- * apply on every page load. See `FEEDBACKS.md` §4.
- */
-export interface MigrationPolicy {
-  readonly allowedOperationClasses?: readonly MigrationOperationClass[];
-  readonly onDestructive?: "refuse" | "allow";
-}
-
-const SAFE_POLICY: Required<MigrationPolicy> = {
-  allowedOperationClasses: ["additive", "widening"],
-  onDestructive: "refuse",
-};
 
 // ── Public API ───────────────────────────────────────────────────────────────
 
@@ -63,8 +29,6 @@ const SAFE_POLICY: Required<MigrationPolicy> = {
 export interface AutoMigrateClientOptions<TContract extends IdbContract> {
   readonly contractSpace: ContractSpace<TContract>;
   readonly dbName: string;
-  /** Migration policy. Defaults to safe (additive + widening only, refuse destructive). */
-  readonly policy?: MigrationPolicy;
   /** IDB factory override — primarily for tests. Defaults to `indexedDB`. */
   readonly factory?: IDBFactory;
   /**
@@ -91,14 +55,18 @@ export interface AutoMigrateClientOptions<TContract extends IdbContract> {
  * 3. Otherwise, walk `contractSpace.migrations` from the marker hash (or
  *    `null` for fresh) to `headRef.hash`, collecting each pending
  *    package's `ops` in chain order.
- * 4. Apply the policy filter. Refuse if any destructive op was filtered
- *    out and `onDestructive === 'refuse'`.
- * 5. If `extensions` are configured, repeat steps 1–4 for each extension
+ * 4. If `extensions` are configured, repeat steps 1–3 for each extension
  *    space, then combine every space's pending ops into ONE reopen at
  *    `db.version + 1` so `upgradeneeded` fires once; apply every collected
- *    op (all spaces) inside that single version-change transaction.
- * 6. Write every migrated space's marker in one batched readwrite tx.
- * 7. Hand back the typed `IdbClient`.
+ *    op (all spaces) inside that single version-change transaction, which
+ *    also writes every migrated space's marker.
+ * 5. Hand back the typed `IdbClient`.
+ *
+ * Every pending op is applied exactly as planned, destructive ones included.
+ * The developer reviewed them when running `prisma-idb migration plan`,
+ * which warns about any that delete data. Skipping some ops would leave the
+ * database claiming a schema it doesn't have, and refusing them would stop
+ * the app from opening for every user.
  *
  * **What does NOT run in the browser**:
  *
@@ -120,7 +88,6 @@ export async function createAutoMigratingIdbClient<TContract extends IdbContract
   options: AutoMigrateClientOptions<TContract>
 ): Promise<IdbClient<TContract>> {
   const factory = options.factory ?? indexedDB;
-  const policy = mergePolicy(options.policy);
 
   await autoMigrate({
     // The public `AutoMigrateClientOptions<TContract>` is generic over the
@@ -128,7 +95,6 @@ export async function createAutoMigratingIdbClient<TContract extends IdbContract
     // chain-walking fields, so widen to `ContractSpace<Contract>` here.
     contractSpace: options.contractSpace as unknown as ContractSpace<Contract>,
     dbName: options.dbName,
-    policy,
     factory,
     ...(options.extensions !== undefined ? { extensions: options.extensions } : {}),
   });
@@ -138,13 +104,6 @@ export async function createAutoMigratingIdbClient<TContract extends IdbContract
     dbName: options.dbName,
     factory,
   });
-}
-
-function mergePolicy(p?: MigrationPolicy): Required<MigrationPolicy> {
-  return {
-    allowedOperationClasses: p?.allowedOperationClasses ?? SAFE_POLICY.allowedOperationClasses,
-    onDestructive: p?.onDestructive ?? SAFE_POLICY.onDestructive,
-  };
 }
 
 // ── Core migration loop ──────────────────────────────────────────────────────
@@ -166,15 +125,14 @@ export async function autoMigrate(input: {
   // the precise contract shape inside `contractJson` doesn't matter here.
   readonly contractSpace: ContractSpace<Contract>;
   readonly dbName: string;
-  readonly policy: Required<MigrationPolicy>;
   readonly factory: IDBFactory;
   readonly extensions?: ReadonlyArray<IdbExtensionSpace>;
 }): Promise<void> {
-  const { dbName, policy, factory } = input;
+  const { dbName, factory } = input;
 
-  // Order here only affects the destructive-op collection loop below, not the
-  // final apply order (see the combined-apply step, which re-sorts to match
-  // upstream ADR 212's extension-first convention).
+  // Order here only affects the collection loop below, not the final apply
+  // order (see the combined-apply step, which re-sorts to match upstream
+  // ADR 212's extension-first convention).
   const spaces: Array<{ spaceId: string; contractSpace: ContractSpace<Contract> }> = [
     { spaceId: APP_SPACE_ID, contractSpace: input.contractSpace },
     ...(input.extensions ?? []),
@@ -214,23 +172,20 @@ export async function autoMigrate(input: {
   // Read current DB version once (all spaces share the same IDB database).
   const { currentVersion: initialVersion } = await openAndReadMarker(dbName, factory, APP_SPACE_ID);
 
-  // Collect pending work per space without applying yet, so we can surface
-  // all destructive violations before touching the database.
+  // Collect pending work per space without applying yet, so a broken chain in
+  // any space fails before the database is touched.
   const pendingPerSpace: Array<{ spaceId: string; ops: IdbDdlOp[]; storageHash: string }> = [];
-  let totalDestructiveDropped = 0;
 
   for (const space of spaces) {
     const targetHash = space.contractSpace.headRef.hash;
     const { markerHash } = await openAndReadMarker(dbName, factory, space.spaceId);
     if (markerHash === targetHash) continue;
 
-    const { pendingOps, destructiveDropped } = await walkChain({
+    const pendingOps = await walkChain({
       markerHash,
       headHash: targetHash,
       migrations: space.contractSpace.migrations,
-      policy,
     });
-    totalDestructiveDropped += destructiveDropped;
     // Push whenever the marker is behind `targetHash` — even if every package
     // walked had zero ops (a hash-only "bridge" migration, e.g. re-emitting
     // the contract under a new hashing algorithm with no structural change).
@@ -240,17 +195,6 @@ export async function autoMigrate(input: {
     // space never converges to `targetHash`, even though there was never
     // any actual work to do.
     pendingPerSpace.push({ spaceId: space.spaceId, ops: pendingOps, storageHash: targetHash });
-  }
-
-  // Refuse if any space had destructive ops dropped under refuse policy.
-  if (totalDestructiveDropped > 0 && policy.onDestructive === "refuse") {
-    throw new Error(
-      `Auto-migration refused: ${totalDestructiveDropped} destructive operation(s) ` +
-        "in the pending chain would drop user data. To allow them, pass " +
-        "`policy: { onDestructive: 'allow' }` to createAutoMigratingIdbClient. " +
-        "Per-tab persistent state (drafts, offline queue, cached content) will " +
-        "be lost when destructive ops apply silently — review the change before opting in."
-    );
   }
 
   if (pendingPerSpace.length === 0) return;
@@ -280,16 +224,9 @@ export async function autoMigrate(input: {
   });
 }
 
-interface WalkResult {
-  readonly pendingOps: IdbDdlOp[];
-  readonly destructiveDropped: number;
-}
-
 /**
  * Walk the migration chain from `markerHash` (or `null` for a fresh DB) to
- * `headHash`, collecting each pending package's ops in order. Applies the
- * policy filter on each op as it's added; returns the count of destructive
- * ops that were dropped so the caller can refuse if the policy demands.
+ * `headHash`, collecting every pending package's ops in order.
  *
  * Throws on chain discontinuity (no package whose `from === cursor`) so
  * misconfigured `contractSpace` inputs fail loudly rather than silently
@@ -299,16 +236,13 @@ async function walkChain(input: {
   readonly markerHash: string | null;
   readonly headHash: string;
   readonly migrations: readonly MigrationPackage[];
-  readonly policy: Required<MigrationPolicy>;
-}): Promise<WalkResult> {
+}): Promise<IdbDdlOp[]> {
   const byFrom = new Map<string | null, MigrationPackage>();
   for (const pkg of input.migrations) {
     byFrom.set(pkg.metadata.from, pkg);
   }
 
-  const allowed = new Set(input.policy.allowedOperationClasses);
   const pendingOps: IdbDdlOp[] = [];
-  let destructiveDropped = 0;
   let cursor: string | null = input.markerHash;
   const visited = new Set<string | null>();
 
@@ -342,21 +276,12 @@ async function walkChain(input: {
       if (!isIdbDdlOp(op)) {
         throw new Error(`Non-IDB operation found in migration package ${next.dirName}: ${JSON.stringify(op)}`);
       }
-      if (allowed.has(op.operationClass)) {
-        pendingOps.push(op);
-      } else if (op.operationClass === "destructive") {
-        if (input.policy.onDestructive === "allow") {
-          pendingOps.push(op);
-        } else {
-          destructiveDropped += 1;
-        }
-      }
-      // Other classes filtered silently.
+      pendingOps.push(op);
     }
     cursor = next.metadata.to;
   }
 
-  return { pendingOps, destructiveDropped };
+  return pendingOps;
 }
 
 /**

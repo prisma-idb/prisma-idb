@@ -318,8 +318,29 @@ async function planIncremental(ctx: SharedCtx, existingDirs: readonly string[]):
     toHash,
     logVerb: "Generated migration",
   });
+  warnAboutDeletedData(ctx, ops);
 
   return 0;
+}
+
+/**
+ * The browser applies every planned op without asking, so this is the one
+ * place the developer hears that a migration deletes data. Only dropping a
+ * store deletes records; dropping an index loses nothing that can't be
+ * rebuilt, so it isn't listed.
+ */
+function warnAboutDeletedData(ctx: SharedCtx, ops: readonly unknown[]): void {
+  const droppedStores = ops
+    .filter((op): op is { kind: "dropObjectStore"; storeName: string } => {
+      return (op as { kind?: unknown }).kind === "dropObjectStore";
+    })
+    .map((op) => op.storeName);
+  if (droppedStores.length === 0) return;
+  ctx.err(
+    "\nWarning: this migration deletes data. When it runs in a user's browser, every record in these stores is deleted:\n" +
+      droppedStores.map((store) => `  - ${store}\n`).join("") +
+      "Check that this is intended before shipping it.\n"
+  );
 }
 
 interface WritePackageInput {

@@ -8,6 +8,11 @@ import type {
   IdbStorage,
 } from "@prisma-idb/target-idb/pack";
 
+// Key comparison lives in target-idb so adapter-idb's filter evaluator can
+// share it. Re-exported here for the modules and public exports that already
+// import it from this file.
+export { fieldValueToken, fieldValuesEqual, isValidIdbKey, keyEquals, keyToken } from "@prisma-idb/target-idb/runtime";
+
 // Re-export so consumers that only import from client-idb don't need a
 // separate target-idb dependency.
 export type { IdbKeyPath };
@@ -635,82 +640,6 @@ export function extractKeyFromRow(row: Record<string, unknown>, keyPath: IdbKeyP
 }
 
 /**
- * Structural equality between two {@link IDBValidKey} values. Plain `===`/`!==`
- * is wrong for a compound (array) key — two freshly-constructed arrays with
- * identical contents are never `===`. Recurses so nested-array keys (a
- * compound key with a `Bytes`/`ArrayBuffer` member, or a key genuinely
- * containing a nested array) compare correctly too.
- */
-export function keyEquals(a: IDBValidKey, b: IDBValidKey): boolean {
-  try {
-    if (typeof indexedDB !== "undefined") return indexedDB.cmp(a, b) === 0;
-  } catch {
-    // cmp throws DataError for non-keys; fall through to structural comparison.
-  }
-  if (Array.isArray(a) || Array.isArray(b)) {
-    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
-    return a.every((v, i) => keyEquals(v as IDBValidKey, b[i] as IDBValidKey));
-  }
-  if (a instanceof Date && b instanceof Date) return a.getTime() === b.getTime();
-  const ab = binaryBytes(a);
-  const bb = binaryBytes(b);
-  if (ab !== null || bb !== null) {
-    return ab !== null && bb !== null && ab.length === bb.length && ab.every((v, i) => v === bb[i]);
-  }
-  return a === b;
-}
-
-function binaryBytes(key: unknown): Uint8Array | null {
-  if (key instanceof ArrayBuffer) return new Uint8Array(key);
-  if (ArrayBuffer.isView(key)) return new Uint8Array(key.buffer, key.byteOffset, key.byteLength);
-  return null;
-}
-
-function tokenPart(key: unknown): unknown {
-  if (Array.isArray(key)) return ["a", key.map(tokenPart)];
-  if (key instanceof Date) return ["d", key.getTime()];
-  const bytes = binaryBytes(key);
-  if (bytes !== null) return ["b", Array.from(bytes)];
-  if (typeof key === "number") return ["n", Object.is(key, -0) ? 0 : String(key)];
-  return ["s", String(key)];
-}
-
-/**
- * A stable, comparable token for a key — for `Set`/`Map` dedup keys where a
- * raw key can't be used directly (arrays, `Date`s and binary keys are never
- * `===`/never hash the same in a `Set`). Plain string/number keys keep
- * `String(key)` (also used in error messages); every other shape is encoded
- * recursively with type tags so `1` vs `"1"`, equal Dates and equal bytes
- * are distinguished/matched correctly.
- */
-export function keyToken(key: IDBValidKey): string {
-  if (typeof key === "string" || typeof key === "number") return String(key);
-  return JSON.stringify(tokenPart(key));
-}
-
-/**
- * Equality for two relation/FK field values, as IndexedDB would match them.
- * Plain `===` for primitives and `null`/`undefined`; key equality for
- * object-shaped keys (`Date`, binary, arrays), which are never `===` once read
- * back from IDB — e.g. a `DateTime` FK against its parent's `DateTime` key.
- */
-export function fieldValuesEqual(a: unknown, b: unknown): boolean {
-  if (a === b) return true;
-  if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) return false;
-  return isValidIdbKey(a) && isValidIdbKey(b) && keyEquals(a, b);
-}
-
-/**
- * A `Map`/`Set` key for a relation/FK field value: primitives pass through
- * unchanged, object-shaped keys (`Date`, binary, arrays) become a {@link keyToken}
- * string so equal values collapse to the same entry.
- */
-export function fieldValueToken(value: unknown): unknown {
-  if (typeof value === "object" && value !== null && isValidIdbKey(value)) return `\u0000${keyToken(value)}`;
-  return value;
-}
-
-/**
  * Find the IDB index name for `fieldName` on the given object store, searching
  * `contract.storage.stores[storeName].indexes` by `keyPath` equality.
  *
@@ -743,28 +672,6 @@ export function buildFieldToIndexMap(contract: IdbContract, storeName: string): 
     }
   }
   return result;
-}
-
-/**
- * Returns `true` when `value` is a valid {@link IDBValidKey} — i.e. a value
- * that can be passed to `IDBKeyRange.only()` without throwing a DataError.
- * Booleans, `NaN`, `BigInt`, plain objects, and `null`/`undefined` are not
- * valid IDB keys (only number/string/Date/binary/Array are, per the
- * IndexedDB spec). Arrays are validated recursively — an array containing
- * any invalid element (e.g. a nested boolean) is itself not a valid key.
- *
- * Shared by the relation loader (filtering FK values before building
- * `IDBKeyRange.only()` plans) and query-shaping (gating `eq` conditions for
- * index/PK point-range acceleration).
- */
-export function isValidIdbKey(value: unknown): value is IDBValidKey {
-  if (typeof value === "number") return !Number.isNaN(value);
-  if (typeof value === "string") return true;
-  if (value instanceof Date) return true;
-  if (value instanceof ArrayBuffer) return true;
-  if (ArrayBuffer.isView(value)) return true;
-  if (Array.isArray(value)) return value.every((v) => isValidIdbKey(v));
-  return false;
 }
 
 /**

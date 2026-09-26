@@ -287,6 +287,24 @@ describe("migrationPlan — incremental mode", () => {
     expect(ops.some((op) => op.storeName === "_prisma_next_marker")).toBe(false);
   });
 
+  it("warns on stderr when the migration drops a store, and not otherwise", async () => {
+    await writeContract(cwd, CONTRACT_V2);
+    expect(await migrationPlan(defaultPaths(cwd))).toBe(0);
+
+    capturedStderr = "";
+    await writeContract(cwd, {
+      storage: { storageHash: "sha256:contractv3", stores: { outboxEvent: { keyPath: "id" } } },
+    });
+    expect(await migrationPlan({ ...defaultPaths(cwd), name: "drop_version_meta" })).toBe(0);
+    expect(capturedStderr).toMatch(/deletes data/);
+    expect(capturedStderr).toContain("  - versionMeta\n");
+
+    capturedStderr = "";
+    await writeContract(cwd, CONTRACT_V2);
+    expect(await migrationPlan({ ...defaultPaths(cwd), name: "readd_version_meta" })).toBe(0);
+    expect(capturedStderr).not.toMatch(/deletes data/);
+  });
+
   it("returns 0 and does nothing when the contract is unchanged since the last migration", async () => {
     expect(await migrationPlan(defaultPaths(cwd))).toBe(0);
     // Contract unchanged (still V1).

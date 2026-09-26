@@ -25,17 +25,9 @@ The promise is cached so the database only opens once. Call `getDb()` from any b
 
 ## Destructive migrations
 
-By default, the client refuses to apply migrations that drop object stores or indexes. Opt in explicitly after reviewing the migration:
+The client applies every pending migration exactly as it was planned, including ones that drop object stores or indexes. There is no runtime switch to skip or refuse them: skipping would leave the database out of step with its contract, and refusing would stop the app from opening.
 
-```ts
-createAutoMigratingIdbClient({
-  contractSpace,
-  dbName: "my-app",
-  policy: { onDestructive: "allow" },
-});
-```
-
-Local IndexedDB may contain data that exists only on the user's device — drafts, cached state, offline work. Only allow destructive operations when you are certain the data can be discarded.
+Review destructive changes when you plan them instead. `prisma-idb migration plan` warns when a migration drops a store. Local IndexedDB may hold data that exists only on the user's device, such as drafts, cached state or offline work, so make sure that data can be discarded before you ship the migration.
 
 ## Client shape
 

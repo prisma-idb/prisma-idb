@@ -182,8 +182,9 @@ describe("auto-migrate across contract evolution", () => {
     ).rejects.toThrow(/marker open failed/i);
   });
 
-  it("destructive op refuses by default; opt-in allows it", async () => {
-    // Author drops the byEmail index.
+  it("applies destructive ops as planned, without any opt-in", async () => {
+    // Author drops the unique byEmail index. Planned and reviewed at design
+    // time, so the browser applies it instead of refusing to open.
     const v3Loosened = defineContract({
       family: idbFamilyPack,
       target: idbTargetPack,
@@ -200,16 +201,8 @@ describe("auto-migrate across contract evolution", () => {
     await c3.close();
 
     const spaceLoose = buildContractSpaceFixture([v1, v2, v3, v3Loosened]);
-
-    // Default policy refuses: dropping an index is destructive.
-    await expect(createAutoMigratingIdbClient({ contractSpace: spaceLoose, dbName: name })).rejects.toThrow(/refused/i);
-
-    // Opt-in lets it through.
-    const cLoose = await createAutoMigratingIdbClient({
-      contractSpace: spaceLoose,
-      dbName: name,
-      policy: { onDestructive: "allow" },
-    });
+    const cLoose = await createAutoMigratingIdbClient({ contractSpace: spaceLoose, dbName: name });
+    // The unique index is gone, so a duplicate email is accepted.
     await asRecord(cLoose.orm)["users"]!.create({ id: "u2", email: "alice@example.com" });
     expect(await asRecord(cLoose.orm)["users"]!.all().toArray()).toHaveLength(2);
     await cLoose.close();
