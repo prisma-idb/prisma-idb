@@ -11,22 +11,34 @@
 /**
  * Returns `true` when `value` is a valid {@link IDBValidKey} — i.e. a value
  * that can be passed to `IDBKeyRange.only()` without throwing a DataError.
- * Booleans, `NaN`, `BigInt`, plain objects, and `null`/`undefined` are not
- * valid IDB keys (only number/string/Date/binary/Array are, per the
- * IndexedDB spec). Arrays are validated recursively — an array containing
- * any invalid element (e.g. a nested boolean) is itself not a valid key.
+ * Only numbers (not `NaN`), strings, valid `Date`s, binary values and arrays
+ * of valid keys are keys, per the IndexedDB spec. Booleans, `BigInt`, plain
+ * objects, `null`/`undefined` and invalid `Date`s are not. An array is a key
+ * only if every element is, it has no holes, and no array appears in it
+ * twice (which also rules out cycles), as in the spec.
  *
  * Shared by the relation loader (filtering FK values before building
  * `IDBKeyRange.only()` plans) and query-shaping (gating `eq` conditions for
  * index/PK point-range acceleration).
  */
 export function isValidIdbKey(value: unknown): value is IDBValidKey {
+  return isValidKey(value, new Set());
+}
+
+function isValidKey(value: unknown, seen: Set<unknown>): boolean {
   if (typeof value === "number") return !Number.isNaN(value);
   if (typeof value === "string") return true;
-  if (value instanceof Date) return true;
+  if (value instanceof Date) return !Number.isNaN(value.getTime());
   if (value instanceof ArrayBuffer) return true;
   if (ArrayBuffer.isView(value)) return true;
-  if (Array.isArray(value)) return value.every((v) => isValidIdbKey(v));
+  if (Array.isArray(value)) {
+    if (seen.has(value)) return false;
+    seen.add(value);
+    for (let i = 0; i < value.length; i++) {
+      if (!(i in value) || !isValidKey(value[i], seen)) return false;
+    }
+    return true;
+  }
   return false;
 }
 
@@ -97,12 +109,14 @@ export function fieldValuesEqual(a: unknown, b: unknown): boolean {
 }
 
 /**
- * A `Map`/`Set` key for a relation/FK field value: primitives pass through
- * unchanged, object-shaped keys (`Date`, binary, arrays) become a {@link keyToken}
- * string so equal values collapse to the same entry.
+ * A `Map`/`Set` key for a relation/FK field value. Object-shaped keys (`Date`,
+ * binary, arrays) become a {@link keyToken} string so equal values collapse to
+ * the same entry. Strings get a different prefix, so no string can equal an
+ * object's token. Other primitives pass through unchanged.
  */
 export function fieldValueToken(value: unknown): unknown {
-  if (typeof value === "object" && value !== null && isValidIdbKey(value)) return `\u0000${keyToken(value)}`;
+  if (typeof value === "string") return `\u0000s${value}`;
+  if (typeof value === "object" && value !== null && isValidIdbKey(value)) return `\u0000o${keyToken(value)}`;
   return value;
 }
 

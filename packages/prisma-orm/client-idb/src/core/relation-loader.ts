@@ -6,15 +6,19 @@ import type { IdbRowFilter } from "@prisma-idb/driver-idb/runtime";
 import type { IdbQueryExecutor } from "./executor";
 import { buildRowComparator, combineFilterExprs } from "./query-shaping";
 import type { IncludeEntry } from "./store-state";
-import { fieldValueToken, getIndexForField, getKeyPath, isValidIdbKey } from "./types";
+import { keyPathFields, type IdbKeyPath } from "@prisma-idb/target-idb/pack";
+import { fieldValueToken, getKeyPath, isValidIdbKey } from "./types";
 import type { IdbContract } from "./types";
 
 /**
  * Batch-load a single named relation for all rows in `rows` and attach the
  * result to each row under the `relName` key.
  *
- * The join is done with one cursor scan over the related store (with an
- * in-memory filter), then grouped/indexed in memory — avoiding N+1 queries.
+ * The join matches every field of the relation, so compound foreign keys join
+ * on the whole tuple. It uses one key-range scan per distinct tuple when an
+ * index or the related primary key covers the target fields, and otherwise
+ * one full scan with an in-memory filter. Rows are then grouped in memory,
+ * which avoids N+1 queries.
  *
  * The `entry` carries any `include()` refinement:
  *
@@ -58,9 +62,9 @@ export async function loadRelation(
   // `relation.to` is a CrossReference `{ namespace, model }`.
   const relatedModelName = relation.to.model;
 
-  const localField = on.localFields[0];
-  const foreignField = on.targetFields[0];
-  if (localField === undefined || foreignField === undefined) return rows;
+  const localFields = on.localFields;
+  const targetFields = on.targetFields;
+  if (localFields.length === 0 || localFields.length !== targetFields.length) return rows;
 
   const relatedModel = models[relatedModelName];
   if (relatedModel === undefined) return rows;
@@ -73,71 +77,70 @@ export async function loadRelation(
 
   const isScalar = entry.kind === "scalar";
 
-  // Collect all distinct local-field values to drive the in-memory filter,
-  // keyed by `fieldValueToken` so equal Date/binary values collapse (and match
-  // related rows' freshly-deserialized values below).
-  const localValues = new Map<unknown, unknown>();
+  // Collect the distinct local tuples to drive the related-store lookup. A
+  // tuple is keyed by `tupleToken`, so equal Date/binary values collapse and
+  // match the related rows' freshly-deserialized values below. A row with a
+  // null in any local field has no related rows.
+  const localTuples = new Map<string, unknown[]>();
   for (const row of rows) {
-    const v = row[localField];
-    if (v !== undefined && v !== null) localValues.set(fieldValueToken(v), v);
+    const token = tupleToken(row, localFields);
+    if (token !== null)
+      localTuples.set(
+        token,
+        localFields.map((f) => row[f])
+      );
   }
 
-  // Short-circuit: if all local values are null/undefined, attach empties.
+  // Short-circuit: if every local tuple has a null, attach empties.
   // (Scalar counts are 0; to-many is [], to-one is null.)
-  if (localValues.size === 0) {
+  if (localTuples.size === 0) {
     return rows.map((row) => ({
       ...row,
       [relName]: isScalar ? 0 : cardinality === "1:N" ? [] : null,
     }));
   }
 
-  const capturedForeignField = foreignField;
   const refinedWhere = combineFilterExprs(entry.state.filters);
 
   const storageHash = contract.storage.storageHash;
   const planMeta = { target: "idb", storageHash, lane: "idb-orm", annotations: { groupingKey } } as const;
 
-  // When an IDB index exists on `foreignField` and IDBKeyRange is available,
-  // run one IDBKeyRange.only() point-range scan per distinct FK value. Each
-  // scan visits only records with that exact FK, so no membership re-check is
-  // needed — only the refined `where` is applied as a row filter.
-  // This is correct for any key type; the old bound-range heuristic used
-  // JS lexicographic sort which produced wrong lo/hi for numeric keys.
-  const fkIndexName =
-    typeof IDBKeyRange !== "undefined" ? getIndexForField(contract, relatedStoreName, capturedForeignField) : undefined;
-
-  // The related store's own primary key is never listed in its `indexes` map
-  // (it doesn't need a named IDBIndex), but IDBObjectStore.openCursor(range)
-  // scans the store's own keyPath directly — just as efficient as an index.
-  // Without this, the very common N:1 case (e.g. `Post.author -> User.id`)
-  // would miss acceleration entirely and fall back to a full store scan.
-  const targetsRelatedPk =
-    fkIndexName === undefined &&
-    typeof IDBKeyRange !== "undefined" &&
-    capturedForeignField === getKeyPath(contract, relatedModelName);
+  // When an index or the related store's own primary key covers exactly the
+  // target fields, run one IDBKeyRange.only() point-range scan per distinct
+  // tuple. Each scan visits only matching records, so only the refined
+  // `where` is applied as a row filter. Otherwise, scan the whole store.
+  const rangeSource = findRangeSource(contract, relatedStoreName, relatedModelName, targetFields);
 
   let relatedRows: Record<string, unknown>[];
-  if (fkIndexName !== undefined || targetsRelatedPk) {
+  if (rangeSource !== undefined) {
     const refinedFilter: IdbRowFilter | undefined =
       refinedWhere !== undefined ? (row: Record<string, unknown>) => evaluateFilter(refinedWhere, row) : undefined;
 
     // IDBKeyRange.only() throws DataError for invalid keys (boolean, NaN,
     // plain objects, etc.). Such values cannot be stored as IndexedDB keys,
-    // so no related rows can match — filter them out before building plans.
-    const validValues = Array.from(localValues.values()).filter(isValidIdbKey);
+    // so no related rows can match — skip them before building plans.
+    const ranges: IDBKeyRange[] = [];
+    for (const values of localTuples.values()) {
+      const ordered = keyPathFields(rangeSource.keyPath).map((f) => values[targetFields.indexOf(f)]);
+      if (!ordered.every((v) => isValidIdbKey(v))) continue;
+      ranges.push(
+        IDBKeyRange.only(
+          typeof rangeSource.keyPath === "string" ? (ordered[0] as IDBValidKey) : (ordered as IDBValidKey[])
+        )
+      );
+    }
 
-    // One index (or, for a PK target, store-keyspace) scan per distinct FK
-    // value — independent, so run concurrently.
-    const valueResults = await Promise.all(
-      validValues.map(async (value) => {
+    // One scan per distinct tuple — independent, so run concurrently.
+    const rangeResults = await Promise.all(
+      ranges.map(async (range) => {
         const plan: IdbQueryPlan<Record<string, unknown>> = {
           meta: planMeta,
           idbPlan: {
             meta: planMeta,
             kind: "cursor-scan",
             storeName: relatedStoreName,
-            ...(fkIndexName !== undefined ? { indexName: fkIndexName } : {}),
-            range: IDBKeyRange.only(value),
+            ...(rangeSource.indexName !== undefined ? { indexName: rangeSource.indexName } : {}),
+            range,
             ...(refinedFilter !== undefined ? { filter: refinedFilter } : {}),
           },
         };
@@ -148,13 +151,16 @@ export async function loadRelation(
         return rows;
       })
     );
-    relatedRows = valueResults.flat();
+    relatedRows = rangeResults.flat();
   } else {
     relatedRows = [];
-    // No index: full store scan with an in-memory FK membership + refined-where filter.
-    const filter: IdbRowFilter = (row: Record<string, unknown>): boolean =>
-      localValues.has(fieldValueToken(row[capturedForeignField])) &&
-      (refinedWhere === undefined || evaluateFilter(refinedWhere, row));
+    // Full store scan with an in-memory FK membership + refined-where filter.
+    const filter: IdbRowFilter = (row: Record<string, unknown>): boolean => {
+      const token = tupleToken(row, targetFields);
+      return (
+        token !== null && localTuples.has(token) && (refinedWhere === undefined || evaluateFilter(refinedWhere, row))
+      );
+    };
     const plan: IdbQueryPlan<Record<string, unknown>> = {
       meta: planMeta,
       idbPlan: { meta: planMeta, kind: "cursor-scan", storeName: relatedStoreName, filter },
@@ -167,20 +173,25 @@ export async function loadRelation(
   // ── Merge ──────────────────────────────────────────────────────────────────
 
   if (cardinality === "1:N") {
-    // Group related rows by their foreignField value.
-    const grouped = new Map<unknown, Record<string, unknown>[]>();
+    // Group related rows by their target tuple.
+    const grouped = new Map<string, Record<string, unknown>[]>();
     for (const rrow of relatedRows) {
-      const gk = fieldValueToken(rrow[capturedForeignField]);
+      const gk = tupleToken(rrow, targetFields);
+      if (gk === null) continue;
       const group = grouped.get(gk) ?? [];
       group.push(rrow);
       grouped.set(gk, group);
     }
+    const groupFor = (row: Record<string, unknown>): Record<string, unknown>[] => {
+      const token = tupleToken(row, localFields);
+      return token === null ? [] : (grouped.get(token) ?? []);
+    };
 
     if (isScalar) {
       // Scalar reducer (Phase 6.5: count) — attach the per-parent child count.
       return rows.map((row) => ({
         ...row,
-        [relName]: (grouped.get(fieldValueToken(row[localField])) ?? []).length,
+        [relName]: groupFor(row).length,
       }));
     }
 
@@ -189,7 +200,7 @@ export async function loadRelation(
     const skip = entry.state.skip ?? 0;
     const take = entry.state.take;
     return rows.map((row) => {
-      let group = grouped.get(fieldValueToken(row[localField])) ?? [];
+      let group = groupFor(row);
       if (comparator !== undefined) group = [...group].sort(comparator);
       if (skip > 0 || take !== undefined) {
         group = group.slice(skip, take !== undefined ? skip + take : undefined);
@@ -198,14 +209,54 @@ export async function loadRelation(
     });
   }
 
-  // N:1 / 1:1: index related rows by their foreignField value, attach singles.
+  // N:1 / 1:1: index related rows by their target tuple, attach singles.
   // A refined `where` that excludes the related row yields `null` here.
-  const indexed = new Map<unknown, Record<string, unknown>>();
+  const indexed = new Map<string, Record<string, unknown>>();
   for (const rrow of relatedRows) {
-    indexed.set(fieldValueToken(rrow[capturedForeignField]), rrow);
+    const token = tupleToken(rrow, targetFields);
+    if (token !== null) indexed.set(token, rrow);
   }
-  return rows.map((row) => ({
-    ...row,
-    [relName]: indexed.get(fieldValueToken(row[localField])) ?? null,
-  }));
+  return rows.map((row) => {
+    const token = tupleToken(row, localFields);
+    return { ...row, [relName]: (token === null ? undefined : indexed.get(token)) ?? null };
+  });
+}
+
+/**
+ * A `Map` key for the values of `fields` in `row`, or `null` when any of them
+ * is null or undefined. Equal `Date`s and binary values give equal tokens.
+ */
+function tupleToken(row: Record<string, unknown>, fields: readonly string[]): string | null {
+  const parts: unknown[] = [];
+  for (const field of fields) {
+    const value = row[field];
+    if (value === null || value === undefined) return null;
+    const token = fieldValueToken(value);
+    parts.push([typeof token, String(token)]);
+  }
+  return JSON.stringify(parts);
+}
+
+/**
+ * Finds an index, or else the store's primary key, whose key path has exactly
+ * `fields` (in any order), so a lookup on those fields can use a key range.
+ * Returns `undefined` when there is none, or when `IDBKeyRange` isn't available.
+ */
+function findRangeSource(
+  contract: IdbContract,
+  storeName: string,
+  modelName: string,
+  fields: readonly string[]
+): { readonly indexName?: string; readonly keyPath: IdbKeyPath } | undefined {
+  if (typeof IDBKeyRange === "undefined") return undefined;
+  const coversFields = (keyPath: IdbKeyPath): boolean => {
+    const keyFields = keyPathFields(keyPath);
+    return keyFields.length === fields.length && keyFields.every((f) => fields.includes(f));
+  };
+  const indexes = contract.storage.stores[storeName]?.indexes ?? {};
+  for (const [indexName, indexDef] of Object.entries(indexes)) {
+    if (indexDef.multiEntry !== true && coversFields(indexDef.keyPath)) return { indexName, keyPath: indexDef.keyPath };
+  }
+  const primaryKey = getKeyPath(contract, modelName);
+  return coversFields(primaryKey) ? { keyPath: primaryKey } : undefined;
 }
