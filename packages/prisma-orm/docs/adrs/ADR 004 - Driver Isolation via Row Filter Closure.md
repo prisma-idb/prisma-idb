@@ -46,7 +46,7 @@ if (plan.filter && !plan.filter(row)) continue;
 
 - **The driver runs predicates. It doesn't interpret them.** Its job is to open a transaction, walk a cursor, apply a predicate and return rows. Where the predicate came from doesn't matter to it.
 - **A smaller driver.** The driver could later be used on its own, for example with a different query layer or in a service worker, without pulling in the adapter.
-- **Plans are visibly local.** Functions can't be serialized: `JSON.stringify`, `structuredClone` and `postMessage` all reject them. A plan holding a function is clearly meant to run where it was built, not to be sent to a worker or stored.
+- **Plans are visibly local.** Functions can't be serialized. `structuredClone` and `postMessage` reject them, and `JSON.stringify` silently leaves them out, so its output is an incomplete plan. A plan holding a function is clearly meant to run where it was built, not to be sent to a worker or stored.
 
 ## Alternatives considered
 
