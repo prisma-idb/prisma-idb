@@ -4,7 +4,7 @@
  * The driver's `IdbRowFilter` type stays as `(row) => boolean` — the
  * accessor builds a closure that calls `evaluateFilter(expr, row)` and
  * passes that to the driver. The driver therefore never imports the
- * adapter's AST types, preserving the layering rule in ARCHITECTURE.md.
+ * adapter's AST types, and keeps no dependency on the adapter.
  *
  * Equality and ordering compare values the way IndexedDB compares keys, so
  * a filter gives the same answer whether it runs here or through an index

@@ -461,7 +461,7 @@ export function defineContract(input: DefineContractInput, options?: DefineContr
 
   // Mirror the capability surface that `prisma contract emit` writes
   // into the JSON contract — keeps the two authoring paths byte-equivalent
-  // for the capabilities block. See ARCHITECTURE.md § "Key type: capabilities".
+  // for the capabilities block.
   const capabilities = {
     idb: {
       ddlOnlyInUpgrade: true,

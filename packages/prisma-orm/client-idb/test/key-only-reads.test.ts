@@ -1,9 +1,9 @@
 /**
- * Phase 9.4 — key-only existence reads (`IdbKeysPlan`) for FK checks.
+ * Key-only existence reads (`IdbKeysPlan`) for FK checks.
  *
- * Only the FK → primary-key subset is wired (see PLAN_9.4 §3.3): a lookup is
- * key-only when the criterion is "some row's own single-field primary key
- * equals V", and stays a value-materializing `cursor-scan` otherwise.
+ * A lookup is key-only when its fields are exactly the parent's primary key
+ * fields, in any order. Any other lookup stays a value-materializing
+ * `cursor-scan`.
  *
  * Every test is behavioral first (same outcome/message as before the change);
  * a recording executor then pins which physical plan each lookup issued so
