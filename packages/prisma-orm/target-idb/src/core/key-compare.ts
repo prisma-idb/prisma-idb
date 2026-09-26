@@ -35,7 +35,7 @@ function isValidKey(value: unknown, seen: Set<unknown>): boolean {
     if (seen.has(value)) return false;
     seen.add(value);
     for (let i = 0; i < value.length; i++) {
-      if (!(i in value) || !isValidKey(value[i], seen)) return false;
+      if (!Object.prototype.hasOwnProperty.call(value, i) || !isValidKey(value[i], seen)) return false;
     }
     return true;
   }

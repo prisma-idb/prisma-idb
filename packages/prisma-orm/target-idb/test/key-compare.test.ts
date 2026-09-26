@@ -33,6 +33,18 @@ describe("isValidIdbKey", () => {
       expect(() => IDBKeyRange.only(value)).toThrow();
     }
   });
+
+  it("treats an index inherited from Array.prototype as a hole", () => {
+    // eslint-disable-next-line no-sparse-arrays
+    const sparse = [1, , 3];
+    Object.defineProperty(Array.prototype, 1, { value: 2, configurable: true, writable: true });
+    try {
+      expect(sparse[1]).toBe(2);
+      expect(isValidIdbKey(sparse)).toBe(false);
+    } finally {
+      delete (Array.prototype as unknown as Record<number, unknown>)[1];
+    }
+  });
 });
 
 describe("fieldValueToken", () => {
