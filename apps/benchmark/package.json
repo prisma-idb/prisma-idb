@@ -12,14 +12,15 @@
     "generate": "prisma generate --config prisma.config.ts",
     "test": "PLAYWRIGHT_HTML_OPEN=never playwright test --reporter=list",
     "benchmark:ci": "pnpm test",
-    "benchmark:compare": "tsx ./scripts/compare-benchmark-results.ts",
-    "benchmark:comment": "tsx ./scripts/publish-benchmark-pr-comment.ts",
+    "benchmark:compare": "benchmark-compare",
+    "benchmark:comment": "benchmark-comment",
     "check": "next typegen && tsc --noEmit",
     "lint": "prettier --check . && eslint",
     "format": "prettier --write ."
   },
   "dependencies": {
     "@base-ui/react": "^1.8.0",
+    "@prisma-idb/benchmark-kit": "workspace:*",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "geist": "^1.7.2",

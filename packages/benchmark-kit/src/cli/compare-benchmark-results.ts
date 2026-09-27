@@ -1,6 +1,7 @@
+#!/usr/bin/env tsx
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
-import { BENCHMARK_REGRESSION_GATE } from "../src/lib/benchmark/types";
+import { BENCHMARK_REGRESSION_GATE } from "../types";
 import { getStringArg, hasFlag, parseArgs } from "./cli-args";
 
 interface BenchmarkOperation {
@@ -239,7 +240,7 @@ function pairMetric(baseline: number, current: number): MetricPair {
   };
 }
 
-function renderMarkdown(summary: ComparisonSummary, threshold: number): string {
+function renderMarkdown(summary: ComparisonSummary, threshold: number, title: string): string {
   const noisyRegressions = summary.rows.filter((r) => r.status === "FAIL" && r.noisy).length;
   const potentialRegressions = summary.rows.filter((r) => r.status === "WARN").length;
   const clearSpeedups = summary.rows.filter((r) => isClearSpeedup(r, threshold)).length;
@@ -257,7 +258,7 @@ function renderMarkdown(summary: ComparisonSummary, threshold: number): string {
       : "✅ passed";
 
   const lines: string[] = [
-    "## Benchmark Regression Report",
+    `## ${title}`,
     "",
     `| Summary | |`,
     `| :-- | :-- |`,
@@ -451,7 +452,7 @@ async function main() {
 
   if (!baselinePath || !currentPath) {
     throw new Error(
-      "Usage: compare-benchmark-results.ts --baseline <path> --current <path> [--threshold 10] [--json-out <path>] [--markdown-out <path>] [--exit-on-fail]"
+      "Usage: compare-benchmark-results.ts --baseline <path> --current <path> [--threshold 10] [--title <text>] [--json-out <path>] [--markdown-out <path>] [--exit-on-fail]"
     );
   }
 
@@ -563,7 +564,7 @@ async function main() {
     shouldFail: !isAdvisory && (regressions.length > 0 || removedOperations.length > 0),
   };
 
-  const markdown = renderMarkdown(summary, threshold);
+  const markdown = renderMarkdown(summary, threshold, getStringArg(args, "title") || "Benchmark Regression Report");
 
   // JSON.stringify serializes Infinity as `null` — matches our "no comparable delta" convention.
   await writeOutput(getStringArg(args, "json-out"), `${JSON.stringify(summary, null, 2)}\n`);

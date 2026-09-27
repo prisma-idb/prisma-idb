@@ -258,6 +258,9 @@ importers:
       '@base-ui/react':
         specifier: ^1.8.0
         version: 1.8.0(@types/react@19.2.18)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+      '@prisma-idb/benchmark-kit':
+        specifier: workspace:*
+        version: link:../../packages/benchmark-kit
       class-variance-authority:
         specifier: ^0.7.1
         version: 0.7.1
@@ -534,6 +537,49 @@ importers:
       workbox-window:
         specifier: ^7.4.1
         version: 7.4.1
+
+  apps/prisma-orm-benchmark:
+    dependencies:
+      '@prisma-idb/benchmark-kit':
+        specifier: workspace:*
+        version: link:../../packages/benchmark-kit
+      '@prisma-idb/client-idb':
+        specifier: workspace:*
+        version: link:../../packages/prisma-orm/client-idb
+      '@prisma-idb/family-idb':
+        specifier: workspace:*
+        version: link:../../packages/prisma-orm/family-idb
+      '@prisma-idb/target-idb':
+        specifier: workspace:*
+        version: link:../../packages/prisma-orm/target-idb
+    devDependencies:
+      '@playwright/test':
+        specifier: ^1.63.0
+        version: 1.63.0
+      '@prisma-idb/adapter-idb':
+        specifier: workspace:*
+        version: link:../../packages/prisma-orm/adapter-idb
+      '@prisma-idb/driver-idb':
+        specifier: workspace:*
+        version: link:../../packages/prisma-orm/driver-idb
+      '@prisma/cli-engine':
+        specifier: 0.2.0
+        version: 0.2.0(magicast@0.5.4)
+      '@types/node':
+        specifier: ^24.10.9
+        version: 24.13.6
+      prisma:
+        specifier: 8.0.0-rc.7
+        version: 8.0.0-rc.7(@types/node@24.13.6)(@types/react@19.2.18)(magicast@0.5.4)(rollup@4.63.4)(socks@2.8.9)(supports-color@7.2.0)(typanion@3.14.0)(typescript@6.0.3)(vite@8.2.1(@types/node@24.13.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.15)(yaml@2.9.1))(vitest@4.1.11(@types/node@24.13.6)(vite@8.2.1(@types/node@24.13.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.15)(yaml@2.9.1)))(workerd@1.20260704.1)(ws@8.21.1)
+      tsx:
+        specifier: ^4.23.11
+        version: 4.23.15
+      typescript:
+        specifier: ^6.0.3
+        version: 6.0.3
+      vite:
+        specifier: ^8.2.1
+        version: 8.2.1(@types/node@24.13.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.15)(yaml@2.9.1)
 
   apps/prisma-orm-kanban-example:
     dependencies:
@@ -849,6 +895,19 @@ importers:
       zod:
         specifier: ^4.6.5
         version: 4.6.5
+
+  packages/benchmark-kit:
+    dependencies:
+      tsx:
+        specifier: ^4.23.11
+        version: 4.23.15
+    devDependencies:
+      '@types/node':
+        specifier: ^24.10.9
+        version: 24.13.6
+      typescript:
+        specifier: ^6.0.3
+        version: 6.0.3
 
   packages/generator:
     dependencies:

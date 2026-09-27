@@ -7,6 +7,8 @@ const workspaceRoot = path.resolve(dirname, "../..");
 /** @type {import('next').NextConfig} */
 const config = {
   output: "export",
+  // The kit ships TypeScript source, so Next has to compile it.
+  transpilePackages: ["@prisma-idb/benchmark-kit"],
   reactStrictMode: true,
   images: { unoptimized: true },
   turbopack: {

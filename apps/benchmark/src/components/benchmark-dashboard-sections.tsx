@@ -11,7 +11,7 @@ import { Progress, ProgressLabel } from "@/components/ui/progress";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { BENCHMARK_DATASET_SIZE_OPTIONS, BENCHMARK_DEFAULT_CONFIG } from "@/lib/benchmark/types";
-import { BENCHMARK_LIMITS } from "@/lib/benchmark/config-validation";
+import { BENCHMARK_LIMITS } from "@prisma-idb/benchmark-kit";
 import type { BenchmarkDashboardController } from "./use-benchmark-dashboard-controller";
 import Favicon from "@/assets/favicon.png";
 
