@@ -1,4 +1,4 @@
-import { domainModelsAtDefaultNamespace } from "@prisma/orm-framework/contract/types";
+import { UNBOUND_DOMAIN_NAMESPACE_ID, domainModelsAtDefaultNamespace } from "@prisma/orm-framework/contract/types";
 import type { MockInstance } from "vitest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { defineContract } from "../src/core/contract-builder";
@@ -13,6 +13,62 @@ beforeEach(() => {
 
 afterEach(() => {
   warnSpy.mockRestore();
+});
+
+describe("defineContract — enums", () => {
+  it("builds domain enums and enum-typed fields, including optional and list fields", () => {
+    const contract = defineContract({
+      family: idbFamilyPack,
+      target: idbTargetPack,
+      enums: { Role: ["USER", "ADMIN"] },
+      models: {
+        User: {
+          store: "users",
+          key: "id",
+          fields: { id: "String", role: "Role", invitedAs: "Role?", previousRoles: "Role[]" },
+        },
+      },
+    });
+
+    const ns = contract.domain.namespaces[UNBOUND_DOMAIN_NAMESPACE_ID]!;
+    expect(ns.enum?.["Role"]).toEqual({
+      codecId: "idb/string@1",
+      members: [
+        { name: "USER", value: "USER" },
+        { name: "ADMIN", value: "ADMIN" },
+      ],
+    });
+    expect(ns.models["User"]!.fields["role"]).toMatchObject({
+      nullable: false,
+      type: { kind: "scalar", codecId: "idb/string@1" },
+      valueSet: {
+        plane: "domain",
+        entityKind: "enum",
+        namespaceId: UNBOUND_DOMAIN_NAMESPACE_ID,
+        entityName: "Role",
+      },
+    });
+    expect(ns.models["User"]!.fields["invitedAs"]).toMatchObject({ nullable: true });
+    expect(ns.models["User"]!.fields["previousRoles"]).toMatchObject({ many: true });
+  });
+
+  it("validates enum declarations and enum field defaults", () => {
+    expect(() =>
+      defineContract({
+        family: idbFamilyPack,
+        target: idbTargetPack,
+        enums: { Role: ["USER", "ADMIN"] },
+        models: {
+          User: {
+            store: "users",
+            key: "id",
+            fields: { id: "String", role: "Role" },
+            fieldDefaults: { role: "OWNER" },
+          },
+        },
+      })
+    ).toThrow(/not a declared value of enum "Role"/);
+  });
 });
 
 describe("defineContract — @idb.exclude projection (ADR 012)", () => {

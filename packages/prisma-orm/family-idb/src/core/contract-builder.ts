@@ -1,5 +1,11 @@
 import { computeProfileHash, computeStorageHash } from "@prisma/orm-framework/contract/hashing";
-import type { ApplicationDomain, Contract, ContractField, CrossReference } from "@prisma/orm-framework/contract/types";
+import type {
+  ApplicationDomain,
+  Contract,
+  ContractEnum,
+  ContractField,
+  CrossReference,
+} from "@prisma/orm-framework/contract/types";
 import { UNBOUND_DOMAIN_NAMESPACE_ID, crossRef } from "@prisma/orm-framework/contract/types";
 import type {
   IdbIndexDefinition,
@@ -18,11 +24,19 @@ import { validateContract } from "./validate";
 
 type PrismaScalarType = "String" | "Int" | "Float" | "Boolean" | "DateTime" | "BigInt" | "Decimal" | "Json" | "Bytes";
 
+type PrismaScalarFieldSpec = PrismaScalarType | `${PrismaScalarType}?`;
+
 /**
  * A field spec string: the Prisma scalar type name, optionally suffixed with
  * `?` to indicate the field is nullable (e.g. `"String"`, `"Int?"`, `"DateTime?"`).
  */
-export type FieldSpec = PrismaScalarType | `${PrismaScalarType}?`;
+export type FieldSpec<EnumName extends string = never> =
+  PrismaScalarFieldSpec | EnumName | `${EnumName}?` | `${EnumName}[]`;
+
+/** A named enum's ordered string values. Names and stored values are identical, matching standard Prisma enum blocks. */
+export type EnumDef = readonly string[];
+
+export type EnumDefs = Readonly<Record<string, EnumDef>>;
 
 const SCALAR_TO_CODEC_ID: Record<PrismaScalarType, string> = {
   String: "idb/string@1",
@@ -62,12 +76,12 @@ export type IndexDef = {
   readonly multiEntry?: boolean;
 };
 
-export type ModelDef = {
+export type ModelDef<EnumName extends string = never> = {
   readonly store: string;
   /** The primary key field, or an ordered list of fields for a compound primary key. */
   readonly key: IdbKeyPath;
   /** All scalar fields on the model. Use `"Type"` for non-nullable, `"Type?"` for nullable. */
-  readonly fields: Record<string, FieldSpec>;
+  readonly fields: Record<string, FieldSpec<EnumName>>;
   readonly indexes?: Record<string, IndexDef>;
   readonly relations?: Record<string, RelationDef>;
   /**
@@ -89,12 +103,13 @@ export type ModelDef = {
   readonly excludeFields?: readonly string[];
 };
 
-export type DefineContractInput = {
+export type DefineContractInput<TEnums extends EnumDefs = Record<never, never>> = {
   /** Pass the default export of `@prisma-idb/family-idb/pack`. */
   readonly family: { readonly familyId: "idb"; readonly id: string };
   /** Pass the default export of `@prisma-idb/target-idb/pack`. */
   readonly target: { readonly targetId: string; readonly id: string };
-  readonly models: Record<string, ModelDef>;
+  readonly enums?: TEnums;
+  readonly models: Record<string, ModelDef<Extract<keyof TEnums, string>>>;
 };
 
 export type DefineContractOptions = {
@@ -110,14 +125,14 @@ export type DefineContractOptions = {
  * don't cascade on requiredness"). The underlying FK scalar field (if any)
  * is kept, orphaned but inert.
  */
-function projectModelsForClient(models: Record<string, ModelDef>): Record<string, ModelDef> {
+function projectModelsForClient(models: Record<string, ModelDef<string>>): Record<string, ModelDef<string>> {
   const excludedModelNames = new Set(
     Object.entries(models)
       .filter(([, def]) => def.exclude === true)
       .map(([name]) => name)
   );
 
-  const result: Record<string, ModelDef> = {};
+  const result: Record<string, ModelDef<string>> = {};
 
   for (const [modelName, def] of Object.entries(models)) {
     if (excludedModelNames.has(modelName)) continue;
@@ -172,7 +187,7 @@ function projectModelsForClient(models: Record<string, ModelDef>): Record<string
       relations[relName] = rel;
     }
 
-    const fields: Record<string, FieldSpec> = {};
+    const fields: Record<string, FieldSpec<string>> = {};
     for (const [fieldName, spec] of Object.entries(def.fields)) {
       if (excludedFields.has(fieldName)) continue;
       fields[fieldName] = spec;
@@ -186,11 +201,28 @@ function projectModelsForClient(models: Record<string, ModelDef>): Record<string
 
 // ── Validate key/index field types against IDB's valid-key algorithm ──────────
 
-function resolveFieldCodecId(def: ModelDef, fieldName: string): string | undefined {
+type ParsedFieldSpec = {
+  readonly typeName: string;
+  readonly nullable: boolean;
+  readonly many: boolean;
+};
+
+function parseFieldSpec(spec: string): ParsedFieldSpec {
+  const nullable = spec.endsWith("?");
+  const withoutOptional = nullable ? spec.slice(0, -1) : spec;
+  const many = withoutOptional.endsWith("[]");
+  return {
+    typeName: many ? withoutOptional.slice(0, -2) : withoutOptional,
+    nullable,
+    many,
+  };
+}
+
+function resolveFieldCodecId(def: ModelDef<string>, fieldName: string, enums: EnumDefs): string | undefined {
   const spec = def.fields[fieldName];
   if (spec === undefined) return undefined;
-  const typeName = (spec.endsWith("?") ? spec.slice(0, -1) : spec) as PrismaScalarType;
-  return SCALAR_TO_CODEC_ID[typeName];
+  const { typeName } = parseFieldSpec(spec);
+  return typeName in enums ? SCALAR_TO_CODEC_ID.String : SCALAR_TO_CODEC_ID[typeName as PrismaScalarType];
 }
 
 /**
@@ -203,7 +235,7 @@ function resolveFieldCodecId(def: ModelDef, fieldName: string): string | undefin
  * (a `multiEntry` index only makes sense over a `Json`-typed field holding an
  * array — the one case this file can't statically validate either way).
  */
-function validateModelKeyAndIndexes(modelName: string, def: ModelDef): void {
+function validateModelKeyAndIndexes(modelName: string, def: ModelDef<string>, enums: EnumDefs): void {
   const keyFields = keyPathFields(def.key);
   if (keyFields.length === 0) {
     throw new Error(`defineContract: model "${modelName}" "key" must name at least one field.`);
@@ -216,12 +248,12 @@ function validateModelKeyAndIndexes(modelName: string, def: ModelDef): void {
     if (!(keyField in def.fields)) {
       throw new Error(`defineContract: model "${modelName}" key field "${keyField}" is not declared in "fields".`);
     }
-    if (def.fields[keyField]?.endsWith("?")) {
+    if (def.fields[keyField] !== undefined && parseFieldSpec(def.fields[keyField]).nullable) {
       throw new Error(
         `defineContract: model "${modelName}" key field "${keyField}" is nullable ("${def.fields[keyField]}") — the primary key cannot be nullable.`
       );
     }
-    const keyCodec = resolveFieldCodecId(def, keyField);
+    const keyCodec = resolveFieldCodecId(def, keyField, enums);
     if (keyCodec !== undefined && !isValidIdbKeyCodec(keyCodec)) {
       throw new Error(
         `defineContract: model "${modelName}" key field "${keyField}" has type "${keyCodec}", which IndexedDB cannot use as a key. Every write would throw (DataError extracting the primary key). Use String, Int, Float, DateTime, Decimal, or Bytes instead.`
@@ -253,7 +285,7 @@ function validateModelKeyAndIndexes(modelName: string, def: ModelDef): void {
         );
       }
       if (idx.multiEntry) continue;
-      const fieldCodec = resolveFieldCodecId(def, indexField);
+      const fieldCodec = resolveFieldCodecId(def, indexField, enums);
       if (fieldCodec === undefined || isValidIdbKeyCodec(fieldCodec)) continue;
       throw new Error(
         `defineContract: model "${modelName}" index "${indexName}" is keyed on "${indexField}" (type "${fieldCodec}"), which IndexedDB cannot use as an index key. Records are silently omitted from the index on write, and any query against it throws at runtime. Use String, Int, Float, DateTime, Decimal, or Bytes instead.`
@@ -272,11 +304,20 @@ function validateModelKeyAndIndexes(modelName: string, def: ModelDef): void {
     // only String/Int/Float/Decimal/Boolean fields accept a literal default
     // at all (matching `ModelDef.fieldDefaults`'s own `string | number |
     // boolean` value type).
-    const codec = resolveFieldCodecId(def, fieldName);
+    const codec = resolveFieldCodecId(def, fieldName, enums);
     if (codec !== undefined && !literalValueMatchesCodec(value, codec)) {
       throw new Error(
         `defineContract: model "${modelName}" fieldDefaults["${fieldName}"] is a ${typeof value} value, but field "${fieldName}" has type "${def.fields[fieldName]}" — the literal default's JS type must match the field's declared type.`
       );
+    }
+    const spec = def.fields[fieldName];
+    if (spec !== undefined) {
+      const enumValues = enums[parseFieldSpec(spec).typeName];
+      if (enumValues !== undefined && (typeof value !== "string" || !enumValues.includes(value))) {
+        throw new Error(
+          `defineContract: model "${modelName}" fieldDefaults["${fieldName}"] is not a declared value of enum "${parseFieldSpec(spec).typeName}".`
+        );
+      }
     }
   }
 }
@@ -300,7 +341,7 @@ function sameFieldList(a: readonly string[], b: readonly string[]): boolean {
  * ignored. That's a footgun, not a legitimate "pick one" scenario, so it's
  * rejected here instead.
  */
-function validateNoConflictingRelationActions(models: Record<string, ModelDef>): void {
+function validateNoConflictingRelationActions(models: Record<string, ModelDef<string>>): void {
   for (const [modelName, def] of Object.entries(models)) {
     for (const [relName, rel] of Object.entries(def.relations ?? {})) {
       const relatedDef = models[rel.to];
@@ -332,23 +373,62 @@ function validateNoConflictingRelationActions(models: Record<string, ModelDef>):
 
 // ── Helper: build ContractField entries from field specs ──────────────────────
 
-function buildFields(fields: Record<string, FieldSpec>): Record<string, ContractField> {
+function buildFields(
+  fields: Record<string, FieldSpec<string>>,
+  enums: EnumDefs,
+  namespaceId: string
+): Record<string, ContractField> {
   const result: Record<string, ContractField> = {};
   for (const [name, spec] of Object.entries(fields)) {
-    const nullable = spec.endsWith("?");
-    const typeName = (nullable ? spec.slice(0, -1) : spec) as PrismaScalarType;
-    const codecId = SCALAR_TO_CODEC_ID[typeName];
+    const { typeName, nullable, many } = parseFieldSpec(spec);
+    const enumValues = enums[typeName];
+    const codecId =
+      enumValues === undefined ? SCALAR_TO_CODEC_ID[typeName as PrismaScalarType] : SCALAR_TO_CODEC_ID.String;
     if (codecId === undefined) {
       throw new Error(`Unknown field type "${typeName}" for field "${name}"`);
     }
-    result[name] = { nullable, type: { kind: "scalar" as const, codecId } };
+    result[name] = {
+      nullable,
+      type: { kind: "scalar" as const, codecId },
+      ...(many ? { many: true as const } : {}),
+      ...(enumValues !== undefined
+        ? {
+            valueSet: {
+              plane: "domain" as const,
+              entityKind: "enum" as const,
+              namespaceId,
+              entityName: typeName,
+            },
+          }
+        : {}),
+    };
+  }
+  return result;
+}
+
+function buildEnums(enums: EnumDefs): Record<string, ContractEnum> {
+  const result: Record<string, ContractEnum> = {};
+  for (const [name, values] of Object.entries(enums)) {
+    if (name in SCALAR_TO_CODEC_ID) {
+      throw new Error(`defineContract: enum "${name}" conflicts with the built-in scalar type of the same name.`);
+    }
+    if (values.length === 0) {
+      throw new Error(`defineContract: enum "${name}" must declare at least one value.`);
+    }
+    if (new Set(values).size !== values.length) {
+      throw new Error(`defineContract: enum "${name}" repeats a value. Enum values must be unique.`);
+    }
+    result[name] = {
+      codecId: SCALAR_TO_CODEC_ID.String,
+      members: values.map((value) => ({ name: value, value })),
+    };
   }
   return result;
 }
 
 // ── Helper: derive the `roots` map (storeName → model CrossReference) ─────────
 
-function buildRoots(models: Record<string, ModelDef>): Record<string, CrossReference> {
+function buildRoots(models: Record<string, ModelDef<string>>): Record<string, CrossReference> {
   const roots: Record<string, CrossReference> = {};
   for (const modelName of Object.keys(models)) {
     const def = models[modelName]!;
@@ -361,7 +441,7 @@ function buildRoots(models: Record<string, ModelDef>): Record<string, CrossRefer
 
 // ── Helper: derive storage.stores from model definitions ─────────────────────
 
-function buildStores(models: Record<string, ModelDef>): Record<string, IdbStoreDefinition> {
+function buildStores(models: Record<string, ModelDef<string>>): Record<string, IdbStoreDefinition> {
   const stores: Record<string, IdbStoreDefinition> = {};
   for (const def of Object.values(models)) {
     const indexes: Record<string, IdbIndexDefinition> = {};
@@ -396,7 +476,11 @@ type ContractModelEntry = {
   readonly storage: IdbModelStorage;
 };
 
-function buildModels(models: Record<string, ModelDef>): Record<string, ContractModelEntry> {
+function buildModels(
+  models: Record<string, ModelDef<string>>,
+  enums: EnumDefs,
+  namespaceId: string
+): Record<string, ContractModelEntry> {
   const result: Record<string, ContractModelEntry> = {};
   for (const [modelName, def] of Object.entries(models)) {
     const relations: ContractModelEntry["relations"] = {};
@@ -425,7 +509,7 @@ function buildModels(models: Record<string, ModelDef>): Record<string, ContractM
       ...(Object.keys(relationsStorage).length > 0 ? { relations: relationsStorage } : {}),
       ...(def.fieldDefaults && Object.keys(def.fieldDefaults).length > 0 ? { fieldDefaults: def.fieldDefaults } : {}),
     };
-    result[modelName] = { fields: buildFields(def.fields), relations, storage };
+    result[modelName] = { fields: buildFields(def.fields, enums, namespaceId), relations, storage };
   }
   return result;
 }
@@ -459,12 +543,21 @@ function buildModels(models: Record<string, ModelDef>): Record<string, ContractM
  * });
  * ```
  */
-export function defineContract(input: DefineContractInput, options?: DefineContractOptions): Contract<IdbStorage> {
+export function defineContract<const TEnums extends EnumDefs = Record<never, never>>(
+  input: DefineContractInput<TEnums>,
+  options?: DefineContractOptions
+): Contract<IdbStorage> {
   const projection: ContractProjection = options?.projection ?? "full";
-  const models = projection === "client" ? projectModelsForClient(input.models) : input.models;
+  const enums: EnumDefs = input.enums ?? {};
+  const models = (projection === "client" ? projectModelsForClient(input.models) : input.models) as Record<
+    string,
+    ModelDef<string>
+  >;
+
+  const domainEnums = buildEnums(enums);
 
   for (const [modelName, def] of Object.entries(models)) {
-    validateModelKeyAndIndexes(modelName, def);
+    validateModelKeyAndIndexes(modelName, def, enums);
   }
   validateNoConflictingRelationActions(models);
 
@@ -505,7 +598,12 @@ export function defineContract(input: DefineContractInput, options?: DefineContr
   // v0.12.0: models live under `domain.namespaces.<ns>.models`, not a top-level
   // `models` field.
   const domain = {
-    namespaces: { [ns]: { models: buildModels(models) } },
+    namespaces: {
+      [ns]: {
+        models: buildModels(models, enums, ns),
+        ...(Object.keys(domainEnums).length > 0 ? { enum: domainEnums } : {}),
+      },
+    },
   } as unknown as ApplicationDomain;
 
   const contract: Contract<IdbStorage> = {

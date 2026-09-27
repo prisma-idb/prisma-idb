@@ -19,6 +19,7 @@ import type { IdbQueryExecutor, IdbStoreAccessor } from "../src/exports/orm";
 const contract = defineContract({
   family: idbFamilyPack,
   target: idbTargetPack,
+  enums: { Role: ["USER", "ADMIN"] },
   models: {
     User: {
       store: "users",
@@ -30,6 +31,7 @@ const contract = defineContract({
         bio: "String?",
         score: "Int",
         active: "Boolean",
+        role: "Role",
       },
     },
   },
@@ -66,11 +68,11 @@ function openSeeded(name: string): Promise<IDBDatabase> {
 }
 
 const ROWS = [
-  { id: "u1", name: "Alice", email: "alice@example.com", bio: null, score: 100, active: true },
-  { id: "u2", name: "Bob", email: "bob@example.com", bio: "Bob bio", score: 50, active: false },
-  { id: "u3", name: "Carol", email: "carol@example.com", bio: "Carol bio", score: 75, active: true },
+  { id: "u1", name: "Alice", email: "alice@example.com", bio: null, score: 100, active: true, role: "ADMIN" },
+  { id: "u2", name: "Bob", email: "bob@example.com", bio: "Bob bio", score: 50, active: false, role: "USER" },
+  { id: "u3", name: "Carol", email: "carol@example.com", bio: "Carol bio", score: 75, active: true, role: "USER" },
   // No bio field at all — exercises the undefined vs null distinction.
-  { id: "u4", name: "Dave", email: "dave@example.com", score: 25, active: true },
+  { id: "u4", name: "Dave", email: "dave@example.com", score: 25, active: true, role: "ADMIN" },
 ] as const;
 
 async function seed(name: string): Promise<void> {
@@ -107,6 +109,11 @@ describe("where() — shorthand form", () => {
 
   it("treats null in shorthand as null-check (matches null + undefined)", async () => {
     const rows = (await client()["users"]!.where({ bio: null }).all().toArray()) as Array<{ id: string }>;
+    expect(rows.map((r) => r.id).sort()).toEqual(["u1", "u4"]);
+  });
+
+  it("filters an enum field by string equality", async () => {
+    const rows = (await client()["users"]!.where({ role: "ADMIN" }).all().toArray()) as Array<{ id: string }>;
     expect(rows.map((r) => r.id).sort()).toEqual(["u1", "u4"]);
   });
 });
@@ -180,6 +187,28 @@ describe("where() — callback form: single-field operators", () => {
       id: string;
     }>;
     expect(notIn.map((r) => r.id).sort()).toEqual(["u3", "u4"]);
+  });
+
+  it("eq / in / notIn compare enum values as strings", async () => {
+    const c = client();
+    const eq = (await c["users"]!.where((m) => m["role"]!.eq("ADMIN"))
+      .all()
+      .toArray()) as Array<{ id: string }>;
+    expect(eq.map((r) => r.id).sort()).toEqual(["u1", "u4"]);
+
+    const inRows = (await c["users"]!.where((m) => m["role"]!.in(["USER"]))
+      .all()
+      .toArray()) as Array<{
+      id: string;
+    }>;
+    expect(inRows.map((r) => r.id).sort()).toEqual(["u2", "u3"]);
+
+    const notInRows = (await c["users"]!.where((m) => m["role"]!.notIn(["USER"]))
+      .all()
+      .toArray()) as Array<{
+      id: string;
+    }>;
+    expect(notInRows.map((r) => r.id).sort()).toEqual(["u1", "u4"]);
   });
 
   it("contains / startsWith / endsWith on strings", async () => {

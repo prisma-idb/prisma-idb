@@ -3,6 +3,7 @@ import { computeExecutionHash, computeProfileHash, computeStorageHash } from "@p
 import type {
   ApplicationDomain,
   Contract,
+  ContractEnum,
   ContractField,
   ExecutionMutationDefault,
 } from "@prisma/orm-framework/contract/types";
@@ -246,6 +247,70 @@ function hasModelAttribute(model: ModelSymbol, name: string): boolean {
 
 const IDB_EXCLUDE_ATTR = "idb.exclude";
 
+function interpretEnums(
+  table: SymbolTable,
+  sourceId: string,
+  diagnostics: ContractSourceDiagnostic[]
+): Record<string, ContractEnum> {
+  const enums: Record<string, ContractEnum> = {};
+
+  for (const block of Object.values(table.topLevel.blocks)) {
+    if (block.keyword !== "enum") continue;
+
+    const members: Array<{ readonly name: string; readonly value: string }> = [];
+    const seenValues = new Set<string>();
+
+    for (const [memberName, parameter] of Object.entries(block.block.parameters)) {
+      let value: string | undefined;
+      if (parameter.kind === "bare") {
+        value = memberName;
+      } else if (parameter.kind === "value") {
+        try {
+          const parsed: unknown = JSON.parse(parameter.raw);
+          if (typeof parsed === "string") value = parsed;
+        } catch {
+          // The diagnostic below handles malformed/non-string enum values uniformly.
+        }
+      }
+
+      if (value === undefined) {
+        diagnostics.push({
+          code: "IDB_ENUM_VALUE_NOT_STRING",
+          message: `Enum "${block.name}" member "${memberName}" must be a string value. IDB enums are stored as strings.`,
+          sourceId,
+          span: parameter.span,
+        });
+        continue;
+      }
+      if (seenValues.has(value)) {
+        diagnostics.push({
+          code: "IDB_ENUM_DUPLICATE_VALUE",
+          message: `Enum "${block.name}" repeats stored value "${value}". Enum values must be unique.`,
+          sourceId,
+          span: parameter.span,
+        });
+        continue;
+      }
+      seenValues.add(value);
+      members.push({ name: memberName, value });
+    }
+
+    if (members.length === 0) {
+      diagnostics.push({
+        code: "IDB_ENUM_EMPTY",
+        message: `Enum "${block.name}" must declare at least one member.`,
+        sourceId,
+        span: block.span,
+      });
+      continue;
+    }
+
+    enums[block.name] = { codecId: SCALAR_TO_CODEC_ID["String"]!, members };
+  }
+
+  return enums;
+}
+
 // ── Per-model interpretation result ───────────────────────────────────────────
 
 interface InterpretedModel {
@@ -280,6 +345,7 @@ interface InterpretedModel {
 function interpretModel(
   model: ModelSymbol,
   modelNames: ReadonlySet<string>,
+  enums: Readonly<Record<string, ContractEnum>>,
   sourceId: string,
   diagnostics: ContractSourceDiagnostic[],
   projection: ContractProjection,
@@ -581,8 +647,11 @@ function interpretModel(
       continue;
     }
 
-    // Skip list fields of non-model types (JSON arrays etc. are handled as Json codec)
-    if (field.list) {
+    const enumType = enums[field.typeName];
+
+    // Non-model scalar lists remain unsupported. Enum lists are represented
+    // by the string codec plus ContractField.many, so they continue below.
+    if (field.list && enumType === undefined) {
       // Only model-type lists are backrelations; non-model lists are not supported in IDB.
       continue;
     }
@@ -654,7 +723,7 @@ function interpretModel(
       continue;
     }
 
-    const codecId = SCALAR_TO_CODEC_ID[field.typeName];
+    const codecId = enumType?.codecId ?? SCALAR_TO_CODEC_ID[field.typeName];
     if (codecId === undefined) {
       diagnostics.push({
         code: "IDB_UNSUPPORTED_FIELD_TYPE",
@@ -668,6 +737,17 @@ function interpretModel(
     contractFields[field.name] = {
       nullable: field.optional,
       type: { kind: "scalar", codecId },
+      ...(field.list ? { many: true } : {}),
+      ...(enumType !== undefined
+        ? {
+            valueSet: {
+              plane: "domain",
+              entityKind: "enum",
+              namespaceId: UNBOUND_DOMAIN_NAMESPACE_ID,
+              entityName: field.typeName,
+            },
+          }
+        : {}),
     };
 
     // `@updatedAt` (classic Prisma spelling) — same runtime semantics as
@@ -731,101 +811,132 @@ function interpretModel(
         continue;
       }
 
-      const literal = parseDefaultLiteralValue(raw);
-      if (literal) {
-        if (!literalValueMatchesCodec(literal.value, codecId)) {
-          diagnostics.push({
-            code: "IDB_INVALID_DEFAULT_VALUE",
-            message: `Field "${model.name}.${field.name}" has type "${field.typeName}" but @default(${raw}) is a ${typeof literal.value} literal.`,
-            sourceId,
-            span: defaultAttr.span,
-          });
-          continue;
-        }
+      const enumMember =
+        enumType === undefined
+          ? undefined
+          : enumType.members.find((member) => raw === member.name || raw === `${field.typeName}.${member.name}`);
+
+      if (enumType !== undefined && field.list) {
+        diagnostics.push({
+          code: "IDB_ENUM_LIST_DEFAULT_UNSUPPORTED",
+          message: `Field "${model.name}.${field.name}" is an enum list; list defaults are not supported by IDB.`,
+          sourceId,
+          span: defaultAttr.span,
+        });
+        continue;
+      }
+
+      if (enumType !== undefined && enumMember !== undefined) {
         fieldExecutionDefaults.push({
           fieldName: field.name,
-          onCreate: { kind: "generator", id: LITERAL_GENERATOR_ID, params: { value: literal.value } },
+          onCreate: { kind: "generator", id: LITERAL_GENERATOR_ID, params: { value: enumMember.value } },
         });
-        // Also feeds `IdbModelStorage.fieldDefaults` (setDefault referential
-        // action) — only literal defaults land here, never a generator
-        // (uuid()/cuid()/now()/autoincrement()), matching Prisma's own rule
-        // that `SetDefault` may only target a scalar/literal default.
-        fieldDefaults[field.name] = literal.value;
+        fieldDefaults[field.name] = enumMember.value as string;
+      } else if (enumType !== undefined) {
+        diagnostics.push({
+          code: "IDB_INVALID_ENUM_DEFAULT",
+          message: `Field "${model.name}.${field.name}" @default(${raw}) does not name a member of enum "${field.typeName}".`,
+          sourceId,
+          span: defaultAttr.span,
+        });
+        continue;
       } else {
-        const call = parseDefaultFunctionCall(raw);
-        if (!call) {
-          diagnostics.push({
-            code: "IDB_INVALID_DEFAULT_VALUE",
-            message: `Field "${model.name}.${field.name}" has unsupported default value "${raw}".`,
-            sourceId,
-            span: defaultAttr.span,
-          });
-          continue;
-        }
-
-        if (call.name === "autoincrement") {
-          if (!idFieldNames.includes(field.name)) {
+        const literal = parseDefaultLiteralValue(raw);
+        if (literal) {
+          if (!literalValueMatchesCodec(literal.value, codecId)) {
             diagnostics.push({
-              code: "IDB_AUTOINCREMENT_NOT_ON_KEY_FIELD",
-              message: `Field "${model.name}.${field.name}" uses @default(autoincrement()) but is not the model's @id key. IndexedDB only generates keys for the primary key field.`,
+              code: "IDB_INVALID_DEFAULT_VALUE",
+              message: `Field "${model.name}.${field.name}" has type "${field.typeName}" but @default(${raw}) is a ${typeof literal.value} literal.`,
               sourceId,
               span: defaultAttr.span,
             });
             continue;
           }
-          if (idFieldNames.length > 1) {
+          fieldExecutionDefaults.push({
+            fieldName: field.name,
+            onCreate: { kind: "generator", id: LITERAL_GENERATOR_ID, params: { value: literal.value } },
+          });
+          // Also feeds `IdbModelStorage.fieldDefaults` (setDefault referential
+          // action) — only literal defaults land here, never a generator
+          // (uuid()/cuid()/now()/autoincrement()), matching Prisma's own rule
+          // that `SetDefault` may only target a scalar/literal default.
+          fieldDefaults[field.name] = literal.value;
+        } else {
+          const call = parseDefaultFunctionCall(raw);
+          if (!call) {
             diagnostics.push({
-              code: "IDB_AUTOINCREMENT_ON_COMPOUND_KEY",
-              message: `Field "${model.name}.${field.name}" uses @default(autoincrement()) but is part of a compound primary key (@@id([${idFieldNames.join(", ")}])). IndexedDB rejects autoIncrement combined with a compound key (InvalidAccessError) — use a single-field @id if you need autoincrement().`,
+              code: "IDB_INVALID_DEFAULT_VALUE",
+              message: `Field "${model.name}.${field.name}" has unsupported default value "${raw}".`,
               sourceId,
               span: defaultAttr.span,
             });
             continue;
           }
-          if (codecId !== SCALAR_TO_CODEC_ID["Int"]) {
+
+          if (call.name === "autoincrement") {
+            if (!idFieldNames.includes(field.name)) {
+              diagnostics.push({
+                code: "IDB_AUTOINCREMENT_NOT_ON_KEY_FIELD",
+                message: `Field "${model.name}.${field.name}" uses @default(autoincrement()) but is not the model's @id key. IndexedDB only generates keys for the primary key field.`,
+                sourceId,
+                span: defaultAttr.span,
+              });
+              continue;
+            }
+            if (idFieldNames.length > 1) {
+              diagnostics.push({
+                code: "IDB_AUTOINCREMENT_ON_COMPOUND_KEY",
+                message: `Field "${model.name}.${field.name}" uses @default(autoincrement()) but is part of a compound primary key (@@id([${idFieldNames.join(", ")}])). IndexedDB rejects autoIncrement combined with a compound key (InvalidAccessError) — use a single-field @id if you need autoincrement().`,
+                sourceId,
+                span: defaultAttr.span,
+              });
+              continue;
+            }
+            if (codecId !== SCALAR_TO_CODEC_ID["Int"]) {
+              diagnostics.push({
+                code: "IDB_AUTOINCREMENT_NOT_INT",
+                message: `Field "${model.name}.${field.name}" uses @default(autoincrement()) but has type "${field.typeName}", not Int. IndexedDB key generators only produce numbers.`,
+                sourceId,
+                span: defaultAttr.span,
+              });
+              continue;
+            }
+            autoIncrement = true;
+            continue;
+          }
+
+          if (field.optional) {
             diagnostics.push({
-              code: "IDB_AUTOINCREMENT_NOT_INT",
-              message: `Field "${model.name}.${field.name}" uses @default(autoincrement()) but has type "${field.typeName}", not Int. IndexedDB key generators only produce numbers.`,
+              code: "IDB_EXECUTION_DEFAULT_ON_OPTIONAL_FIELD",
+              message: `Field "${model.name}.${field.name}" cannot be both optional and @default(${call.name}(...)) — an omitted value would be ambiguous between "generate one" and "store null". Remove "?" or the default.`,
               sourceId,
               span: defaultAttr.span,
             });
             continue;
           }
-          autoIncrement = true;
-          continue;
-        }
 
-        if (field.optional) {
-          diagnostics.push({
-            code: "IDB_EXECUTION_DEFAULT_ON_OPTIONAL_FIELD",
-            message: `Field "${model.name}.${field.name}" cannot be both optional and @default(${call.name}(...)) — an omitted value would be ambiguous between "generate one" and "store null". Remove "?" or the default.`,
-            sourceId,
-            span: defaultAttr.span,
+          const resolution = resolveDefaultFunctionGeneratorId(call.name, call.arg);
+          if (!resolution.ok) {
+            diagnostics.push({
+              code:
+                resolution.reason === "unknown-function"
+                  ? "IDB_UNKNOWN_DEFAULT_FUNCTION"
+                  : "IDB_INVALID_DEFAULT_FUNCTION_ARGUMENT",
+              message:
+                resolution.reason === "unknown-function"
+                  ? `Field "${model.name}.${field.name}" uses unsupported default function "${call.name}(...)". Supported: now(), uuid(), uuid(7), cuid(), autoincrement().`
+                  : `Field "${model.name}.${field.name}" — @default(${call.name}(${call.arg ?? ""})) has an unsupported argument.`,
+              sourceId,
+              span: defaultAttr.span,
+            });
+            continue;
+          }
+
+          fieldExecutionDefaults.push({
+            fieldName: field.name,
+            onCreate: { kind: "generator", id: resolution.generatorId },
           });
-          continue;
         }
-
-        const resolution = resolveDefaultFunctionGeneratorId(call.name, call.arg);
-        if (!resolution.ok) {
-          diagnostics.push({
-            code:
-              resolution.reason === "unknown-function"
-                ? "IDB_UNKNOWN_DEFAULT_FUNCTION"
-                : "IDB_INVALID_DEFAULT_FUNCTION_ARGUMENT",
-            message:
-              resolution.reason === "unknown-function"
-                ? `Field "${model.name}.${field.name}" uses unsupported default function "${call.name}(...)". Supported: now(), uuid(), uuid(7), cuid(), autoincrement().`
-                : `Field "${model.name}.${field.name}" — @default(${call.name}(${call.arg ?? ""})) has an unsupported argument.`,
-            sourceId,
-            span: defaultAttr.span,
-          });
-          continue;
-        }
-
-        fieldExecutionDefaults.push({
-          fieldName: field.name,
-          onCreate: { kind: "generator", id: resolution.generatorId },
-        });
       }
     }
 
@@ -923,6 +1034,7 @@ export function interpretPslDocumentToIdbContract(
 ): Result<Contract<IdbStorage>, ContractSourceDiagnostics> {
   const projection: ContractProjection = options?.projection ?? "full";
   const diagnostics: ContractSourceDiagnostic[] = [];
+  const enums = interpretEnums(table, sourceId, diagnostics);
 
   // IDB does not support namespace blocks
   const explicitNamespaces = Object.values(table.topLevel.namespaces);
@@ -987,6 +1099,7 @@ export function interpretPslDocumentToIdbContract(
     const result = interpretModel(
       model,
       modelNames,
+      enums,
       sourceId,
       diagnostics,
       projection,
@@ -1104,7 +1217,12 @@ export function interpretPslDocumentToIdbContract(
   const storage: IdbStorage = { ...storageBlock, storageHash };
 
   const domain = {
-    namespaces: { [ns]: { models: domainModels } },
+    namespaces: {
+      [ns]: {
+        models: domainModels,
+        ...(Object.keys(enums).length > 0 ? { enum: enums } : {}),
+      },
+    },
   } as unknown as ApplicationDomain;
 
   const execution =

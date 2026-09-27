@@ -26,6 +26,7 @@ export const codecDescriptors: readonly AnyCodecDescriptor[] = [
     dataType: idbString.id,
     traits: ["equality", "textual"],
     targetTypes: ["string"],
+    renderValueLiteral: (value) => (typeof value === "string" ? JSON.stringify(value) : undefined),
     paramsSchema: undefined as never,
     isParameterized: false,
     factory: () => () => ({
@@ -218,10 +219,16 @@ export const idbCodecLookup: CodecLookup = (() => {
     })
   );
   const targetTypesMap = new Map(codecDescriptors.map((desc) => [desc.codecId, desc.targetTypes]));
+  const valueLiteralRenderers = new Map(
+    codecDescriptors
+      .filter((desc) => "renderValueLiteral" in desc)
+      .map((desc) => [desc.codecId, desc.renderValueLiteral] as const)
+  );
   return {
     get: (id) => codecMap.get(id),
     targetTypesFor: (id) => targetTypesMap.get(id),
     metaFor: () => undefined,
     renderOutputTypeFor: () => undefined,
+    renderValueLiteralFor: (id, value, side) => valueLiteralRenderers.get(id)?.(value, side),
   };
 })();

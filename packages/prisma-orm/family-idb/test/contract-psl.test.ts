@@ -126,6 +126,63 @@ describe("interpretPslDocumentToIdbContract", () => {
       expect(typeof result.value.storage.storageHash).toBe("string");
       expect(typeof result.value.profileHash).toBe("string");
     });
+
+    it("interprets enum blocks, optional/list enum fields, and enum defaults", () => {
+      const result = interpret(`
+        enum Role {
+          USER
+          ADMIN
+        }
+
+        model User {
+          id            String @id
+          role          Role   @default(USER)
+          invitedAs     Role?
+          previousRoles Role[]
+        }
+      `);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+
+      const ns = result.value.domain.namespaces[NS]!;
+      expect(ns.enum?.["Role"]).toEqual({
+        codecId: "idb/string@1",
+        members: [
+          { name: "USER", value: "USER" },
+          { name: "ADMIN", value: "ADMIN" },
+        ],
+      });
+      expect(ns.models["User"]!.fields["role"]).toMatchObject({
+        nullable: false,
+        type: { kind: "scalar", codecId: "idb/string@1" },
+        valueSet: { plane: "domain", entityKind: "enum", namespaceId: NS, entityName: "Role" },
+      });
+      expect(ns.models["User"]!.fields["invitedAs"]).toMatchObject({ nullable: true });
+      expect(ns.models["User"]!.fields["previousRoles"]).toMatchObject({ many: true });
+      expect(result.value.execution?.mutations.defaults).toContainEqual({
+        ref: { namespace: NS, table: "user", column: "role" },
+        onCreate: { kind: "generator", id: "literal", params: { value: "USER" } },
+      });
+      expect(JSON.parse(JSON.stringify(result.value)).domain.namespaces[NS].enum.Role.members).toEqual([
+        { name: "USER", value: "USER" },
+        { name: "ADMIN", value: "ADMIN" },
+      ]);
+    });
+
+    it("rejects an enum default that is not a declared member", () => {
+      const result = interpret(`
+        enum Role { USER ADMIN }
+        model User {
+          id   String @id
+          role Role   @default(OWNER)
+        }
+      `);
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.failure.diagnostics).toEqual(
+        expect.arrayContaining([expect.objectContaining({ code: "IDB_INVALID_ENUM_DEFAULT" })])
+      );
+    });
   });
 
   describe("@@id model-level attribute", () => {

@@ -150,6 +150,17 @@ export const idbEmission = {
     ].join("; ");
   },
 
+  resolveFieldValueSet(_modelName: string, fieldName: string, model: ContractModel, contract: Contract) {
+    const ref = model.fields[fieldName]?.valueSet;
+    if (ref?.plane !== "domain" || ref.entityKind !== "enum" || ref.spaceId !== undefined) return undefined;
+    const entry = contract.domain.namespaces[ref.namespaceId]?.enum?.[ref.entityName];
+    if (entry === undefined) return undefined;
+    return {
+      codecId: entry.codecId,
+      encodedValues: entry.members.map((member) => member.value),
+    };
+  },
+
   /**
    * Returns the `import type` lines prepended to `contract.d.ts` that bring
    * IDB-family types into scope.
