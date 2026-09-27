@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>client-idb benchmark</title>
+    <style>
+      body {
+        font-family: system-ui, sans-serif;
+        margin: 2rem;
+        max-width: 60rem;
+      }
+      table {
+        border-collapse: collapse;
+      }
+      td,
+      th {
+        padding: 0.25rem 0.75rem;
+        text-align: right;
+        border-bottom: 1px solid #ddd;
+      }
+      td:first-child,
+      th:first-child {
+        text-align: left;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>client-idb benchmark</h1>
+    <form id="config">
+      <label>Dataset size <input name="datasetSize" type="number" value="5000" /></label>
+      <label>Warmup runs <input name="warmupRuns" type="number" value="2" /></label>
+      <label>Measured runs <input name="measuredRuns" type="number" value="30" /></label>
+      <button type="submit">Run</button>
+    </form>
+    <p id="status"></p>
+    <div id="output"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

@@ -83,20 +83,22 @@ const payload = {
 process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
 NODE
 
-# ── Kill any stale server on the benchmark port ──────────────────────────────
-# act uses --network host, so host-side processes on port 4175 collide with the
-# container's Playwright webServer.
-BENCHMARK_PORT=4175
-PORT_PIDS="$(lsof -ti:"$BENCHMARK_PORT" 2>/dev/null || true)"
-if [[ -n "$PORT_PIDS" ]]; then
-  echo "Terminating stale process on port ${BENCHMARK_PORT}..."
-  printf '%s\n' "$PORT_PIDS" | xargs kill 2>/dev/null || true
-  sleep 1
-  if lsof -ti:"$BENCHMARK_PORT" &>/dev/null; then
-    echo "Error: port ${BENCHMARK_PORT} is still in use after SIGTERM. Free it manually and retry." >&2
-    exit 1
+# ── Kill any stale server on the benchmark ports ─────────────────────────────
+# act uses --network host, so host-side processes on the suites' ports
+# (4175: generator, 4176: prisma-orm) collide with the container's Playwright
+# webServer.
+for BENCHMARK_PORT in 4175 4176; do
+  PORT_PIDS="$(lsof -ti:"$BENCHMARK_PORT" 2>/dev/null || true)"
+  if [[ -n "$PORT_PIDS" ]]; then
+    echo "Terminating stale process on port ${BENCHMARK_PORT}..."
+    printf '%s\n' "$PORT_PIDS" | xargs kill 2>/dev/null || true
+    sleep 1
+    if lsof -ti:"$BENCHMARK_PORT" &>/dev/null; then
+      echo "Error: port ${BENCHMARK_PORT} is still in use after SIGTERM. Free it manually and retry." >&2
+      exit 1
+    fi
   fi
-fi
+done
 
 # ── Persistent caches ────────────────────────────────────────────────────────
 # Mount host directories into the container so Playwright browsers and the pnpm

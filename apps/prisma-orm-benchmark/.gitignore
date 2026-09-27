@@ -1,0 +1,7 @@
+# `prisma contract emit` also writes a .d.ts; the app takes its type from
+# contract.server.ts instead, so only contract.json is committed.
+src/contract.d.ts
+.benchmark-results/
+dist/
+test-results/
+playwright-report/

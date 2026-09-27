@@ -1,18 +1,30 @@
 name: Benchmark Regression
 
+# Two suites share one pipeline (see the `suite` matrix below):
+# - generator:  apps/benchmark, the old code generator's client.
+# - prisma-orm: apps/prisma-orm-benchmark, the @prisma-idb/client-idb ORM.
+# Both use @prisma-idb/benchmark-kit for the runner, the bootstrap-CI
+# comparison and the PR comment.
+
 on:
   push:
     branches: [main]
     paths:
       - "apps/benchmark/**"
+      - "apps/prisma-orm-benchmark/**"
+      - "packages/benchmark-kit/**"
       - "packages/generator/**"
+      - "packages/prisma-orm/**"
       - "scripts/benchmark-local.sh"
       - ".github/workflows/benchmark.yml"
   pull_request:
     branches: [main]
     paths:
       - "apps/benchmark/**"
+      - "apps/prisma-orm-benchmark/**"
+      - "packages/benchmark-kit/**"
       - "packages/generator/**"
+      - "packages/prisma-orm/**"
       - "scripts/benchmark-local.sh"
       - ".github/workflows/benchmark.yml"
 
@@ -25,7 +37,6 @@ permissions:
   pull-requests: write
 
 env:
-  BENCHMARK_DATASET_SIZE: "1000"
   BENCHMARK_WARMUP_RUNS: "2"
   BENCHMARK_MEASURED_RUNS: "30"
 
@@ -33,11 +44,39 @@ jobs:
   benchmark-pr-compare:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        suite:
+          - id: generator
+            title: Benchmark Regression Report (generator client)
+            dir: apps/benchmark
+            # The generated client is gitignored, so it's regenerated per checkout.
+            prepare: pnpm generate
+            dataset-size: "1000"
+            # Kept unsuffixed so the existing PR comment keeps being updated.
+            marker: "<!-- benchmark-regression-report -->"
+          - id: prisma-orm
+            title: Benchmark Regression Report (prisma-orm client)
+            dir: apps/prisma-orm-benchmark
+            # The app consumes the built dist/ of the workspace packages.
+            prepare: pnpm turbo run build --filter=@prisma-idb/prisma-orm-benchmark^...
+            # Large enough that a full scan costs clearly more than the
+            # gate's 5ms absolute floor.
+            dataset-size: "5000"
+            marker: "<!-- benchmark-regression-report:prisma-orm -->"
+
+    env:
+      BENCHMARK_DATASET_SIZE: ${{ matrix.suite.dataset-size }}
 
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           fetch-depth: 0
+
+      # The runner context isn't available in job-level env.
+      - name: Set results directory
+        run: echo "RESULTS_DIR=$RUNNER_TEMP/benchmark-results" >> "$GITHUB_ENV"
 
       - name: Install pnpm
         uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
@@ -58,26 +97,23 @@ jobs:
           key: ${{ runner.os }}-playwright-${{ hashFiles('pnpm-lock.yaml') }}
 
       - name: Install Playwright Browser
-        working-directory: apps/benchmark
+        working-directory: ${{ matrix.suite.dir }}
         run: pnpm exec playwright install --with-deps chromium
 
-      - name: Generate benchmark clients (PR head)
-        working-directory: apps/benchmark
-        run: pnpm generate
+      - name: Prepare benchmark app (PR head)
+        working-directory: ${{ matrix.suite.dir }}
+        run: ${{ matrix.suite.prepare }}
         env:
           DATABASE_URL: "postgresql://placeholder@localhost:5432/placeholder"
 
       - name: Run benchmark suite (PR head)
-        working-directory: apps/benchmark
+        working-directory: ${{ matrix.suite.dir }}
         env:
-          BENCHMARK_DATASET_SIZE: ${{ env.BENCHMARK_DATASET_SIZE }}
-          BENCHMARK_WARMUP_RUNS: ${{ env.BENCHMARK_WARMUP_RUNS }}
-          BENCHMARK_MEASURED_RUNS: ${{ env.BENCHMARK_MEASURED_RUNS }}
           BENCHMARK_RESULT_PATH: ${{ runner.temp }}/benchmark-results/current.json
           NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN: ""
           NEXT_PUBLIC_POSTHOG_HOST: "https://us.i.posthog.com"
         run: |
-          mkdir -p "$RUNNER_TEMP/benchmark-results"
+          mkdir -p "$RESULTS_DIR"
           pnpm benchmark:ci
 
       - name: Save HEAD chromium directory
@@ -88,7 +124,20 @@ jobs:
       - name: Checkout PR base
         run: git checkout --force ${{ github.event.pull_request.base.sha }}
 
+      # A PR that introduces a suite has nothing to compare against on base.
+      # Its comparison is then advisory instead of failing.
+      - name: Check the suite exists on base
+        id: base
+        run: |
+          if [ -f "${{ matrix.suite.dir }}/package.json" ]; then
+            echo "has-suite=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has-suite=false" >> "$GITHUB_OUTPUT"
+            echo "PR base has no ${{ matrix.suite.dir }}; skipping the base run."
+          fi
+
       - name: Install base dependencies
+        if: steps.base.outputs.has-suite == 'true'
         # PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 prevents playwright 1.x postinstall hooks
         # from running, which would otherwise delete HEAD's chromium revision as "unused".
         #
@@ -103,7 +152,8 @@ jobs:
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 pnpm install --frozen-lockfile
 
       - name: Ensure Playwright browser is available for base
-        working-directory: apps/benchmark
+        if: steps.base.outputs.has-suite == 'true'
+        working-directory: ${{ matrix.suite.dir }}
         # HEAD's browser is still intact (PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD prevented deletion).
         # If base needs a different revision, symlink HEAD's binary — same chromium engine,
         # close enough for benchmark comparison purposes.
@@ -121,18 +171,17 @@ jobs:
             echo "Symlinked: $HEAD_CHROMIUM -> $BROWSER_DIR"
           fi
 
-      - name: Generate benchmark clients (PR base)
-        working-directory: apps/benchmark
-        run: pnpm generate
+      - name: Prepare benchmark app (PR base)
+        if: steps.base.outputs.has-suite == 'true'
+        working-directory: ${{ matrix.suite.dir }}
+        run: ${{ matrix.suite.prepare }}
         env:
           DATABASE_URL: "postgresql://placeholder@localhost:5432/placeholder"
 
       - name: Run benchmark suite (PR base)
-        working-directory: apps/benchmark
+        if: steps.base.outputs.has-suite == 'true'
+        working-directory: ${{ matrix.suite.dir }}
         env:
-          BENCHMARK_DATASET_SIZE: ${{ env.BENCHMARK_DATASET_SIZE }}
-          BENCHMARK_WARMUP_RUNS: ${{ env.BENCHMARK_WARMUP_RUNS }}
-          BENCHMARK_MEASURED_RUNS: ${{ env.BENCHMARK_MEASURED_RUNS }}
           BENCHMARK_RESULT_PATH: ${{ runner.temp }}/benchmark-results/baseline.json
           NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN: ""
           NEXT_PUBLIC_POSTHOG_HOST: "https://us.i.posthog.com"
@@ -145,21 +194,35 @@ jobs:
           pnpm install --frozen-lockfile
 
       - name: Compare benchmarks
-        working-directory: apps/benchmark
+        if: steps.base.outputs.has-suite == 'true'
+        working-directory: ${{ matrix.suite.dir }}
         run: |
-          test -f "$RUNNER_TEMP/benchmark-results/baseline.json"
-          test -f "$RUNNER_TEMP/benchmark-results/current.json"
+          test -f "$RESULTS_DIR/baseline.json"
+          test -f "$RESULTS_DIR/current.json"
           pnpm benchmark:compare \
-            --baseline "$RUNNER_TEMP/benchmark-results/baseline.json" \
-            --current "$RUNNER_TEMP/benchmark-results/current.json" \
+            --baseline "$RESULTS_DIR/baseline.json" \
+            --current "$RESULTS_DIR/current.json" \
             --threshold 10 \
-            --json-out "$RUNNER_TEMP/benchmark-results/report.json" \
-            --markdown-out "$RUNNER_TEMP/benchmark-results/report.md"
+            --title "${{ matrix.suite.title }}" \
+            --json-out "$RESULTS_DIR/report.json" \
+            --markdown-out "$RESULTS_DIR/report.md"
+
+      - name: Write advisory report (no baseline)
+        if: steps.base.outputs.has-suite != 'true'
+        run: |
+          NOTICE="The PR base has no ${{ matrix.suite.dir }}, so there is no baseline to compare against."
+          jq -n --arg notice "$NOTICE" '{isAdvisory: true, shouldFail: false, notices: [$notice]}' > "$RESULTS_DIR/report.json"
+          {
+            echo "## ${{ matrix.suite.title }}"
+            echo
+            echo "> [!NOTE]"
+            echo "> $NOTICE This run's results are in the workflow artifacts."
+          } > "$RESULTS_DIR/report.md"
 
       - name: Enforce benchmark regression gate
         run: |
-          jq -r '(.notices[]? | "Notice: " + .)' "$RUNNER_TEMP/benchmark-results/report.json"
-          if [ "$(jq -r '.shouldFail' "$RUNNER_TEMP/benchmark-results/report.json")" = "true" ]; then
+          jq -r '(.notices[]? | "Notice: " + .)' "$RESULTS_DIR/report.json"
+          if [ "$(jq -r '.shouldFail' "$RESULTS_DIR/report.json")" = "true" ]; then
             echo "Benchmark regression gate failed." >&2
             exit 1
           fi
@@ -167,27 +230,46 @@ jobs:
       - name: Publish benchmark PR comment
         if: ${{ !cancelled() && github.event.pull_request.head.repo.full_name == github.repository }}
         continue-on-error: true
-        working-directory: apps/benchmark
+        working-directory: ${{ matrix.suite.dir }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: pnpm benchmark:comment --body-file "$RUNNER_TEMP/benchmark-results/report.md"
+        run: pnpm benchmark:comment --body-file "$RESULTS_DIR/report.md" --marker "${{ matrix.suite.marker }}"
 
       - name: Upload benchmark artifacts
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: benchmark-results
+          name: benchmark-results-${{ matrix.suite.id }}
           path: ${{ runner.temp }}/benchmark-results/
           retention-days: 30
 
-  publish-main-benchmark-snapshot:
+  run-main-benchmark:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        suite:
+          - id: generator
+            dir: apps/benchmark
+            prepare: pnpm generate
+            dataset-size: "1000"
+          - id: prisma-orm
+            dir: apps/prisma-orm-benchmark
+            prepare: pnpm turbo run build --filter=@prisma-idb/prisma-orm-benchmark^...
+            dataset-size: "5000"
+
+    env:
+      BENCHMARK_DATASET_SIZE: ${{ matrix.suite.dataset-size }}
 
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           fetch-depth: 0
+
+      # The runner context isn't available in job-level env.
+      - name: Set results directory
+        run: echo "RESULTS_DIR=$RUNNER_TEMP/benchmark-results" >> "$GITHUB_ENV"
 
       - name: Install pnpm
         uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
@@ -208,32 +290,52 @@ jobs:
           key: ${{ runner.os }}-playwright-${{ hashFiles('pnpm-lock.yaml') }}
 
       - name: Install Playwright Browser
-        working-directory: apps/benchmark
+        working-directory: ${{ matrix.suite.dir }}
         run: pnpm exec playwright install --with-deps chromium
 
-      - name: Generate benchmark clients
-        working-directory: apps/benchmark
-        run: pnpm generate
+      - name: Prepare benchmark app
+        working-directory: ${{ matrix.suite.dir }}
+        run: ${{ matrix.suite.prepare }}
         env:
           DATABASE_URL: "postgresql://placeholder@localhost:5432/placeholder"
 
       - name: Run benchmark suite
-        working-directory: apps/benchmark
+        working-directory: ${{ matrix.suite.dir }}
         env:
-          BENCHMARK_DATASET_SIZE: ${{ env.BENCHMARK_DATASET_SIZE }}
-          BENCHMARK_WARMUP_RUNS: ${{ env.BENCHMARK_WARMUP_RUNS }}
-          BENCHMARK_MEASURED_RUNS: ${{ env.BENCHMARK_MEASURED_RUNS }}
           BENCHMARK_RESULT_PATH: ${{ runner.temp }}/benchmark-results/main-current.json
           NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN: ""
           NEXT_PUBLIC_POSTHOG_HOST: "https://us.i.posthog.com"
         run: |
-          mkdir -p "$RUNNER_TEMP/benchmark-results"
+          mkdir -p "$RESULTS_DIR"
           pnpm benchmark:ci
 
+      - name: Upload benchmark artifacts
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: benchmark-results-main-${{ matrix.suite.id }}
+          path: ${{ runner.temp }}/benchmark-results/
+          retention-days: 30
+
+  # One publish for both suites: the branch is force-replaced on every
+  # publish, so separate publishes would delete each other's snapshot.
+  publish-main-benchmark-snapshot:
+    needs: run-main-benchmark
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download suite results
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          pattern: benchmark-results-main-*
+          path: ${{ runner.temp }}/downloaded
+
       - name: Prepare public benchmark snapshot
+        # The docs site reads the generator suite from latest.json.
         run: |
-          mkdir -p "$RUNNER_TEMP/benchmark-public"
-          cp "$RUNNER_TEMP/benchmark-results/main-current.json" "$RUNNER_TEMP/benchmark-public/latest.json"
+          OUT="$RUNNER_TEMP/benchmark-public"
+          mkdir -p "$OUT/prisma-orm"
+          cp "$RUNNER_TEMP/downloaded/benchmark-results-main-generator/main-current.json" "$OUT/latest.json"
+          cp "$RUNNER_TEMP/downloaded/benchmark-results-main-prisma-orm/main-current.json" "$OUT/prisma-orm/latest.json"
 
       - name: Publish public benchmark snapshot
         uses: peaceiris/actions-gh-pages@84c30a85c19949d7eee79c4ff27748b70285e453 # v4
@@ -244,11 +346,3 @@ jobs:
           force_orphan: true
           enable_jekyll: false
           commit_message: "chore(benchmark): publish latest benchmark snapshot [skip ci]"
-
-      - name: Upload benchmark artifacts
-        if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: benchmark-results-main
-          path: ${{ runner.temp }}/benchmark-results/
-          retention-days: 30
