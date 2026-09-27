@@ -1,6 +1,8 @@
 import type { IdbFilterExpr, IdbOrExpr } from "@prisma-idb/adapter-idb/runtime";
 import { andExpr } from "@prisma-idb/adapter-idb/runtime";
-import type { IdbRowComparator } from "@prisma-idb/driver-idb/runtime";
+import type { IdbCountPlan, IdbCursorScanPlan, IdbRowComparator } from "@prisma-idb/driver-idb/runtime";
+import type { IdbKeyPath } from "@prisma-idb/target-idb/pack";
+import { compareFieldValues } from "@prisma-idb/target-idb/runtime";
 import { isValidIdbKey } from "./types";
 
 /** Describes an extractable indexed equality that can narrow a cursor scan. */
@@ -69,6 +71,22 @@ function isIndexableEqValue(value: unknown): boolean {
 }
 
 /**
+ * `true` when `field` is a *single-field* primary key that a lone `eq`
+ * condition can directly point-range-query (`store.get`/`openCursor(range)`
+ * against the store's own keyPath, no named index required).
+ *
+ * Deliberately `false` for a compound (array) `keyPath`, even if `field`
+ * happens to be one of its member fields — a single `eq` condition can only
+ * pin one member, not the whole compound key, so it can't drive a PK
+ * point-range scan on its own. Accelerating that case needs *all* member
+ * fields ANDed together, which is a cost-based multi-field planner decision
+ * (Phase 10 §3.2), not this peephole optimizer's job.
+ */
+function isPrimaryKeyField(field: string, keyPath: IdbKeyPath): boolean {
+  return typeof keyPath === "string" && field === keyPath;
+}
+
+/**
  * Scan the combined filter expression for the first `eq` field condition whose
  * field either has a matching IDB index (`fieldToIndexName[field]` is set) or
  * *is* the store's own primary key (`keyPath`) — a store's keyPath is always
@@ -86,13 +104,13 @@ function isIndexableEqValue(value: unknown): boolean {
 export function extractIndexEqualityHint(
   filter: IdbFilterExpr | undefined,
   fieldToIndexName: Record<string, string>,
-  keyPath: string
+  keyPath: IdbKeyPath
 ): IndexEqualityHint | null {
   if (filter === undefined) return null;
 
   if (filter.kind === "field" && filter.op === "eq") {
     const indexName = fieldToIndexName[filter.field];
-    if ((indexName !== undefined || filter.field === keyPath) && isIndexableEqValue(filter.value)) {
+    if ((indexName !== undefined || isPrimaryKeyField(filter.field, keyPath)) && isIndexableEqValue(filter.value)) {
       return { indexName, value: filter.value, remainingFilter: undefined };
     }
     return null;
@@ -104,7 +122,7 @@ export function extractIndexEqualityHint(
       const expr = flat[i]!;
       if (expr.kind === "field" && expr.op === "eq") {
         const indexName = fieldToIndexName[expr.field];
-        if ((indexName !== undefined || expr.field === keyPath) && isIndexableEqValue(expr.value)) {
+        if ((indexName !== undefined || isPrimaryKeyField(expr.field, keyPath)) && isIndexableEqValue(expr.value)) {
           const rest = flat.filter((_, j) => j !== i);
           return { indexName, value: expr.value, remainingFilter: foldRemainder(rest) };
         }
@@ -124,7 +142,7 @@ export function extractIndexEqualityHint(
 function tryExtractOrBranches(
   orNode: IdbOrExpr,
   fieldToIndexName: Record<string, string>,
-  keyPath: string,
+  keyPath: IdbKeyPath,
   remainingFilter: IdbFilterExpr | undefined
 ): IndexOrHint | null {
   if (orNode.exprs.length === 0) return null;
@@ -132,7 +150,8 @@ function tryExtractOrBranches(
   for (const expr of orNode.exprs) {
     if (expr.kind !== "field" || expr.op !== "eq") return null;
     const indexName = fieldToIndexName[expr.field];
-    if ((indexName === undefined && expr.field !== keyPath) || !isIndexableEqValue(expr.value)) return null;
+    if ((indexName === undefined && !isPrimaryKeyField(expr.field, keyPath)) || !isIndexableEqValue(expr.value))
+      return null;
     branches.push({ indexName, value: expr.value });
   }
   return { branches, remainingFilter };
@@ -152,7 +171,7 @@ function tryExtractOrBranches(
 export function extractIndexOrHint(
   filter: IdbFilterExpr | undefined,
   fieldToIndexName: Record<string, string>,
-  keyPath: string
+  keyPath: IdbKeyPath
 ): IndexOrHint | null {
   if (filter === undefined) return null;
 
@@ -180,19 +199,61 @@ export function extractIndexOrHint(
  * Build an in-memory comparator from an `orderBy` spec (field → direction).
  *
  * Returns `undefined` when there is nothing to sort by. Compares fields in
- * declaration order; values are primitives (strings, numbers, dates) in
- * practice, so JS relational comparison is sufficient.
+ * declaration order, with {@link compareFieldValues}: the same order an
+ * IndexedDB index uses, so equal `Date`s tie and fall through to the next
+ * field, and `null`s sort last (first when descending).
  */
 export function buildRowComparator(orderBy: Record<string, "asc" | "desc"> | undefined): IdbRowComparator | undefined {
   if (orderBy === undefined) return undefined;
   return (a: Record<string, unknown>, b: Record<string, unknown>): number => {
     for (const [field, dir] of Object.entries(orderBy)) {
-      const av = a[field];
-      const bv = b[field];
-      if (av === bv) continue;
-      const cmp = (av as string | number) < (bv as string | number) ? -1 : 1;
+      const cmp = compareFieldValues(a[field], b[field]);
+      if (cmp === 0) continue;
       return dir === "desc" ? -cmp : cmp;
     }
     return 0;
   };
+}
+
+// ── Native count ──────────────────────────────────────────────────────────────
+
+/**
+ * `true` when a `cursor-scan` plan's result *cardinality* is fully determined
+ * by its store/index + key range — i.e. there is no in-memory `filter` that
+ * would need each row's value. Only then can `count()` be answered natively
+ * (`store.count(range)` / `index.count(range)`) without deserializing rows.
+ *
+ * `comparator` (ORDER BY), `direction`, `skip` and `take` don't change *which*
+ * rows match, so they don't disqualify a plan — `skip`/`take` are applied to
+ * the native total afterwards via {@link clampCount}.
+ *
+ * Safe for index scans because the equality hint that builds `range` never
+ * selects a `multiEntry` (or compound) index — `buildFieldToIndexMap` excludes
+ * them — so one record maps to at most one index entry and entries == rows.
+ */
+export function isNativelyCountable(plan: IdbCursorScanPlan): boolean {
+  return plan.filter === undefined;
+}
+
+/** Rewrites a natively-countable `cursor-scan` as the equivalent native `count` plan. */
+export function toCountPlan(plan: IdbCursorScanPlan): IdbCountPlan {
+  return {
+    meta: plan.meta,
+    kind: "count",
+    storeName: plan.storeName,
+    ...(plan.indexName !== undefined ? { indexName: plan.indexName } : {}),
+    ...(plan.range !== undefined ? { range: plan.range } : {}),
+  };
+}
+
+/**
+ * Applies `skip`/`take` to an *unpaginated* total. A paginated count is pure
+ * arithmetic on the unpaginated count — `max(0, total - skip)`, capped at
+ * `take` — so this is exact, not an approximation.
+ */
+export function clampCount(total: number, skip: number | undefined, take: number | undefined): number {
+  let n = total;
+  if (skip !== undefined) n = Math.max(0, n - skip);
+  if (take !== undefined) n = Math.min(take, n);
+  return n;
 }

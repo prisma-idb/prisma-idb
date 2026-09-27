@@ -1,23 +1,14 @@
 # `@prisma-idb/target-idb`
 
-> Part of the [`@prisma-idb`](https://prisma-idb.dev/) driver stack for Prisma 8.
+The IndexedDB target for Prisma 8: codecs, contract storage types, key comparison, and the migration system (planner, operations, and the code that applies them in the browser).
 
-**target-idb** is the foundation layer. It defines the IDB target pack: store/index identity, DDL op factories, and the migration runner that applies schema changes idempotently on `IDBDatabase` open.
+Install it as a dev dependency; `prisma.config.ts` uses `@prisma-idb/target-idb/control`. Migration files import `@prisma-idb/target-idb/migration`. Apps don't import it at run time; `@prisma-idb/client-idb` does.
 
-## Stack position
-
-```
-family-idb  (CLI / config)
-client-idb  (ORM query builder)
-runtime-idb (RuntimeCore)
-adapter-idb (query AST → IDB plan)
-driver-idb  (window.indexedDB wrapper)
-target-idb  ← you are here (identity + migrations)
+```bash
+npm install --save-dev @prisma-idb/target-idb
 ```
 
-## Usage
-
-Consumed internally by the rest of the `@prisma-idb` family. You generally do not install this package directly — use [`@prisma-idb/family-idb`](https://www.npmjs.com/package/@prisma-idb/family-idb) as your entry point.
+Part of [Prisma 8 IDB](https://prisma-idb.dev/docs/prisma-8), a typed IndexedDB client for Prisma 8. Start with the [Quick Start](https://prisma-idb.dev/docs/prisma-8/getting-started). For how the packages fit together, see [ARCHITECTURE.md](https://github.com/prisma-idb/prisma-idb/blob/main/packages/prisma-orm/docs/ARCHITECTURE.md).
 
 ## License
 

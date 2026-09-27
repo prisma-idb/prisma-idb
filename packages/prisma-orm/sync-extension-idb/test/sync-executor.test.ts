@@ -5,8 +5,33 @@
  * commits atomically in one IDB transaction.
  */
 import { describe, expect, it } from "vitest";
-import { getNextBatch } from "../src/exports/client";
-import { asAccessors, createTestSyncClient, keyGet, scanAll } from "./helpers";
+import { createSyncIdbClient, getNextBatch } from "../src/exports/client";
+import type { IdbContract } from "@prisma-idb/client-idb/orm";
+import { asAccessors, createTestSyncClient, keyGet, scanAll, testContract, testDbName } from "./helpers";
+
+/** `testContract()` with the `users` store switched to `autoIncrement`. */
+function autoIncrementUsersContract(): IdbContract {
+  const contract = testContract();
+  const stores = contract.storage.stores;
+  return {
+    ...contract,
+    storage: { ...contract.storage, stores: { ...stores, users: { ...stores["users"]!, autoIncrement: true } } },
+  } as IdbContract;
+}
+
+describe("SyncInterceptorExecutor — autoIncrement keys", () => {
+  it("rejects a synced model whose store uses autoIncrement", () => {
+    expect(() => createSyncIdbClient({ contract: autoIncrementUsersContract(), dbName: testDbName() })).toThrow(
+      /Synced models can't use @default\(autoincrement\(\)\) keys: User\./
+    );
+  });
+
+  it("allows an autoIncrement model left out of trackedModels", () => {
+    expect(() =>
+      createSyncIdbClient({ contract: autoIncrementUsersContract(), dbName: testDbName(), trackedModels: ["Post"] })
+    ).not.toThrow();
+  });
+});
 
 describe("SyncInterceptorExecutor", () => {
   it("writes an outbox event + version-meta row alongside a tracked create", async () => {
@@ -118,6 +143,25 @@ describe("SyncInterceptorExecutor", () => {
 
     const outbox = await scanAll(client, "_idb_sync_outbox");
     expect(outbox).toHaveLength(0);
+  });
+
+  it("count() is an untracked read — native or materialized — and never writes an outbox row", async () => {
+    const { client } = await createTestSyncClient();
+    const users = asAccessors(client.orm)["users"]!;
+    await users.create({ id: "u1", name: "Alice" });
+    await users.create({ id: "u2", name: "Bob" });
+
+    const outboxBefore = await scanAll(client, "_idb_sync_outbox");
+    const calls: number[] = [];
+    client.on("outboxwrite", () => calls.push(1));
+
+    expect(await users.count()).toBe(2); // whole-store: native `count` plan
+    expect(await users.where({ id: "u1" }).count()).toBe(1); // PK point range: native
+    expect(await users.where({ name: "Bob" }).count()).toBe(1); // unindexed: materialized
+    expect(await users.where({ id: "u1" }).skip(1).count()).toBe(0);
+
+    expect(calls).toHaveLength(0);
+    expect(await scanAll(client, "_idb_sync_outbox")).toEqual(outboxBefore);
   });
 
   it("writes a delete outbox event with a statically-known key", async () => {

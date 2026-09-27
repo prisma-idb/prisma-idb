@@ -142,7 +142,7 @@ describe("interpretPslDocumentToIdbContract", () => {
       expect(result.value.storage.stores["post"]).toMatchObject({ keyPath: "id" });
     });
 
-    it("errors on compound @@id", () => {
+    it("accepts compound @@id as an ordered array keyPath", () => {
       const result = interpret(`
         model Post {
           a String
@@ -150,9 +150,68 @@ describe("interpretPslDocumentToIdbContract", () => {
           @@id([a, b])
         }
       `);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value.storage.stores["post"]).toMatchObject({ keyPath: ["a", "b"] });
+    });
+
+    it("preserves declaration order for compound @@id (order-sensitive)", () => {
+      const result = interpret(`
+        model Post {
+          a String
+          b String
+          @@id([b, a])
+        }
+      `);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value.storage.stores["post"]).toMatchObject({ keyPath: ["b", "a"] });
+    });
+
+    it("errors when @@id repeats a field", () => {
+      const result = interpret(`
+        model Post {
+          a String
+          @@id([a, a])
+        }
+      `);
+      expect(result.ok).toBe(false);
+    });
+
+    it("errors when a compound @@id member is optional", () => {
+      const result = interpret(`
+        model Post {
+          a String
+          b String?
+          @@id([a, b])
+        }
+      `);
+      expect(result.ok).toBe(false);
+    });
+
+    it("errors when a compound @@id member has @default(autoincrement())", () => {
+      const result = interpret(`
+        model Post {
+          a Int    @default(autoincrement())
+          b String
+          @@id([a, b])
+        }
+      `);
       expect(result.ok).toBe(false);
       if (result.ok) return;
-      expect(result.failure.diagnostics[0]!.code).toBe("IDB_NO_COMPOUND_KEY");
+      expect(result.failure.diagnostics[0]!.code).toBe("IDB_AUTOINCREMENT_ON_COMPOUND_KEY");
+    });
+
+    it("errors when declaring @id on multiple fields (use @@id([...]) instead)", () => {
+      const result = interpret(`
+        model Post {
+          a String @id
+          b String @id
+        }
+      `);
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.failure.diagnostics[0]!.code).toBe("IDB_MULTIPLE_ID_FIELDS");
     });
 
     it("errors when both @id and @@id are used", () => {
@@ -225,7 +284,7 @@ describe("interpretPslDocumentToIdbContract", () => {
       expect(store.indexes!["email_unique"]).toMatchObject({ unique: true });
     });
 
-    it("errors on compound index", () => {
+    it("creates a compound index from @@index([a, b]) as an ordered array keyPath", () => {
       const result = interpret(`
         model User {
           id    String @id
@@ -234,9 +293,83 @@ describe("interpretPslDocumentToIdbContract", () => {
           @@index([first, last])
         }
       `);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      const store = result.value.storage.stores["user"]!;
+      expect(store.indexes).toHaveProperty("first_last");
+      expect(store.indexes!["first_last"]).toMatchObject({ keyPath: ["first", "last"], unique: false });
+    });
+
+    it("creates a compound unique index from @@unique([a, b]) with a joined default name", () => {
+      const result = interpret(`
+        model Membership {
+          id     String @id
+          userId String
+          orgId  String
+          @@unique([userId, orgId])
+        }
+      `);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      const store = result.value.storage.stores["membership"]!;
+      expect(store.indexes).toHaveProperty("userId_orgId_unique");
+      expect(store.indexes!["userId_orgId_unique"]).toMatchObject({ keyPath: ["userId", "orgId"], unique: true });
+    });
+
+    it("preserves declaration order for a compound index (order-sensitive)", () => {
+      const result = interpret(`
+        model User {
+          id    String @id
+          first String
+          last  String
+          @@index([last, first])
+        }
+      `);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      const store = result.value.storage.stores["user"]!;
+      expect(store.indexes!["last_first"]).toMatchObject({ keyPath: ["last", "first"] });
+    });
+
+    it("names a compound index from an explicit name: arg", () => {
+      const result = interpret(`
+        model User {
+          id    String @id
+          first String
+          last  String
+          @@index([first, last], name: "byFullName")
+        }
+      `);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      const store = result.value.storage.stores["user"]!;
+      expect(store.indexes).toHaveProperty("byFullName");
+    });
+
+    it("errors when @@index repeats a field", () => {
+      const result = interpret(`
+        model User {
+          id    String @id
+          first String
+          @@index([first, first])
+        }
+      `);
       expect(result.ok).toBe(false);
-      if (result.ok) return;
-      expect(result.failure.diagnostics[0]!.code).toBe("IDB_COMPOUND_INDEX_UNSUPPORTED");
+    });
+
+    it("does not conflate a compound index with a multiEntry index (PSL has no multiEntry authoring surface)", () => {
+      const result = interpret(`
+        model User {
+          id    String @id
+          first String
+          last  String
+          @@index([first, last])
+        }
+      `);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      const idx = result.value.storage.stores["user"]!.indexes!["first_last"]!;
+      expect(idx.multiEntry).toBeUndefined();
     });
   });
 

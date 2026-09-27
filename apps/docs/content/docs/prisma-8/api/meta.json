@@ -1,6 +1,6 @@
 {
   "title": "API",
-  "description": "Common Prisma 8 IDB client methods",
+  "description": "Every method on a model accessor",
   "icon": "Braces",
   "pages": ["index", "querying", "writing", "transactions"]
 }

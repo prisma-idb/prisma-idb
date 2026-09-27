@@ -10,9 +10,9 @@ function makeContract(
   stores: Record<
     string,
     {
-      keyPath: string;
+      keyPath: string | readonly string[];
       autoIncrement?: boolean;
-      indexes?: Record<string, { keyPath: string; unique: boolean; multiEntry?: boolean }>;
+      indexes?: Record<string, { keyPath: string | readonly string[]; unique: boolean; multiEntry?: boolean }>;
     }
   >
 ) {
@@ -55,6 +55,34 @@ describe("verifyIdbSchema — pass cases", () => {
       users: {
         keyPath: "id",
         indexes: { byEmail: { keyPath: "email", unique: true } },
+      },
+    });
+    const result = verifyIdbSchema(contract, schema, false);
+
+    expect(result.ok).toBe(true);
+    expect(result.schema.issues).toHaveLength(0);
+  });
+
+  it("passes when a compound store keyPath matches exactly, in order", () => {
+    const contract = makeContract({ memberships: { keyPath: ["orgId", "userId"] } });
+    const schema = makeSchema({ memberships: { keyPath: ["orgId", "userId"] } });
+    const result = verifyIdbSchema(contract, schema, false);
+
+    expect(result.ok).toBe(true);
+    expect(result.schema.issues).toHaveLength(0);
+  });
+
+  it("passes when a compound index keyPath matches exactly, in order", () => {
+    const contract = makeContract({
+      memberships: {
+        keyPath: "id",
+        indexes: { byUserEffective: { keyPath: ["userId", "effectiveFrom"], unique: true } },
+      },
+    });
+    const schema = makeSchema({
+      memberships: {
+        keyPath: "id",
+        indexes: { byUserEffective: { keyPath: ["userId", "effectiveFrom"], unique: true } },
       },
     });
     const result = verifyIdbSchema(contract, schema, false);
@@ -116,6 +144,36 @@ describe("verifyIdbSchema — primary_key_mismatch", () => {
 
     expect(result.ok).toBe(false);
     expect(result.schema.issues.some((i) => i.kind === "primary_key_mismatch")).toBe(true);
+  });
+
+  it("fails when a compound keyPath's field order differs (order-sensitive)", () => {
+    const contract = makeContract({ memberships: { keyPath: ["orgId", "userId"] } });
+    const schema = makeSchema({ memberships: { keyPath: ["userId", "orgId"] } });
+    const result = verifyIdbSchema(contract, schema, false);
+
+    expect(result.ok).toBe(false);
+    expect(result.schema.issues.some((i) => i.kind === "primary_key_mismatch")).toBe(true);
+  });
+
+  it("fails when a compound keyPath has a different member count", () => {
+    const contract = makeContract({ memberships: { keyPath: ["orgId", "userId"] } });
+    const schema = makeSchema({ memberships: { keyPath: ["orgId"] } });
+    const result = verifyIdbSchema(contract, schema, false);
+
+    expect(result.ok).toBe(false);
+    expect(result.schema.issues.some((i) => i.kind === "primary_key_mismatch")).toBe(true);
+  });
+
+  it("passes a single-field keyPath against an equal-content array (string vs 1-tuple are different, not a false match)", () => {
+    const contract = makeContract({ users: { keyPath: "id" } });
+    const schema = makeSchema({ users: { keyPath: ["id"] } });
+    const result = verifyIdbSchema(contract, schema, false);
+
+    // A bare string keyPath and a 1-element array keyPath are semantically
+    // equivalent for field extraction, but this is still a real mismatch
+    // worth flagging: the manifest schema disagrees with the contract about
+    // whether the store was created with keyPath: "id" vs keyPath: ["id"].
+    expect(result.ok).toBe(false);
   });
 });
 

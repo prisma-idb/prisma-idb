@@ -14,7 +14,7 @@
  *   - Batch plans:        `readwrite` if any op is a write, `readonly` otherwise
  */
 import type { IdbAtomicPlan, IdbBatchPlan, IdbPlanBody } from "../plan-body";
-import { IdbExecuteError } from "./error";
+import { IdbExecuteError, isTransactionInactiveError, transactionInactiveError } from "./error";
 import { executeOpInTx, planTxMode } from "./ops";
 
 type Row = Record<string, unknown>;
@@ -155,6 +155,10 @@ function runOpsSequentially(
   try {
     store = tx.objectStore(op.storeName);
   } catch (err) {
+    if (isTransactionInactiveError(err)) {
+      onError(transactionInactiveError("batch", op.storeName, err));
+      return;
+    }
     onError(
       new IdbExecuteError(
         { code: "STORE_NOT_FOUND", planKind: "batch", storeName: op.storeName, cause: err },

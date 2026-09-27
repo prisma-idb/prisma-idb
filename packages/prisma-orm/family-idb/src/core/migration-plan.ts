@@ -2,7 +2,12 @@ import { copyFile, mkdir, readdir, readFile, rename, rm, writeFile } from "node:
 import { randomBytes } from "node:crypto";
 import type { Contract } from "@prisma/orm-framework/contract/types";
 import type { IdbMigrationPlanWithAuthoring } from "@prisma-idb/target-idb/migration";
-import { IdbMigrationPlanner, contractToIdbSchema, renderMigrationTs } from "@prisma-idb/target-idb/migration";
+import {
+  IdbMigrationPlanner,
+  contractToIdbSchema,
+  deletedDataWarning,
+  renderMigrationTs,
+} from "@prisma-idb/target-idb/migration";
 import { keepInternalSpecifiers } from "@prisma/orm-framework/components/emission";
 import { computeMigrationHash } from "@prisma/orm-toolchain/migration-tools/hash";
 import { formatMigrationDirName } from "@prisma/orm-toolchain/migration-tools/io";
@@ -318,8 +323,15 @@ async function planIncremental(ctx: SharedCtx, existingDirs: readonly string[]):
     toHash,
     logVerb: "Generated migration",
   });
+  warnAboutDeletedData(ctx, ops);
 
   return 0;
+}
+
+/** Warns on stderr when the migration drops a store; see {@link deletedDataWarning}. */
+function warnAboutDeletedData(ctx: SharedCtx, ops: readonly unknown[]): void {
+  const warning = deletedDataWarning(ops);
+  if (warning !== undefined) ctx.err(warning);
 }
 
 interface WritePackageInput {

@@ -1,36 +1,36 @@
 ---
 title: Kanban Example
-description: A Svelte app using Prisma 8 IDB, migrations, auth, and full bidirectional sync
+description: A SvelteKit app with Prisma 8 IDB, sign-in, offline support and sync
 icon: LayoutDashboard
 ---
 
-The Prisma 8 kanban example is a full-stack SvelteKit app: an IndexedDB client in the browser, a Postgres server, [better-auth](https://better-auth.com) for sessions (Google OAuth and anonymous guest sign-in), and the [sync engine](/docs/prisma-8/sync) keeping the two databases in sync per user.
+The kanban example is a complete SvelteKit app. Each user's boards live in IndexedDB in their browser and sync to a Postgres database on the server. Sign-in uses [better-auth](https://better-auth.com), with Google or an anonymous guest account.
 
-Live app: [next-kanban.prisma-idb.dev](https://next-kanban.prisma-idb.dev/)
-Source: [`apps/prisma-orm-kanban-example`](https://github.com/prisma-idb/prisma-idb/tree/main/apps/prisma-orm-kanban-example)
+- Live app: [next-kanban.prisma-idb.dev](https://next-kanban.prisma-idb.dev/)
+- Source: [`apps/prisma-orm-kanban-example`](https://github.com/prisma-idb/prisma-idb/tree/main/apps/prisma-orm-kanban-example)
 
 ## What it shows
 
-- One `schema.prisma` interpreted twice — a client (IDB) projection and a server (Postgres) projection — with `@@idb.exclude` marking better-auth's `Session`, `Account`, and `Verification` tables as server-only (see [Client Contracts](/docs/prisma-8/sync/client-contracts))
-- Committed migration chains for both sides: `migrations/app` (IDB) and `migrations-postgres/app` (Postgres)
-- `createManagedAutoSyncIdbClient` for a singleton, race-safe, auto-migrating, sync-tracked client in one call (see [Client](/docs/prisma-8/client#managed-client))
-- Google + anonymous sign-in via better-auth, with the signed-in user mirrored into IDB through `withoutTracking` on first load
-- A `SyncWorker` pushing and pulling against `/api/sync/push` and `/api/sync/pull`, with `createSyncServer`'s ownership DAG authorizing every write and read server-side (see [Server](/docs/prisma-8/sync/server))
-- A pending-sync-count badge driven by the `"outboxwrite"` event, and a resync on the browser's `online` event
-- `resetDb()` (the managed client's race-safe wipe) called on sign-out, so a different account on the same browser never sees a previous session's local data
-- A minimal PWA manifest and service worker so the app shell works offline after the first load
+- **One schema for both databases.** `schema.prisma` feeds both the browser contract and the Postgres contract. better-auth's `Session`, `Account` and `Verification` models are marked `@@idb.exclude`, so they stay on the server. See [Client Contracts](/docs/prisma-8/sync/client-contracts).
+- **Two migration histories.** `migrations/app` for IndexedDB and `migrations-postgres/app` for Postgres.
+- **A managed sync client.** `createManagedAutoSyncIdbClient` gives one shared client that migrates, records changes for sync, and can be wiped on sign-out. See [Client](/docs/prisma-8/client#share-one-client-and-reset-it-on-logout).
+- **Server-side authorization.** Push and pull endpoints use `createSyncServer` to check that every record belongs to the signed-in user. See [Server](/docs/prisma-8/sync/server).
+- **Local writes that don't sync.** On first load, the app copies the signed-in user into IndexedDB with `withoutTracking`, since the server already has that row.
+- **Sync status in the UI.** A badge shows how many changes are waiting to sync, updated from the `"outboxwrite"` event. The app syncs again when the browser comes back online.
+- **A clean slate per account.** Sign-out calls `resetDb()`, so another account on the same browser starts with an empty database.
+- **Offline use.** A small service worker caches the app shell, so the app opens without a network after the first visit. Changes made offline wait in the outbox and sync when the connection returns.
 
-## Run it
+## Run it locally
 
-From the repository root, bring up Postgres and initialize both databases:
+You need Docker for Postgres. From the repository root:
 
 ```bash
-pnpm --filter @prisma-idb/prisma-orm-kanban-example db:up
-pnpm --filter @prisma-idb/prisma-orm-kanban-example db:init
+pnpm --filter @prisma-idb/prisma-orm-kanban-example db:up     # start Postgres
+pnpm --filter @prisma-idb/prisma-orm-kanban-example db:init   # create the tables
 pnpm --filter @prisma-idb/prisma-orm-kanban-example dev
 ```
 
-For a production check:
+To check a production build:
 
 ```bash
 pnpm --filter @prisma-idb/prisma-orm-kanban-example check
@@ -38,25 +38,19 @@ pnpm --filter @prisma-idb/prisma-orm-kanban-example build
 pnpm --filter @prisma-idb/prisma-orm-kanban-example test:e2e
 ```
 
-## Offline behavior
-
-The PWA setup intentionally stays small. The service worker precaches the built app shell and static files, then caches same-origin GET requests as they are fetched.
-
-IndexedDB data already lives on the device. Once the browser has loaded the app and installed the service worker, the kanban UI can reopen offline, keep reading and writing local data, and queue outbox events for the `SyncWorker` to push once the connection returns.
-
 ## Where to look
 
-| File                                  | Purpose                                                                           |
-| ------------------------------------- | --------------------------------------------------------------------------------- |
-| `src/lib/prisma/schema.prisma`        | Single schema, source for both the IDB and Postgres contracts                     |
-| `src/lib/prisma/db.ts`                | Managed, auto-migrating, sync-tracked IDB client                                  |
-| `src/lib/server/auth.ts`              | better-auth config (Google + anonymous sign-in)                                   |
-| `src/lib/server/sync.ts`              | `createSyncServer` + `createSqlSyncAdapter` (`@prisma-idb/sync-server-sql`) setup |
-| `src/routes/api/sync/push/+server.ts` | Push endpoint — HTTP boundary around `validatePush`                               |
-| `src/routes/api/sync/pull/+server.ts` | Pull endpoint — HTTP boundary around `buildPullQueries`                           |
-| `src/lib/stores/kanban.svelte.ts`     | Svelte state: loads the workspace, drives the sync worker                         |
-| `src/service-worker.ts`               | Caches the app shell and same-origin assets                                       |
-| `static/manifest.webmanifest`         | Provides the installable PWA metadata                                             |
+| File                                  | What it does                                         |
+| ------------------------------------- | ---------------------------------------------------- |
+| `src/lib/prisma/schema.prisma`        | The one schema for both databases.                   |
+| `src/lib/prisma/db.ts`                | The managed sync client.                             |
+| `src/lib/server/auth.ts`              | better-auth setup: Google and anonymous sign-in.     |
+| `src/lib/server/sync.ts`              | `createSyncServer` and `createSqlSyncAdapter` setup. |
+| `src/routes/api/sync/push/+server.ts` | The push endpoint.                                   |
+| `src/routes/api/sync/pull/+server.ts` | The pull endpoint.                                   |
+| `src/lib/stores/kanban.svelte.ts`     | Loads the workspace and runs the sync worker.        |
+| `src/service-worker.ts`               | Caches the app shell and same-origin files.          |
+| `static/manifest.webmanifest`         | Makes the app installable.                           |
 
 <Cards>
   <Card title="Live App" href="https://next-kanban.prisma-idb.dev/" />

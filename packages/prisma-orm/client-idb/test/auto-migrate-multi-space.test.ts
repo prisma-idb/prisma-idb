@@ -1,11 +1,9 @@
 /**
- * Multi-space auto-migration (ADR 010 — combined single-transaction apply).
+ * Multi-space auto-migration.
  *
  * Covers `createAutoMigratingIdbClient({ extensions: [...] })`: app space +
  * N extension spaces collapse into ONE IDB version bump and ONE
- * `upgradeneeded` transaction, followed by ONE batched marker-write
- * transaction. See `packages/prisma-orm/docs/adrs/ADR 010 - Combined
- * Single-Transaction Multi-Space Apply.md`.
+ * `upgradeneeded` transaction, which also writes every space's marker.
  */
 import "fake-indexeddb/auto";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";

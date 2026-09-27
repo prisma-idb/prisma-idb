@@ -1,41 +1,50 @@
 ---
 title: Transactions
-description: How Prisma 8 IDB groups writes
+description: What runs in one transaction, and the low-level transaction scope
 icon: Lock
 ---
 
-Most application code does not need to open transactions manually. Single writes, bulk writes, and nested relation writes create the IndexedDB transactions they need.
+## Each write is one transaction
+
+Every write method runs in a single IndexedDB transaction that covers all the stores it touches. That includes:
+
+- the rows it writes, for `create`, `createAll`, `update`, `updateAll`, `upsert`, `delete` and `deleteAll`;
+- related rows written by relation functions such as `todos: (t) => t.create([...])`;
+- the foreign-key checks and `onDelete`/`onUpdate` actions it triggers.
+
+If any part fails, IndexedDB rolls back the whole write.
+
+Separate calls are separate transactions. There is no way yet to group several ORM calls into one transaction:
 
 ```ts
-await db.orm.todo.create({
-  id: crypto.randomUUID(),
-  title: "Write docs",
-  done: false,
-  userId,
+await db.orm.user.create({ id: "u1", name: "Alice", email: null });
+await db.orm.todo.create({ id: "t1", title: "First", done: false, userId: "u1" }); // a second transaction
+```
+
+To make these atomic, write them as one call with a relation function:
+
+```ts
+await db.orm.user.create({
+  id: "u1",
+  name: "Alice",
+  email: null,
+  todos: (todos) => todos.create([{ id: "t1", title: "First", done: false }]),
 });
 ```
 
-## Automatic transaction cases
+## Low-level transaction scope
 
-These methods run atomically:
-
-- `create()`
-- `createAll()`
-- `update()`
-- `updateAll()`
-- `upsert()`
-- `delete()`
-- `deleteAll()`
-- nested relation creates, connects, and disconnects
-
-## Advanced scope
-
-`db.withTransaction()` exposes a low-level transaction scope for advanced integrations:
+`db.withTransaction()` opens a read-write transaction over the stores you name and gives you a scope that runs driver plans in it. It's meant for integrations, such as the sync extension, that work below the ORM:
 
 ```ts
 await db.withTransaction(["user", "todo"], async (scope) => {
-  // scope.execute(plan) accepts low-level IDB atomic plans.
+  const rows = await scope.execute({ meta, kind: "cursor-scan", storeName: "todo" });
+  // …
 });
 ```
 
-The high-level ORM methods do not currently accept this scope as an option. Prefer the normal ORM methods unless you are integrating with lower-level Prisma 8 IDB plan execution.
+ORM methods can't run inside this scope.
+
+### Don't await other work inside a transaction
+
+IndexedDB commits a transaction as soon as it has no pending requests at the end of a task. Awaiting anything other than the scope's own requests, such as `fetch()` or a timer, lets the transaction commit early. The next request then fails with an `IdbExecuteError` whose code is `TRANSACTION_INACTIVE`. Do that other work before or after the transaction.

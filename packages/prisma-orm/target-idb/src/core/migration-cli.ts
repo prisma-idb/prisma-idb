@@ -5,6 +5,7 @@ import type { MigrationMetadata } from "@prisma/orm-toolchain/migration-tools/me
 import { buildMigrationArtifacts, isDirectEntrypoint } from "@prisma/orm-toolchain/migration-tools/migration";
 import { dirname, join } from "pathe";
 import type { IdbMigration } from "./idb-migration";
+import { deletedDataWarning } from "./migration-factories";
 
 type IdbMigrationConstructor = new () => IdbMigration;
 
@@ -69,6 +70,8 @@ export class MigrationCLI {
     }
 
     const { opsJson, metadataJson } = await buildMigrationArtifacts(instance, existing);
+    const warning = deletedDataWarning(instance.operations);
+    if (warning !== undefined) process.stderr.write(warning);
 
     if (values["dry-run"]) {
       process.stdout.write(`--- migration.json ---\n${metadataJson}\n`);

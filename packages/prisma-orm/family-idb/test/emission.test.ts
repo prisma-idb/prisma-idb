@@ -97,6 +97,39 @@ describe("idbEmission", () => {
       expect(result).toContain("readonly unique: false");
     });
 
+    it("serializes a compound (array) store keyPath as a readonly tuple type", () => {
+      const contract = defineContract({
+        family: idbFamilyPack,
+        target: idbTargetPack,
+        models: {
+          Membership: {
+            store: "memberships",
+            key: ["orgId", "userId"],
+            fields: { orgId: "String", userId: "String" },
+          },
+        },
+      });
+      const result = idbEmission.generateStorageType(contract, "H");
+      expect(result).toContain("readonly keyPath: readonly ['orgId', 'userId']");
+    });
+
+    it("serializes a compound (array) index keyPath as a readonly tuple type", () => {
+      const contract = defineContract({
+        family: idbFamilyPack,
+        target: idbTargetPack,
+        models: {
+          Membership: {
+            store: "memberships",
+            key: "id",
+            fields: { id: "String", userId: "String", effectiveFrom: "DateTime" },
+            indexes: { byUserEffective: { keyPath: ["userId", "effectiveFrom"], unique: true } },
+          },
+        },
+      });
+      const result = idbEmission.generateStorageType(contract, "H");
+      expect(result).toContain("readonly keyPath: readonly ['userId', 'effectiveFrom']; readonly unique: true");
+    });
+
     it("returns a Record<string, never> stores type for an empty stores object", () => {
       // Use a raw object here — defineContract requires at least one model.
       // This test exercises the emission path directly with an empty stores map.
@@ -199,6 +232,38 @@ describe("validateContract", () => {
   it("throws when a store has an empty string keyPath", () => {
     const raw = makeRawWithStorage({
       stores: { posts: { keyPath: "" } },
+      storageHash: "sha256:x",
+    });
+    expect(() => validateContract(raw)).toThrowError(/keyPath/);
+  });
+
+  it("accepts a compound (array) store keyPath", () => {
+    const raw = makeRawWithStorage({
+      stores: { memberships: { keyPath: ["orgId", "userId"] } },
+      storageHash: "sha256:x",
+    });
+    expect(() => validateContract(raw)).not.toThrow();
+  });
+
+  it("throws when a store's keyPath array is empty", () => {
+    const raw = makeRawWithStorage({
+      stores: { memberships: { keyPath: [] } },
+      storageHash: "sha256:x",
+    });
+    expect(() => validateContract(raw)).toThrowError(/keyPath/);
+  });
+
+  it("throws when a store's keyPath array contains an empty string member", () => {
+    const raw = makeRawWithStorage({
+      stores: { memberships: { keyPath: ["orgId", ""] } },
+      storageHash: "sha256:x",
+    });
+    expect(() => validateContract(raw)).toThrowError(/keyPath/);
+  });
+
+  it("throws when a store's keyPath array repeats a field", () => {
+    const raw = makeRawWithStorage({
+      stores: { memberships: { keyPath: ["orgId", "orgId"] } },
       storageHash: "sha256:x",
     });
     expect(() => validateContract(raw)).toThrowError(/keyPath/);

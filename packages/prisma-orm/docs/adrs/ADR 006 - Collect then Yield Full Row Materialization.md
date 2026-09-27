@@ -1,96 +1,80 @@
-# ADR 006 — Collect-then-Yield: Full Row Materialization Inside the Transaction
+# ADR 006: Collect rows, then yield them
+
+- **Status:** Accepted
+- **Date:** 2026-05-24
+- **Area:** Driver
+
+## Summary
+
+The driver reads every result row inside the transaction and only returns them once the transaction has completed. The framework's interface is an `AsyncIterable<Row>`, which suggests streaming, but for IndexedDB it is always backed by an array that is already complete. Streaming would let the transaction commit while the caller waits between rows, and the cursor would then fail.
 
 ## Context
 
-The upstream framework exposes query results as `AsyncIterable<Row>` — a streaming interface. This means the driver can theoretically yield rows incrementally as the cursor advances, rather than buffering all rows before returning.
+The upstream framework returns query results as an `AsyncIterable<Row>`, so a driver can hand out rows one at a time as its cursor moves.
 
-IDB cursors are event-driven: you call `cursor.continue()` to advance, and the next `onsuccess` fires with the next record. The cursor is alive as long as the transaction is active.
-
-The question is whether the driver should yield rows incrementally (one per cursor advance) or collect all rows inside the transaction and resolve with an array.
+IndexedDB cursors are event-based. Calling `cursor.continue()` makes the next `onsuccess` fire with the next record. A cursor only works while its transaction is active.
 
 ## Decision
 
-The driver collects all rows inside the transaction, resolves with a full array on `tx.oncomplete`, and then the outer wrapper converts that array to an `AsyncIterable`. No rows are yielded while the transaction is still open.
+The driver collects all rows inside the transaction and resolves with the full array in `tx.oncomplete`. That array is then wrapped as an `AsyncIterable`. No row reaches the caller while the transaction is open.
 
 ```ts
-// In executeIdbPlan():
+// Simplified from executeAtomicPlan:
 const rows = await new Promise<Row[]>((resolve, reject) => {
   const tx = db.transaction(storeName, "readonly");
-  // ... cursor scan collects into `collected: Row[]` ...
+  // ... the cursor scan pushes rows into `collected` ...
   tx.oncomplete = () => resolve(collected);
   tx.onerror = () => reject(tx.error);
 });
-// rows is now a fully materialized array; transaction is committed
+// The transaction has committed; `rows` is complete.
 return toAsyncIterable(rows);
 ```
 
-## Why full materialization is required
+### Why streaming doesn't work
 
-**IDB cursors are transaction-scoped.** A cursor becomes invalid the moment its transaction commits. If we yielded rows incrementally and the consumer paused consumption between rows (a common pattern with `AsyncIterable`), the transaction would auto-commit during that pause and subsequent `cursor.continue()` calls would fail with `TransactionInactiveError`.
+A cursor stops working as soon as its transaction commits. If the driver handed out rows one at a time and the caller paused between rows, which is normal with an `AsyncIterable`, the transaction would commit during the pause. The next `cursor.continue()` would then throw `TransactionInactiveError`. See [ADR 005](ADR%20005%20-%20Event-Driven%20Execution%20No%20Async%20Await.md).
 
-This is not a performance trade-off — it is a correctness requirement. There is no IDB API to keep a transaction alive across `await` boundaries in user code.
+This is a correctness requirement, not a performance trade-off. IndexedDB has no way to keep a transaction open across an `await` in caller code.
 
-**The streaming abstraction does not reach into the transaction.** The `AsyncIterable<Row>` interface suggests streaming, but for IDB the stream can only begin after the transaction is done. The `AsyncIterable` returned by the driver is backed by an in-memory array, not a live cursor.
+## Alternatives considered
 
-## Performance implications
-
-**Memory:** All matching rows for a query are held in memory simultaneously. For queries returning large result sets (e.g. `all()` on a store with 100k records), this is a real cost. IDB is designed for moderately-sized client-side datasets where this is acceptable. If a store grows to a size where full materialization is problematic, the appropriate response is to use cursor-based pagination (`skip`/`take`) rather than consuming unbounded result sets.
-
-**Latency:** The first row is not available to the caller until the last row has been fetched and the transaction committed. For the same reason as above, this is acceptable in the IDB context. The latency is bounded by the cursor scan time, which is fast for local storage.
-
-## What we deliberately did not do
-
-**Keep-alive transactions for streaming:** It is not possible in standard IDB to keep a transaction alive across `await` points in user code. Some environments (e.g. OPFS-based IDB polyfills) may support this, but we do not target non-standard IDB environments.
-
-**Chunked reads with re-opened transactions:** We could read 100 rows, close the transaction, yield them, then open a new transaction for the next 100. This would support large result sets at the cost of consistency — two reads of the same store in different transactions can return different data if a write occurs between them. We do not implement this; it would require explicit opt-in pagination semantics.
-
-**Worker-based streaming:** Offloading the cursor walk to a Web Worker with a `ReadableStream` would allow true streaming, but it would require serializing IDB requests across a MessageChannel, which is significantly more complex. Out of scope.
+- **Keep the transaction alive while streaming.** Standard IndexedDB doesn't allow it. We don't target non-standard implementations that might. Rejected.
+- **Read in chunks, with a new transaction per chunk.** For example, read 100 rows, close the transaction, hand them out, then open a new transaction for the next 100. This would support large results, but each chunk could see different data if a write happens in between. Not implemented. It would need explicit, opt-in pagination semantics.
+- **Stream from a Web Worker.** Walking the cursor in a worker and streaming rows through a `ReadableStream` would allow real streaming, but it means sending IndexedDB requests across a `MessageChannel`. Out of scope.
 
 ## Consequences
 
-- `driver-idb`'s `execute()` method returns `AsyncIterable<Row>` for interface compatibility with the framework, but the iterable is always backed by a materialized array.
-- `IdbStoreAccessor.all()` materializes all rows. Users should use `take()` and `skip()` for pagination.
-- The sort, skip, and take operations in the driver are all post-materialization (sort the array, then slice). This is consistent with the collect-then-yield model.
-- Middleware `onRow` hooks in `runtime-idb` fire synchronously over the materialized array, not during cursor traversal. See the section below for the full implications of this.
+### Memory and latency
 
-## Middleware implications
+- **Memory.** All matching rows are in memory at once. On a store with 100,000 records, `all()` is expensive. IndexedDB is meant for moderately sized client-side data. For large stores, page through results with `skip()` and `take()`.
+- **Latency.** The caller gets the first row only after the last one has been read. For local storage the scan is fast, so this is acceptable.
 
-The framework's `run-with-middleware.ts` fires `onRow` inside a `for await` loop over the row source. For SQL and Mongo drivers, that row source is a live cursor: rows arrive one at a time as the cursor advances, so middleware that wants to short-circuit (e.g. stop after collecting N rows, or cancel via `AbortSignal`) genuinely prevents further database work.
+### Sorting and pagination
 
-**For IDB this invariant does not hold.** When the `for await` loop in `run-with-middleware.ts` starts, the IDB driver has already returned a fully materialized array. All rows are in memory. Consequently:
+- **With an `orderBy`:** the driver collects every matching row, sorts them, then applies `skip` and `take`.
+- **Without an `orderBy`:** the driver applies `skip` and `take` while the cursor moves, and stops the cursor as soon as it has `take` rows.
 
-- **Backpressure is ineffective.** A middleware that returns early from `onRow` (or throws an abort signal) does not reduce the number of rows read from the object store. The cursor scan already ran to completion before `onRow` was called for the first time.
-- **`AbortSignal` cannot short-circuit materialization.** Aborting after seeing row N does not prevent rows N+1 … M from having been read; they are already in memory, just not yet yielded to the caller.
-- **The `onRow` hook is still useful for observation.** Logging, metrics collection, and read-through cache population all work correctly — they just receive rows from an already-complete scan rather than observing rows as they arrive from the database.
+### Middleware
 
-### What this means in practice
+The framework's middleware runner calls the `onRow` hook inside a `for await` loop over the driver's rows. For SQL and Mongo drivers those rows come from a live cursor. So a middleware that stops early, or aborts with an `AbortSignal`, really does stop further database work.
 
-Use `take(n)` on the query builder, not `onRow` early-exit, to bound the number of rows materialized:
+For IndexedDB, all rows are already in memory before `onRow` is first called. As a result:
+
+- **Stopping early in `onRow` doesn't reduce reads.** The scan has already finished.
+- **Aborting doesn't stop the scan.** The remaining rows have already been read. They just haven't been handed to the caller yet.
+- **Observing still works.** Logging, metrics and cache population behave correctly. They just see rows from a finished scan.
+
+To limit how many rows are read, use `take()` on the query, not an early exit in `onRow`:
 
 ```ts
-// ✅ Correct — bounding happens before IDB reads
+// Limits the scan itself: the cursor stops after 100 rows.
 const rows = await db.users.take(100).all().toArray();
-
-// ⚠️  Does not reduce IDB reads — onRow fires after all rows are in memory
-db.users
-  .all()
-  .execute()
-  .onRow((row, plan, ctx) => {
-    if (someCondition) throw new AbortError(); // too late; full scan already ran
-  });
 ```
 
-Middleware that needs to observe IDB query results (cache population, telemetry) should use `afterExecute` with the `rowCount` rather than assuming `onRow` will fire incrementally.
-
-### Why this diverges from the framework contract
-
-The framework's `RuntimeMiddleware` type documents `onRow` as firing "per row as the driver yields". That language assumes a streaming driver. IDB is structurally incapable of being a streaming driver (see "Why full materialization is required" above), so our `onRow` firing pattern is a compliant-but-semantically-different implementation of the same hook. The hook fires once per row and in order — the only difference is that all rows have been read before any of them are delivered to `onRow`.
-
-This divergence is harmless for all middleware written today. It becomes observable if someone writes middleware that depends on `onRow` to apply backpressure. Any such middleware must document that it does not apply to IDB targets.
+The framework's `RuntimeMiddleware` type says `onRow` fires "per row as the driver yields". Our implementation meets that: it fires once per row, in order. It just doesn't stream. Middleware written for backpressure won't work on IndexedDB and should say so. The `IdbMiddleware` type in `runtime-idb/src/idb-middleware.ts` documents this limitation.
 
 ## Related
 
-- `driver-idb/src/core/execute/index.ts` — `executeAtomicPlan` implementation
-- `driver-idb/src/core/execute/ops.ts` — `execCursorScan` cursor collection loop
-- `runtime-idb/src/idb-middleware.ts` — `IdbMiddleware` type with onRow warning
-- [ADR 005](ADR%20005%20-%20Event-Driven%20Execution%20No%20Async%20Await.md) — why we can't yield inside the transaction (the async/await constraint is what makes streaming impossible)
+- `driver-idb/src/core/execute/index.ts`: `executeAtomicPlan`.
+- `driver-idb/src/core/execute/ops.ts`: `execCursorScan`, the collection loop.
+- `runtime-idb/src/idb-middleware.ts`: `IdbMiddleware` and its `onRow` note.

@@ -3,9 +3,19 @@ import { domainModelsAtDefaultNamespace } from "@prisma/orm-framework/contract/t
 import type {
   ExtractIdbFieldInputTypes,
   ExtractIdbFieldOutputTypes,
+  IdbKeyPath,
   IdbModelStorage,
   IdbStorage,
 } from "@prisma-idb/target-idb/pack";
+
+// Key comparison lives in target-idb so adapter-idb's filter evaluator can
+// share it. Re-exported here for the modules and public exports that already
+// import it from this file.
+export { fieldValueToken, fieldValuesEqual, isValidIdbKey, keyEquals, keyToken } from "@prisma-idb/target-idb/runtime";
+
+// Re-export so consumers that only import from client-idb don't need a
+// separate target-idb dependency.
+export type { IdbKeyPath };
 
 // Re-export for consumers who only import from client-idb
 export type { IdbStorage };
@@ -99,37 +109,88 @@ export type WhereFilter<TContract, ModelName extends string> = {
 // ── KeyPath / KeyType ─────────────────────────────────────────────────────────
 
 /**
- * The literal `keyPath` string for a model, extracted from
- * `contract.models[ModelName].storage.keyPath`.
+ * The union of a model's `keyPath` field name(s), extracted from
+ * `contract.models[ModelName].storage.keyPath`. For a single-field key this
+ * is just that field name; for a compound key it's the union of every member
+ * field name (NOT an ordered tuple — see {@link ModelKeyPathOrdered} for the
+ * order-preserving form `KeyType` needs).
  *
- * Used at the type level to exclude the key field from `CreateInput` and to
- * narrow the `findUnique` / `delete` key parameter type.
+ * A plain union is what `Omit`/`Pick` need, where order doesn't matter.
  */
 export type ModelKeyPath<TContract, ModelName extends string> = ModelName extends keyof ModelsOf<TContract>
   ? ModelsOf<TContract>[ModelName] extends { storage: { keyPath: infer P } }
     ? P extends string
       ? P
-      : never
+      : P extends readonly string[]
+        ? P[number]
+        : never
     : never
   : never;
 
 /**
- * TypeScript type of the primary key field for a given model.
+ * Like {@link ModelKeyPath}, but preserves declaration order as a tuple
+ * (`readonly ["a", "b"]`, not the unioned `"a" | "b"`). A single-field key is
+ * normalized to a 1-tuple (`readonly ["id"]`) so `KeyType` below can branch
+ * on tuple shape uniformly. Needed because `findUnique`/`delete` accept the
+ * key as a positional array for compound-key models (mirroring the
+ * `IDBValidKey` array form IDB itself expects — see ADR-tracked decision in
+ * Phase 9.1), which requires order, unlike `ModelKeyPath`'s Omit/Pick usage.
+ */
+export type ModelKeyPathOrdered<TContract, ModelName extends string> = ModelName extends keyof ModelsOf<TContract>
+  ? ModelsOf<TContract>[ModelName] extends { storage: { keyPath: infer P } }
+    ? P extends string
+      ? readonly [P]
+      : P extends readonly string[]
+        ? P
+        : never
+    : never
+  : never;
+
+/** Maps an ordered tuple of key field names to their resolved output types, preserving position. */
+type KeyTupleType<TContract, ModelName extends string, Fields extends readonly string[]> = {
+  [I in keyof Fields]: Fields[I] extends keyof ResolvedOutputRow<TContract, ModelName>
+    ? ResolvedOutputRow<TContract, ModelName>[Fields[I] & keyof ResolvedOutputRow<TContract, ModelName>]
+    : IDBValidKey;
+};
+
+/**
+ * `true` only when `T` is exactly `never` — the tuple-wrap defeats
+ * conditional-type distributivity (without it, `never extends never ? A : B`
+ * called with a naked, union-distributing `T` short-circuits to `never`
+ * itself rather than evaluating `A`/`B`). Needed because `never` is also a
+ * structural subtype of every other concrete type (including a 2+-element
+ * tuple type), so a plain `ModelKeyPathOrdered<...> extends readonly
+ * [string, string, ...string[]]` check would incorrectly match `never`
+ * (the loosely-typed/no-type-maps contract case) as if it were a real
+ * compound key.
+ */
+type IsNever<T> = [T] extends [never] ? true : false;
+
+/**
+ * TypeScript type of the primary key parameter for `findUnique()`/`delete()`.
  *
- * When the output row type has a field matching `ModelKeyPath`, that field's
- * type is used. Otherwise falls back to `IDBValidKey` (the DOM union of valid
- * IDB key types).
+ * Single-field-key models keep today's scalar shape (e.g. `string`) — no
+ * change for the common case, and untyped/loosely-typed contracts (no
+ * emitted type maps — `ModelKeyPathOrdered` resolves to `never`) fall
+ * through to the exact same `IDBValidKey` fallback `KeyType` always used
+ * before compound keys existed. Compound-key models get an ordered tuple
+ * type (e.g. `[string, Date]` for `@@id([orgId, effectiveFrom])`), matching
+ * the `IDBValidKey` array IDB itself expects for a compound key-get — the
+ * same value passes straight through to the driver with zero runtime
+ * conversion.
  */
 export type KeyType<TContract, ModelName extends string> =
-  ModelKeyPath<TContract, ModelName> extends keyof ResolvedOutputRow<TContract, ModelName>
-    ? ResolvedOutputRow<TContract, ModelName>[ModelKeyPath<TContract, ModelName>]
-    : IDBValidKey;
+  IsNever<ModelKeyPathOrdered<TContract, ModelName>> extends true
+    ? ModelKeyPath<TContract, ModelName> extends keyof ResolvedOutputRow<TContract, ModelName>
+      ? ResolvedOutputRow<TContract, ModelName>[ModelKeyPath<TContract, ModelName>]
+      : IDBValidKey
+    : ModelKeyPathOrdered<TContract, ModelName> extends readonly [infer Single extends string]
+      ? Single extends keyof ResolvedOutputRow<TContract, ModelName>
+        ? ResolvedOutputRow<TContract, ModelName>[Single]
+        : IDBValidKey
+      : KeyTupleType<TContract, ModelName, ModelKeyPathOrdered<TContract, ModelName>>;
 
 // ── Create input ──────────────────────────────────────────────────────────────
-
-/** The keyPath field when it exists in the resolved input row (may be absent for models with no typed maps). */
-type KeyPathField<TContract, ModelName extends string> = ModelKeyPath<TContract, ModelName> &
-  keyof ResolvedInputRow<TContract, ModelName>;
 
 /** The object store name for a model, extracted from `contract.domain...storage.storeName` (used to match `execution.mutations.defaults[].ref.table`). */
 type ModelStoreName<TContract, ModelName extends string> = ModelName extends keyof ModelsOf<TContract>
@@ -139,6 +200,37 @@ type ModelStoreName<TContract, ModelName extends string> = ModelName extends key
       : never
     : never
   : never;
+
+/** Whether the model's object store has `autoIncrement: true` in `contract.storage.stores` (set by `@default(autoincrement())`). */
+type IsAutoIncrementStore<TContract, ModelName extends string> = TContract extends {
+  readonly storage: { readonly stores: infer Stores };
+}
+  ? ModelStoreName<TContract, ModelName> extends keyof Stores
+    ? Stores[ModelStoreName<TContract, ModelName>] extends { readonly autoIncrement: true }
+      ? true
+      : false
+    : false
+  : false;
+
+/**
+ * The primary key field `create()` may omit because IDB generates it: the
+ * key of a *single-field*-key model whose store has `autoIncrement: true`.
+ * IDB's key generator is numeric-only and never runs without
+ * `autoIncrement` — an absent key then makes `add()` throw `DataError` —
+ * and it can't fill a compound key (`autoIncrement` + array `keyPath` is
+ * rejected). App-generated keys (`uuid()`/`cuid()`) are covered separately
+ * by {@link FieldsWithCreateDefault}; any other key must be supplied.
+ */
+type OptionalKeyPathField<TContract, ModelName extends string> =
+  IsAutoIncrementStore<TContract, ModelName> extends true
+    ? ModelKeyPathOrdered<TContract, ModelName> extends readonly [infer Single extends string]
+      ? Single
+      : never
+    : never;
+
+/** {@link OptionalKeyPathField}, narrowed to a key that actually exists on the resolved input row (may be absent for models with no typed maps). */
+type KeyPathField<TContract, ModelName extends string> = OptionalKeyPathField<TContract, ModelName> &
+  keyof ResolvedInputRow<TContract, ModelName>;
 
 /** The flattened `execution.mutations.defaults` array type, or `never` for a contract with no execution section. */
 type ExecutionDefaultsOf<TContract> = TContract extends {
@@ -166,14 +258,14 @@ type DefaultedInputField<TContract, ModelName extends string> = FieldsWithCreate
   keyof ResolvedInputRow<TContract, ModelName>;
 
 /**
- * Input shape for `create()`: the full input row with the primary key field
- * made optional (IDB can generate keys via `autoIncrement`, or clients may
- * omit the key when using `cuid()` / `uuid()` at the application layer), and
- * every other field with an `onCreate` execution default also made optional.
+ * Input shape for `create()`: the full input row with an `autoIncrement`
+ * primary key made optional (see {@link OptionalKeyPathField}), and every
+ * field with an `onCreate` execution default — including a `uuid()`/`cuid()`
+ * key — also made optional. Any other key field stays required.
  */
 export type CreateInput<TContract, ModelName extends string> = Omit<
   ResolvedInputRow<TContract, ModelName>,
-  ModelKeyPath<TContract, ModelName> | FieldsWithCreateDefault<TContract, ModelName>
+  OptionalKeyPathField<TContract, ModelName> | FieldsWithCreateDefault<TContract, ModelName>
 > &
   Partial<
     Pick<
@@ -517,11 +609,34 @@ export function getStoreName(contract: IdbContract, modelName: string): string {
 
 /**
  * Extract the `keyPath` from a model's storage metadata at runtime.
- * Falls back to `"id"` (the invariant key name for all syncable IDB models).
+ * A single field name for the common case; an ordered array of field names
+ * for a compound primary key.
+ *
+ * @throws if the model is unknown or its storage has no `keyPath` — a
+ * validated contract always has one, so this only fires on a malformed or
+ * hand-built contract, where guessing a key name would silently read/write
+ * the wrong key.
  */
-export function getKeyPath(contract: IdbContract, modelName: string): string {
+export function getKeyPath(contract: IdbContract, modelName: string): IdbKeyPath {
   const model = domainModelsAtDefaultNamespace(contract.domain)[modelName];
-  return (model?.storage as IdbModelStorage | undefined)?.keyPath ?? "id";
+  const keyPath = (model?.storage as IdbModelStorage | undefined)?.keyPath;
+  if (keyPath === undefined) {
+    throw new Error(`Model "${modelName}" has no storage.keyPath in the contract.`);
+  }
+  return keyPath;
+}
+
+/**
+ * Extracts a row's primary key as an {@link IDBValidKey} — the scalar value
+ * at `row[keyPath]` for a single-field key, or an ordered array of the
+ * compound key's member field values (matching the array form IDB itself
+ * expects for a compound `keyPath`). The one construction site every
+ * key-get/put/delete/update call should route through, so compound-key field
+ * order stays consistent everywhere.
+ */
+export function extractKeyFromRow(row: Record<string, unknown>, keyPath: IdbKeyPath): IDBValidKey {
+  if (typeof keyPath === "string") return row[keyPath] as IDBValidKey;
+  return keyPath.map((field) => row[field]) as IDBValidKey;
 }
 
 /**
@@ -530,8 +645,12 @@ export function getKeyPath(contract: IdbContract, modelName: string): string {
  *
  * Returns the index name (e.g. `"byEmail"`) when a single-field index whose
  * `keyPath` equals `fieldName` exists, or `undefined` otherwise.
- * Multi-entry and composite indexes (`keyPath` is an array) are skipped —
- * equality semantics on those are unsupported.
+ * Compound (array-`keyPath`) and multi-entry indexes are skipped — the
+ * equality-acceleration path this map feeds (`query-shaping.ts`) only peels
+ * off a single-field `eq` condition, so a compound index can't be point-range
+ * queried from a single field alone. Whether/how to accelerate a compound
+ * index (matching *all* its member fields against an AND'd filter) is a
+ * cost-based planner decision, deferred to Phase 10.
  */
 export function getIndexForField(contract: IdbContract, storeName: string, fieldName: string): string | undefined {
   return buildFieldToIndexMap(contract, storeName)[fieldName];
@@ -553,28 +672,6 @@ export function buildFieldToIndexMap(contract: IdbContract, storeName: string): 
     }
   }
   return result;
-}
-
-/**
- * Returns `true` when `value` is a valid {@link IDBValidKey} — i.e. a value
- * that can be passed to `IDBKeyRange.only()` without throwing a DataError.
- * Booleans, `NaN`, `BigInt`, plain objects, and `null`/`undefined` are not
- * valid IDB keys (only number/string/Date/binary/Array are, per the
- * IndexedDB spec). Arrays are validated recursively — an array containing
- * any invalid element (e.g. a nested boolean) is itself not a valid key.
- *
- * Shared by the relation loader (filtering FK values before building
- * `IDBKeyRange.only()` plans) and query-shaping (gating `eq` conditions for
- * index/PK point-range acceleration).
- */
-export function isValidIdbKey(value: unknown): value is IDBValidKey {
-  if (typeof value === "number") return !Number.isNaN(value);
-  if (typeof value === "string") return true;
-  if (value instanceof Date) return true;
-  if (value instanceof ArrayBuffer) return true;
-  if (ArrayBuffer.isView(value)) return true;
-  if (Array.isArray(value)) return value.every((v) => isValidIdbKey(v));
-  return false;
 }
 
 /**

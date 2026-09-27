@@ -1,25 +1,21 @@
 ---
 title: Writing
-description: Create, update, upsert, and delete rows
+description: Create, update, upsert and delete rows, and how relations are enforced
 icon: Pencil
 ---
 
 ## Create
 
 ```ts
-const user = await db.orm.user.create({
-  id: crypto.randomUUID(),
-  name: "Alice",
-  email: "alice@example.com",
-});
+const user = await db.orm.user.create({ id: crypto.randomUUID(), name: "Alice", email: null });
 ```
 
-`create()` inserts a new row. It throws if the primary key already exists; use `upsert()` when existing rows should be updated.
+`create()` inserts one row and returns it. Fields with a `@default` can be left out. It fails if a row with the same primary key exists; use [`upsert()`](#upsert) to update in that case.
 
-## Create many
+`createAll()` inserts several rows in one transaction. If any row fails, none are written:
 
 ```ts
-const rows = await db.orm.todo
+const todos = await db.orm.todo
   .createAll([
     { id: crypto.randomUUID(), title: "One", done: false, userId },
     { id: crypto.randomUUID(), title: "Two", done: false, userId },
@@ -27,27 +23,27 @@ const rows = await db.orm.todo
   .toArray();
 ```
 
-Use `createCount()` when you only need the number of inserted rows.
+Use `createCount()` when you only need the number of rows.
 
-## Update one
+## Update
 
-`update()` updates the first row matching the current filter.
+`update()` changes the first row that matches the current filter, and returns the updated row, or `null` when nothing matched:
 
 ```ts
 const todo = await db.orm.todo.where({ id: todoId }).update({ done: true });
 ```
 
-It returns the updated row, or `null` if nothing matched.
-
-## Update many
+`updateAll()` changes every matching row in one transaction and returns them. `updateCount()` returns how many changed.
 
 ```ts
-const updated = await db.orm.todo.where({ userId }).updateAll({ done: true }).toArray();
+const done = await db.orm.todo.where({ userId }).updateAll({ done: true }).toArray();
 ```
 
-Use `updateCount()` when you only need the number of changed rows.
+An update merges the patch into the stored row. Fields you leave out keep their values.
 
 ## Upsert
+
+`upsert()` updates the row that matches `where`, or creates one from `create` if none matches. The lookup and the write happen in one transaction.
 
 ```ts
 const user = await db.orm.user.upsert({
@@ -57,31 +53,105 @@ const user = await db.orm.user.upsert({
 });
 ```
 
-## Delete by primary key
+## Delete
+
+`delete()` removes the row with a primary key. For a compound key, pass the values as an array:
 
 ```ts
 await db.orm.todo.delete(todoId);
 ```
 
-## Delete many
+`deleteAll()` removes every matching row and returns them. `deleteCount()` returns how many were removed.
 
 ```ts
-const deleted = await db.orm.todo.where({ done: true }).deleteAll().toArray();
+const removed = await db.orm.todo.where({ done: true }).deleteAll().toArray();
 ```
 
-Use `deleteCount()` when you only need the number of deleted rows.
+## Write related rows
 
-## Relation writes
-
-Relation fields can use callbacks for nested creates and connects.
+A relation field accepts a function that creates, connects or disconnects related rows. Everything runs in one transaction.
 
 ```ts
-const todo = await db.orm.todo.create({
+// Create a user and their first todos together.
+await db.orm.user.create({
+  id: userId,
+  name: "Alice",
+  email: null,
+  todos: (todos) => todos.create([{ id: crypto.randomUUID(), title: "Unpack", done: false }]),
+});
+
+// Create a todo and point it at an existing user.
+await db.orm.todo.create({
   id: crypto.randomUUID(),
   title: "Write docs",
   done: false,
   user: (user) => user.connect({ id: userId }),
 });
+
+// Detach a user's finished todos (their userId must be optional).
+await db.orm.user.where({ id: userId }).update({
+  todos: (todos) => todos.disconnect([{ done: true }]),
+});
 ```
 
-Nested relation writes run in a multi-store IndexedDB transaction.
+| Function                | In `create()` | In `update()` | Does                                                                                                                                               |
+| ----------------------- | ------------- | ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `create(rows)`          | Yes           | Yes           | Inserts related rows, with their foreign keys filled in.                                                                                           |
+| `connect(criteria)`     | Yes           | Yes           | On a to-one relation, points this row at an existing row, and fails if none matches. On a to-many relation, points every matching row at this one. |
+| `disconnect(criteria?)` | No            | Yes           | Sets the foreign key to `null`. With no criteria, disconnects every related row.                                                                   |
+
+Related rows can't have relation functions of their own: nesting is one level deep.
+
+## Foreign keys and referential actions
+
+IndexedDB has no foreign keys, so the client enforces them the way a SQL database does. Every check and action runs in the write's transaction. If any of them fails, the whole write is rolled back.
+
+### Foreign keys are checked on every write
+
+When a write sets a foreign key, the client checks that the parent row exists:
+
+```ts
+await db.orm.todo.create({ id: "t1", title: "Orphan", done: false, userId: "nobody" });
+// Error: FK violation on relation 'user': no User with id='nobody'
+```
+
+This applies to `create`, `createAll`, `update`, `updateAll`, both branches of `upsert`, and every row a relation function writes. It also applies to a foreign key filled in by a `@default`.
+
+- **A compound foreign key is checked as a whole.** One parent row must match every field.
+- **A foreign key with any `null` field isn't checked**, as in SQL.
+
+### What happens to children when a parent changes
+
+When you delete a row, or update a field that other rows refer to, each relation's `onDelete` or `onUpdate` action decides what happens to the rows that point at it:
+
+| Action               | Children                                                                                 |
+| -------------------- | ---------------------------------------------------------------------------------------- |
+| `Restrict` (default) | The write fails while any child exists.                                                  |
+| `NoAction`           | Same as `Restrict`.                                                                      |
+| `Cascade`            | Deleted too, or updated to the new value. Continues to their own children.               |
+| `SetNull`            | Their foreign key is set to `null`. The field must be optional.                          |
+| `SetDefault`         | Their foreign key is set to its `@default` value, which must point at a row that exists. |
+
+Declare the actions on the relation in your schema:
+
+```prisma
+model Todo {
+  id     String  @id
+  userId String
+  user   User    @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+}
+```
+
+Without them, deleting a user who still has todos fails:
+
+```txt
+Cannot delete User 'user_1': child records exist on relation 'todos'. Delete those children first, or declare onDelete: Cascade, SetNull or SetDefault on the relation.
+```
+
+Both actions default to `Restrict`, matching Postgres, where an undeclared action is `NO ACTION`. So a synced app's client and server refuse the same changes. An update only triggers `onUpdate` when a referenced value actually changes.
+
+<Cards>
+  <Card title="Querying" href="/docs/prisma-8/api/querying" />
+  <Card title="Transactions" href="/docs/prisma-8/api/transactions" />
+  <Card title="Schema" href="/docs/prisma-8/schema#relations" />
+</Cards>

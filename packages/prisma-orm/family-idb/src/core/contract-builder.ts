@@ -3,11 +3,13 @@ import type { ApplicationDomain, Contract, ContractField, CrossReference } from 
 import { UNBOUND_DOMAIN_NAMESPACE_ID, crossRef } from "@prisma/orm-framework/contract/types";
 import type {
   IdbIndexDefinition,
+  IdbKeyPath,
   IdbModelStorage,
   IdbReferentialAction,
   IdbStorage,
   IdbStoreDefinition,
 } from "@prisma-idb/target-idb/pack";
+import { keyPathFields } from "@prisma-idb/target-idb/pack";
 import type { ContractProjection } from "./psl-interpreter";
 import { isValidIdbKeyCodec, literalValueMatchesCodec, warnDroppedRelation } from "./psl-interpreter";
 import { validateContract } from "./validate";
@@ -48,14 +50,16 @@ export type RelationDef = {
 };
 
 export type IndexDef = {
-  readonly keyPath: string;
+  /** A single field name, or an ordered list of field names for a compound (multi-field) index. */
+  readonly keyPath: IdbKeyPath;
   readonly unique?: boolean;
   readonly multiEntry?: boolean;
 };
 
 export type ModelDef = {
   readonly store: string;
-  readonly key: string;
+  /** The primary key field, or an ordered list of fields for a compound primary key. */
+  readonly key: IdbKeyPath;
   /** All scalar fields on the model. Use `"Type"` for non-nullable, `"Type?"` for nullable. */
   readonly fields: Record<string, FieldSpec>;
   readonly indexes?: Record<string, IndexDef>;
@@ -113,15 +117,17 @@ function projectModelsForClient(models: Record<string, ModelDef>): Record<string
     if (excludedModelNames.has(modelName)) continue;
 
     const excludedFields = new Set(def.excludeFields ?? []);
+    const keyFields = keyPathFields(def.key);
 
-    if (excludedFields.has(def.key)) {
+    const excludedKeyField = keyFields.find((f) => excludedFields.has(f));
+    if (excludedKeyField !== undefined) {
       throw new Error(
-        `defineContract: model "${modelName}" excludes its own key field "${def.key}" — the client contract needs a primary key for every included model.`
+        `defineContract: model "${modelName}" excludes its own key field "${excludedKeyField}" — the client contract needs a primary key for every included model.`
       );
     }
 
     for (const excludedField of excludedFields) {
-      if (excludedField === def.key) continue;
+      if (keyFields.includes(excludedField)) continue;
       if (!(excludedField in def.fields)) {
         throw new Error(
           `defineContract: model "${modelName}" excludeFields references unknown field "${excludedField}" — it is not declared in "fields".`
@@ -130,9 +136,10 @@ function projectModelsForClient(models: Record<string, ModelDef>): Record<string
     }
 
     for (const [indexName, idx] of Object.entries(def.indexes ?? {})) {
-      if (excludedFields.has(idx.keyPath)) {
+      const excludedIndexField = keyPathFields(idx.keyPath).find((f) => excludedFields.has(f));
+      if (excludedIndexField !== undefined) {
         throw new Error(
-          `defineContract: model "${modelName}" index "${indexName}" references excluded field "${idx.keyPath}". Remove the index or the exclusion.`
+          `defineContract: model "${modelName}" index "${indexName}" references excluded field "${excludedIndexField}". Remove the index or the exclusion.`
         );
       }
     }
@@ -191,33 +198,61 @@ function resolveFieldCodecId(def: ModelDef, fieldName: string): string | undefin
  * array — the one case this file can't statically validate either way).
  */
 function validateModelKeyAndIndexes(modelName: string, def: ModelDef): void {
-  if (!(def.key in def.fields)) {
-    throw new Error(`defineContract: model "${modelName}" key field "${def.key}" is not declared in "fields".`);
+  const keyFields = keyPathFields(def.key);
+  if (keyFields.length === 0) {
+    throw new Error(`defineContract: model "${modelName}" "key" must name at least one field.`);
   }
-  if (def.fields[def.key]?.endsWith("?")) {
-    throw new Error(
-      `defineContract: model "${modelName}" key field "${def.key}" is nullable ("${def.fields[def.key]}") — the primary key cannot be nullable.`
-    );
+  if (new Set(keyFields).size !== keyFields.length) {
+    throw new Error(`defineContract: model "${modelName}" "key" [${keyFields.join(", ")}] repeats a field name.`);
   }
-  const keyCodec = resolveFieldCodecId(def, def.key);
-  if (keyCodec !== undefined && !isValidIdbKeyCodec(keyCodec)) {
-    throw new Error(
-      `defineContract: model "${modelName}" key field "${def.key}" has type "${keyCodec}", which IndexedDB cannot use as a key. Every write would throw (DataError extracting the primary key). Use String, Int, Float, DateTime, Decimal, or Bytes instead.`
-    );
+
+  for (const keyField of keyFields) {
+    if (!(keyField in def.fields)) {
+      throw new Error(`defineContract: model "${modelName}" key field "${keyField}" is not declared in "fields".`);
+    }
+    if (def.fields[keyField]?.endsWith("?")) {
+      throw new Error(
+        `defineContract: model "${modelName}" key field "${keyField}" is nullable ("${def.fields[keyField]}") — the primary key cannot be nullable.`
+      );
+    }
+    const keyCodec = resolveFieldCodecId(def, keyField);
+    if (keyCodec !== undefined && !isValidIdbKeyCodec(keyCodec)) {
+      throw new Error(
+        `defineContract: model "${modelName}" key field "${keyField}" has type "${keyCodec}", which IndexedDB cannot use as a key. Every write would throw (DataError extracting the primary key). Use String, Int, Float, DateTime, Decimal, or Bytes instead.`
+      );
+    }
   }
 
   for (const [indexName, idx] of Object.entries(def.indexes ?? {})) {
-    if (!(idx.keyPath in def.fields)) {
+    const indexFields = keyPathFields(idx.keyPath);
+    if (indexFields.length === 0) {
       throw new Error(
-        `defineContract: model "${modelName}" index "${indexName}" references field "${idx.keyPath}", which is not declared in "fields".`
+        `defineContract: model "${modelName}" index "${indexName}" "keyPath" must name at least one field.`
       );
     }
-    if (idx.multiEntry) continue;
-    const fieldCodec = resolveFieldCodecId(def, idx.keyPath);
-    if (fieldCodec === undefined || isValidIdbKeyCodec(fieldCodec)) continue;
-    throw new Error(
-      `defineContract: model "${modelName}" index "${indexName}" is keyed on "${idx.keyPath}" (type "${fieldCodec}"), which IndexedDB cannot use as an index key. Records are silently omitted from the index on write, and any query against it throws at runtime. Use String, Int, Float, DateTime, Decimal, or Bytes instead.`
-    );
+    if (new Set(indexFields).size !== indexFields.length) {
+      throw new Error(
+        `defineContract: model "${modelName}" index "${indexName}" "keyPath" [${indexFields.join(", ")}] repeats a field name.`
+      );
+    }
+    if (idx.multiEntry && indexFields.length > 1) {
+      throw new Error(
+        `defineContract: model "${modelName}" index "${indexName}" combines "multiEntry: true" with a compound "keyPath" [${indexFields.join(", ")}] — IndexedDB rejects this combination (InvalidAccessError). multiEntry only applies to a single array-valued field.`
+      );
+    }
+    for (const indexField of indexFields) {
+      if (!(indexField in def.fields)) {
+        throw new Error(
+          `defineContract: model "${modelName}" index "${indexName}" references field "${indexField}", which is not declared in "fields".`
+        );
+      }
+      if (idx.multiEntry) continue;
+      const fieldCodec = resolveFieldCodecId(def, indexField);
+      if (fieldCodec === undefined || isValidIdbKeyCodec(fieldCodec)) continue;
+      throw new Error(
+        `defineContract: model "${modelName}" index "${indexName}" is keyed on "${indexField}" (type "${fieldCodec}"), which IndexedDB cannot use as an index key. Records are silently omitted from the index on write, and any query against it throws at runtime. Use String, Int, Float, DateTime, Decimal, or Bytes instead.`
+      );
+    }
   }
 
   for (const [fieldName, value] of Object.entries(def.fieldDefaults ?? {})) {
@@ -426,7 +461,7 @@ export function defineContract(input: DefineContractInput, options?: DefineContr
 
   // Mirror the capability surface that `prisma contract emit` writes
   // into the JSON contract — keeps the two authoring paths byte-equivalent
-  // for the capabilities block. See ARCHITECTURE.md § "Key type: capabilities".
+  // for the capabilities block.
   const capabilities = {
     idb: {
       ddlOnlyInUpgrade: true,

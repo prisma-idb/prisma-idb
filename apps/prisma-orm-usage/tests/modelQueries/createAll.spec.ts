@@ -43,6 +43,13 @@ test.describe("createAll()", () => {
   });
 
   test("inserts 3+ records atomically", async ({ runner }) => {
+    // Every post's author must exist: createAll checks foreign keys.
+    await runner.run(`
+      orm.users.createAll([
+        { id: "u1", name: "Alice", email: "a@x.com", bio: null, score: 10, active: true,  joinedAt: new Date() },
+        { id: "u2", name: "Bob",   email: "b@x.com", bio: null, score: 20, active: false, joinedAt: new Date() },
+      ])
+    `);
     const rows = (await runner.run(`
       orm.posts.createAll([
         { id: "p1", authorId: "u1", title: "A", content: null, views: 0, published: true,  publishedAt: null },

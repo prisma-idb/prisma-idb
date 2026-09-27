@@ -191,7 +191,7 @@ type ContractBase = Omit<
   };
   readonly capabilities: {
     readonly idb: {
-      readonly compoundKeys: false;
+      readonly compoundKeys: true;
       readonly ddlOnlyInUpgrade: true;
       readonly returning: false;
       readonly transactionalDDL: true;

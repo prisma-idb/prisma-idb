@@ -37,5 +37,5 @@ pnpm --filter @prisma-idb/prisma-orm-usage migration:preflight
 
 ## Links
 
-- Docs: https://prisma-idb.dev/docs/prisma-8/usage
+- Docs: https://prisma-idb.dev/docs/prisma-8/getting-started
 - Source: https://github.com/prisma-idb/prisma-idb/tree/main/apps/prisma-orm-usage

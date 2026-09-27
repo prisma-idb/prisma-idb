@@ -1,43 +1,44 @@
 ---
-title: Server
-description: The ownership DAG, push/pull authorization, and the Changelog schema
+title: Sync server
+description: Reference for ownership checks, the Changelog model and the SQL adapter
 icon: Server
 ---
 
-`@prisma-idb/sync-server` never touches a database or an HTTP framework. Given a `rootModel`, it builds an ownership graph from your schema's relations at startup, then turns push events and pull rows into `OwnershipCheck` **descriptions** — what a caller needs to verify — leaving the actual query and the actual write to you. This keeps authorization logic out of the browser bundle entirely: it's server-only, by construction.
+Reference for `@prisma-idb/sync-server` and `@prisma-idb/sync-server-sql`. For complete push and pull endpoints, follow the [Sync tutorial](/docs/prisma-8/sync#4-set-up-the-server).
 
-It's also family-agnostic. The DAG only walks `contract.domain` — model names and relations — which looks the same whether the server contract is SQL, IDB, or anything else. The one thing that varies by family is where a primary key lives in the contract, which is why `createSyncServer` takes a `getKeyField` override.
+## How authorization works
 
-This page is the reference for the server side. For the setup sequence, start at [Sync](/docs/prisma-8/sync).
+Every synced record belongs to one user, or to whatever your root model is. The server works out the owner by following many-to-one relations from the record up to the root model. With `Todo → Board → User`, a todo belongs to the user who owns its board.
 
-## Building the server
+`sync-server` builds this ownership graph from your schema once, at startup. For each pushed event or pulled changelog row, it returns a description of what to check: which relation paths lead from the record to the root, and which key they must reach. It never runs queries itself, so it works with any database and any HTTP framework. `sync-server-sql` runs those checks against a Prisma 8 SQL client.
 
-`contract` and `clientContract` are the `contract emit` output — import the generated `.json` and cast it through the generated `.d.ts` type. `NamespaceId` (and the contract's other id-like fields) are branded types, not plain strings, so passing the JSON import straight through without the cast fails to type-check:
+The checks run on the server only, so the browser bundle never contains authorization logic.
+
+## `createSyncServer(options)`
 
 ```ts
 import { createSyncServer } from "@prisma-idb/sync-server";
 import { sqlGetKeyField } from "@prisma-idb/sync-server-sql";
-import type { Contract as ServerContract } from "./prisma/schema.postgres.generated";
-import type { Contract as ClientContract } from "./prisma/contract";
-import serverContractJson from "./prisma/schema.postgres.generated.json" with { type: "json" };
-import clientContractJson from "./prisma/contract.json" with { type: "json" };
 
-const serverContract = serverContractJson as unknown as ServerContract;
-const clientContract = clientContractJson as unknown as ClientContract;
-
-export const syncServer = createSyncServer({
-  contract: serverContract, // full server contract — includes @idb.exclude'd models
-  clientContract, // client-projected contract — defines what's ever synced
-  rootModel: "User",
-  getKeyField: sqlGetKeyField, // required for a SQL contract — see below
-});
+const syncServer = createSyncServer({ contract, clientContract, rootModel: "User", getKeyField: sqlGetKeyField });
 ```
 
-This builds the ownership DAG once, at construction — not per request — and throws immediately if the schema is broken: a cycle in the ownership relations, or a client-synced model with no chain of `N:1` relations back to `rootModel`. See [Client Contracts](/docs/prisma-8/sync/client-contracts) for how the client projection is derived.
+| Option           | Description                                                                                                           |
+| ---------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `contract`       | The server's full contract, including models excluded from the browser.                                               |
+| `clientContract` | The browser's contract. Only its models are synced.                                                                   |
+| `rootModel`      | The model that owns everything, usually `User`. The signed-in user's id is compared with its primary key.             |
+| `getKeyField`    | Finds a model's primary-key field. The default reads an IndexedDB contract. Pass `sqlGetKeyField` for a SQL contract. |
 
-### `getKeyField`
+Import each contract's `.json` and cast it to its generated `Contract` type. Id fields in the contract have branded types, so the raw JSON doesn't type-check without the cast.
 
-The default resolver assumes an IDB-shaped contract (`model.storage.keyPath`). A SQL contract keeps its primary key on the table definition instead, potentially as a compound array — `@prisma-idb/sync-server-sql` exports a ready-made resolver for that shape, `sqlGetKeyField`, which works against any SQL-family Prisma ORM contract (Postgres, SQLite, …), not just one engine:
+`createSyncServer` throws at startup if the ownership relations form a cycle, or a synced model has no path of many-to-one relations to `rootModel`.
+
+Synced models need a single-field primary key. Compound keys aren't supported by sync yet, and `getKeyField` throws for them.
+
+### Writing a `getKeyField` for another family
+
+A resolver takes the contract and a model name and returns the name of the model's primary-key field. This is what `sqlGetKeyField` does for any SQL contract:
 
 ```ts
 import { domainModelsAtDefaultNamespace } from "@prisma/orm-framework/contract/types";
@@ -52,97 +53,58 @@ export const sqlGetKeyField: GetKeyField = (contract, modelName) => {
 };
 ```
 
-That's what `sqlGetKeyField` actually does — shown here so a different family (Mongo, or anything else) knows the shape of resolver to write; for SQL, just import it instead of redefining it.
+## `validatePush(events, { scopeKey })`
 
-## Push: `validatePush`
+Takes the pushed events, each `{ id, model, operation, payload }`, and the signed-in user's id. Returns one `{ eventId, model, check }` per event, where `check` is one of:
 
-```ts
-const checks = syncServer.validatePush(pushEvents, { scopeKey: currentUserId });
-```
+| `check.kind`      | Meaning                                                                            |
+| ----------------- | ---------------------------------------------------------------------------------- |
+| `"unknown-model"` | The model isn't in the browser contract. A real client can't send this; reject it. |
+| `"root"`          | The record is the root model itself. `check.authorized` is already computed.       |
+| `"scoped"`        | Authorized if any one of `check.paths` leads from the record to `scopeKey`.        |
 
-Returns one `OwnershipCheck` per event:
+Run the check inside the same transaction as the write, just before it. Checking before the transaction opens would let another request change the record's owner in between. `sqlSyncAdapter.applyPushEvent` does this for you.
 
-| `kind`            | Meaning                                                                                  |
-| ----------------- | ---------------------------------------------------------------------------------------- |
-| `"unknown-model"` | Not in `clientContract` — a real client could never have produced this. Reject outright. |
-| `"root"`          | The record _is_ the root model — `authorized` is already computed (`key === scopeKey`).  |
-| `"scoped"`        | Authorized if _any one_ of `paths` (relation-name chains) resolves to `scopeKey`.        |
+The request body has a different shape from these events: the client sends `entityType` and a raw `payload`. Validate it with `pushRequestBodySchema` from `@prisma-idb/sync-extension-idb/schemas`, then map it as the [tutorial](/docs/prisma-8/sync#4-set-up-the-server) shows. That entry point has no browser-only code, so it's safe to import on the server.
 
-Authorize and write in the **same transaction**, checking immediately before the write rather than before the transaction opens — otherwise a record's ownership chain (e.g. a `Board.userId`) could be reassigned in the gap between the check and the write it was meant to gate. This is the shape — `findAlongPath` (walk one `OwnershipCheck["scoped"].paths` chain against your own tables) and `applyEvent` (the actual insert/update/delete) are not exports of `sync-server` itself, since it never touches a database. For a SQL contract, though, you don't have to write `findAlongPath` by hand: `@prisma-idb/sync-server-sql` exports the exact same walk as `checkAuthorization`, generic over any model/relation shape — see [Full endpoint shape](#full-endpoint-shape) below for the complete, importable version:
+## `buildPullQueries(logs, { scopeKey })`
 
-```ts
-await db.transaction(async (tx) => {
-  let authorized: boolean;
-  if (check.kind === "root") {
-    authorized = check.authorized;
-  } else {
-    // ANY ONE path resolving to scopeKey authorizes — use Promise.all + some,
-    // not Promise.any: a path that legitimately resolves to `null` shouldn't
-    // short-circuit a later path that would have resolved.
-    const results = await Promise.all(check.paths.map((path) => findAlongPath(tx, path, check.scopeKey)));
-    authorized = results.some(Boolean);
-  }
-  if (!authorized) throw new Error("SCOPE_VIOLATION"); // rolls back the transaction
+Takes changelog rows, each `{ changelogId, model, key }`, and returns one `{ changelogId, model, check }` per row, with the same `check` kinds as `validatePush`.
 
-  await applyEvent(tx, event);
-  await tx.Changelog.create({ data: { model: event.model, scopeKey: currentUserId, outboxEventId: event.id } });
-});
-```
+### Why pull checks ownership twice
 
-Stamp the resolved `scopeKey` onto the `Changelog` row right there — reuse the value you already authorized against, don't recompute it for the pull side.
+Pull is two steps:
 
-## Pull is two steps
+1. **Your query** reads the user's changelog rows: `WHERE scopeKey = ? AND id > lastChangelogId`. `scopeKey` is the owner recorded when the change was pushed. This step is cheap and uses an index.
+2. **`buildPullQueries`** checks each record's owner again, against the current data.
 
-`buildPullQueries` is only the second step. `sync-server` never fetches changelog rows itself.
-
-**1. Cheap pre-filter**, on your own changelog storage: `WHERE scopeKey = ? AND id > lastChangelogId`. Index-friendly, and entirely your own query — `sync-server` has no opinion on it.
-
-**2. Live re-check**, via `buildPullQueries`:
-
-```ts
-const scoped = syncServer.buildPullQueries(logs, { scopeKey: currentUserId });
-```
-
-This re-derives ownership from the record's _current_ relations, not from what was stamped at push time — because ownership can move after the stamp was taken:
-
-- Alice creates `Todo T1` under `Board B1`, which she owns. Push authorizes it and stamps `scopeKey: "alice"` on that changelog row.
-- `B1` is later reassigned to Bob.
-- Alice pulls. Step 1's flat filter still returns `T1`'s row — it was true when written. Step 2 re-resolves live: the path now points at Bob, not Alice, so Alice's client correctly treats `T1` as no longer accessible instead of materializing stale access.
+The second step matters because ownership can change after a push. Say Alice creates a todo on her board, then the board is given to Bob. The changelog row still says Alice, but the live check now leads to Bob, so Alice's client receives `record: null` and deletes its copy.
 
 <Callout type="warn" title="Known limitation">
-  This only converges correctly for domains where ownership never shifts away from an already-synced client. If a record
-  is reassigned after a client has synced it, and that client has no further changelog rows pending for it, it never
-  receives another update for that record — its stale local copy just sits there.
+  A client only learns about a change of owner when a changelog row for that record comes up in its pull. If a record
+  moves to another user and no later change to it is pulled, the previous owner's client keeps a stale copy.
 </Callout>
 
-## Schema: the `Changelog` model
+## SQL adapter
 
-`Changelog` has to live on the server's real database — never IndexedDB, which is browser-only storage. `@prisma-idb/sync-server/postgres` derives it from your existing `schema.prisma` instead of requiring a hand-typed model:
+`createSqlSyncAdapter({ contract })` from `@prisma-idb/sync-server-sql` runs the checks and writes against a Prisma 8 SQL ORM client. It works with any model; nothing in it is specific to your schema.
 
-```ts
-// prisma.config.postgres.ts
-import { definePrismaConfig } from "@prisma/cli-engine";
-import { defineConfig } from "@prisma-idb/sync-server/postgres";
+| Member                                                    | Does                                                                                                                                   |
+| --------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `getKeyField(model)`                                      | The model's primary-key field.                                                                                                         |
+| `toSyncPushPayload(operation, payload, keyField)`         | Turns a pushed payload into the shape `validatePush` expects.                                                                          |
+| `applyPushEvent(db, event, model, check, scopeKey)`       | In one transaction: checks ownership, writes the record and writes its `Changelog` row. Does nothing if the event was already applied. |
+| `resolvePullRecord(db, model, check, keyPath, operation)` | Returns the record if the user still owns it, or `null`.                                                                               |
 
-export default definePrismaConfig({
-  orm: defineConfig({
-    schema: "schema.prisma",
-    // Explicit: the default derives from the schema's own directory
-    // (contract.json), which collides with the IDB side's own contract.json.
-    output: "schema.postgres.generated.json",
-    db: { connection: process.env.DATABASE_URL },
-  }),
-});
-```
+`db` is your Prisma 8 SQL client. It must have `.transaction(fn)` and `.orm.public.<Model>`.
 
-Under the hood, this reads your schema, strips `@idb.exclude`/`@@idb.exclude` (meaningless to a SQL parser — it hard-errors on the unrecognized namespace otherwise), appends a SQL-flavored `Changelog` model and `ChangeOperation` enum, and hands the result straight to the SQL family's own parser in memory — no generated `.prisma` file lands on disk. It also wires the SQL family/Postgres target/adapter/driver descriptors through the core `defineConfig` for you, since `@prisma/orm-postgres/config`'s own convenience `defineConfig` only accepts a schema path for `contract`. For a non-Postgres target, or when you need control this facade doesn't expose, wire the pieces by hand with `sqlContractWithSync` from `@prisma-idb/sync-server/schema` — see its README for the full example.
+When a write fails, `applyPushEvent` logs the real error on the server and returns a generic, retryable failure, so database details such as constraint names never reach the browser.
 
-<Callout type="warn" title="Upgrading from a hand-authored Changelog">
-  Delete the `Changelog` model and `ChangeOperation` enum from `schema.prisma` first — both are appended for you, and
-  leaving your own declarations in place produces duplicate PSL declarations, which fail contract generation.
-</Callout>
+The package also exports the pieces these use, such as `checkAuthorization` and `sqlGetKeyField`. See its README for the full list.
 
-The schema that comes out looks like this:
+## The `Changelog` model
+
+The server records every synced change in a `Changelog` table, which pull reads from. You don't declare it: the Postgres config adds it to your schema, along with this enum:
 
 ```prisma
 enum ChangeOperation {
@@ -164,134 +126,53 @@ model Changelog {
 }
 ```
 
-`prepareSqlSchemaWithSync` (pure text transform, no file I/O — what this runs under the hood) and `injectChangelogModelSql` (just the `Changelog` append) are also exported individually from `@prisma-idb/sync-server/schema` if you need to compose this into a different schema-loading pipeline.
+`outboxEventId` is unique, so pushing the same event twice writes it once. The `[scopeKey, id]` index serves the pull query.
 
-Set up and evolve this side with the same `prisma` CLI you already use for the SQL family, pointed at this config with `--config`:
+Keep the server's migrations in their own folder, such as `migrations-postgres/`, separate from the browser's `migrations/`. They're separate histories for separate databases.
 
-```bash
-npx prisma@latest contract emit --config prisma.config.postgres.ts
-npx prisma@latest db init --config prisma.config.postgres.ts
-npx prisma@latest migration new --config prisma.config.postgres.ts
-npx prisma@latest db update --config prisma.config.postgres.ts
-```
+### Other databases
 
-Keep this migration lineage (`migrations-postgres/`, or whatever `migrations.dir` you set) separate from the IDB side's own `migrations/app/` — they're unrelated graphs (browser IndexedDB vs. the real server), and sharing one directory would make the CLI compute nonsense `from` hashes across families.
-
-## Full endpoint shape
-
-The kanban example's routes are the reference implementation — `scopeKey` always comes from the authenticated session, resolved server-side, never trusted from the request body. `syncServer` is the value from [Building the server](#building-the-server) above; `getAuthenticatedUserId` and `db` are your own session lookup and database client; `sqlSyncAdapter` — `getKeyField`/`toSyncPushPayload`/`applyPushEvent`/`resolvePullRecord` — is `createSqlSyncAdapter({ contract: serverContract })` from `@prisma-idb/sync-server-sql`, built once alongside `syncServer` in the same `sync.ts`. It's the execution half of the same boundary `checkAuthorization` is part of, above: everything in it is generic over model/contract (it walks `OwnershipCheck`s and runs CRUD against `db.orm.public[model]` dynamically), not specific to this app's schema, so it's a real dependency, not reference code to copy-paste.
-
-The request body isn't `SyncPushEvent` — that's the shape `validatePush` expects _after_ you've mapped it, not what arrives over the wire (the wire body's `entityType`/raw `payload` become `SyncPushEvent`'s `model`/transformed `payload` below). It's also not the client's `OutboxEvent`: `sync-server` has zero dependency on `sync-extension-idb` by design (family/transport-agnostic), and the server only cares about 4 of `OutboxEvent`'s dozen-odd fields anyway.
-
-`@prisma-idb/sync-extension-idb/schemas` exports that narrower wire shape as a real [zod](https://zod.dev) schema — `pushRequestBodySchema` — under its own subpath with no other dependency, so importing it server-side doesn't pull in any IDB-only code. `.safeParse` both validates untrusted network input (a type assertion alone doesn't check anything) and narrows `operation` to the 3-op union `SyncPushEvent` expects, so nothing downstream needs a manual cast:
+`defineConfig` from `@prisma-idb/sync-server/postgres` wraps `sqlContractWithSync` from `@prisma-idb/sync-server/schema`, which works with any SQL target. Use it directly for another target, or when you need options the wrapper doesn't expose. It needs the framework's own `defineConfig`, with every descriptor set by hand:
 
 ```ts
-// POST /api/sync/push
-import { pushRequestBodySchema } from "@prisma-idb/sync-extension-idb/schemas";
-import { syncServer, sqlSyncAdapter } from "./sync"; // "Building the server", above
-import { getAuthenticatedUserId } from "./auth"; // your own session lookup
-import { db } from "./db"; // your own database client
+import { definePrismaConfig } from "@prisma/cli-engine";
+import { defineConfig } from "@prisma/orm-framework/config/config-types";
+import postgresAdapter from "@prisma/orm-postgres/adapter/control";
+import postgresDriver from "@prisma/orm-postgres/driver/control";
+import sql from "@prisma/orm-postgres/family/control";
+import { PG_INT_CODEC_ID, PG_TEXT_CODEC_ID } from "@prisma/orm-postgres/target/codec-ids";
+import postgres from "@prisma/orm-postgres/target/control";
+import postgresPackRef from "@prisma/orm-postgres/target/pack";
+import { postgresCreateNamespace } from "@prisma/orm-postgres/target/types";
+import { sqlContractWithSync } from "@prisma-idb/sync-server/schema";
 
-export async function POST(req: Request) {
-  const scopeKey = await getAuthenticatedUserId(req);
-  const parsed = pushRequestBodySchema.safeParse(await req.json());
-  if (!parsed.success) {
-    return Response.json({ error: "Malformed request body", details: parsed.error.issues }, { status: 400 });
-  }
-  const { events } = parsed.data;
-
-  const pushEvents = events.map((e) => ({
-    id: e.id,
-    model: e.entityType,
-    operation: e.operation,
-    payload: sqlSyncAdapter.toSyncPushPayload(e.operation, e.payload, sqlSyncAdapter.getKeyField(e.entityType)),
-  }));
-
-  const checks = syncServer.validatePush(pushEvents, { scopeKey });
-
-  // Sequential, not Promise.all: a batch can carry data dependencies (a Todo
-  // created right after the Board it belongs to) — concurrent checks would
-  // race the Board's own not-yet-committed transaction.
-  const results = []; // one PushResult per event — the shape pushHandler's
-  // response is parsed as, client-side (see Client)
-  for (const { eventId, model, check } of checks) {
-    const event = events.find((e) => e.id === eventId)!;
-    results.push(await sqlSyncAdapter.applyPushEvent(db, event, model, check, scopeKey));
-  }
-  return Response.json(results);
-}
+export default definePrismaConfig({
+  orm: defineConfig({
+    family: sql,
+    target: postgres,
+    adapter: postgresAdapter,
+    driver: postgresDriver,
+    contract: sqlContractWithSync("src/prisma/schema.prisma", {
+      target: postgresPackRef,
+      createNamespace: postgresCreateNamespace,
+      enumInferenceCodecs: { text: PG_TEXT_CODEC_ID, int: PG_INT_CODEC_ID },
+      output: "src/prisma/schema.postgres.generated.json",
+    }),
+    db: { connection: process.env.DATABASE_URL },
+  }),
+});
 ```
 
-```ts
-// GET /api/sync/pull?since=<changelogId>
-import { syncServer, sqlSyncAdapter } from "./sync"; // "Building the server", above
-import { getAuthenticatedUserId } from "./auth"; // your own session lookup
-import { db } from "./db"; // your own database client — built from the SQL contract, see Gotchas below
+For your own schema pipeline, `prepareSqlSchemaWithSync` takes schema text and returns it with the `idb` attributes removed and the `Changelog` added. `injectChangelogModelSql` only adds the `Changelog`.
 
-export async function GET(req: Request) {
-  const scopeKey = await getAuthenticatedUserId(req);
-  const since = new URL(req.url).searchParams.get("since");
-  const sinceId = since !== null ? Number(since) : null;
-  if (sinceId !== null && !Number.isInteger(sinceId)) {
-    return Response.json({ error: "since must be an integer" }, { status: 400 });
-  }
+## Common mistakes
 
-  // sync-server has no opinion on this query — any client works. The kanban
-  // example runs it through the Prisma 8 SQL ORM built in step 2, above.
-  // Cursor by `id` (monotonic, index-friendly) and cap with `.take()` — see
-  // Gotchas below for why an unbounded pull is a real risk, not a theoretical one.
-  const ordered = db.orm.public.Changelog.where({ scopeKey })
-    .select("id", "model", "keyPath", "operation")
-    .orderBy((c) => c.id.asc());
-  const rows = await (sinceId !== null ? ordered.cursor({ id: sinceId }) : ordered).take(50).all();
-
-  const checks = syncServer.buildPullQueries(
-    rows.map((r) => ({ changelogId: String(r.id), model: r.model, key: r.keyPath })),
-    { scopeKey }
-  );
-
-  // One LogWithRecord per row (@prisma-idb/sync-extension-idb/client)
-  // — the shape pullHandler's response is parsed as, client-side (see
-  // Client). Unlike push, this cast isn't validating network input — `row`
-  // is your own trusted Changelog row, not a caller-supplied value — but
-  // `logWithRecordSchema` (from the same /schemas subpath as push's) is
-  // there if you'd rather validate the response shape than assert it.
-  const logs = await Promise.all(
-    checks.map(async ({ changelogId, model, check }) => {
-      const row = rows.find((r) => String(r.id) === changelogId)!;
-      const operation = row.operation as "create" | "update" | "delete";
-      const record = await sqlSyncAdapter.resolvePullRecord(db, model, check, row.keyPath, operation);
-      return { changelogId, model, operation, keyPath: row.keyPath, record };
-    })
-  );
-  return Response.json(logs);
-}
-```
-
-A `record: null` in a pull response — an unauthorized or deleted row — is applied by `applyPull` on the client as a local delete.
-
-## Gotchas
-
-**Your server's `db` client has to be built from the generated SQL contract, not the IDB one.** One schema produces two very different generated contracts — the browser/IDB projection (`contract.json` / `contract.d.ts`) and the real SQL contract (`schema.postgres.generated.json` / `.d.ts`). `db.orm.public.*` and `sqlSyncAdapter` are only correctly typed against the latter:
-
-```ts
-// src/lib/server/db.ts
-import postgres from "@prisma/orm-postgres/runtime";
-import type { Contract } from "./prisma/schema.postgres.generated"; // ✅ the SQL contract
-// import type { Contract } from "./prisma/contract";               // ❌ the IDB client contract
-import contractJson from "./prisma/schema.postgres.generated.json" with { type: "json" };
-
-export const client = postgres<Contract>({ contractJson });
-```
-
-Pointing `postgres<Contract>()` at the wrong `Contract` type doesn't necessarily fail loudly — the model names often overlap enough that `db.orm.public.Changelog` still resolves — but every query on `db` silently loses type-checking: no autocomplete, no compiler error on a typo'd field or a wrong argument shape. If `db.orm.public.<Model>` stops autocompleting, or a field you know exists in `schema.prisma` isn't recognized, check this import first.
-
-**Model names passed into the sync layer are exact, case-sensitive matches.** They flow straight from your `pushEvents`/`entityType` mapping into `db.orm.public[model]` — `sqlSyncAdapter` doesn't normalize casing for you. A mismatch (`changelog` instead of `Changelog`) throws immediately (`Model "changelog" not found on db.orm.public.`) rather than silently doing nothing, but it's an easy typo to introduce when hand-writing a query outside the adapter, like the `Changelog` lookup in the pull endpoint above.
-
-**Cap every pull query with `.take()`.** Neither `buildPullQueries` nor `resolvePullRecord` impose a limit — that's the caller's own storage query, and `sync-server` has no opinion on it. The `.take(50)` in the pull endpoint above is load-bearing, not decorative: without it, a client that's been offline for a long time (or a `since=0` from a client that never synced) pulls its entire changelog history in one response. Cursor by `id`, not by comparing `since` as a raw filter value — ids are monotonic and index-friendly, timestamps or client-supplied cursors aren't guaranteed to be either.
+- **Building the server's database client from the browser's contract.** `db.orm.public.*` and the SQL adapter need the SQL contract (`schema.postgres.generated`). With the browser's `contract` type, model names often still resolve, but queries lose their types: no autocomplete, and no error for a misspelled field.
+- **Wrong capitalization in model names.** Names pass straight through to `db.orm.public[model]`, so `changelog` instead of `Changelog` fails with `Model "changelog" not found on db.orm.public.`
+- **An unlimited pull query.** Neither package limits how many rows a pull returns. Always limit your changelog query and page by `id`, or a client that was offline for a long time downloads its whole history at once.
 
 <Cards>
+  <Card title="Sync tutorial" href="/docs/prisma-8/sync" />
+  <Card title="Sync client" href="/docs/prisma-8/sync/client" />
   <Card title="Client Contracts" href="/docs/prisma-8/sync/client-contracts" />
-  <Card title="Client" href="/docs/prisma-8/sync/client" />
-  <Card title="Kanban Example" href="/docs/prisma-8/kanban-example" />
 </Cards>

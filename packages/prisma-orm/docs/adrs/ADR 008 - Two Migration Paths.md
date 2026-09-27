@@ -1,155 +1,87 @@
-# ADR 008 — Two Migration Paths: Runtime Auto-Migration and CLI-Managed
+# ADR 008: Two migration paths
 
-## Context
+- **Status:** Superseded
+- **Date:** 2026-05-25
+- **Area:** Migrations, developer experience
 
-IndexedDB is a browser-local database. Unlike server-side databases (Postgres, SQLite, MongoDB), there is no deploy step where a CLI can connect to a live database and apply migrations before the application serves traffic. The browser opens the database when the user visits the page — there is no "before" moment.
+> **Superseded.** There is now one migration path. Migrations are planned at design time with `prisma-idb migration plan`, bundled into the app with `prisma-idb migration contract-space`, and applied in the browser by `createAutoMigratingIdbClient` when the app opens the database. The browser no longer inspects the live schema or plans anything. The manifest file and the CLI apply path described below no longer exist. See [ADR 018](ADR%20018%20-%20Separate%20prisma-idb%20CLI.md) for the current commands.
+>
+> Two parts of this ADR still apply. They are described first.
 
-However, teams building production applications want:
-
-- **Reviewable migration history** — git-tracked migration files that show what DDL changed and why.
-- **CI verification** — `prisma-next db verify` in CI to catch schema drift before it reaches users.
-- **Explicit control** — the ability to author data-transform migrations (backfills, type casts) that can't be derived from a pure schema diff.
-
-These two forces — browser-local always-on vs. team-level control — pull in opposite directions.
-
-## Decision
-
-We provide **two migration paths** that share the same planner and runner:
-
-### Path A — Runtime auto-migration (the default)
-
-```ts
-// One function call, zero config
-const db = await createAutoMigratingIdbClient({ contract, dbName: "my-app" });
-```
-
-Under the hood:
-
-1. Opens the live IDB database and introspects the current schema — reads `objectStoreNames`, `indexNames`, `keyPath`, `unique`, `multiEntry` for each user store. Also reads the `_prisma_next_marker` store to get the last-signed `storageHash`.
-2. If the marker's `storageHash` matches the contract → instant open, no overhead.
-3. Otherwise, builds a synthetic `fromContract` from the introspected schema, passes it to the planner so the diff produces only the delta (add/drop), opens IDB at the next integer version, applies the ops in `upgradeneeded`, and writes the new marker.
-
-This is the **only** path needed for local dev, prototypes, and SPAs without a server.
-
-> **Implementation note.** Earlier revisions passed `fromContract: null` regardless of live state, which forced the planner to emit a "from scratch" plan. That broke any contract evolution (the runner would try to `createObjectStore` on stores that already existed and abort the version-change tx). Live-DB introspection is now the canonical input for the planner on Path A.
-
-### Path B — CLI-managed migrations (opt-in)
-
-```bash
-prisma-next db sign        # write contract marker to manifest
-prisma-next db verify      # check marker matches contract
-prisma-next migration new  # scaffold a migration.ts
-prisma-next db update      # plan + apply, bump idbVersion in manifest
-```
-
-Requires a `prisma.config.ts` that wires the family, target, adapter, and driver descriptors. The CLI reads/writes `prisma-idb.manifest.json` — the on-disk record of the last-applied `idbVersion` and contract marker.
-
-When using Path B, the runtime can pass the manifest through so it respects the CLI-managed `idbVersion`:
-
-```ts
-import manifest from "../prisma-idb.manifest.json" with { type: "json" };
-const db = await createAutoMigratingIdbClient({ contract, dbName: "my-app", manifest });
-```
-
-> **Note.** The command names above (`prisma-next db sign/verify`, `prisma-next migration new`, the `prisma-idb.manifest.json` bridge) predate the Phase 7 rewrite. The current IDB-specific CLI is `prisma-idb generate-baseline` / `generate-migration` / `generate-contract-space` / `preflight` (`family-idb/src/bin/prisma-idb.ts`) and there is no manifest file — the concepts below (Path B as the hand-authorable, git-tracked path; `migration.ts` as its editable source) still hold, just under different command names. This applies to every remaining reference to `prisma-idb.manifest.json`, `prisma.config.ts`, and the `prisma-next db …`/`prisma-next migration …` commands for the rest of this document (the "Shared infrastructure" diagram, the `dbName` section, and the Consequences below) — they're kept as originally written since the manifest-vs-`storageHash` and `dbName`-as-space-boundary reasoning is unchanged, only the concrete filenames/commands are historical.
+## Still applies
 
 ### `migration.ts` must round-trip exactly
 
-Every migration package ships three interchangeable representations of the same operations: `ops.json` (what the runtime applies), `migration.json` (the content-addressed `migrationHash` over `ops.json`, verified on every Path A load — see `walkChain` in `client-idb/src/core/auto-migrate.ts`), and `migration.ts` (the human-editable class scaffold `generate-baseline`/`generate-migration` render alongside them).
+Each migration package holds the same operations in three files:
 
-`migration.ts` is not a passive artifact — hand-authoring depends on it being _exactly_ reproducible. `node migration.ts` (via `MigrationCLI.run` → `buildMigrationArtifacts` in vendor's `migration-base.ts`) re-derives `ops.json`/`migration.json` straight from the class's `operations` getter, with **no target-specific knowledge**: it serializes whatever the getter returns, verbatim. If the rendered TypeScript doesn't losslessly capture everything the original ops had, re-running the file — the exact workflow a developer uses to hand-edit a migration, and, before CLI `--space` support existed, the _only_ way to author a second migration for an extension space — silently regenerates a **different** `ops.json` with a **different** `migrationHash` than what's committed.
+- `ops.json`: the operations the browser applies.
+- `migration.json`: metadata, including `migrationHash`, a hash of `ops.json`. The browser checks it every time it walks the chain (`walkChain` in `client-idb/src/core/auto-migrate.ts`).
+- `migration.ts`: an editable TypeScript version, for hand-authoring changes.
 
-This bit us once: `renderMigrationTs`'s `renderOpCall` (`target-idb/src/core/migration-planner.ts`) used to (a) default a missing `unique` to `false` and always render it — but `JSON.stringify` drops an `undefined` key while keeping an explicit `false`, so an index whose `unique` was never set (the contract canonicaliser strips `unique: false` by default-stripping) would round-trip into one that explicitly has it — and (b) drop `def.indexes` entirely when rendering a `createObjectStoreOp` call, even though `diffIdbSchema` embeds the full store definition (indexes included) into that op's `def` for a freshly-created store. Both are covered now: `target-idb/test/migration.test.ts`'s `renderTypeScript() round-trips unique/multiEntry/indexes exactly (regression)` snapshot pins the full rendered output across every combination, and `family-idb/test/generate-baseline.test.ts`'s `migration.ts matches ops.json exactly` test locks in that both files describe the same operations for extension-space baselines (the same class of bug that let the marker-store op drift between the two files in the sync-extension package — fixed by rendering both from the same filtered `ops`, see `generate-baseline.ts`).
+Running `node migration.ts` regenerates `ops.json` and `migration.json` from the class's `operations` getter. It writes whatever the getter returns, with no IndexedDB-specific logic. So `migration.ts` must capture every detail of the original operations. If it loses anything, editing and re-running it silently produces a different `ops.json` and a different `migrationHash` from the committed ones.
 
-### Shared infrastructure
+This has happened once. `renderMigrationTs` used to:
 
-Both paths use the **same** types, planner, runner, and marker store:
+- always write `unique: false` for an index that had no `unique` value. `JSON.stringify` keeps an explicit `false` but drops a missing key, so the regenerated `ops.json` differed.
+- leave out a new store's `indexes` when rendering its `createObjectStore` call.
 
-```
-┌─────────────────────────────────────────────────────┐
-│                  IdbMigrationPlanner                │
-│                  IdbMigrationRunner                 │
-│              _prisma_next_marker store              │
-├───────────────────────┬─────────────────────────────┤
-│      Path A           │         Path B              │
-│  (runtime, browser)   │    (CLI, design-time)       │
-│                       │                             │
-│  createAutoMigrating  │  prisma-next db update      │
-│    IdbClient()        │  prisma-next migration new  │
-│                       │  prisma.config.ts           │
-│  No config needed     │  prisma-idb.manifest.json   │
-└───────────────────────┴─────────────────────────────┘
-```
+The test `renderTypeScript() round-trips unique/multiEntry/indexes exactly (regression)` in `target-idb/test/migration.test.ts` now pins the rendered output for every combination.
 
-The manifest's `idbVersion` field is the bridge: the CLI bumps it when applying migrations, and the runtime reads it (when provided) to compute the correct `targetVersion` for `IDBFactory.open()`. When the manifest is not provided, the runtime probes the live database to discover the current version.
+### `dbName` separates tenants
 
-### `dbName` is the space boundary (not `spaceId`)
+IndexedDB has one level of naming: the database name passed to `indexedDB.open(name, version)`. All object stores sit directly inside that database. There are no schemas within a database.
 
-The vendor framework (Postgres, Mongo) uses `spaceId` to partition a **single database connection** into logical slices — one per extension pack — sharing the same underlying connection. This works because SQL databases have schemas and Mongo has collections inside a single cluster handle.
-
-IndexedDB has no such nesting. Its only namespace primitive is the **database name** passed to `indexedDB.open(name, version)`. Every object store is flat at the top level inside that database. You cannot create "schemas inside a database" — the database name **is** the space.
-
-**Therefore, `dbName` — not `spaceId` — is the natural isolation boundary for IDB:**
+So to keep tenants apart, give each one its own `dbName`:
 
 ```
 indexedDB.open("my-app")          → users, posts, _prisma_next_marker
 indexedDB.open("my-app-tenant-b") → users, posts, _prisma_next_marker
 ```
 
-Each database name gets its own:
+Each database has its own version number, stores, indexes and marker store.
 
-- Version counter (IDB enforces monotonic per-name)
-- Object stores and indexes
-- `_prisma_next_marker` store
-- Manifest `idbVersion` (one per database, tracked via `prisma-idb.manifest.json`)
+Contract spaces are a different thing. They separate the app's migrations from those of its extensions, inside one database. See [ADR 010](ADR%20010%20-%20Combined%20Single-Transaction%20Multi-Space%20Apply.md).
 
-This means **multi-tenancy in IDB is achieved by varying `dbName`**, not by introducing a nested `spaceId` concept. For single-database use, we hardcode `spaceId = "app"` to satisfy the vendor's `MigrationPlanner.plan()` interface — it costs nothing and the parameter is ignored by the IDB planner.
+## Original decision (historical)
 
-We deliberately chose **not** to map `spaceId` to `dbName` because:
+The rest of this record describes the design as it was decided in May 2026.
 
-| If we did this...              | Problem                                                                                                                                                                                                      |
-| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `spaceId = dbName` everywhere  | Conflates the vendor's "extension slice" concept with IDB's "database" concept. When IDB extensions arrive (future), they'd need true `spaceId` partitioning within a single database to share transactions. |
-| `spaceId = some tenant prefix` | The manifest tracks one `idbVersion` per file; per-tenant manifests would need per-tenant files. That's correct (each database has its own version), but it muddies the CLI's single-manifest model.         |
+### Context
 
-Keeping `spaceId = "app"` and using `dbName` as the user-facing multi-tenancy primitive keeps both concepts clean and future-proof.
+IndexedDB lives in the browser. There is no deploy step in which a CLI connects to the database before the app serves traffic. The database is opened when a user visits the page.
 
-### Which path when?
+Teams still want:
 
-| Concern                              | Path A (runtime) | Path B (CLI) |
-| ------------------------------------ | :--------------: | :----------: |
-| Local dev / prototype                |        ✅        |      —       |
-| SPA with no server                   |        ✅        |      —       |
-| Git-tracked migration history        |        —         |      ✅      |
-| CI verification (`db verify`)        |        —         |      ✅      |
-| Data-transform migrations (backfill) |        —         |      ✅      |
-| Team review of DDL changes           |        —         |      ✅      |
+- migration history they can review in git,
+- a CI check that catches schema drift,
+- a way to write data migrations (backfills, type changes) that a schema diff can't produce.
 
-## What we deliberately did not do
+### Decision
 
-**Make the CLI mandatory.** This would break the zero-config SPA use case — the whole point of IDB is that it works without a server. Path A is the default; Path B is an opt-in upgrade for teams.
+Offer two paths that share one planner, one runner and one marker store:
 
-**Make runtime auto-migration the only path.** This would make it impossible to author data-transform migrations, review DDL changes in PRs, or verify schema integrity in CI. Teams building production apps need these capabilities.
+- **Path A, runtime auto-migration (the default).** `createAutoMigratingIdbClient({ contract, dbName })` read the live schema and the marker. If the marker's hash matched the contract, it opened the database straight away. Otherwise it planned the difference between the live schema and the contract, applied it in `upgradeneeded`, and wrote the new marker.
+- **Path B, CLI-managed migrations (opt-in).** Commands such as `db sign`, `db verify`, `migration new` and `db update` worked with git-tracked migration files. A `prisma-idb.manifest.json` file recorded the last applied IndexedDB version, and the runtime could read it to pick the right version number.
 
-**Have separate planner/runner for each path.** This would create a correctness fork — a migration that works in the CLI but fails at runtime (or vice versa). By sharing the same planner and runner, both paths produce identical DDL for the same contract diff.
+| Need                           | Path A | Path B |
+| ------------------------------ | :----: | :----: |
+| Local development, prototypes  |  Yes   |        |
+| Single-page app with no server |  Yes   |        |
+| Migration history in git       |        |  Yes   |
+| CI verification                |        |  Yes   |
+| Data migrations (backfills)    |        |  Yes   |
+| Team review of schema changes  |        |  Yes   |
 
-**Auto-detect which path is active.** We considered having the runtime detect whether a `prisma.config.ts` exists and switch behavior automatically. We rejected this because it would make the runtime's behavior path-dependent on filesystem state, which is hard to test and reason about. The explicit `manifest` parameter is a cleaner contract.
+### Alternatives considered
 
-**Generate migration files from the runtime.** The runtime could theoretically write `migration.ts` files back to disk after auto-migrating. We rejected this because the browser has no filesystem access — and even with the File System Access API, writing back to the developer's source tree from a production page is the wrong direction.
+- **Make the CLI mandatory.** Rejected: it would break the no-server, no-config use case.
+- **Make runtime auto-migration the only path.** Rejected: no data migrations, no review, no CI check.
+- **Separate planners for each path.** Rejected: the two paths could then produce different schema changes for the same contract.
+- **Detect the path from the filesystem.** Rejected: the runtime's behaviour would depend on whether `prisma.config.ts` exists, which is hard to test. An explicit `manifest` option was clearer.
+- **Write migration files from the browser.** Rejected: the browser can't write to the developer's source tree, and a production page shouldn't try.
 
-## Consequences
+### Consequences at the time
 
-- The `client-idb` package exports two entry points: `client` (no migration) and `client-auto` (auto-migration). Users pick based on whether they want Path A or just the raw ORM.
-- `createAutoMigratingIdbClient` is async (migration may run) while `createIdbClient` is synchronous (no migration).
-- The `prisma-idb.manifest.json` file is the on-disk bridge between paths. Losing it means the CLI loses track of `idbVersion` — the runtime can still auto-migrate, but the CLI must re-sign.
-- The manifest is only written by the CLI. The browser runtime never writes it (no filesystem access). This means `idbVersion` in the manifest can lag behind the actual IDB version if the runtime auto-migrates without a manifest. The `storageHash` comparison is always the authoritative check (ADR 001).
-
-## Related
-
-- [ADR 001](ADR%20001%20-%20IDB%20Version%20Integer%20as%20Migration%20Identity.md) — `idbVersion` as the integer migration identity
-- [ADR 002](ADR%20002%20-%20Two-Phase%20Migration.md) — why DDL and marker write are separate phases
-- Upstream ADR 001 — Migrations as Edges (the hash-edge model we adapted from)
-- `client-idb/src/core/auto-migrate.ts` — Path A implementation
-- `target-idb/src/core/migration-planner.ts` — shared planner
-- `target-idb/src/core/migration-runner.ts` — shared runner
-- `target-idb/src/exports/control.ts` — CLI target descriptor with `migrations` capability
+- `client-idb` had two entry points: `client` (no migration) and `client-auto` (auto-migration). Both still exist.
+- `createAutoMigratingIdbClient` was async, because a migration might run. `createIdbClient` was synchronous. This is still true.
+- The manifest was the link between the two paths. Only the CLI wrote it, so its version number could fall behind the real database. The marker's `storageHash` was always the authoritative check.

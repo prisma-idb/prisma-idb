@@ -2,6 +2,14 @@ import type { RuntimeTargetDescriptor, RuntimeTargetInstance } from "@prisma/orm
 import { idbTargetDescriptorMeta } from "../core/descriptor-meta";
 export { idbCodecLookup } from "../core/codecs";
 export { decodeJsonRecord } from "../core/decode-json-record";
+export {
+  compareFieldValues,
+  fieldValueToken,
+  fieldValuesEqual,
+  isValidIdbKey,
+  keyEquals,
+  keyToken,
+} from "../core/key-compare";
 
 // ── Browser-safe DDL apply helpers ────────────────────────────────────────────
 // These are re-exported here (in addition to the CLI-only `./migration` subpath)

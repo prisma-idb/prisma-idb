@@ -10,7 +10,10 @@ export default defineConfig({
   workers: process.env["CI"] ? 1 : 4,
   reporter: process.env["CI"] ? "list" : [["list"], ["html", { open: "never" }]],
   use: { trace: "on-first-retry", video: "retain-on-failure" },
-  projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
+  projects: [
+    { name: "chromium", use: { ...devices["Desktop Chrome"] } },
+    { name: "webkit", use: { ...devices["Desktop Safari"] } },
+  ],
   webServer: {
     command: "pnpm build && pnpm preview --port 4173",
     port: 4173,

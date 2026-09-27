@@ -1,41 +1,47 @@
-# ADR 007 — Two Transaction APIs: Automatic Store Inference vs. Manual Scope
+# ADR 007: Two transaction APIs
+
+- **Status:** Accepted. The manual API currently exists only in a low-level form (see Decision).
+- **Date:** 2026-05-24
+- **Area:** ORM
+
+## Summary
+
+There are two ways to get a transaction that spans several object stores:
+
+- **Automatic**, for nested writes. The ORM works out which stores a nested write touches from the contract, and opens one transaction over all of them.
+- **Manual**, for everything else. The caller names the stores up front, because the ORM can't predict what arbitrary application code will touch.
 
 ## Context
 
-IDB transactions are scoped to a fixed list of object stores declared at open time (`db.transaction(["users", "posts"], "readwrite")`). You cannot add more stores to an in-progress transaction. All read and write requests must be issued against stores that were named when the transaction was opened.
+An IndexedDB transaction covers a fixed list of object stores, named when it opens: `db.transaction(["users", "posts"], "readwrite")`. You can't add a store to a transaction that is already running.
 
-Phase 6.4 (nested relation writes) requires writing to multiple stores atomically. For example, `db.users.create({ posts: (rel) => rel.create([...]) })` must write to `users` and `posts` in the same transaction. Phase 6.3 (multi-store transaction support) also enables user-authored multi-store operations.
-
-The question is: who decides which stores a transaction spans?
+Some operations must write to several stores atomically. For example, `db.users.create({ posts: (rel) => rel.create([...]) })` must write to `users` and `posts` in one transaction. Applications also need their own multi-store operations. So something has to decide which stores a transaction covers before it opens.
 
 ## Decision
 
-Provide two distinct APIs with different contracts:
+### Automatic: nested writes from the ORM
 
-### API 1 — Automatic inference (for nested writes from the ORM)
-
-When the ORM layer detects relation callbacks in a `create()` or `update()` call, it walks the contract's relation graph to collect all stores transitively involved, then opens a single transaction spanning all of them via `withMutationScope()`. The user never names stores.
+When a `create()` or `update()` call includes relation callbacks, the ORM collects every store the write touches by following the relations in the contract. It then opens one transaction over all of them with `withMutationScope()`. The user never names a store.
 
 ```ts
-// User writes:
-await db.users.create({
+await db.orm.users.create({
   id: "u1",
   name: "Alice",
   posts: (rel) => rel.create([{ title: "Post 1" }, { title: "Post 2" }]),
 });
-// Internally: store names ["users", "posts"] derived from contract's relation graph
-// before the transaction is opened.
+// The ORM derives ["users", "posts"] from the contract before opening the transaction.
 ```
 
-**When this is possible:** The stores involved in nested writes are known at parse time — `parseMutationInput()` walks `data` to identify which fields are relation callbacks and reads the contract to find their target stores. All stores are collected before the transaction opens.
+This works because the stores are known before any request is issued. `parseMutationInput()` separates plain fields from relation callbacks, and `partitionByOwnership()` sorts the relations. Both work from the contract alone, without touching IndexedDB.
 
-**Limitation:** The store list must be fully known before any IDB request is issued. `parseMutationInput()` + `partitionByOwnership()` do this synchronously from the contract, so no pre-flight IDB access is needed.
+### Manual: application-controlled transactions
 
-### API 2 — Manual scope (for application-controlled atomicity)
+Some multi-store work doesn't fit a single nested write: conditional logic, two unrelated model writes, or operations the ORM doesn't model. For these, the caller names the stores explicitly.
 
-When the user wants to write to multiple stores in ways that are not expressible as a single nested write (e.g. conditional logic, two independent model writes, or operations the ORM doesn't model), they call `db.transaction()` explicitly and name the stores upfront.
+The intended API is typed ORM access inside the transaction:
 
 ```ts
+// Planned, not yet implemented:
 await db.transaction(["users", "posts"], async (tx) => {
   const user = await tx.users.create({ name: "Alice" });
   if (user.role === "author") {
@@ -44,45 +50,30 @@ await db.transaction(["users", "posts"], async (tx) => {
 });
 ```
 
-**Why the user must name stores upfront:** Inside the `run` callback, application code may conditionally access different stores based on runtime values. There is no static analysis that can determine which stores will be used. The transaction must be opened before the callback runs, so the caller must enumerate stores explicitly.
+Today the manual API is the lower-level `db.withTransaction(storeNames, fn)`. It passes `fn` an `IdbTransactionScope`, which runs driver plans with `scope.execute(plan)`. It commits when `fn` resolves and rolls back when `fn` throws.
 
-## Why two APIs and not one
+The caller must name the stores because the callback can decide at runtime which stores to use. No analysis can find that out ahead of time, and the transaction must be open before the callback runs.
 
-Once the manual API exists, you can no longer infer stores for users — the callback might access stores not derivable from a single ORM call chain. The two APIs have genuinely separate contracts:
+## Why two APIs, not one
 
-- **Automatic inference:** "I'm doing a nested write that the ORM models. You know what stores I need."
-- **Manual scope:** "I'm doing something the ORM doesn't model. I'll tell you what stores I need."
+The two APIs make different promises:
 
-Collapsing them into one API would either force all multi-store operations to name stores manually (breaking ergonomics for nested writes) or require static analysis of the callback body (impossible at runtime).
+- **Automatic:** "This is a nested write the ORM models. You know which stores it needs."
+- **Manual:** "This is something the ORM doesn't model. I'll tell you which stores it needs."
 
-This is the same distinction the older generator used, and it holds for the same reasons.
-
-## Implementation notes
-
-**Automatic path (`withMutationScope` in `client-idb/src/core/mutation-scope.ts`):**
-
-- `parseMutationInput(contract, modelName, data)` splits scalars from relation callbacks
-- `partitionByOwnership()` separates parent-owned (N:1) from child-owned (1:N/1:1) relations
-- Store names are collected by walking `contract.relations[modelName]` for each relation field found
-- `withMutationScope(executor, storeNames, run)` opens the transaction, calls `run(scope)`, commits on success, aborts on error
-
-**Manual path (`IdbTransactionScope` in `driver-idb/src/core/transaction-scope.ts`):**
-
-- `executor.transaction(storeNames, "readwrite")` returns an `IdbTransactionScope`
-- The scope exposes `execute(plan)` for individual operations and `commit()` / `rollback()`
-- All plans executed through the scope share one underlying IDB transaction
+A single API would either make every nested write list its stores by hand, which is worse to use, or need to analyse the callback's code at runtime, which isn't possible. The older generator made the same split for the same reasons.
 
 ## Consequences
 
-- Nested writes from the ORM (Phase 6.4) are fully automatic — the user declares relations, the ORM handles atomicity.
-- Application code that needs multi-store atomicity outside the ORM's model uses `db.transaction()`.
-- If a user calls `db.transaction()` for a nested write that the ORM could have handled automatically, that is fine — the manual API is a strict superset.
-- The manual API leaks IDB store names into application code. This is intentional: the user is opting into IDB-specific atomicity semantics.
+- Nested writes are atomic with no extra work from the user.
+- Multi-store work that the ORM doesn't model uses the manual API.
+- Using the manual API for something the ORM could do automatically is fine. The manual API can do everything the automatic one can.
+- The manual API exposes store names to application code. This is deliberate: the caller is opting into IndexedDB's transaction rules.
+- Inside a manual transaction, the caller must only `await` promises that resolve from IndexedDB requests. Awaiting anything else, such as `fetch` or a timer, lets the transaction commit early ([ADR 005](ADR%20005%20-%20Event-Driven%20Execution%20No%20Async%20Await.md)). The driver then reports a `TRANSACTION_INACTIVE` error. The typed `db.transaction()` API must document this when it ships.
 
 ## Related
 
-- `client-idb/src/core/mutation-scope.ts` — `withMutationScope()` implementation (Phase 6.3)
-- `driver-idb/src/core/transaction-scope.ts` — `IdbTransactionScope` interface (Phase 6.3)
-- `client-idb/src/core/mutation-executor.ts` — `parseMutationInput`, `partitionByOwnership` (Phase 6.4)
-- Upstream `sql-orm-client/mutation-executor.ts` — the SQL ORM pattern we ported from
-- [PLAN.md](../../PLAN.md) § Phase 6.3, § Phase 6.4
+- `client-idb/src/core/mutation-scope.ts`: `withMutationScope()`.
+- `client-idb/src/core/mutation-executor.ts`: `parseMutationInput()`, `partitionByOwnership()`.
+- `client-idb/src/core/idb-client.ts`: `withTransaction()`.
+- `driver-idb/src/core/transaction-scope.ts`: `IdbTransactionScope`.

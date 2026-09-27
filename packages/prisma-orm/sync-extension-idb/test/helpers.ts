@@ -95,6 +95,8 @@ export interface TestStoreAccessor {
   findUnique(key: unknown): Promise<Record<string, unknown> | null>;
   delete(key: unknown): Promise<void>;
   where(filter: Record<string, unknown>): TestStoreAccessor;
+  skip(n: number): TestStoreAccessor;
+  count(): Promise<number>;
   update(patch: Record<string, unknown>): Promise<Record<string, unknown> | null>;
   updateAll(patch: Record<string, unknown>): { toArray(): Promise<Record<string, unknown>[]> };
   deleteAll(): { toArray(): Promise<Record<string, unknown>[]> };

@@ -18,15 +18,17 @@
 import type {
   IdbAddPlan,
   IdbAtomicPlan,
+  IdbCountPlan,
   IdbCursorScanPlan,
   IdbDeletePlan,
   IdbIndexGetPlan,
   IdbKeyGetPlan,
+  IdbKeysPlan,
   IdbPutPlan,
   IdbScanWritePlan,
   IdbUpdatePlan,
 } from "../plan-body";
-import { IdbExecuteError } from "./error";
+import { IdbExecuteError, isTransactionInactiveError, transactionInactiveError } from "./error";
 
 type Row = Record<string, unknown>;
 type OnComplete = (rows: Row[]) => void;
@@ -47,6 +49,17 @@ export function executeOpInTx(
   onComplete: OnComplete,
   onError: OnError
 ): void {
+  try {
+    dispatchOp(store, plan, onComplete, onError);
+  } catch (err) {
+    // Requests are issued synchronously, so a dead transaction surfaces here as a
+    // thrown DOMException. Anything else (DataError, unknown index, ...) is unchanged.
+    if (isTransactionInactiveError(err)) return onError(transactionInactiveError(plan.kind, plan.storeName, err));
+    throw err;
+  }
+}
+
+function dispatchOp(store: IDBObjectStore, plan: IdbAtomicPlan, onComplete: OnComplete, onError: OnError): void {
   switch (plan.kind) {
     case "key-get":
       return execKeyGet(store, plan, onComplete, onError);
@@ -54,6 +67,10 @@ export function executeOpInTx(
       return execIndexGet(store, plan, onComplete, onError);
     case "cursor-scan":
       return execCursorScan(store, plan, onComplete, onError);
+    case "count":
+      return execCount(store, plan, onComplete, onError);
+    case "keys":
+      return execKeys(store, plan, onComplete, onError);
     case "add":
       return execAdd(store, plan, onComplete, onError);
     case "put":
@@ -64,6 +81,12 @@ export function executeOpInTx(
       return execDelete(store, plan, onComplete, onError);
     case "scan-write":
       return execScanWrite(store, plan, onComplete, onError);
+    default: {
+      // Unreachable for a well-typed plan; a stale driver build receiving a newer plan kind
+      // would otherwise never call onComplete/onError and hang the caller.
+      const unknown: never = plan;
+      return onError(new Error(`Unknown IDB plan kind: ${String((unknown as { kind?: unknown }).kind)}`));
+    }
   }
 }
 
@@ -110,6 +133,48 @@ function execIndexGet(store: IDBObjectStore, plan: IdbIndexGetPlan, onComplete: 
         `IDB index-get failed on "${plan.storeName}"/"${plan.indexName}": ${String(req.error)}`
       )
     );
+}
+
+function execCount(store: IDBObjectStore, plan: IdbCountPlan, onComplete: OnComplete, onError: OnError): void {
+  const source: IDBObjectStore | IDBIndex = plan.indexName !== undefined ? store.index(plan.indexName) : store;
+  const req = plan.range !== undefined ? source.count(plan.range) : source.count();
+  req.onsuccess = () => onComplete([{ count: req.result }]);
+  req.onerror = () =>
+    onError(
+      new IdbExecuteError(
+        { code: "COUNT_FAILED", planKind: "count", storeName: plan.storeName, cause: req.error },
+        `IDB count failed on store "${plan.storeName}"${plan.indexName !== undefined ? ` (index "${plan.indexName}")` : ""}: ${String(req.error)}`
+      )
+    );
+}
+
+function execKeys(store: IDBObjectStore, plan: IdbKeysPlan, onComplete: OnComplete, onError: OnError): void {
+  const source: IDBObjectStore | IDBIndex = plan.indexName !== undefined ? store.index(plan.indexName) : store;
+  const fail = (cause: unknown) =>
+    onError(
+      new IdbExecuteError(
+        { code: "KEYS_FAILED", planKind: "keys", storeName: plan.storeName, cause },
+        `IDB keys read failed on store "${plan.storeName}"${plan.indexName !== undefined ? ` (index "${plan.indexName}")` : ""}: ${String(cause)}`
+      )
+    );
+
+  // getKey() requires a query (null/absent throws), so a range-less single-key
+  // read is expressed as getAllKeys(undefined, 1) instead.
+  if (plan.take === 1 && plan.range !== undefined) {
+    const req = source.getKey(plan.range);
+    req.onsuccess = () => onComplete(req.result === undefined ? [] : [{ key: req.result }]);
+    req.onerror = () => fail(req.error);
+    return;
+  }
+
+  if (plan.take === 0) {
+    onComplete([]);
+    return;
+  }
+
+  const req = source.getAllKeys(plan.range, plan.take);
+  req.onsuccess = () => onComplete((req.result as IDBValidKey[]).map((key) => ({ key })));
+  req.onerror = () => fail(req.error);
 }
 
 function execCursorScan(
@@ -189,12 +254,27 @@ function execCursorScan(
     );
 }
 
+/**
+ * The record as stored: `record` itself, plus the generated key when an
+ * `autoIncrement` store with an inline `keyPath` filled it in. IDB writes the
+ * generated key into its own stored copy, never into the caller's object, so
+ * the echo needs it set from `req.result`.
+ */
+function withGeneratedKey(
+  store: IDBObjectStore,
+  record: Record<string, unknown>,
+  key: IDBValidKey
+): Record<string, unknown> {
+  if (!store.autoIncrement || typeof store.keyPath !== "string" || record[store.keyPath] !== undefined) return record;
+  return { ...record, [store.keyPath]: key };
+}
+
 function execAdd(store: IDBObjectStore, plan: IdbAddPlan, onComplete: OnComplete, onError: OnError): void {
   // Use the optional out-of-line key when provided; otherwise IDB derives the
   // key from the record via the store's keyPath.
   const req = plan.key !== undefined ? store.add(plan.record, plan.key) : store.add(plan.record);
   // Echo the record back — IDB has no RETURNING clause.
-  req.onsuccess = () => onComplete([plan.record]);
+  req.onsuccess = () => onComplete([withGeneratedKey(store, plan.record, req.result)]);
   req.onerror = () =>
     onError(
       new IdbExecuteError(
@@ -209,7 +289,7 @@ function execPut(store: IDBObjectStore, plan: IdbPutPlan, onComplete: OnComplete
   // key from the record via the store's keyPath.
   const req = plan.key !== undefined ? store.put(plan.record, plan.key) : store.put(plan.record);
   // Echo the record back — IDB has no RETURNING clause.
-  req.onsuccess = () => onComplete([plan.record]);
+  req.onsuccess = () => onComplete([withGeneratedKey(store, plan.record, req.result)]);
   req.onerror = () =>
     onError(
       new IdbExecuteError(

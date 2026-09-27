@@ -1,26 +1,40 @@
-# ADR 005 — Event-Driven Execution: No async/await Inside IDB Transactions
+# ADR 005: No `async`/`await` inside IDB transactions
+
+- **Status:** Accepted
+- **Date:** 2026-05-24
+- **Area:** Driver
+
+## Summary
+
+The driver chains IndexedDB requests with callbacks: each request is issued from inside the previous request's `onsuccess` handler. It never uses `await` while a transaction is open. Awaiting anything that isn't an IndexedDB request lets the browser commit the transaction early, and the next request then fails.
 
 ## Context
 
-IDB uses an event-driven, callback-based API. When you call `store.get(key)`, it returns an `IDBRequest`. You attach `onsuccess` and `onerror` handlers to that request. The handler fires synchronously in an IDB "event loop" context.
+IndexedDB's API is event-based. A call such as `store.get(key)` returns an `IDBRequest`, and the result arrives later in its `onsuccess` or `onerror` handler.
 
-The `IDBTransaction` has a critical lifecycle rule: **a transaction auto-commits when there are no pending IDB requests AND the event loop returns to the browser**. More precisely, using the microtask semantics of modern JS engines: after the last `onsuccess` or `onerror` handler fires, if the code returns without issuing another IDB request, the transaction will commit when the microtask queue drains.
+A transaction commits automatically when two things are true:
 
-`async/await` in JavaScript is syntactic sugar over Promises, which resolve via microtasks. An `await` inside an IDB event handler yields execution to the microtask queue, which may drain — and the browser may commit the transaction — before your next line runs.
+- It has no pending requests.
+- The current task has finished and the microtask queue is empty.
+
+`await` resumes your code in a later microtask. If you `await` a promise that isn't waiting on an IndexedDB request, the queue can empty while you wait. The browser then commits the transaction. When your code resumes and issues its next request, the browser throws `TransactionInactiveError`, or `InvalidStateError` if the transaction has already finished.
+
+This behaviour comes from the IndexedDB specification, not from any one browser. Because it depends on timing, the failure is intermittent. It often passes in tests and fails in production under load.
 
 ## Decision
 
-All IDB request issuance inside a live transaction must be synchronous and callback-based, with no `await` between request creation and the next request in a chain. Specifically:
+While a transaction is open, the driver issues every request synchronously from a callback:
 
-- No `await` inside `onsuccess`, `onerror`, or `oncomplete` handlers.
-- Multi-step operations (e.g. `execUpdate`: get → merge → put) chain requests by issuing the next request inside the previous request's `onsuccess`.
-- Batch operations chain through recursive `runOpsSequentially()` callbacks.
-- The outer `execute()` wrapper wraps the whole transaction in a Promise that resolves on `tx.oncomplete` — this is fine because the Promise resolves after the transaction is already done.
+- No handler (`onsuccess`, `onerror`, `oncomplete`) is `async`, and none contains an `await`.
+- A multi-step operation issues its next request inside the previous request's `onsuccess`. For example, `execUpdate` reads a record, merges the patch, and writes it back.
+- A batch plan runs its operations one after another through `runOpsSequentially`, which starts each operation from the previous one's completion callback.
+- `executeIdbPlan` wraps the whole transaction in a promise that resolves in `tx.oncomplete`. This is safe, because by then the transaction has finished and no more requests will be issued.
 
-### Correct pattern (from `execute/ops.ts`):
+### Correct: the next request starts inside `onsuccess`
+
+This is `execUpdate` from `execute/ops.ts`, simplified:
 
 ```ts
-// execUpdate: get → merge → put, all inside one readwrite transaction
 function execUpdate(store: IDBObjectStore, plan: IdbUpdatePlan, onComplete, onError) {
   const getReq = store.get(plan.key);
   getReq.onsuccess = () => {
@@ -30,7 +44,7 @@ function execUpdate(store: IDBObjectStore, plan: IdbUpdatePlan, onComplete, onEr
       return;
     }
     const merged = { ...existing, ...plan.patch };
-    const putReq = store.put(merged); // issued SYNCHRONOUSLY inside onsuccess
+    const putReq = store.put(merged); // issued synchronously, inside onsuccess
     putReq.onsuccess = () => onComplete([merged]);
     putReq.onerror = () => onError(putReq.error);
   };
@@ -38,44 +52,36 @@ function execUpdate(store: IDBObjectStore, plan: IdbUpdatePlan, onComplete, onEr
 }
 ```
 
-### Anti-pattern (what we do NOT do):
+### Wrong: an `await` between two requests
 
 ```ts
-// This would silently corrupt transactions
 getReq.onsuccess = async () => {
-  const existing = getReq.result;
-  const merged = { ...existing, ...plan.patch };
-  await someHelperFunction(); // ← yields to microtask queue; transaction may auto-commit here
-  store.put(merged); // ← IDB request on a committed transaction → InvalidStateError
+  const merged = { ...getReq.result, ...plan.patch };
+  await someHelperFunction(); // the transaction can commit here
+  store.put(merged); // throws: the transaction is no longer active
 };
 ```
 
-## Why this constraint exists
+### Operations that look like they need `await`
 
-This is an IDB specification requirement, not a browser implementation quirk. The IDB spec states that a transaction's active flag is set to false after the event dispatch that created the request returns. In practice, this means: once an event handler returns without issuing a new request, the transaction is eligible for commit. Awaiting a Promise between requests creates a gap in which the browser is free to commit.
+- **Sorted cursor scans.** `execCursorScan` must see every row before it can sort. Each `onsuccess` stores the row and calls `cursor.continue()` synchronously. When the cursor is exhausted, the last `onsuccess` sorts the collected rows. Sorting is synchronous, so no `await` is needed.
+- **Batches across several stores.** `executeBatchPlan` opens one transaction for all the stores and runs the operations through `runOpsSequentially`, as described above.
 
-The failure mode is an `InvalidStateError` thrown by IDB when code attempts to use an already-committed transaction. This error is easy to miss in tests (where timing is different) and can be intermittent in production (depends on event loop pressure).
+## Alternatives considered
 
-## How we handle operations that appear to need async work
-
-**`execCursorScan` with sorting:** Sorting requires all rows to be collected before any can be returned. We collect all rows synchronously in the cursor's `onsuccess` chain (each advance issues a synchronous `cursor.continue()`), then sort the collected array in the final `onsuccess` when the cursor is exhausted. The sort itself is synchronous.
-
-**`executeBatchPlan`:** Runs multiple ops across multiple stores in one transaction. Uses `runOpsSequentially()` — a recursive callback that issues the next op only when the current op's `onComplete` fires. No `await` anywhere in the chain.
-
-**The outer Promise wrapper:** The `executeIdbPlan()` function wraps the entire transaction in a `Promise<Row[]>` that resolves in `tx.oncomplete`. This is correct because `tx.oncomplete` fires after all requests are done and the transaction has committed — at that point, no more IDB requests will be issued, so yielding to the microtask queue is safe.
-
-## Testing implications
-
-In tests using `fake-indexeddb`, this constraint is less visible because the fake implementation runs synchronously. Tests that pass with `fake-indexeddb` but use `await` inside transaction handlers will silently work in tests and fail intermittently in real browsers. The architecture rule is: if you can't write it without `await` inside a handler, reconsider the approach.
+- **`async`/`await` inside the transaction.** Easier to read, but unsafe for the reasons in Context. Rejected.
 
 ## Consequences
 
-- All multi-step IDB operations are more verbose than their async equivalents.
-- Adding new operation types requires following the callback-chaining pattern established in `execute/ops.ts`.
-- The constraint is enforced by convention and code review, not by the type system.
+- Multi-step operations are more verbose than their `async` equivalents would be.
+- A new operation type must follow the callback pattern in `execute/ops.ts`.
+- Nothing in the type system enforces this rule. Code review has to.
+- `fake-indexeddb`, which the unit tests use, doesn't always reproduce real browser timing. Code that awaits inside a transaction can pass the unit tests and still fail in a browser. The Playwright tests in `apps/prisma-orm-usage` run in real Chromium and WebKit to catch this.
+- If a request is issued on a transaction that has already committed, the driver reports an `IdbExecuteError` with the code `TRANSACTION_INACTIVE`, which explains the cause. See [ADR 017](ADR%20017%20-%20Native%20IndexedDB%20Feature%20Parity.md).
+- The manual transaction scope in [ADR 007](ADR%20007%20-%20Two%20Transaction%20APIs.md) lets application code `await` between requests. The same rule applies there: only await promises that resolve from IndexedDB requests.
 
 ## Related
 
-- `driver-idb/src/core/execute/ops.ts` — all operation implementations follow this pattern
-- `driver-idb/src/core/execute/index.ts` — `executeBatchPlan` and `executeAtomicPlan` wrappers
-- MDN: [Using IndexedDB — transactions](https://developer.mozilla.org/en-US/docs/Web/API/IndexedDB_API/Using_IndexedDB#using_a_transaction) — "A transaction has a fixed scope that you specify when you create the transaction."
+- `driver-idb/src/core/execute/ops.ts`: every operation follows this pattern.
+- `driver-idb/src/core/execute/index.ts`: `executeIdbPlan`, `executeAtomicPlan`, `executeBatchPlan` and `runOpsSequentially`.
+- MDN: [Using IndexedDB, transactions](https://developer.mozilla.org/en-US/docs/Web/API/IndexedDB_API/Using_IndexedDB#using_a_transaction).

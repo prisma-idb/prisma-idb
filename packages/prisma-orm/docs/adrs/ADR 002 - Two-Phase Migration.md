@@ -1,75 +1,74 @@
-# ADR 002 — Two-Phase Migration: DDL in upgradeneeded, Marker Write Separately
+# ADR 002: Schema changes and the marker commit in one transaction
+
+- **Status:** Accepted
+- **Date:** 2026-05-24, revised 2026-09-26
+- **Area:** Migrations
+
+## Summary
+
+A migration applies its schema changes and writes its marker in the same IndexedDB transaction: the version-change transaction that runs `upgradeneeded`. Either both commit or neither does. The database can never have a new schema with an old marker.
 
 ## Context
 
-IDB migrations involve two distinct operations:
+A migration does two things:
 
-1. **DDL** — creating/dropping object stores and indexes. This can only happen inside the `upgradeneeded` callback, which fires inside a version-change transaction.
-2. **Marker write** — writing the `storageHash` and `profileHash` into the `_prisma_next_marker` object store so the runtime can verify schema correctness.
+1. **Change the schema.** Create or drop object stores and indexes. IndexedDB only allows this inside the `upgradeneeded` callback, which runs in a special version-change transaction.
+2. **Write the marker.** Record the new contract's `storageHash` in the `_prisma_next_marker` store, so the runtime can check that the database matches the contract it was built for.
 
-The version-change transaction that carries DDL is technically capable of also writing data records. The `_prisma_next_marker` store exists after DDL creates it, so the marker record could be written in the same version-change transaction. The question is: should we?
+The version-change transaction can also read and write records, so both steps fit in it.
+
+This ADR first made the opposite choice: schema changes in `upgradeneeded`, then the marker in a separate `readwrite` transaction after the open succeeded. That left a gap. If the app stopped between the two, the database had the new schema but the old marker. The next open saw the old marker and replayed the migration.
+
+Replaying was only safe because every schema operation checks whether its store or index already exists. Record transforms ([ADR 016](ADR%20016%20-%20Declarative%20Record%20Transforms%20in%20IDB%20Migrations.md)) would break that. A transform such as "multiply `price` by 100" can't tell whether it already ran, so a replay would apply it twice.
 
 ## Decision
 
-Split migration into two sequential phases:
+`openAndUpgrade` in `target-idb/src/core/apply-ddl-op.ts` does everything inside `upgradeneeded`, in this order:
 
-**Phase 1 — DDL (inside `upgradeneeded`):**
-Open at `targetVersion`. In the `upgradeneeded` callback, apply all `IdbDdlOp` operations (create/drop stores, create/drop indexes). The marker store itself is created here on first migration.
-
-**Phase 2 — Marker write (separate `readwrite` transaction):**
-After the version-change transaction commits and the database is open at the new version, open a separate `readwrite` transaction on `_prisma_next_marker` and write the marker record (`storageHash`, `profileHash`, `updatedAt`).
-
-The runner owns both phases. The caller (CLI or family instance) writes `idbVersion` to the manifest only after both phases succeed.
-
-### Sequence
+1. Apply every schema operation (`applyOneDdlOp`). The first migration also creates the marker store.
+2. Put every marker record into `_prisma_next_marker`.
 
 ```
-factory.open(dbName, targetVersion)
-  └── upgradeneeded fires
-        └── applyDdlOps(db, tx, ops)
-              ├── createObjectStore("users", ...)
-              ├── createIndex("users", ...)
-              └── [first migration only] createObjectStore("_prisma_next_marker", ...)
-  └── onsuccess fires → db is open at targetVersion
-        └── writeMarker(db, { storageHash, profileHash, updatedAt })
-              └── db.transaction("_prisma_next_marker", "readwrite")
-                    └── store.put(markerRecord)
+factory.open(dbName, db.version + 1)
+  └── upgradeneeded (one version-change transaction)
+        ├── applyOneDdlOp(db, tx, op) for each op
+        │     ├── createObjectStore("users", ...)
+        │     ├── createIndex("users", ...)
+        │     └── createObjectStore("_prisma_next_marker", ...)   first migration only
+        └── put(marker) for each contract space
+  └── onsuccess: close the connection
 ```
 
-## Why not write the marker inside `upgradeneeded`?
+Markers are written after all the operations, so a marker store created by one of them already exists.
 
-There are two reasons:
+### What happens on failure
 
-**Separation of concerns.** The version-change transaction exists to change the schema. Writing data inside it mixes DDL and DML concerns in a single callback. Separating them makes the runner easier to reason about: phase 1 is schema-only, phase 2 is data-only.
+If anything throws inside `upgradeneeded`, `openAndUpgrade` aborts the transaction. IndexedDB then rolls back every schema change and marker, and the database stays at its previous version. The next open tries the whole migration again.
 
-**Race window is recoverable.** There is a short window between phase 1 completing and phase 2 completing where the schema exists but the marker doesn't. If the process crashes in this window, `verifyMarker()` returns `false` (and on the next auto-migrate the marker still reads the old hash). The next migration run re-collects the already-applied ops from the chain walk and replays them inside a fresh `upgradeneeded`, then re-attempts the marker write.
+This includes a missing marker store. The migration chain should always create it in the first migration, so a missing store means the chain is broken. The upgrade fails with an error that names the store, instead of committing a schema nobody can verify.
 
-This recovery is only safe because **`applyOneDdlOp` is explicitly idempotent** — each op is guarded by an existence check (`db.objectStoreNames.contains(...)` / `store.indexNames.contains(...)`) so a replayed `createObjectStore`/`createIndex` is a no-op instead of a throw.
+When IndexedDB aborts an upgrade, the open request fails with a generic `AbortError`. `openAndUpgrade` keeps the original error and rejects with that instead.
 
-> **Correction (2026-06-04).** An earlier version of this ADR claimed DDL ops are "idempotent under 'store already exists' semantics (IDB's own guarantee)". That is **false** — IndexedDB's `createObjectStore` and `createIndex` throw `ConstraintError` when the target already exists; there is no such guarantee. Before the guards were added (PLAN Issue #25), a crash in the phase-1/phase-2 window left the database **permanently wedged**: every subsequent open replayed the create ops, aborted the version-change transaction on `ConstraintError`, and failed identically forever. The idempotency now lives in `applyOneDdlOp` (`target-idb/src/core/apply-ddl-op.ts`), covered by the "crash-recovery replay" regression tests in `target-idb/test/migration.test.ts`.
+### Schema operations still skip work that's already done
 
-## Failure modes
+`applyOneDdlOp` still checks for an existing store or index before creating one, and for a missing one before dropping it. IndexedDB itself would throw `ConstraintError` on an existing target and abort the upgrade. A normal run no longer replays anything, but a database can still have a schema ahead of its marker, for example one left by an older build that wrote the marker separately. The checks let those databases catch up.
 
-| Failure point                     | Result                                                                         | Recovery                                                                                                          |
-| --------------------------------- | ------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------- |
-| Crash during DDL (phase 1)        | IDB rolls back the version-change transaction; database remains at old version | Next run retries from phase 1                                                                                     |
-| Crash between phase 1 and phase 2 | Database is at new version; marker is absent or stale                          | Next migration run replays the collected ops (idempotent no-op via the existence guards) and re-writes the marker |
-| Crash during phase 2              | Marker write aborted                                                           | Same as above                                                                                                     |
+## Alternatives considered
 
-## What we deliberately did not do
-
-**Single-phase migration:** Writing the marker inside `upgradeneeded` would eliminate the failure window but would make the runner harder to understand — DDL callbacks are not a natural place for data writes, and any bug in marker serialization could corrupt the schema transaction.
-
-**Marker written by the caller (not the runner):** We considered having the caller write the marker after the runner returns, keeping the runner a pure DDL executor. We rejected this because the marker is tightly coupled to migration correctness — if the runner succeeds but the caller forgets to write the marker (or crashes), the database is permanently unverifiable. Owning the marker write inside the runner keeps the invariant local.
+- **Write the marker in a separate transaction after the open succeeds.** This was the original decision. It kept the upgrade callback limited to schema changes, and a bug in building the marker couldn't abort the schema change. Neither turned out to matter: the marker record is a plain object, and if it can't be written, rolling back the schema is the right outcome. Meanwhile the gap between the two transactions made every migration replayable, which isn't safe once migrations transform records. Replaced.
+- **Let the caller write the marker after the runner returns.** A caller that forgets the marker, or stops before writing it, leaves a database that can never be verified. Rejected.
 
 ## Consequences
 
-- The runner is the sole writer of `_prisma_next_marker`. The runtime reads but never writes it (confirmed: `verifyMarker()` opens a `"readonly"` transaction).
-- The manifest's `idbVersion` is written by the caller only after both phases succeed. If the caller crashes between phase 2 and the manifest write, the next run will re-attempt migration at the same `targetVersion` — DDL is a no-op, marker write is idempotent.
-- This means `idbVersion` in the manifest can lag one behind the actual IDB version in edge cases. The `storageHash` comparison is the authoritative check; `idbVersion` is used only to compute `targetVersion`.
+- **No half-migrated state.** `verifyMarker()` never sees a new schema with an old marker, because that state can't be committed.
+- **Record transforms can run in the same transaction** without having to be safe to repeat ([ADR 016](ADR%20016%20-%20Declarative%20Record%20Transforms%20in%20IDB%20Migrations.md)).
+- **Several contract spaces commit together.** When the app and its extensions migrate at once, all their schema changes and markers are in one transaction ([ADR 010](ADR%20010%20-%20Combined%20Single-Transaction%20Multi-Space%20Apply.md)).
+- **Only the migration writes `_prisma_next_marker`.** The runtime only reads it: `verifyMarker()` uses a `readonly` transaction. This matches upstream ADR 021 (Contract Marker Storage).
+- **`writeMarkers` is no longer used by migrations.** It is still exported for callers that need to write a marker on its own. It now rejects when the marker store is missing, instead of logging a warning.
 
 ## Related
 
-- [ADR 001](ADR%20001%20-%20IDB%20Version%20Integer%20as%20Migration%20Identity.md) — overall migration identity model
-- Upstream ADR 021 — Contract Marker Storage (ownership invariant: runner writes, runtime reads)
-- `target-idb/src/core/migration-runner.ts` — implementation
+- `target-idb/src/core/apply-ddl-op.ts`: `openAndUpgrade`, `applyOneDdlOp`, `writeMarkers`, `readMarker`.
+- `client-idb/src/core/auto-migrate.ts`: the browser code that calls `openAndUpgrade`.
+- `target-idb/test/migration.test.ts`: the "schema changes and markers commit together" tests.
+- [ADR 001](ADR%20001%20-%20IDB%20Version%20Integer%20as%20Migration%20Identity.md): why the version number only triggers the upgrade and the marker says which schema the database has.

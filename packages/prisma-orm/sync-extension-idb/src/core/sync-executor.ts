@@ -46,7 +46,8 @@ import type {
   IdbPlanBody,
   IdbTransactionScope,
 } from "@prisma-idb/driver-idb/runtime";
-import { getKeyPath, getStoreName } from "@prisma-idb/client-idb/orm";
+import { extractKeyFromRow, getKeyPath, getStoreName } from "@prisma-idb/client-idb/orm";
+import type { IdbKeyPath } from "@prisma-idb/client-idb/orm";
 import { domainModelsAtDefaultNamespace } from "@prisma/orm-framework/contract/types";
 import type { OutboxEvent, OutboxWriteEntry } from "../types";
 
@@ -221,11 +222,14 @@ function serializableKey(key: IDBValidKey | IDBKeyRange): unknown {
  * Returns `undefined` when the key cannot be determined statically (e.g.
  * scan-write operations that match by filter, not by key).
  */
-function extractKey(ast: MutationAst, keyField: string): unknown {
+function extractKey(ast: MutationAst, keyPath: IdbKeyPath): unknown {
   switch (ast.kind) {
     case "create":
       // Pull key from AST data — the codec hasn't run yet so the value is the raw JS type.
-      return ast.data[keyField];
+      // Always present: a synced model can't use an autoIncrement key (see
+      // `assertNoAutoIncrementTrackedModels`), so the caller or an execution
+      // default has supplied it before the AST was built.
+      return extractKeyFromRow(ast.data as Record<string, unknown>, keyPath);
     case "delete":
       return ast.key;
     case "update":
@@ -362,6 +366,26 @@ function isTrackedModel(config: SyncInterceptorConfig, modelName: string): boole
 }
 
 /**
+ * Throws if a synced model's store uses `autoIncrement`. Each device's key
+ * generator counts from 1 on its own, so two devices would create different
+ * records with the same key and collide on the server. Synced models need
+ * keys that are unique across devices, such as `uuid()` or `cuid()`.
+ */
+function assertNoAutoIncrementTrackedModels(config: SyncInterceptorConfig): void {
+  const { contract } = config;
+  const offending = Object.keys(domainModelsAtDefaultNamespace(contract.domain)).filter(
+    (modelName) =>
+      isTrackedModel(config, modelName) && contract.storage.stores[getStoreName(contract, modelName)]?.autoIncrement
+  );
+  if (offending.length === 0) return;
+  throw new Error(
+    `Synced models can't use @default(autoincrement()) keys: ${offending.join(", ")}. ` +
+      "Each device generates its own sequence, so keys created offline on different devices collide. " +
+      "Use @default(uuid()) or @default(cuid()) instead, or leave the model out of trackedModels."
+  );
+}
+
+/**
  * Executor wrapper that atomically extends tracked mutation plans with outbox
  * and version-meta writes.
  *
@@ -374,6 +398,7 @@ export class SyncInterceptorExecutor implements IdbQueryExecutorWithTransaction 
   readonly #config: SyncInterceptorConfig;
 
   constructor(inner: IdbQueryExecutor, config: SyncInterceptorConfig) {
+    assertNoAutoIncrementTrackedModels(config);
     this.#inner = inner;
     this.#config = config;
   }
@@ -440,7 +465,7 @@ export class SyncInterceptorExecutor implements IdbQueryExecutorWithTransaction 
         modelName,
         operation: "create",
         payload: record,
-        key: record[keyPath],
+        key: extractKeyFromRow(record, keyPath),
       }));
       return { plan: this.#buildBatchPlan(plan, entries), entries };
     }
@@ -572,7 +597,9 @@ class SyncInterceptingTransactionScope implements IdbTransactionScope {
     switch (plan.kind) {
       case "add": {
         const record = plan.record;
-        await this.#writeOutboxAndMeta([{ modelName, operation: "create", payload: record, key: record[keyPath] }]);
+        await this.#writeOutboxAndMeta([
+          { modelName, operation: "create", payload: record, key: extractKeyFromRow(record, keyPath) },
+        ]);
         return;
       }
       case "delete": {
@@ -591,14 +618,19 @@ class SyncInterceptingTransactionScope implements IdbTransactionScope {
         const merged = rows[0];
         if (!merged) return;
         await this.#writeOutboxAndMeta([
-          { modelName, operation: "update", payload: { patch: plan.patch, key: plan.key }, key: merged[keyPath] },
+          {
+            modelName,
+            operation: "update",
+            payload: { patch: plan.patch, key: plan.key },
+            key: extractKeyFromRow(merged, keyPath),
+          },
         ]);
         return;
       }
       case "scan-write": {
         const operation = plan.write === "delete" ? "delete" : "update";
         const entries: OutboxWriteEntry[] = rows.map((row) => {
-          const key = row[keyPath];
+          const key = extractKeyFromRow(row, keyPath);
           const payload = plan.write === "delete" ? { key } : { patch: plan.patch, key };
           return { modelName, operation, payload, key };
         });
@@ -614,6 +646,8 @@ class SyncInterceptingTransactionScope implements IdbTransactionScope {
       case "key-get":
       case "index-get":
       case "cursor-scan":
+      case "count":
+      case "keys":
         return;
       default: {
         const _exhaustive: never = plan;
