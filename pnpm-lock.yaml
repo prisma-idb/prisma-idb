@@ -897,6 +897,10 @@ importers:
         version: 4.6.5
 
   packages/benchmark-kit:
+    dependencies:
+      tsx:
+        specifier: ^4.23.11
+        version: 4.23.15
     devDependencies:
       '@types/node':
         specifier: ^24.10.9

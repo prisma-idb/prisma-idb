@@ -8,6 +8,10 @@
     ".": "./src/index.ts",
     "./node": "./src/node.ts"
   },
+  "bin": {
+    "benchmark-compare": "./src/cli/compare-benchmark-results.ts",
+    "benchmark-comment": "./src/cli/publish-benchmark-pr-comment.ts"
+  },
   "scripts": {
     "check": "tsc --noEmit",
     "lint": "prettier --check . && eslint .",
@@ -16,5 +20,8 @@
   "devDependencies": {
     "@types/node": "^24.13.3",
     "typescript": "^6.0.3"
+  },
+  "dependencies": {
+    "tsx": "^4.23.11"
   }
 }
