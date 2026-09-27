@@ -17,10 +17,10 @@ afterEach(() => {
 });
 
 function interpret(schema: string, projection?: ContractProjection) {
-  const { document, sourceFile } = parse(schema);
-  const { table } = buildSymbolTable({
-    document,
-    sourceFile,
+  const { document, sources } = parse(schema, "test.prisma");
+  const { symbolTable: table } = buildSymbolTable({
+    documents: [document],
+    sources,
     pslBlockDescriptors: {},
   });
   return interpretPslDocumentToIdbContract(table, "test.prisma", projection !== undefined ? { projection } : undefined);
@@ -542,6 +542,33 @@ describe("interpretPslDocumentToIdbContract", () => {
         cardinality: "1:N",
         on: { localFields: ["id"], targetFields: ["userId"] },
       });
+      expect(userModel.relations["posts"]).not.toHaveProperty("nullable");
+    });
+
+    it("marks a to-one relation nullable from the relation field's optionality", () => {
+      const result = interpret(`
+        model User {
+          id       String  @id
+          posts    Post[]
+          comments Comment[]
+        }
+        model Post {
+          id     String @id
+          userId String
+          user   User   @relation(fields: [userId], references: [id])
+        }
+        model Comment {
+          id     String  @id
+          userId String?
+          user   User?   @relation(fields: [userId], references: [id])
+        }
+      `);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+
+      const models = result.value.domain.namespaces[NS]!.models as unknown as Record<string, TestContractModel>;
+      expect(models["Post"]!.relations["user"]).toMatchObject({ cardinality: "N:1", nullable: false });
+      expect(models["Comment"]!.relations["user"]).toMatchObject({ cardinality: "N:1", nullable: true });
     });
 
     it("stores onDelete in IdbModelStorage.relations", () => {

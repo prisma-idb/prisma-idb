@@ -260,6 +260,8 @@ interface InterpretedModel {
       readonly to: ReturnType<typeof crossRef>;
       readonly cardinality: "1:1" | "1:N" | "N:1";
       readonly on: { readonly localFields: readonly string[]; readonly targetFields: readonly string[] };
+      /** Set on to-one relations only; the emitter requires it there. */
+      readonly nullable?: boolean;
     }
   >;
   readonly relationsStorage: Record<string, { onDelete?: IdbReferentialAction; onUpdate?: IdbReferentialAction }>;
@@ -544,6 +546,8 @@ function interpretModel(
         to: crossRef(field.typeName),
         cardinality: "N:1",
         on: { localFields, targetFields },
+        // `author User?` is the PSL spelling of an optional to-one relation.
+        nullable: field.optional,
       };
       if (onDelete !== undefined || onUpdate !== undefined) {
         relationsStorage[field.name] = {
@@ -923,11 +927,13 @@ export function interpretPslDocumentToIdbContract(
   // IDB does not support namespace blocks
   const explicitNamespaces = Object.values(table.topLevel.namespaces);
   for (const ns of explicitNamespaces) {
+    // A namespace can be declared more than once; anchor on its first declaration.
+    const span = ns.declarations[0]?.span;
     diagnostics.push({
       code: "IDB_UNSUPPORTED_NAMESPACE_BLOCK",
       message: `IDB does not support \`namespace ${ns.name} { … }\` blocks. All models must be declared at the top level.`,
       sourceId,
-      span: ns.span,
+      ...(span !== undefined ? { span } : {}),
     });
   }
 

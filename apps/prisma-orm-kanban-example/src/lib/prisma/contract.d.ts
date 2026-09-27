@@ -22,59 +22,102 @@ export type LaneCodecTypes = CodecTypes;
 export type FieldOutputTypes = {
   readonly __unbound__: {
     readonly Board: {
+      readonly createdAt: CodecTypes["idb/date@1"]["output"];
       readonly id: CodecTypes["idb/string@1"]["output"];
       readonly name: CodecTypes["idb/string@1"]["output"];
-      readonly createdAt: CodecTypes["idb/date@1"]["output"];
       readonly userId: CodecTypes["idb/string@1"]["output"];
     };
     readonly Todo: {
-      readonly id: CodecTypes["idb/string@1"]["output"];
-      readonly title: CodecTypes["idb/string@1"]["output"];
-      readonly description: CodecTypes["idb/string@1"]["output"] | null;
-      readonly isCompleted: CodecTypes["idb/bool@1"]["output"];
-      readonly createdAt: CodecTypes["idb/date@1"]["output"];
       readonly boardId: CodecTypes["idb/string@1"]["output"];
+      readonly createdAt: CodecTypes["idb/date@1"]["output"];
+      readonly description: CodecTypes["idb/string@1"]["output"] | null;
+      readonly id: CodecTypes["idb/string@1"]["output"];
+      readonly isCompleted: CodecTypes["idb/bool@1"]["output"];
+      readonly title: CodecTypes["idb/string@1"]["output"];
     };
     readonly User: {
-      readonly id: CodecTypes["idb/string@1"]["output"];
-      readonly name: CodecTypes["idb/string@1"]["output"];
+      readonly createdAt: CodecTypes["idb/date@1"]["output"];
       readonly email: CodecTypes["idb/string@1"]["output"];
       readonly emailVerified: CodecTypes["idb/bool@1"]["output"];
+      readonly id: CodecTypes["idb/string@1"]["output"];
       readonly image: CodecTypes["idb/string@1"]["output"] | null;
-      readonly createdAt: CodecTypes["idb/date@1"]["output"];
-      readonly updatedAt: CodecTypes["idb/date@1"]["output"];
       readonly isAnonymous: CodecTypes["idb/bool@1"]["output"];
+      readonly name: CodecTypes["idb/string@1"]["output"];
+      readonly updatedAt: CodecTypes["idb/date@1"]["output"];
     };
   };
 };
 export type FieldInputTypes = {
   readonly __unbound__: {
     readonly Board: {
+      readonly createdAt: CodecTypes["idb/date@1"]["input"];
       readonly id: CodecTypes["idb/string@1"]["input"];
       readonly name: CodecTypes["idb/string@1"]["input"];
-      readonly createdAt: CodecTypes["idb/date@1"]["input"];
       readonly userId: CodecTypes["idb/string@1"]["input"];
     };
     readonly Todo: {
-      readonly id: CodecTypes["idb/string@1"]["input"];
-      readonly title: CodecTypes["idb/string@1"]["input"];
-      readonly description: CodecTypes["idb/string@1"]["input"] | null;
-      readonly isCompleted: CodecTypes["idb/bool@1"]["input"];
-      readonly createdAt: CodecTypes["idb/date@1"]["input"];
       readonly boardId: CodecTypes["idb/string@1"]["input"];
+      readonly createdAt: CodecTypes["idb/date@1"]["input"];
+      readonly description: CodecTypes["idb/string@1"]["input"] | null;
+      readonly id: CodecTypes["idb/string@1"]["input"];
+      readonly isCompleted: CodecTypes["idb/bool@1"]["input"];
+      readonly title: CodecTypes["idb/string@1"]["input"];
     };
     readonly User: {
-      readonly id: CodecTypes["idb/string@1"]["input"];
-      readonly name: CodecTypes["idb/string@1"]["input"];
+      readonly createdAt: CodecTypes["idb/date@1"]["input"];
       readonly email: CodecTypes["idb/string@1"]["input"];
       readonly emailVerified: CodecTypes["idb/bool@1"]["input"];
+      readonly id: CodecTypes["idb/string@1"]["input"];
       readonly image: CodecTypes["idb/string@1"]["input"] | null;
-      readonly createdAt: CodecTypes["idb/date@1"]["input"];
-      readonly updatedAt: CodecTypes["idb/date@1"]["input"];
       readonly isAnonymous: CodecTypes["idb/bool@1"]["input"];
+      readonly name: CodecTypes["idb/string@1"]["input"];
+      readonly updatedAt: CodecTypes["idb/date@1"]["input"];
     };
   };
 };
+
+export namespace Models {
+  export type unbound_Board = {
+    createdAt: CodecTypes["idb/date@1"]["output"];
+    id: CodecTypes["idb/string@1"]["output"];
+    name: CodecTypes["idb/string@1"]["output"];
+    userId: CodecTypes["idb/string@1"]["output"];
+    todos: unbound_Todo[];
+    user: unbound_User;
+    readonly [RelationKeys]?: "todos" | "user";
+  };
+  export type unbound_Todo = {
+    boardId: CodecTypes["idb/string@1"]["output"];
+    createdAt: CodecTypes["idb/date@1"]["output"];
+    description: CodecTypes["idb/string@1"]["output"] | null;
+    id: CodecTypes["idb/string@1"]["output"];
+    isCompleted: CodecTypes["idb/bool@1"]["output"];
+    title: CodecTypes["idb/string@1"]["output"];
+    board: unbound_Board;
+    readonly [RelationKeys]?: "board";
+  };
+  export type unbound_User = {
+    createdAt: CodecTypes["idb/date@1"]["output"];
+    email: CodecTypes["idb/string@1"]["output"];
+    emailVerified: CodecTypes["idb/bool@1"]["output"];
+    id: CodecTypes["idb/string@1"]["output"];
+    image: CodecTypes["idb/string@1"]["output"] | null;
+    isAnonymous: CodecTypes["idb/bool@1"]["output"];
+    name: CodecTypes["idb/string@1"]["output"];
+    updatedAt: CodecTypes["idb/date@1"]["output"];
+    boards: unbound_Board[];
+    readonly [RelationKeys]?: "boards";
+  };
+}
+
+export declare const models: {
+  __unbound__: {
+    Board: Models.unbound_Board;
+    Todo: Models.unbound_Todo;
+    User: Models.unbound_User;
+  };
+};
+
 export type TypeMaps = IdbTypeMaps<CodecTypes, FieldOutputTypes, FieldInputTypes>;
 
 type ContractBase = Omit<
@@ -109,9 +152,9 @@ type ContractBase = Omit<
   readonly target: "idb";
   readonly targetFamily: "idb";
   readonly roots: {
-    readonly user: { readonly namespace: "__unbound__" & NamespaceId; readonly model: "User" };
     readonly board: { readonly namespace: "__unbound__" & NamespaceId; readonly model: "Board" };
     readonly todo: { readonly namespace: "__unbound__" & NamespaceId; readonly model: "Todo" };
+    readonly user: { readonly namespace: "__unbound__" & NamespaceId; readonly model: "User" };
   };
   readonly domain: {
     readonly namespaces: {
@@ -119,6 +162,10 @@ type ContractBase = Omit<
         readonly models: {
           readonly Board: {
             readonly fields: {
+              readonly createdAt: {
+                readonly nullable: false;
+                readonly type: { readonly kind: "scalar"; readonly codecId: "idb/date@1" };
+              };
               readonly id: {
                 readonly nullable: false;
                 readonly type: { readonly kind: "scalar"; readonly codecId: "idb/string@1" };
@@ -127,27 +174,12 @@ type ContractBase = Omit<
                 readonly nullable: false;
                 readonly type: { readonly kind: "scalar"; readonly codecId: "idb/string@1" };
               };
-              readonly createdAt: {
-                readonly nullable: false;
-                readonly type: { readonly kind: "scalar"; readonly codecId: "idb/date@1" };
-              };
               readonly userId: {
                 readonly nullable: false;
                 readonly type: { readonly kind: "scalar"; readonly codecId: "idb/string@1" };
               };
             };
             readonly relations: {
-              readonly user: {
-                readonly to: {
-                  readonly namespace: "__unbound__" & NamespaceId;
-                  readonly model: "User";
-                };
-                readonly cardinality: "N:1";
-                readonly on: {
-                  readonly localFields: readonly ["userId"];
-                  readonly targetFields: readonly ["id"];
-                };
-              };
               readonly todos: {
                 readonly to: {
                   readonly namespace: "__unbound__" & NamespaceId;
@@ -159,32 +191,44 @@ type ContractBase = Omit<
                   readonly targetFields: readonly ["boardId"];
                 };
               };
+              readonly user: {
+                readonly to: {
+                  readonly namespace: "__unbound__" & NamespaceId;
+                  readonly model: "User";
+                };
+                readonly cardinality: "N:1";
+                readonly nullable: false;
+                readonly on: {
+                  readonly localFields: readonly ["userId"];
+                  readonly targetFields: readonly ["id"];
+                };
+              };
             };
             readonly storage: { readonly storeName: "board"; readonly keyPath: "id" };
           };
           readonly Todo: {
             readonly fields: {
-              readonly id: {
+              readonly boardId: {
                 readonly nullable: false;
                 readonly type: { readonly kind: "scalar"; readonly codecId: "idb/string@1" };
               };
-              readonly title: {
+              readonly createdAt: {
                 readonly nullable: false;
-                readonly type: { readonly kind: "scalar"; readonly codecId: "idb/string@1" };
+                readonly type: { readonly kind: "scalar"; readonly codecId: "idb/date@1" };
               };
               readonly description: {
                 readonly nullable: true;
+                readonly type: { readonly kind: "scalar"; readonly codecId: "idb/string@1" };
+              };
+              readonly id: {
+                readonly nullable: false;
                 readonly type: { readonly kind: "scalar"; readonly codecId: "idb/string@1" };
               };
               readonly isCompleted: {
                 readonly nullable: false;
                 readonly type: { readonly kind: "scalar"; readonly codecId: "idb/bool@1" };
               };
-              readonly createdAt: {
-                readonly nullable: false;
-                readonly type: { readonly kind: "scalar"; readonly codecId: "idb/date@1" };
-              };
-              readonly boardId: {
+              readonly title: {
                 readonly nullable: false;
                 readonly type: { readonly kind: "scalar"; readonly codecId: "idb/string@1" };
               };
@@ -196,6 +240,7 @@ type ContractBase = Omit<
                   readonly model: "Board";
                 };
                 readonly cardinality: "N:1";
+                readonly nullable: false;
                 readonly on: {
                   readonly localFields: readonly ["boardId"];
                   readonly targetFields: readonly ["id"];
@@ -206,13 +251,9 @@ type ContractBase = Omit<
           };
           readonly User: {
             readonly fields: {
-              readonly id: {
+              readonly createdAt: {
                 readonly nullable: false;
-                readonly type: { readonly kind: "scalar"; readonly codecId: "idb/string@1" };
-              };
-              readonly name: {
-                readonly nullable: false;
-                readonly type: { readonly kind: "scalar"; readonly codecId: "idb/string@1" };
+                readonly type: { readonly kind: "scalar"; readonly codecId: "idb/date@1" };
               };
               readonly email: {
                 readonly nullable: false;
@@ -222,21 +263,25 @@ type ContractBase = Omit<
                 readonly nullable: false;
                 readonly type: { readonly kind: "scalar"; readonly codecId: "idb/bool@1" };
               };
+              readonly id: {
+                readonly nullable: false;
+                readonly type: { readonly kind: "scalar"; readonly codecId: "idb/string@1" };
+              };
               readonly image: {
                 readonly nullable: true;
                 readonly type: { readonly kind: "scalar"; readonly codecId: "idb/string@1" };
               };
-              readonly createdAt: {
+              readonly isAnonymous: {
                 readonly nullable: false;
-                readonly type: { readonly kind: "scalar"; readonly codecId: "idb/date@1" };
+                readonly type: { readonly kind: "scalar"; readonly codecId: "idb/bool@1" };
+              };
+              readonly name: {
+                readonly nullable: false;
+                readonly type: { readonly kind: "scalar"; readonly codecId: "idb/string@1" };
               };
               readonly updatedAt: {
                 readonly nullable: false;
                 readonly type: { readonly kind: "scalar"; readonly codecId: "idb/date@1" };
-              };
-              readonly isAnonymous: {
-                readonly nullable: false;
-                readonly type: { readonly kind: "scalar"; readonly codecId: "idb/bool@1" };
               };
             };
             readonly relations: {
@@ -260,9 +305,8 @@ type ContractBase = Omit<
   };
   readonly capabilities: {
     readonly idb: {
-      readonly compoundKeys: false;
+      readonly compoundKeys: true;
       readonly ddlOnlyInUpgrade: true;
-      readonly returning: false;
       readonly transactionalDDL: true;
     };
   };
@@ -272,35 +316,35 @@ type ContractBase = Omit<
     readonly mutations: {
       readonly defaults: readonly [
         {
+          readonly onCreate: {
+            readonly id: "literal";
+            readonly kind: "generator";
+            readonly params: {};
+          };
           readonly ref: {
-            readonly namespace: "__unbound__";
-            readonly table: "user";
             readonly column: "emailVerified";
-          };
-          readonly onCreate: {
-            readonly kind: "generator";
-            readonly id: "literal";
-            readonly params: { readonly value: false };
+            readonly namespace: "__unbound__";
+            readonly table: "user";
           };
         },
         {
+          readonly onCreate: { readonly id: "timestampNow"; readonly kind: "generator" };
           readonly ref: {
-            readonly namespace: "__unbound__";
-            readonly table: "user";
             readonly column: "createdAt";
-          };
-          readonly onCreate: { readonly kind: "generator"; readonly id: "timestampNow" };
-        },
-        {
-          readonly ref: {
             readonly namespace: "__unbound__";
             readonly table: "user";
-            readonly column: "isAnonymous";
           };
+        },
+        {
           readonly onCreate: {
-            readonly kind: "generator";
             readonly id: "literal";
-            readonly params: { readonly value: false };
+            readonly kind: "generator";
+            readonly params: {};
+          };
+          readonly ref: {
+            readonly column: "isAnonymous";
+            readonly namespace: "__unbound__";
+            readonly table: "user";
           };
         },
       ];

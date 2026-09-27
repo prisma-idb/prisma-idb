@@ -97,6 +97,33 @@ describe("idbEmission", () => {
       expect(result).toContain("readonly unique: false");
     });
 
+    it("emits unique: false for an index whose flag was dropped by canonicalization", () => {
+      const contract = defineContract({
+        family: idbFamilyPack,
+        target: idbTargetPack,
+        models: {
+          Post: {
+            store: "posts",
+            key: "id",
+            fields: { id: "String", authorId: "String" },
+            indexes: { byAuthorId: { keyPath: "authorId", unique: false } },
+          },
+        },
+      });
+      // contract.json omits `unique: false`, and the emitter types the canonical form.
+      const { unique: _dropped, ...canonicalIndex } = contract.storage.stores["posts"]!.indexes!["byAuthorId"]!;
+      const canonical = {
+        ...contract,
+        storage: {
+          ...contract.storage,
+          stores: { posts: { ...contract.storage.stores["posts"]!, indexes: { byAuthorId: canonicalIndex } } },
+        },
+      } as unknown as typeof contract;
+      const result = idbEmission.generateStorageType(canonical, "H");
+      expect(result).toContain("readonly keyPath: 'authorId'; readonly unique: false");
+      expect(result).not.toContain("undefined");
+    });
+
     it("serializes a compound (array) store keyPath as a readonly tuple type", () => {
       const contract = defineContract({
         family: idbFamilyPack,

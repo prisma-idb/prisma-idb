@@ -73,10 +73,10 @@ interface ContractArtifacts {
 }
 
 function emitContract(schema: string, sourceId = "schema.prisma"): ContractArtifacts {
-  const { document, sourceFile } = parse(schema);
-  const { table } = buildSymbolTable({
-    document,
-    sourceFile,
+  const { document, sources } = parse(schema, sourceId);
+  const { symbolTable: table } = buildSymbolTable({
+    documents: [document],
+    sources,
     pslBlockDescriptors: {},
   });
   const result = interpretPslDocumentToIdbContract(table, sourceId);

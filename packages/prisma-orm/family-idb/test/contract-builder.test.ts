@@ -209,6 +209,44 @@ describe("defineContract — @idb.exclude projection (ADR 012)", () => {
   });
 });
 
+describe("defineContract — to-one relation nullability", () => {
+  it("derives nullable from the local FK fields and honors an explicit override", () => {
+    const contract = defineContract({
+      family: idbFamilyPack,
+      target: idbTargetPack,
+      models: {
+        User: {
+          store: "users",
+          key: "id",
+          fields: { id: "String" },
+          relations: {
+            posts: { to: "Post", cardinality: "1:N", on: { local: ["id"], target: ["authorId"] } },
+          },
+        },
+        Post: {
+          store: "posts",
+          key: "id",
+          fields: { id: "String", authorId: "String", editorId: "String?", reviewerId: "String" },
+          relations: {
+            author: { to: "User", cardinality: "N:1", on: { local: ["authorId"], target: ["id"] } },
+            editor: { to: "User", cardinality: "N:1", on: { local: ["editorId"], target: ["id"] } },
+            reviewer: { to: "User", cardinality: "N:1", on: { local: ["reviewerId"], target: ["id"] }, nullable: true },
+          },
+        },
+      },
+    });
+
+    const models = domainModelsAtDefaultNamespace(contract.domain) as Record<
+      string,
+      { relations: Record<string, object> }
+    >;
+    expect(models["Post"]!.relations["author"]).toMatchObject({ nullable: false });
+    expect(models["Post"]!.relations["editor"]).toMatchObject({ nullable: true });
+    expect(models["Post"]!.relations["reviewer"]).toMatchObject({ nullable: true });
+    expect(models["User"]!.relations["posts"]).not.toHaveProperty("nullable");
+  });
+});
+
 describe("defineContract — FK projection cascade (ADR 013)", () => {
   it("drops a required N:1 relation to an excluded model, keeping the model and its FK scalar field", () => {
     const contract = defineContract(

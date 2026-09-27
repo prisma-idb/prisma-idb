@@ -26,9 +26,9 @@
     "@playwright/test": "^1.63.0",
     "@prisma-idb/adapter-idb": "workspace:*",
     "@prisma-idb/driver-idb": "workspace:*",
-    "@prisma/cli-engine": "0.2.0",
+    "@prisma/cli-engine": "0.6.1",
     "@types/node": "^24.13.3",
-    "prisma": "8.0.0-rc.7",
+    "prisma": "8.0.0-rc.17",
     "tsx": "^4.23.11",
     "typescript": "^6.0.3",
     "vite": "^8.2.1"

@@ -47,6 +47,12 @@ export type RelationDef = {
   };
   readonly onDelete?: IdbReferentialAction;
   readonly onUpdate?: IdbReferentialAction;
+  /**
+   * Whether a to-one (`N:1` / `1:1`) relation can be absent. Defaults to
+   * `true` when any `on.local` field is nullable (`"String?"`), `false`
+   * otherwise. Ignored for `1:N`.
+   */
+  readonly nullable?: boolean;
 };
 
 export type IndexDef = {
@@ -384,6 +390,7 @@ type ContractModelEntry = {
       readonly to: CrossReference;
       readonly cardinality: "1:1" | "1:N" | "N:1";
       readonly on: { readonly localFields: readonly string[]; readonly targetFields: readonly string[] };
+      readonly nullable?: boolean;
     }
   >;
   readonly storage: IdbModelStorage;
@@ -400,6 +407,10 @@ function buildModels(models: Record<string, ModelDef>): Record<string, ContractM
         to: crossRef(rel.to),
         cardinality: rel.cardinality,
         on: { localFields: rel.on.local, targetFields: rel.on.target },
+        // The emitter rejects a to-one relation without a boolean `nullable`.
+        ...(rel.cardinality === "1:N"
+          ? {}
+          : { nullable: rel.nullable ?? rel.on.local.some((f) => def.fields[f]?.endsWith("?") === true) }),
       };
       if (rel.onDelete !== undefined || rel.onUpdate !== undefined) {
         relationsStorage[relName] = {

@@ -66,6 +66,7 @@
               },
               "user": {
                 "cardinality": "N:1",
+                "nullable": false,
                 "on": {
                   "localFields": ["userId"],
                   "targetFields": ["id"]
@@ -134,6 +135,7 @@
             "relations": {
               "board": {
                 "cardinality": "N:1",
+                "nullable": false,
                 "on": {
                   "localFields": ["boardId"],
                   "targetFields": ["id"]
@@ -316,6 +318,7 @@
   },
   "capabilities": {
     "idb": {
+      "compoundKeys": true,
       "ddlOnlyInUpgrade": true,
       "transactionalDDL": true
     }

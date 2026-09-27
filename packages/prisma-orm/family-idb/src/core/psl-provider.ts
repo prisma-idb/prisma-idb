@@ -1,8 +1,7 @@
 import { readFile } from "node:fs/promises";
-import type { ContractConfig, ContractSourceDiagnostic } from "@prisma/orm-framework/config/config-types";
-import { buildSymbolTable, rangeToPslSpan } from "@prisma/orm-framework/psl-parser";
+import type { ContractConfig } from "@prisma/orm-framework/config/config-types";
+import { buildSymbolTable, mapPslDiagnostics } from "@prisma/orm-framework/psl-parser";
 import { withSeedDiagnostics } from "@prisma/orm-framework/psl-parser/interpret";
-import type { ParseDiagnostic, SourceFile } from "@prisma/orm-framework/psl-parser/syntax";
 import { parse } from "@prisma/orm-framework/psl-parser/syntax";
 import { notOk } from "@prisma/orm-framework/utils/result";
 import { extname, basename } from "pathe";
@@ -35,19 +34,6 @@ function defaultOutputFromSchemaPath(schemaPath: string): string {
     return `${base.slice(0, -"schema".length)}contract.json`;
   }
   return `${base}.json`;
-}
-
-function mapParseDiagnostics(
-  diagnostics: readonly ParseDiagnostic[],
-  sourceFile: SourceFile,
-  sourceId: string
-): ContractSourceDiagnostic[] {
-  return diagnostics.map((d) => ({
-    code: d.code as string,
-    message: d.message,
-    sourceId,
-    span: rangeToPslSpan(d.range, sourceFile),
-  }));
 }
 
 export interface PrismaIdbContractOptions {
@@ -123,10 +109,12 @@ export function prismaIdbContract(schemaPath: string, options?: PrismaIdbContrac
           schema = options.injectSchemaText(schema);
         }
 
-        const { document, sourceFile, diagnostics: parseDiagnostics } = parse(schema);
-        const { table, diagnostics: symbolDiagnostics } = buildSymbolTable({
-          document,
-          sourceFile,
+        // The filename becomes each diagnostic's `sourceId`, so pass the
+        // configured schema path to keep diagnostics pointing at the user's file.
+        const { document, sources, diagnostics: parseDiagnostics } = parse(schema, schemaPath);
+        const { symbolTable: table, diagnostics: symbolDiagnostics } = buildSymbolTable({
+          documents: [document],
+          sources,
           pslBlockDescriptors: {},
         });
 
@@ -134,8 +122,8 @@ export function prismaIdbContract(schemaPath: string, options?: PrismaIdbContrac
         // parser/symbol-table still produce a usable table, and the interpreter
         // may surface its own diagnostics in the same response.
         const seedDiagnostics = [
-          ...mapParseDiagnostics(parseDiagnostics, sourceFile, schemaPath),
-          ...mapParseDiagnostics(symbolDiagnostics, sourceFile, schemaPath),
+          ...mapPslDiagnostics(parseDiagnostics, sources),
+          ...mapPslDiagnostics(symbolDiagnostics, sources),
         ];
 
         const interpreted = withSeedDiagnostics(

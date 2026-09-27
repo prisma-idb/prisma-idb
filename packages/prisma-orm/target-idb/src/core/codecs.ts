@@ -1,10 +1,21 @@
 import { JsonValue } from "@prisma/orm-framework/contract/types";
+import {
+  idbBigint,
+  idbBool,
+  idbBytes,
+  idbDate,
+  idbDecimal,
+  idbDouble,
+  idbInt32,
+  idbJson,
+  idbString,
+} from "./data-types";
 import type { AnyCodecDescriptor, CodecInstanceContext, CodecLookup } from "@prisma/orm-framework/components/codec";
 
 /**
  * IDB codec descriptors — the registry of type→IDB mapping metadata.
  *
- * Each descriptor declares its `codecId`, `traits`, `targetTypes`, and a
+ * Each descriptor declares its `codecId`, `dataType`, `traits`, `targetTypes`, and a
  * `factory` that returns a `Codec` instance. This is consumed by the
  * emitter to generate `contract.d.ts` type maps, and by the adapter at
  * runtime to resolve encode/decode per field.
@@ -12,6 +23,7 @@ import type { AnyCodecDescriptor, CodecInstanceContext, CodecLookup } from "@pri
 export const codecDescriptors: readonly AnyCodecDescriptor[] = [
   {
     codecId: "idb/string@1",
+    dataType: idbString.id,
     traits: ["equality", "textual"],
     targetTypes: ["string"],
     paramsSchema: undefined as never,
@@ -26,6 +38,7 @@ export const codecDescriptors: readonly AnyCodecDescriptor[] = [
   },
   {
     codecId: "idb/double@1",
+    dataType: idbDouble.id,
     traits: ["equality", "numeric", "order"],
     targetTypes: ["number"],
     paramsSchema: undefined as never,
@@ -40,6 +53,7 @@ export const codecDescriptors: readonly AnyCodecDescriptor[] = [
   },
   {
     codecId: "idb/int32@1",
+    dataType: idbInt32.id,
     traits: ["equality", "numeric", "order"],
     targetTypes: ["number"],
     paramsSchema: undefined as never,
@@ -62,6 +76,7 @@ export const codecDescriptors: readonly AnyCodecDescriptor[] = [
   },
   {
     codecId: "idb/bool@1",
+    dataType: idbBool.id,
     traits: ["equality", "boolean"],
     targetTypes: ["boolean"],
     paramsSchema: undefined as never,
@@ -76,6 +91,7 @@ export const codecDescriptors: readonly AnyCodecDescriptor[] = [
   },
   {
     codecId: "idb/date@1",
+    dataType: idbDate.id,
     traits: ["equality", "order"],
     targetTypes: ["Date"],
     paramsSchema: undefined as never,
@@ -90,6 +106,7 @@ export const codecDescriptors: readonly AnyCodecDescriptor[] = [
   },
   {
     codecId: "idb/bigint@1",
+    dataType: idbBigint.id,
     traits: ["equality", "numeric", "order"],
     targetTypes: ["bigint"],
     paramsSchema: undefined as never,
@@ -104,6 +121,7 @@ export const codecDescriptors: readonly AnyCodecDescriptor[] = [
   },
   {
     codecId: "idb/decimal@1",
+    dataType: idbDecimal.id,
     traits: ["equality", "numeric"],
     targetTypes: ["string"],
     paramsSchema: undefined as never,
@@ -118,6 +136,7 @@ export const codecDescriptors: readonly AnyCodecDescriptor[] = [
   },
   {
     codecId: "idb/json@1",
+    dataType: idbJson.id,
     traits: ["equality"],
     targetTypes: ["unknown"],
     paramsSchema: undefined as never,
@@ -132,6 +151,7 @@ export const codecDescriptors: readonly AnyCodecDescriptor[] = [
   },
   {
     codecId: "idb/bytes@1",
+    dataType: idbBytes.id,
     traits: ["equality"],
     targetTypes: ["Uint8Array"],
     paramsSchema: undefined as never,

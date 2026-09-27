@@ -90,7 +90,11 @@ export const idbEmission = {
       if (Object.keys(indexes).length > 0) {
         const indexEntries: string[] = [];
         for (const [indexName, index] of Object.entries(indexes).sort(([a], [b]) => a.localeCompare(b))) {
-          const indexParts = [`readonly keyPath: ${serializeValue(index.keyPath)}`, `readonly unique: ${index.unique}`];
+          // Canonicalization drops `unique: false`, so an absent flag means a non-unique index.
+          const indexParts = [
+            `readonly keyPath: ${serializeValue(index.keyPath)}`,
+            `readonly unique: ${index.unique ?? false}`,
+          ];
           if (index.multiEntry !== undefined) {
             indexParts.push(`readonly multiEntry: ${index.multiEntry}`);
           }

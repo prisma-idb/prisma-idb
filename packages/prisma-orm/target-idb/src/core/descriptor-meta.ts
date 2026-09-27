@@ -1,5 +1,6 @@
 import type { TargetDescriptor } from "@prisma/orm-framework/components/components";
 import { codecDescriptors } from "./codecs";
+import { idbDataTypes } from "./data-types";
 
 /**
  * Descriptor metadata for the IndexedDB target.
@@ -8,6 +9,9 @@ import { codecDescriptors } from "./codecs";
  * It is consumed by:
  * - The family descriptor (`family-idb`) to register this target in the control stack.
  * - The emitter during contract generation to stamp `contract.target = 'idb'`.
+ *
+ * `dataTypes` registers the data type every IDB codec names (ADR 254); the
+ * framework refuses to assemble a stack with a codec whose type is unregistered.
  *
  * `types.codecTypes.import` tells the emitter where to import `CodecTypes`
  * when generating `contract.d.ts`. The named export `CodecTypes` must be
@@ -22,6 +26,7 @@ export const idbTargetDescriptorMeta = {
   targetId: "idb",
   id: "idb",
   version: "0.0.1",
+  dataTypes: idbDataTypes,
   types: {
     codecTypes: {
       import: {

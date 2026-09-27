@@ -1,26 +1,12 @@
 import { readFile } from "node:fs/promises";
-import type { ContractConfig, ContractSourceDiagnostic } from "@prisma/orm-framework/config/config-types";
-import { buildSymbolTable, rangeToPslSpan } from "@prisma/orm-framework/psl-parser";
+import type { ContractConfig } from "@prisma/orm-framework/config/config-types";
+import { buildSymbolTable, mapPslDiagnostics } from "@prisma/orm-framework/psl-parser";
 import { hasPslInterpreter, withSeedDiagnostics } from "@prisma/orm-framework/psl-parser/interpret";
-import type { ParseDiagnostic, SourceFile } from "@prisma/orm-framework/psl-parser/syntax";
 import { parse } from "@prisma/orm-framework/psl-parser/syntax";
 import { notOk, ok } from "@prisma/orm-framework/utils/result";
 import { applySqlSpecifierControlPolicy } from "@prisma/orm-family-sql/contract-ts/contract-builder";
 import { prismaContract, type PrismaContractOptions } from "@prisma/orm-family-sql/contract-psl/provider";
 import { prepareSqlSchemaWithSync } from "./changelog-schema";
-
-function mapParseDiagnostics(
-  diagnostics: readonly ParseDiagnostic[],
-  sourceFile: SourceFile,
-  sourceId: string
-): ContractSourceDiagnostic[] {
-  return diagnostics.map((d) => ({
-    code: d.code as string,
-    message: d.message,
-    sourceId,
-    span: rangeToPslSpan(d.range, sourceFile),
-  }));
-}
 
 /**
  * Reads `schemaPath` once, runs it through `prepareSqlSchemaWithSync`, and
@@ -85,20 +71,18 @@ export function sqlContractWithSync(schemaPath: string, options: PrismaContractO
 
         const schema = prepareSqlSchemaWithSync(raw);
 
-        const { document, sourceFile, diagnostics: parseDiagnostics } = parse(schema);
-        const { table: symbolTable, diagnostics: symbolTableDiagnostics } = buildSymbolTable({
-          document,
-          sourceFile,
+        const { document, sources, diagnostics: parseDiagnostics } = parse(schema, schemaPath);
+        const documents = [document];
+        const { symbolTable, diagnostics: symbolTableDiagnostics } = buildSymbolTable({
+          documents,
+          sources,
           pslBlockDescriptors: context.authoringContributions.pslBlockDescriptors,
         });
 
-        const seedDiagnostics = [
-          ...mapParseDiagnostics(parseDiagnostics, sourceFile, schemaPath),
-          ...mapParseDiagnostics(symbolTableDiagnostics, sourceFile, schemaPath),
-        ];
+        const seedDiagnostics = mapPslDiagnostics([...parseDiagnostics, ...symbolTableDiagnostics], sources);
 
         const interpreted = withSeedDiagnostics(
-          interpret({ document, sourceFile, symbolTable, sourceId: schemaPath }, context),
+          interpret({ documents, sources, symbolTable }, context),
           seedDiagnostics
         );
         if (!interpreted.ok) {
