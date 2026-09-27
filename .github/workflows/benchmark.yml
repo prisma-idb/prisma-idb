@@ -321,6 +321,10 @@ jobs:
   # publish, so separate publishes would delete each other's snapshot.
   publish-main-benchmark-snapshot:
     needs: run-main-benchmark
+    # Runs even if the prisma-orm leg failed, so the docs site's snapshot
+    # still updates. The generator snapshot is required: without it the
+    # force-replaced branch would lose latest.json.
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:
       - name: Download suite results
@@ -335,7 +339,12 @@ jobs:
           OUT="$RUNNER_TEMP/benchmark-public"
           mkdir -p "$OUT/prisma-orm"
           cp "$RUNNER_TEMP/downloaded/benchmark-results-main-generator/main-current.json" "$OUT/latest.json"
-          cp "$RUNNER_TEMP/downloaded/benchmark-results-main-prisma-orm/main-current.json" "$OUT/prisma-orm/latest.json"
+          PRISMA_ORM="$RUNNER_TEMP/downloaded/benchmark-results-main-prisma-orm/main-current.json"
+          if [ -f "$PRISMA_ORM" ]; then
+            cp "$PRISMA_ORM" "$OUT/prisma-orm/latest.json"
+          else
+            echo "::warning::No prisma-orm benchmark result; publishing the generator snapshot only."
+          fi
 
       - name: Publish public benchmark snapshot
         uses: peaceiris/actions-gh-pages@84c30a85c19949d7eee79c4ff27748b70285e453 # v4

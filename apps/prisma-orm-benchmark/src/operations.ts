@@ -46,17 +46,31 @@ const noop = async (): Promise<void> => {};
 /** Matches 1% of items, and never fewer than one. */
 const onePercent = (n: number) => Math.max(1, Math.floor(n / 100));
 
+/**
+ * Repetitions for operations that take well under a millisecond once.
+ *
+ * `performance.now()` is coarse at that scale, so single-shot samples of a
+ * fast operation are mostly quantization noise. The comparison treats
+ * high-variance operations as non-blocking, so a fast path that regressed
+ * to a full scan would pass unflagged. Repeating the operation inside each
+ * timed sample keeps samples around 10ms or more.
+ */
+const FAST = 100;
+const QUICK = 20;
+const SHORT = 5;
+
 function read(
   operationId: BenchmarkOperationId,
   label: string,
-  run: (client: BenchmarkClient, n: number) => Promise<unknown>
+  run: (client: BenchmarkClient, n: number) => Promise<unknown>,
+  repeat = 1
 ): Definition {
   return {
     operationId,
-    label,
+    label: repeat > 1 ? `${label} (×${repeat})` : label,
     prepare: noop,
     run: async (client, n) => {
-      await run(client, n);
+      for (let i = 0; i < repeat; i++) await run(client, n);
     },
   };
 }
@@ -66,27 +80,41 @@ let uniqueCounter = 0;
 export const operationDefinitions: readonly Definition[] = [
   // ── Controls and already-accelerated shapes ──
   read("find-all", "findMany, no filter", (c) => c.orm.items.all().toArray()),
-  read("find-by-primary-key", "findMany, eq on primary key", (c) =>
-    c.orm.items
-      .where({ id: itemId(3) })
-      .all()
-      .toArray()
+  read(
+    "find-by-primary-key",
+    "findMany, eq on primary key",
+    (c) =>
+      c.orm.items
+        .where({ id: itemId(3) })
+        .all()
+        .toArray(),
+    FAST
   ),
-  read("find-unique", "findUnique by primary key", (c) => c.orm.items.findUnique(itemId(3))),
-  read("find-eq-indexed", "findMany, eq on indexed field", (c) =>
-    c.orm.items.where({ category: "c3" }).all().toArray()
+  read("find-unique", "findUnique by primary key", (c) => c.orm.items.findUnique(itemId(3)), FAST),
+  read(
+    "find-eq-indexed",
+    "findMany, eq on indexed field",
+    (c) => c.orm.items.where({ category: "c3" }).all().toArray(),
+    SHORT
   ),
   read("find-eq-unindexed", "findMany, eq on unindexed field", (c) =>
     c.orm.items.where({ status: "open" }).all().toArray()
   ),
-  read("find-eq-indexed-and-unindexed", "findMany, indexed eq AND unindexed eq", (c) =>
-    c.orm.items.where({ category: "c3", status: "open" }).all().toArray()
+  read(
+    "find-eq-indexed-and-unindexed",
+    "findMany, indexed eq AND unindexed eq",
+    (c) => c.orm.items.where({ category: "c3", status: "open" }).all().toArray(),
+    SHORT
   ),
-  read("find-or-indexed-eqs", "findMany, OR of indexed eqs", (c) =>
-    c.orm.items
-      .where((m) => or(m.category.eq("c1"), m.category.eq("c2")))
-      .all()
-      .toArray()
+  read(
+    "find-or-indexed-eqs",
+    "findMany, OR of indexed eqs",
+    (c) =>
+      c.orm.items
+        .where((m) => or(m.category.eq("c1"), m.category.eq("c2")))
+        .all()
+        .toArray(),
+    SHORT
   ),
 
   // ── Shapes an index could serve but that scan today ──
@@ -123,21 +151,25 @@ export const operationDefinitions: readonly Definition[] = [
   read("find-order-by-indexed-take", "findMany, orderBy indexed field, take 10", (c) =>
     c.orm.items.orderBy({ score: "asc" }).take(10).all().toArray()
   ),
-  read("count-eq-indexed", "count, eq on indexed field", (c) => c.orm.items.where({ category: "c3" }).count()),
+  read("count-eq-indexed", "count, eq on indexed field", (c) => c.orm.items.where({ category: "c3" }).count(), FAST),
   read("count-lt-indexed", "count, lt on indexed field (1%)", (c, n) =>
     c.orm.items.where((m) => m.score.lt(onePercent(n))).count()
   ),
   read("aggregate-eq-indexed", "aggregate count and sum, eq on indexed field", (c) =>
     c.orm.items.where({ category: "c3" }).aggregate((a) => ({ n: a.count(), total: a.sum("score") }))
   ),
-  read("include-books-by-author", "include 1:N via indexed foreign key", (c) =>
-    // The TS contract builder's relation type doesn't narrow `include()`'s
-    // relation-name parameter, so the name needs a cast.
-    c.orm.authors
-      .where({ id: authorId(1) })
-      .include("books" as never)
-      .all()
-      .toArray()
+  read(
+    "include-books-by-author",
+    "include 1:N via indexed foreign key",
+    (c) =>
+      // The TS contract builder's relation type doesn't narrow `include()`'s
+      // relation-name parameter, so the name needs a cast.
+      c.orm.authors
+        .where({ id: authorId(1) })
+        .include("books" as never)
+        .all()
+        .toArray(),
+    QUICK
   ),
 
   // ── Mutations ──
@@ -199,18 +231,20 @@ export const operationDefinitions: readonly Definition[] = [
     },
   },
   {
-    // Last: every sample adds one book, so later operations would see a
-    // slightly larger store.
+    // Last: every sample adds books, so later operations would see a
+    // larger store.
     operationId: "create-with-fk-check",
-    label: "create, foreign key validation",
+    label: `create, foreign key validation (×${QUICK})`,
     prepare: noop,
     run: async (c) => {
-      await c.orm.books.create({
-        id: `book-created-${++uniqueCounter}`,
-        authorId: authorId(1),
-        publisherId: "p-main",
-        title: "Created",
-      });
+      for (let i = 0; i < QUICK; i++) {
+        await c.orm.books.create({
+          id: `book-created-${++uniqueCounter}`,
+          authorId: authorId(1),
+          publisherId: "p-main",
+          title: "Created",
+        });
+      }
     },
   },
 ];
