@@ -226,9 +226,9 @@ function extractKey(ast: MutationAst, keyPath: IdbKeyPath): unknown {
   switch (ast.kind) {
     case "create":
       // Pull key from AST data — the codec hasn't run yet so the value is the raw JS type.
-      // A member of a compound key can legitimately be absent here (e.g. an
-      // autoIncrement-generated field) — `extractKeyFromRow` doesn't
-      // validate presence, it just reads whatever's there.
+      // Always present: a synced model can't use an autoIncrement key (see
+      // `assertNoAutoIncrementTrackedModels`), so the caller or an execution
+      // default has supplied it before the AST was built.
       return extractKeyFromRow(ast.data as Record<string, unknown>, keyPath);
     case "delete":
       return ast.key;
@@ -366,6 +366,26 @@ function isTrackedModel(config: SyncInterceptorConfig, modelName: string): boole
 }
 
 /**
+ * Throws if a synced model's store uses `autoIncrement`. Each device's key
+ * generator counts from 1 on its own, so two devices would create different
+ * records with the same key and collide on the server. Synced models need
+ * keys that are unique across devices, such as `uuid()` or `cuid()`.
+ */
+function assertNoAutoIncrementTrackedModels(config: SyncInterceptorConfig): void {
+  const { contract } = config;
+  const offending = Object.keys(domainModelsAtDefaultNamespace(contract.domain)).filter(
+    (modelName) =>
+      isTrackedModel(config, modelName) && contract.storage.stores[getStoreName(contract, modelName)]?.autoIncrement
+  );
+  if (offending.length === 0) return;
+  throw new Error(
+    `Synced models can't use @default(autoincrement()) keys: ${offending.join(", ")}. ` +
+      "Each device generates its own sequence, so keys created offline on different devices collide. " +
+      "Use @default(uuid()) or @default(cuid()) instead, or leave the model out of trackedModels."
+  );
+}
+
+/**
  * Executor wrapper that atomically extends tracked mutation plans with outbox
  * and version-meta writes.
  *
@@ -378,6 +398,7 @@ export class SyncInterceptorExecutor implements IdbQueryExecutorWithTransaction 
   readonly #config: SyncInterceptorConfig;
 
   constructor(inner: IdbQueryExecutor, config: SyncInterceptorConfig) {
+    assertNoAutoIncrementTrackedModels(config);
     this.#inner = inner;
     this.#config = config;
   }

@@ -56,7 +56,7 @@ function dbName(): string {
 const META = { target: "idb", storageHash: "test-hash", lane: "test" } as const;
 
 type StoreIndex = { name: string; keyPath: string; unique?: boolean };
-type StoreSpec = { name: string; keyPath: string; indexes?: StoreIndex[] };
+type StoreSpec = { name: string; keyPath: string; autoIncrement?: boolean; indexes?: StoreIndex[] };
 
 /**
  * Open a test database, creating the specified object stores and indexes
@@ -68,7 +68,10 @@ function openTestDb(name: string, stores: StoreSpec[]): Promise<IDBDatabase> {
     req.onupgradeneeded = () => {
       const db = req.result;
       for (const storeSpec of stores) {
-        const os = db.createObjectStore(storeSpec.name, { keyPath: storeSpec.keyPath });
+        const os = db.createObjectStore(storeSpec.name, {
+          keyPath: storeSpec.keyPath,
+          autoIncrement: storeSpec.autoIncrement ?? false,
+        });
         for (const idx of storeSpec.indexes ?? []) {
           os.createIndex(idx.name, idx.keyPath, { unique: idx.unique ?? false });
         }
@@ -578,6 +581,36 @@ describe("add", () => {
       key: "u1",
     });
     expect(getRows[0]).toEqual(ALICE);
+  });
+});
+
+describe("add/put — autoIncrement store", () => {
+  let db: IDBDatabase;
+  const COUNTERS_STORE: StoreSpec = { name: "counters", keyPath: "id", autoIncrement: true };
+
+  beforeEach(async () => {
+    db = await openTestDb(dbName(), [COUNTERS_STORE]);
+  });
+  afterEach(() => db.close());
+
+  it("add echoes back the generated key when the record omits it", async () => {
+    const plan: IdbAddPlan = { meta: META, kind: "add", storeName: "counters", record: { label: "a" } };
+    const [first] = await executeIdbPlan(db, plan);
+    const [second] = await executeIdbPlan(db, { ...plan, record: { label: "b" } });
+    expect(first).toEqual({ id: 1, label: "a" });
+    expect(second).toEqual({ id: 2, label: "b" });
+  });
+
+  it("put echoes back the generated key when the record omits it", async () => {
+    const plan: IdbPutPlan = { meta: META, kind: "put", storeName: "counters", record: { label: "a" } };
+    const [row] = await executeIdbPlan(db, plan);
+    expect(row).toEqual({ id: 1, label: "a" });
+  });
+
+  it("add keeps a caller-supplied key", async () => {
+    const plan: IdbAddPlan = { meta: META, kind: "add", storeName: "counters", record: { id: 7, label: "a" } };
+    const [row] = await executeIdbPlan(db, plan);
+    expect(row).toEqual({ id: 7, label: "a" });
   });
 });
 

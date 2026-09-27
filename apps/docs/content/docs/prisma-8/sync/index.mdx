@@ -192,7 +192,13 @@ import { db } from "./db"; // your Prisma 8 Postgres client
 
 export async function POST(req: Request) {
   const scopeKey = await getAuthenticatedUserId(req); // never trust an id from the body
-  const parsed = pushRequestBodySchema.safeParse(await req.json());
+  let body: unknown;
+  try {
+    body = await req.json();
+  } catch {
+    return Response.json({ error: "Invalid JSON" }, { status: 400 });
+  }
+  const parsed = pushRequestBodySchema.safeParse(body);
   if (!parsed.success) {
     return Response.json({ error: "Malformed request body", details: parsed.error.issues }, { status: 400 });
   }

@@ -254,12 +254,27 @@ function execCursorScan(
     );
 }
 
+/**
+ * The record as stored: `record` itself, plus the generated key when an
+ * `autoIncrement` store with an inline `keyPath` filled it in. IDB writes the
+ * generated key into its own stored copy, never into the caller's object, so
+ * the echo needs it set from `req.result`.
+ */
+function withGeneratedKey(
+  store: IDBObjectStore,
+  record: Record<string, unknown>,
+  key: IDBValidKey
+): Record<string, unknown> {
+  if (!store.autoIncrement || typeof store.keyPath !== "string" || record[store.keyPath] !== undefined) return record;
+  return { ...record, [store.keyPath]: key };
+}
+
 function execAdd(store: IDBObjectStore, plan: IdbAddPlan, onComplete: OnComplete, onError: OnError): void {
   // Use the optional out-of-line key when provided; otherwise IDB derives the
   // key from the record via the store's keyPath.
   const req = plan.key !== undefined ? store.add(plan.record, plan.key) : store.add(plan.record);
   // Echo the record back — IDB has no RETURNING clause.
-  req.onsuccess = () => onComplete([plan.record]);
+  req.onsuccess = () => onComplete([withGeneratedKey(store, plan.record, req.result)]);
   req.onerror = () =>
     onError(
       new IdbExecuteError(
@@ -274,7 +289,7 @@ function execPut(store: IDBObjectStore, plan: IdbPutPlan, onComplete: OnComplete
   // key from the record via the store's keyPath.
   const req = plan.key !== undefined ? store.put(plan.record, plan.key) : store.put(plan.record);
   // Echo the record back — IDB has no RETURNING clause.
-  req.onsuccess = () => onComplete([plan.record]);
+  req.onsuccess = () => onComplete([withGeneratedKey(store, plan.record, req.result)]);
   req.onerror = () =>
     onError(
       new IdbExecuteError(

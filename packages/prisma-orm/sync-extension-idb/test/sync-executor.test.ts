@@ -5,8 +5,33 @@
  * commits atomically in one IDB transaction.
  */
 import { describe, expect, it } from "vitest";
-import { getNextBatch } from "../src/exports/client";
-import { asAccessors, createTestSyncClient, keyGet, scanAll } from "./helpers";
+import { createSyncIdbClient, getNextBatch } from "../src/exports/client";
+import type { IdbContract } from "@prisma-idb/client-idb/orm";
+import { asAccessors, createTestSyncClient, keyGet, scanAll, testContract, testDbName } from "./helpers";
+
+/** `testContract()` with the `users` store switched to `autoIncrement`. */
+function autoIncrementUsersContract(): IdbContract {
+  const contract = testContract();
+  const stores = contract.storage.stores;
+  return {
+    ...contract,
+    storage: { ...contract.storage, stores: { ...stores, users: { ...stores["users"]!, autoIncrement: true } } },
+  } as IdbContract;
+}
+
+describe("SyncInterceptorExecutor — autoIncrement keys", () => {
+  it("rejects a synced model whose store uses autoIncrement", () => {
+    expect(() => createSyncIdbClient({ contract: autoIncrementUsersContract(), dbName: testDbName() })).toThrow(
+      /Synced models can't use @default\(autoincrement\(\)\) keys: User\./
+    );
+  });
+
+  it("allows an autoIncrement model left out of trackedModels", () => {
+    expect(() =>
+      createSyncIdbClient({ contract: autoIncrementUsersContract(), dbName: testDbName(), trackedModels: ["Post"] })
+    ).not.toThrow();
+  });
+});
 
 describe("SyncInterceptorExecutor", () => {
   it("writes an outbox event + version-meta row alongside a tracked create", async () => {
