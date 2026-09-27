@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { sanitizeBenchmarkConfigInputs } from "@/lib/benchmark/config-validation";
+import { sanitizeBenchmarkConfigInputs } from "@prisma-idb/benchmark-kit";
 import { runBenchmarkSuite } from "@/lib/benchmark/runner";
 import {
   BENCHMARK_DEFAULT_CONFIG,

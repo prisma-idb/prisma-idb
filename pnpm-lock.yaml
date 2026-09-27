@@ -258,6 +258,9 @@ importers:
       '@base-ui/react':
         specifier: ^1.8.0
         version: 1.8.0(@types/react@19.2.18)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+      '@prisma-idb/benchmark-kit':
+        specifier: workspace:*
+        version: link:../../packages/benchmark-kit
       class-variance-authority:
         specifier: ^0.7.1
         version: 0.7.1
@@ -849,6 +852,15 @@ importers:
       zod:
         specifier: ^4.6.5
         version: 4.6.5
+
+  packages/benchmark-kit:
+    devDependencies:
+      '@types/node':
+        specifier: ^24.10.9
+        version: 24.13.6
+      typescript:
+        specifier: ^6.0.3
+        version: 6.0.3
 
   packages/generator:
     dependencies:

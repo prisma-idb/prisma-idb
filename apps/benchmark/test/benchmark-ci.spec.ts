@@ -1,24 +1,10 @@
-import { mkdir, writeFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
 import { expect, test } from "@playwright/test";
-import { BENCHMARK_DEFAULT_CONFIG } from "../src/lib/benchmark/types";
-
-function parseEnvInteger(name: string, defaultValue: number, minValue: number): number {
-  const raw = (process.env[name] ?? "").trim();
-  if (raw === "") return defaultValue;
-  const value = Number(raw);
-  if (!Number.isFinite(value) || !Number.isInteger(value) || value < minValue) {
-    throw new Error(`Environment variable ${name} must be an integer >= ${minValue}, got: ${JSON.stringify(raw)}`);
-  }
-  return value;
-}
+import { readBenchmarkConfigFromEnv, writeBenchmarkResult } from "@prisma-idb/benchmark-kit/node";
 
 test("runs benchmark suite and exports JSON result", async ({ page }) => {
   test.setTimeout(12 * 60 * 1000);
 
-  const datasetSize = parseEnvInteger("BENCHMARK_DATASET_SIZE", BENCHMARK_DEFAULT_CONFIG.datasetSize, 1);
-  const warmupRuns = parseEnvInteger("BENCHMARK_WARMUP_RUNS", BENCHMARK_DEFAULT_CONFIG.warmupRuns, 0);
-  const measuredRuns = parseEnvInteger("BENCHMARK_MEASURED_RUNS", BENCHMARK_DEFAULT_CONFIG.measuredRuns, 1);
+  const { datasetSize, warmupRuns, measuredRuns } = readBenchmarkConfigFromEnv();
 
   await page.goto(`/?autoStart&datasetSize=${datasetSize}&warmupRuns=${warmupRuns}&measuredRuns=${measuredRuns}`);
 
@@ -45,11 +31,7 @@ test("runs benchmark suite and exports JSON result", async ({ page }) => {
     expect(operation.summary.meanMs).toBeGreaterThanOrEqual(0);
   }
 
-  const resultWithPlatform = { ...parsedResult, platform: process.platform };
-
-  const resultPath = resolve(process.cwd(), process.env.BENCHMARK_RESULT_PATH ?? "./.benchmark-results/current.json");
-  await mkdir(dirname(resultPath), { recursive: true });
-  await writeFile(resultPath, `${JSON.stringify(resultWithPlatform, null, 2)}\n`, "utf8");
+  const resultPath = await writeBenchmarkResult({ ...parsedResult, platform: process.platform });
 
   test.info().annotations.push({ type: "benchmark-result", description: resultPath });
 });

@@ -1,6 +1,6 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
-import { BENCHMARK_REGRESSION_GATE } from "../src/lib/benchmark/types";
+import { BENCHMARK_REGRESSION_GATE } from "../types";
 import { getStringArg, hasFlag, parseArgs } from "./cli-args";
 
 interface BenchmarkOperation {
