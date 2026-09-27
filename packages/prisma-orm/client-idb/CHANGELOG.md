@@ -1,5 +1,72 @@
 # @prisma-idb/client-idb
 
+## 0.7.0
+
+### Minor Changes
+
+- [#231](https://github.com/prisma-idb/prisma-idb/pull/231) [`efcd242`](https://github.com/prisma-idb/prisma-idb/commit/efcd242c306b51fec92926c91cb5e38dc90488ef) Thanks [@WhyAsh5114](https://github.com/WhyAsh5114)! - `createAutoMigratingIdbClient` now applies every pending migration exactly as planned, destructive operations included. The `policy` option and the `MigrationPolicy` type are removed.
+
+  The old default refused destructive operations at runtime, so shipping a migration that dropped a store or an index (even just to change an index definition) stopped the app from opening for every user until the app passed `onDestructive: 'allow'`. Operations outside `allowedOperationClasses` were also skipped silently while the marker still advanced, leaving the database claiming a schema it didn't have.
+
+  The review now happens where the developer is: `prisma-idb migration plan` warns on stderr when a migration drops a store, listing each store whose records will be deleted.
+
+- [#231](https://github.com/prisma-idb/prisma-idb/pull/231) [`f48d1f9`](https://github.com/prisma-idb/prisma-idb/commit/f48d1f9c4b34625232c8f933171ffc84f9779854) Thanks [@WhyAsh5114](https://github.com/WhyAsh5114)! - Foreign keys are now checked on every write that sets one.
+
+  - **Compound foreign keys are checked as one tuple.** A plain write that set a compound foreign key used to throw "not supported". Now a single parent row must match every field. When an update sets only some fields of the key, the rest come from the row being updated. A key with any `null` field isn't checked, like SQL's `MATCH SIMPLE`.
+  - **`setDefault` works on compound relations**, checking that one parent matches the whole default tuple. It used to throw.
+  - **`createAll()` and `createCount()` check foreign keys.** They used to skip the check entirely. Rows that set a foreign key are now checked and inserted in one transaction, so one bad row writes nothing.
+  - **`upsert()` checks foreign keys** on both its create and update branches. It used to check neither.
+  - A foreign key that references a compound primary key is checked with a key-only lookup, in any field order.
+
+- [#231](https://github.com/prisma-idb/prisma-idb/pull/231) [`78131cf`](https://github.com/prisma-idb/prisma-idb/commit/78131cffdb4bbb02ec91bf6a0a57bb72d193f4a2) Thanks [@WhyAsh5114](https://github.com/WhyAsh5114)! - Adds compound primary keys and compound secondary indexes. `@@id([a, b])`, `@@unique([a, b])` and `@@index([a, b])` (PSL) and the equivalent TS-DSL `keyPath`/`IndexDef.keyPath` arrays now map directly to IndexedDB array `keyPath`s (`createObjectStore(name, { keyPath: [...] })` / `createIndex(name, [...])`). Previously `@@id([...])` was rejected with a claim that IndexedDB doesn't support compound keys, which is not true, so schemas with join tables or composite natural keys couldn't target the IDB family at all. Default compound index names join the member fields (`byUserId_effectiveFrom`-style), and schema diffing/verification and DDL emission are array-aware.
+
+  `client-idb` builds and compares keys through shared helpers (`extractKeyFromRow`, `keyEquals`, `keyToken`), so compound keys work across `findUnique`, `update`, `delete`, `upsert`, cascades and `include()`. `keyEquals`/`keyToken` also compare `Date` and binary keys by value (including inside compound keys) rather than by reference. `CreateInput` now only makes the primary key optional when something actually fills it: a single-field `@default(autoincrement())` key (IndexedDB's key generator) or a key with its own `@default` such as `uuid()`/`cuid()`. A plain `@id` with no default, and every compound-key member without its own `@default`, is now required, since IndexedDB can't generate those keys and `create()` would otherwise fail at runtime with a `DataError`. Compound and `multiEntry` indexes are deliberately not used for single-field equality acceleration; accelerating them is left to the query planner.
+
+  **Breaking (`client-idb`):** `getKeyPath` now throws when a model has no `storage.keyPath` instead of silently falling back to `"id"`, which used to mask malformed contracts.
+
+  `sync-server` doesn't support compound-key models yet; `createSyncServer` now says so explicitly (and how to work around it) instead of reporting a generic "not a string keyPath" error.
+
+- [#231](https://github.com/prisma-idb/prisma-idb/pull/231) [`78131cf`](https://github.com/prisma-idb/prisma-idb/commit/78131cffdb4bbb02ec91bf6a0a57bb72d193f4a2) Thanks [@WhyAsh5114](https://github.com/WhyAsh5114)! - Adds key-only reads. A new `IdbKeysPlan` (`getKey(range)` for a single key, `getAllKeys(range, take)` otherwise) returns `{ key }` rows without deserializing records, with a new `KEYS_FAILED` error code. `client-idb` uses it for lookups that only ask "does a row with this primary key exist": foreign-key validation on create/update, the `setDefault` default-exists check, and `restrict` on shared-primary-key 1:1 relations. Lookups that need row values (cascades, `setNull`, upsert, non-primary-key targets, compound parent keys) are unchanged.
+
+  Fixes a bug on the same path: a valid foreign key pointing at a `DateTime`-keyed parent was rejected with a false "FK violation", because two equal `Date` objects never compare `===`. Key-only lookups compare by IndexedDB key equality, so these now pass. The paths that later join on such a foreign key compare the same way now: referential actions (`cascade`, `restrict`, `setNull`, `setDefault`, `onUpdate` change detection) and `include()`. Without that, the child would have been silently orphaned when its parent was deleted, and never loaded by `include()`.
+
+  `driver-idb` exports `IdbKeysPlan`; anything exhaustively switching over `IdbAtomicPlan` needs a `"keys"` case. `sync-extension-idb` treats `keys` as an untracked read.
+
+- [#231](https://github.com/prisma-idb/prisma-idb/pull/231) [`78131cf`](https://github.com/prisma-idb/prisma-idb/commit/78131cffdb4bbb02ec91bf6a0a57bb72d193f4a2) Thanks [@WhyAsh5114](https://github.com/WhyAsh5114)! - The ORM `.count()` terminal and count-only `aggregate()` now use IndexedDB's native `count()` (`store.count(range)` / `index.count(range)`) through a new `IdbCountPlan`, instead of materializing every matching row just to measure the array. Native count is used only when the result cardinality is fully determined by the store/index and key range: no in-memory filter, no OR-union (which could double-count), and no `multiEntry` or compound index. `skip`/`take` are applied arithmetically to the native total. Everything else keeps the previous materialized behavior, so results are unchanged. Failures surface as `IdbExecuteError` with the new `COUNT_FAILED` code.
+
+  `driver-idb` exports `IdbCountPlan`; anything exhaustively switching over `IdbAtomicPlan` needs a `"count"` case. `sync-extension-idb` treats `count` as an untracked read.
+
+- [#231](https://github.com/prisma-idb/prisma-idb/pull/231) [`d06e11e`](https://github.com/prisma-idb/prisma-idb/commit/d06e11eb8173d1ce3841a1430ec2c7f5c7b4fca0) Thanks [@WhyAsh5114](https://github.com/WhyAsh5114)! - Foreign-key checks now cover nested writes and defaults, so writes that used to succeed with a dangling reference now throw.
+
+  - **Nested writes are checked.** A `create()` or `update()` with relation callbacks didn't check the row's own foreign keys, or those of the rows the callbacks created.
+  - **Defaults are checked.** A foreign key filled in by `@default(...)` when the caller left it out, or by an `onUpdate` default, wasn't checked. The check now sees the row as it's written.
+  - **Nested updates run `onUpdate` referential actions.** Changing a value that children refer to through a nested `update()` skipped them, so it neither cascaded nor restricted.
+
+- [#231](https://github.com/prisma-idb/prisma-idb/pull/231) [`80fcda1`](https://github.com/prisma-idb/prisma-idb/commit/80fcda175bc4a54c2044a4a426f05210ae62dba9) Thanks [@WhyAsh5114](https://github.com/WhyAsh5114)! - Referential actions now match what Postgres does with the same Prisma 8 schema, so a synced app's client and server allow the same changes.
+
+  - **`onUpdate` defaults to `restrict`**, not `cascade`. Changing a value that children refer to now throws unless the relation declares `onUpdate: Cascade`, `SetNull` or `SetDefault`. Prisma 8 emits no `ON UPDATE` clause for an undeclared action, so Postgres rejects the change; the client used to cascade it locally and then fail on push.
+  - **`noAction` behaves like `restrict`**, as `NO ACTION` does in SQL. It used to turn enforcement off, so the client would delete or change a parent that the server refused to, leaving dangling references locally.
+
+### Patch Changes
+
+- [#231](https://github.com/prisma-idb/prisma-idb/pull/231) [`7d0902c`](https://github.com/prisma-idb/prisma-idb/commit/7d0902ce756c7f0fcee0a073e4cb46261203860e) Thanks [@WhyAsh5114](https://github.com/WhyAsh5114)! - Migrations now write their contract markers inside the same `upgradeneeded` transaction as their schema changes, so the two commit together or not at all. Previously the markers were written in a separate transaction after the upgrade. If the app was closed in between, the database kept the new schema with the old marker, and the next open replayed the migration.
+
+  A failed upgrade now rejects with the error that caused it, instead of IndexedDB's generic `AbortError`. If the marker store is missing when markers need writing, the upgrade fails and rolls back. It used to log a warning and commit the schema without a marker. `writeMarkers` likewise rejects when the marker store is missing, instead of warning and resolving.
+
+- [#231](https://github.com/prisma-idb/prisma-idb/pull/231) [`2f683ae`](https://github.com/prisma-idb/prisma-idb/commit/2f683ae8b1966be22dd26cd83f9821631eb90500) Thanks [@WhyAsh5114](https://github.com/WhyAsh5114)! - `include()` on a relation with a compound foreign key now joins on every field of the relation. It used to join on the first field only, so it attached the wrong rows whenever two parents shared that field's value, such as two members with the same handle in different orgs. A parent with a `null` in any of the fields gets no related rows. The join uses a key range when an index or the related primary key covers exactly the relation's fields, in any order.
+
+- [#231](https://github.com/prisma-idb/prisma-idb/pull/231) [`468fa2f`](https://github.com/prisma-idb/prisma-idb/commit/468fa2fc8a1eb36aaf5c3dd555b554da4e2ce6c0) Thanks [@WhyAsh5114](https://github.com/WhyAsh5114)! - Fixes filters and sorting on `DateTime` and `Bytes` fields that aren't indexed. Values read back from IndexedDB are fresh objects, so the in-memory filter's `===` never matched two equal dates: `where({ createdAt: date })`, `eq` and `in` returned nothing, and `neq` returned the matching rows. The same query on a key or an indexed field worked, because it went through a key range. Filters now compare values the way IndexedDB compares keys, so the result no longer depends on whether a field is indexed.
+
+  `orderBy` had the same problem. Equal dates never tied, so a second `orderBy` field was never used to break the tie. Sorting now follows IndexedDB's key order, with `null` last (first when descending).
+
+  `target-idb/runtime` now exports the shared comparison helpers: `compareFieldValues`, `fieldValuesEqual`, `fieldValueToken`, `isValidIdbKey`, `keyEquals` and `keyToken`. `client-idb` still re-exports `keyEquals` and `keyToken`.
+
+- Updated dependencies [[`7d0902c`](https://github.com/prisma-idb/prisma-idb/commit/7d0902ce756c7f0fcee0a073e4cb46261203860e), [`9c30fa9`](https://github.com/prisma-idb/prisma-idb/commit/9c30fa9f696b4d4cc6abf16b88ebcd6e57606994), [`78131cf`](https://github.com/prisma-idb/prisma-idb/commit/78131cffdb4bbb02ec91bf6a0a57bb72d193f4a2), [`468fa2f`](https://github.com/prisma-idb/prisma-idb/commit/468fa2fc8a1eb36aaf5c3dd555b554da4e2ce6c0), [`2f683ae`](https://github.com/prisma-idb/prisma-idb/commit/2f683ae8b1966be22dd26cd83f9821631eb90500), [`78131cf`](https://github.com/prisma-idb/prisma-idb/commit/78131cffdb4bbb02ec91bf6a0a57bb72d193f4a2), [`dcf7f15`](https://github.com/prisma-idb/prisma-idb/commit/dcf7f159b011c6f6b1b02f3168129784c7fb1aef), [`78131cf`](https://github.com/prisma-idb/prisma-idb/commit/78131cffdb4bbb02ec91bf6a0a57bb72d193f4a2), [`80fcda1`](https://github.com/prisma-idb/prisma-idb/commit/80fcda175bc4a54c2044a4a426f05210ae62dba9), [`78131cf`](https://github.com/prisma-idb/prisma-idb/commit/78131cffdb4bbb02ec91bf6a0a57bb72d193f4a2)]:
+  - @prisma-idb/target-idb@0.7.0
+  - @prisma-idb/driver-idb@0.7.0
+  - @prisma-idb/adapter-idb@0.7.0
+  - @prisma-idb/runtime-idb@0.7.0
+
 ## 0.6.1
 
 ### Patch Changes
