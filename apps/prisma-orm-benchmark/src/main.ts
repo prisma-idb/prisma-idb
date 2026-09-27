@@ -15,6 +15,10 @@ const form = document.querySelector<HTMLFormElement>("#config")!;
 const status = document.querySelector<HTMLParagraphElement>("#status")!;
 const output = document.querySelector<HTMLDivElement>("#output")!;
 
+// A second run would block on deleting the database the first run still has
+// open, and both would then write results into the page.
+let running = false;
+
 async function run(config: BenchmarkConfig): Promise<void> {
   output.replaceChildren();
   status.textContent = `Seeding ${config.datasetSize} rows per store…`;
@@ -55,7 +59,13 @@ function start(input: { datasetSize: unknown; warmupRuns: unknown; measuredRuns:
     showError(sanitized.error);
     return;
   }
-  run(sanitized.config).catch((error: unknown) => showError(error instanceof Error ? error.message : String(error)));
+  if (running) return;
+  running = true;
+  run(sanitized.config)
+    .catch((error: unknown) => showError(error instanceof Error ? error.message : String(error)))
+    .finally(() => {
+      running = false;
+    });
 }
 
 function showError(message: string): void {

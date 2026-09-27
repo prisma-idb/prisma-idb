@@ -25,7 +25,7 @@ import type { IdbQueryPlan } from "@prisma-idb/adapter-idb/runtime";
 import { createIDBRuntimeDriver, type IdbRuntimeDriverInstance } from "@prisma-idb/driver-idb/runtime";
 import { and, idbOrm, or } from "../src/exports/orm";
 import type { IdbQueryExecutor, IdbQueryExecutorWithTransaction } from "../src/exports/orm";
-import { installIdbProbe, summarizeRequests, type IdbProbe } from "./_idb-probe";
+import { installIdbProbe, summarizeRequests, type IdbProbe, type ProbeSnapshot } from "./_idb-probe";
 
 // ── Fixture ───────────────────────────────────────────────────────────────────
 
@@ -384,11 +384,17 @@ async function measure(scenario: Scenario): Promise<Measurement> {
   for (const n of SIZES) {
     const name = `plan-shape-gate-${++dbCounter}`;
     const db = await openSeededDb(name, seedRows(n));
-    const orm = idbOrm({ contract, executor: new TestExecutor(createIDBRuntimeDriver(name).create()) }) as LooseOrm;
-    probe.reset();
-    await scenario.run(orm, n);
-    const snap = probe.snapshot();
-    db.close();
+    const driver = createIDBRuntimeDriver(name).create();
+    const orm = idbOrm({ contract, executor: new TestExecutor(driver) }) as LooseOrm;
+    let snap: ProbeSnapshot;
+    try {
+      probe.reset();
+      await scenario.run(orm, n);
+      snap = probe.snapshot();
+    } finally {
+      db.close();
+      await driver.close();
+    }
     values.push(snap.valuesRead);
     keys.push(snap.keysRead);
     requests = summarizeRequests(snap.requests);

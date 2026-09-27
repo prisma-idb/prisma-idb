@@ -322,9 +322,11 @@ jobs:
   publish-main-benchmark-snapshot:
     needs: run-main-benchmark
     # Runs even if the prisma-orm leg failed, so the docs site's snapshot
-    # still updates. The generator snapshot is required: without it the
-    # force-replaced branch would lose latest.json.
-    if: ${{ !cancelled() }}
+    # still updates. `!cancelled()` also overrides the skip inherited from
+    # `needs`, so the push-to-main condition is repeated here. The generator
+    # snapshot is required: without it the force-replaced branch would lose
+    # latest.json.
+    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     steps:
       - name: Download suite results
