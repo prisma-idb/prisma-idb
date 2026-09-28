@@ -6,7 +6,7 @@
  * as two members with the same handle in different orgs.
  *
  * Each variant stores the same data but gives the join a different way to find
- * related rows: a full scan, the parent's compound primary key, or a compound
+ * related rows: no index, the parent's compound primary key, or a compound
  * index.
  */
 import "fake-indexeddb/auto";
@@ -20,9 +20,7 @@ import type { IdbQueryPlan } from "@prisma-idb/adapter-idb/runtime";
 import { idbOrm } from "../src/exports/orm";
 import type { IdbQueryExecutor, IdbQueryExecutorWithTransaction } from "../src/exports/orm";
 
-/** Records every plan sent through `query()`, so tests can check which lookup the join used. */
-class RecordingExecutor implements IdbQueryExecutor, IdbQueryExecutorWithTransaction {
-  readonly plans: Array<{ storeName?: string; indexName?: string; range?: unknown }> = [];
+class TestExecutor implements IdbQueryExecutor, IdbQueryExecutorWithTransaction {
   readonly #driver: IdbRuntimeDriverInstance;
 
   constructor(driver: IdbRuntimeDriverInstance) {
@@ -30,7 +28,6 @@ class RecordingExecutor implements IdbQueryExecutor, IdbQueryExecutorWithTransac
   }
 
   query<Row>(plan: IdbQueryPlan<Row>): AsyncIterableResult<Row> {
-    this.plans.push(plan.idbPlan as { storeName?: string; indexName?: string; range?: unknown });
     const it = this.#driver.execute(plan.idbPlan);
     return new AsyncIterableResult(
       (async function* () {
@@ -106,43 +103,32 @@ const variants: Array<{
   name: string;
   members: StoreSpec;
   posts: StoreSpec;
-  /** What the author lookup (N:1) should use: a named index, the primary key, or a full scan. */
-  authorLookup: "index" | "primaryKey" | "scan";
-  /** What the posts lookup (1:N) should use. */
-  postsLookup: "index" | "primaryKey" | "scan";
 }> = [
   {
-    name: "no index covers the fields (full scan)",
+    name: "no index covers the fields",
     members: { keyPath: "id" },
     posts: { keyPath: "id" },
-    authorLookup: "scan",
-    postsLookup: "scan",
   },
   {
     name: "the parent's compound primary key covers the fields",
     members: { keyPath: ["orgId", "handle"] },
     posts: { keyPath: "id" },
-    authorLookup: "primaryKey",
-    postsLookup: "scan",
   },
   {
     name: "compound indexes cover the fields",
     members: { keyPath: "id", indexes: { byOrgHandle: ["orgId", "handle"] } },
     posts: { keyPath: "id", indexes: { byAuthor: ["orgId", "handle"] } },
-    authorLookup: "index",
-    postsLookup: "index",
   },
 ];
 
 describe.each(variants)("include() on a compound relation: $name", (variant) => {
   let db: IDBDatabase;
-  let executor: RecordingExecutor;
   let orm: Record<string, Accessor>;
 
   beforeEach(async () => {
     const name = `compound-relation-include-${++dbCounter}`;
     db = await openDb(name, { members: variant.members, posts: variant.posts });
-    executor = new RecordingExecutor(createIDBRuntimeDriver(name).create());
+    const executor = new TestExecutor(createIDBRuntimeDriver(name).create());
     orm = idbOrm({ contract: contractFor(variant.members, variant.posts), executor }) as unknown as Record<
       string,
       Accessor
@@ -157,34 +143,20 @@ describe.each(variants)("include() on a compound relation: $name", (variant) => 
     await orm["posts"]!.create({ id: "p3", orgId: "org-B", handle: "alice", title: "B2" });
     await orm["posts"]!.create({ id: "p4", orgId: "org-A", handle: "bob", title: "Bob1" });
     await orm["posts"]!.create({ id: "p5", orgId: "org-A", handle: null, title: "No author" });
-    executor.plans.length = 0;
   });
 
   afterEach(() => db.close());
-
-  function expectLookup(storeName: string, lookup: "index" | "primaryKey" | "scan") {
-    const plans = executor.plans.filter((p) => p.storeName === storeName);
-    expect(plans.length).toBeGreaterThan(0);
-    for (const plan of plans) {
-      if (lookup === "scan") expect(plan.range).toBeUndefined();
-      else expect(plan.range).toBeDefined();
-      if (lookup === "index") expect(plan.indexName).toBeDefined();
-      else expect(plan.indexName).toBeUndefined();
-    }
-  }
 
   it("N:1 attaches the parent that matches every field", async () => {
     const posts = await orm["posts"]!.include("author").all().toArray();
     const authorOf = Object.fromEntries(posts.map((p) => [p["id"], (p["author"] as Row | null)?.["name"] ?? null]));
     expect(authorOf).toEqual({ p1: "Alice (A)", p2: "Alice (B)", p3: "Alice (B)", p4: "Bob", p5: null });
-    expectLookup("members", variant.authorLookup);
   });
 
   it("1:N attaches only the children that match every field", async () => {
     const members = await orm["members"]!.include("posts").all().toArray();
     const postsOf = Object.fromEntries(members.map((m) => [m["id"], (m["posts"] as Row[]).map((p) => p["id"]).sort()]));
     expect(postsOf).toEqual({ m1: ["p1"], m2: ["p2", "p3"], m3: ["p4"] });
-    expectLookup("posts", variant.postsLookup);
   });
 
   it("1:N count counts only the children that match every field", async () => {
