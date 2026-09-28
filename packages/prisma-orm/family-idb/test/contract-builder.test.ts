@@ -26,6 +26,7 @@ describe("defineContract — enums", () => {
           store: "users",
           key: "id",
           fields: { id: "String", role: "Role", invitedAs: "Role?", previousRoles: "Role[]" },
+          fieldDefaults: { role: "USER" },
         },
       },
     });
@@ -68,6 +69,24 @@ describe("defineContract — enums", () => {
         },
       })
     ).toThrow(/not a declared value of enum "Role"/);
+  });
+
+  it("rejects a default on an enum list even when the value is an enum member", () => {
+    expect(() =>
+      defineContract({
+        family: idbFamilyPack,
+        target: idbTargetPack,
+        enums: { Role: ["USER", "ADMIN"] },
+        models: {
+          User: {
+            store: "users",
+            key: "id",
+            fields: { id: "String", previousRoles: "Role[]" },
+            fieldDefaults: { previousRoles: "USER" },
+          },
+        },
+      })
+    ).toThrow(/enum list; list defaults are not supported by IDB/);
   });
 });
 

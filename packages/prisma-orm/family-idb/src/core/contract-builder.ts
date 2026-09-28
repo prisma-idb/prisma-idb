@@ -312,11 +312,19 @@ function validateModelKeyAndIndexes(modelName: string, def: ModelDef<string>, en
     }
     const spec = def.fields[fieldName];
     if (spec !== undefined) {
-      const enumValues = enums[parseFieldSpec(spec).typeName];
-      if (enumValues !== undefined && (typeof value !== "string" || !enumValues.includes(value))) {
-        throw new Error(
-          `defineContract: model "${modelName}" fieldDefaults["${fieldName}"] is not a declared value of enum "${parseFieldSpec(spec).typeName}".`
-        );
+      const parsedSpec = parseFieldSpec(spec);
+      const enumValues = enums[parsedSpec.typeName];
+      if (enumValues !== undefined) {
+        if (parsedSpec.many) {
+          throw new Error(
+            `defineContract: model "${modelName}" fieldDefaults["${fieldName}"] is an enum list; list defaults are not supported by IDB.`
+          );
+        }
+        if (typeof value !== "string" || !enumValues.includes(value)) {
+          throw new Error(
+            `defineContract: model "${modelName}" fieldDefaults["${fieldName}"] is not a declared value of enum "${parsedSpec.typeName}".`
+          );
+        }
       }
     }
   }
