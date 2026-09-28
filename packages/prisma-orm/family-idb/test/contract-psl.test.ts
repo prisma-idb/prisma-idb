@@ -183,6 +183,50 @@ describe("interpretPslDocumentToIdbContract", () => {
         expect.arrayContaining([expect.objectContaining({ code: "IDB_INVALID_ENUM_DEFAULT" })])
       );
     });
+
+    it('stores a member\'s `= "value"` mapping and uses it for defaults', () => {
+      const result = interpret(`
+        enum Role {
+          USER  = "user"
+          ADMIN = "admin"
+        }
+        model User {
+          id   String @id
+          role Role   @default(USER)
+        }
+      `);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value.domain.namespaces[NS]!.enum?.["Role"]?.members).toEqual([
+        { name: "USER", value: "user" },
+        { name: "ADMIN", value: "admin" },
+      ]);
+      expect(result.value.execution?.mutations.defaults).toContainEqual({
+        ref: { namespace: NS, table: "user", column: "role" },
+        onCreate: { kind: "generator", id: "literal", params: { value: "user" } },
+      });
+    });
+
+    it("rejects @map on an enum member instead of silently storing the member name", () => {
+      const result = interpret(`
+        enum Role {
+          USER @map("user")
+          ADMIN
+        }
+        model User {
+          id   String @id
+          role Role
+        }
+      `);
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.failure.diagnostics).toEqual([
+        expect.objectContaining({
+          code: "IDB_ENUM_MEMBER_ATTRIBUTE_UNSUPPORTED",
+          message: expect.stringContaining('USER = "value"'),
+        }),
+      ]);
+    });
   });
 
   describe("@@id model-level attribute", () => {

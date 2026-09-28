@@ -8,7 +8,8 @@ import type {
   ExecutionMutationDefault,
 } from "@prisma/orm-framework/contract/types";
 import { UNBOUND_DOMAIN_NAMESPACE_ID, crossRef } from "@prisma/orm-framework/contract/types";
-import type { FieldSymbol, ModelSymbol, SymbolTable } from "@prisma/orm-framework/psl-parser";
+import type { BlockSymbol, FieldSymbol, ModelSymbol, SymbolTable } from "@prisma/orm-framework/psl-parser";
+import { KeyValuePairAst, SyntaxNode } from "@prisma/orm-framework/psl-parser/syntax";
 import type {
   IdbIndexDefinition,
   IdbKeyPath,
@@ -247,6 +248,42 @@ function hasModelAttribute(model: ModelSymbol, name: string): boolean {
 
 const IDB_EXCLUDE_ATTR = "idb.exclude";
 
+/**
+ * The parser drops an attribute written after an enum member (Prisma 7's
+ * `USER @map("user")`) from the resolved block, leaving only stray `@` tokens
+ * in the syntax tree. Report them so a mapped member isn't silently stored
+ * under its name; rc.12 spells a stored value as `USER = "user"`.
+ */
+function reportEnumMemberAttributes(
+  block: BlockSymbol,
+  sourceId: string,
+  diagnostics: ContractSourceDiagnostic[]
+): void {
+  let memberName: string | undefined;
+  let expectAttributeName = false;
+  for (const child of block.node.syntax.children()) {
+    if (child instanceof SyntaxNode) {
+      if (child.kind === "KeyValuePair") memberName = KeyValuePairAst.cast(child)?.key()?.syntax.firstToken?.text;
+      continue;
+    }
+    if (child.kind === "Newline") {
+      memberName = undefined;
+    } else if (child.kind === "At" && memberName !== undefined) {
+      expectAttributeName = true;
+    } else if (expectAttributeName && child.kind === "Ident" && memberName !== undefined) {
+      expectAttributeName = false;
+      const attributeName = child.text;
+      const hint = attributeName === "map" ? ` Declare the stored value as \`${memberName} = "value"\` instead.` : "";
+      diagnostics.push({
+        code: "IDB_ENUM_MEMBER_ATTRIBUTE_UNSUPPORTED",
+        message: `Enum "${block.name}" member "${memberName}" uses @${attributeName}, which enum members do not support.${hint}`,
+        sourceId,
+        span: block.block.parameters[memberName]?.span ?? block.span,
+      });
+    }
+  }
+}
+
 function interpretEnums(
   table: SymbolTable,
   sourceId: string,
@@ -256,6 +293,7 @@ function interpretEnums(
 
   for (const block of Object.values(table.topLevel.blocks)) {
     if (block.keyword !== "enum") continue;
+    reportEnumMemberAttributes(block, sourceId, diagnostics);
 
     const members: Array<{ readonly name: string; readonly value: string }> = [];
     const seenValues = new Set<string>();
@@ -811,10 +849,7 @@ function interpretModel(
         continue;
       }
 
-      const enumMember =
-        enumType === undefined
-          ? undefined
-          : enumType.members.find((member) => raw === member.name || raw === `${field.typeName}.${member.name}`);
+      const enumMember = enumType === undefined ? undefined : enumType.members.find((member) => raw === member.name);
 
       if (enumType !== undefined && field.list) {
         diagnostics.push({
