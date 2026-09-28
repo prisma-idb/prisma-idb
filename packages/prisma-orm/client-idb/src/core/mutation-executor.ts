@@ -50,11 +50,10 @@ import {
   fieldValuesEqual,
   getKeyPath,
   getStoreName,
-  isValidIdbKey,
   keyEquals,
   keyToken,
 } from "./types";
-import { keyPathFields, type IdbKeyPath } from "@prisma-idb/target-idb/pack";
+import { keyPathFields } from "@prisma-idb/target-idb/pack";
 import type { IdbTransactionScope } from "@prisma-idb/driver-idb/runtime";
 
 // ── Internal types ─────────────────────────────────────────────────────────────
@@ -776,60 +775,18 @@ function isDeleteEnforcementRelation(contract: IdbContract, modelName: string, d
   return false;
 }
 
-// ── Key-only existence lookups ────────────────────────────────────────────────
-
-/**
- * An `IDBKeyRange` for the lookup "does `modelName` have a row whose `field`
- * equals `value`?" — but ONLY when `field` is that model's own single-field
- * primary key (so the answer is a pure key lookup that needs no row value)
- * and `value` is a legal IDB key. `null` otherwise, and the caller keeps its
- * value-materializing `cursor-scan`.
- *
- * Deliberately `null` for a compound primary key even if `field` is one of its
- * members (one member can't pin the whole key), and for any non-key field
- * (that needs an index-resolution step — Phase 10.5's shared primitive, not
- * this helper's job). `IDBKeyRange.only` throws `DataError` on invalid keys
- * (`null`, `NaN`, booleans, …), hence the guard.
- */
-function pkEqualityRange(contract: IdbContract, modelName: string, field: string, value: unknown): IDBKeyRange | null {
-  if (typeof IDBKeyRange === "undefined") return null;
-  const keyPath = getKeyPath(contract, modelName);
-  if (typeof keyPath !== "string" || keyPath !== field) return null;
-  if (!isValidIdbKey(value)) return null;
-  return IDBKeyRange.only(value);
-}
-
-/**
- * Resolves to the first primary key in `storeName` within `range`, or
- * `undefined` — one `getKey` request, no row deserialized.
- */
-async function firstKeyInRange(
-  scope: IdbTransactionScope,
-  meta: PlanMeta,
-  storeName: string,
-  range: IDBKeyRange
-): Promise<IDBValidKey | undefined> {
-  const rows = await scope.execute({ meta, kind: "keys", storeName, range, take: 1 } as IdbAtomicPlan);
-  return rows[0]?.["key"] as IDBValidKey | undefined;
-}
+// ── Existence lookups ─────────────────────────────────────────────────────────
 
 /**
  * `true` if any child row matches the relation against `parentRow`'s values —
- * the existence check behind `restrict`. Key-only when the relation's single
- * child field is the child model's own primary key (a shared-PK 1:1); a
- * value-materializing `cursor-scan` (`take: 1`) otherwise.
+ * the existence check behind `restrict`.
  */
 async function childExists(
   scope: IdbTransactionScope,
-  contract: IdbContract,
   meta: PlanMeta,
   def: RelationDefinition,
   parentRow: Record<string, unknown>
 ): Promise<boolean> {
-  if (def.targetFields.length === 1) {
-    const range = pkEqualityRange(contract, def.relatedModelName, def.targetFields[0]!, parentRow[def.localFields[0]!]);
-    if (range !== null) return (await firstKeyInRange(scope, meta, def.relatedStoreName, range)) !== undefined;
-  }
   const found = await scope.execute({
     meta,
     kind: "cursor-scan",
@@ -1034,7 +991,7 @@ export async function applyReferentialActionsForRowOnUpdate(
     const childFilter = buildChildFilterFromRow(def, oldRow);
 
     if (action === "restrict") {
-      if (await childExists(scope, contract, meta, def, oldRow)) {
+      if (await childExists(scope, meta, def, oldRow)) {
         throw new Error(
           `Cannot update ${modelName} '${keyToken(extractKeyFromRow(oldRow, keyPath))}': changing field(s) ${changedFields.join(", ")} ` +
             `would orphan child records on relation '${def.relationName}'. ` +
@@ -1182,10 +1139,8 @@ function fkCheckNeedsExistingRow(contract: IdbContract, modelName: string, data:
 /**
  * Does `parentModel` have a row whose `fields` equal `values`, pairwise?
  *
- * When `fields` are exactly the parent's primary key (in any order), this is
- * one key-only lookup. Otherwise it scans the parent store, comparing values
- * the way IndexedDB compares keys. `excludeKey` leaves out one parent row,
- * for checks that run while that row is being deleted or changed.
+ * Compares values the way IndexedDB compares keys. `excludeKey` leaves out one
+ * parent row, for checks that run while that row is being deleted or changed.
  */
 async function parentExists(
   scope: IdbTransactionScope,
@@ -1198,35 +1153,11 @@ async function parentExists(
 ): Promise<boolean> {
   const storeName = getStoreName(contract, parentModel);
   const keyPath = getKeyPath(contract, parentModel);
-  const range = primaryKeyRange(keyPath, fields, values);
-  if (range !== null) {
-    // A primary key matches at most one row.
-    const foundKey = await firstKeyInRange(scope, meta, storeName, range);
-    return foundKey !== undefined && (excludeKey === undefined || !keyEquals(foundKey, excludeKey));
-  }
   const filter = (row: Record<string, unknown>): boolean =>
     fields.every((f, i) => fieldValuesEqual(row[f], values[i])) &&
     (excludeKey === undefined || !keyEquals(extractKeyFromRow(row, keyPath), excludeKey));
   const found = await scope.execute({ meta, kind: "cursor-scan", storeName, filter, take: 1 } as IdbAtomicPlan);
   return found.length > 0;
-}
-
-/**
- * An `IDBKeyRange` for "the row whose primary key is `values`", when `fields`
- * are exactly the key's fields (in any order) and every value is a valid
- * IndexedDB key. `null` otherwise, and the caller scans instead.
- */
-function primaryKeyRange(
-  keyPath: IdbKeyPath,
-  fields: readonly string[],
-  values: readonly unknown[]
-): IDBKeyRange | null {
-  if (typeof IDBKeyRange === "undefined") return null;
-  const keyFields = keyPathFields(keyPath);
-  if (keyFields.length !== fields.length || !keyFields.every((f) => fields.includes(f))) return null;
-  const ordered = keyFields.map((f) => values[fields.indexOf(f)]);
-  if (!ordered.every((v) => isValidIdbKey(v))) return null;
-  return IDBKeyRange.only(typeof keyPath === "string" ? (ordered[0] as IDBValidKey) : (ordered as IDBValidKey[]));
 }
 
 /** `id='u1'`, or `orgId='a', id='u1'` for a compound key. */
@@ -1522,7 +1453,7 @@ export async function applyReferentialActionsForRow(
     const childFilter = buildChildFilterFromRow(def, row);
 
     if (action === "restrict") {
-      if (await childExists(scope, contract, meta, def, row)) {
+      if (await childExists(scope, meta, def, row)) {
         throw new Error(
           `Cannot delete ${modelName} '${keyToken(extractKeyFromRow(row, keyPath))}': child records exist on relation '${def.relationName}'. ` +
             "Delete those children first, or declare onDelete: Cascade, SetNull or SetDefault on the relation."
