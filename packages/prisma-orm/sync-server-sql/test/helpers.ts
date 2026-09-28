@@ -47,9 +47,16 @@ export async function closeTestDb(): Promise<void> {
   await resetPool.end();
 }
 
+// Table names come from the emitted contract rather than being hard-coded,
+// so a change in the ORM's default naming (rc.12 stopped lowercasing model
+// names) can't leave this helper truncating tables that don't exist.
+const fixtureTables = Object.entries(
+  (contractJson.storage as { namespaces: Record<string, { entries: { table: Record<string, unknown> } }> }).namespaces
+).flatMap(([namespace, { entries }]) => Object.keys(entries.table).map((table) => `"${namespace}"."${table}"`));
+
 /** Empties every fixture table between tests — a real TRUNCATE, not a mock reset. */
 export async function resetTestDb(): Promise<void> {
-  await resetPool.query('TRUNCATE TABLE "changelog", "todo", "board", "user" RESTART IDENTITY CASCADE');
+  await resetPool.query(`TRUNCATE TABLE ${fixtureTables.join(", ")} RESTART IDENTITY CASCADE`);
 }
 
 /**

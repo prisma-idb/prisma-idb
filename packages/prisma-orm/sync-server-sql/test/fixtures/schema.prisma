@@ -17,7 +17,8 @@ model Board {
 }
 
 model Todo {
-  id      String @id
+  id      String    @id
   boardId String
-  board   Board  @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  board   Board     @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  dueAt   DateTime?
 }
