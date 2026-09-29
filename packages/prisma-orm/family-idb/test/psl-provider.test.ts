@@ -97,6 +97,23 @@ describe("prismaIdbContract", () => {
       expect(result.ok).toBe(false);
     });
   });
+
+  it("anchors parse diagnostics to the schema file with a line/column span", async () => {
+    const result = await load(
+      "schema.prisma",
+      `model User {
+  id String @id
+  name String @@@
+}
+`
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    const [diagnostic] = result.failure.diagnostics;
+    expect(diagnostic).toBeDefined();
+    expect(diagnostic!.sourceId).toBe(join(dir, "schema.prisma"));
+    expect(diagnostic!.span?.start.line).toBe(3);
+  });
 });
 
 describe("stripIdbExcludeAttributes", () => {

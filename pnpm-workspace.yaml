@@ -29,11 +29,13 @@ minimumReleaseAgeExclude:
   - js-yaml@4.3.1
   - dompurify@3.4.13
   - nanoid@3.3.17
-  - "@prisma/orm-family-sql@8.0.0-rc.5"
-  - "@prisma/orm-framework@8.0.0-rc.5"
-  - "@prisma/orm-postgres@8.0.0-rc.5"
-  - "@prisma/orm-target-postgres@8.0.0-rc.5"
-  - "@prisma/orm-toolchain@8.0.0-rc.5"
+  - "@prisma/orm-family-sql@8.0.0-rc.12"
+  - "@prisma/orm-framework@8.0.0-rc.12"
+  - "@prisma/orm-postgres@8.0.0-rc.12"
+  - "@prisma/orm-target-postgres@8.0.0-rc.12"
+  - "@prisma/orm-toolchain@8.0.0-rc.12"
+  - "@prisma/cli-engine@0.6.1"
+  - prisma@8.0.0-rc.17
 
 peerDependencyRules:
   allowedVersions:

@@ -12,8 +12,8 @@
   },
   "devDependencies": {
     "@prisma-idb/family-idb": "workspace:*",
-    "@prisma/cli-engine": "0.2.0",
-    "@prisma/orm-toolchain": "8.0.0-rc.5",
+    "@prisma/cli-engine": "0.6.1",
+    "@prisma/orm-toolchain": "8.0.0-rc.12",
     "@types/node": "^24.13.3",
     "execa": "^10.0.1",
     "vitest": "^4.1.11"

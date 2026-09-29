@@ -1,10 +1,12 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createControlStack } from "@prisma/orm-framework/components/control";
 import type { ContractSourceContext } from "@prisma/orm-framework/config/config-types";
 import postgresPackRef from "@prisma/orm-postgres/target/pack";
 import { postgresCreateNamespace } from "@prisma/orm-postgres/target/types";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { defineConfig } from "../src/exports/postgres";
 import { injectChangelogModelSql, prepareSqlSchemaWithSync, sqlContractWithSync } from "../src/exports/schema";
 
 const postgresContractOptions = {
@@ -92,5 +94,56 @@ describe("sqlContractWithSync", () => {
       expect(result.failure.diagnostics).toHaveLength(1);
       expect(result.failure.diagnostics[0]?.code).toBe("PSL_SCHEMA_READ_FAILED");
     }
+  });
+
+  // Runs the real parse → symbol table → interpret path against the assembled
+  // Postgres control stack, the same context `prisma contract emit` builds.
+  describe("load against the Postgres control stack", () => {
+    async function loadSchema(schema: string) {
+      const schemaPath = join(dir, "schema.prisma");
+      await writeFile(schemaPath, schema, "utf-8");
+      const config = defineConfig({ schema: schemaPath });
+      const stack = createControlStack(config);
+      const context: ContractSourceContext = {
+        composedExtensions: stack.extensions.map((e) => e.id),
+        composedExtensionContracts: stack.extensionContracts,
+        authoringContributions: stack.authoringContributions,
+        codecLookup: stack.codecLookup,
+        dataTypeLookup: stack.dataTypeLookup,
+        controlMutationDefaults: stack.controlMutationDefaults,
+        resolvedInputs: [schemaPath],
+        capabilities: stack.capabilities,
+      };
+      return { schemaPath, result: await config.contract!.source.load(context) };
+    }
+
+    it("builds a SQL contract with the injected Changelog, minus @idb.exclude", async () => {
+      const { result } = await loadSchema(`model User {
+  id     String @id
+  name   String
+  secret String @idb.exclude
+}
+`);
+      if (!result.ok) {
+        throw new Error(result.failure.diagnostics.map((d) => `[${d.code}] ${d.message}`).join("\n"));
+      }
+      const json = JSON.stringify(result.value);
+      expect(json).toContain('"User"');
+      expect(json).toContain('"Changelog"');
+      expect(json).toContain('"secret"');
+    });
+
+    it("anchors parse diagnostics to the configured schema path", async () => {
+      const { schemaPath, result } = await loadSchema(`model User {
+  id String @id
+  name String @@@
+}
+`);
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      const [diagnostic] = result.failure.diagnostics;
+      expect(diagnostic?.sourceId).toBe(schemaPath);
+      expect(diagnostic?.span?.start.line).toBe(3);
+    });
   });
 });

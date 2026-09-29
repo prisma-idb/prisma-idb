@@ -30,7 +30,7 @@
   "dependencies": {
     "@prisma-idb/adapter-idb": "workspace:*",
     "@prisma-idb/driver-idb": "workspace:*",
-    "@prisma/orm-framework": "8.0.0-rc.5"
+    "@prisma/orm-framework": "8.0.0-rc.12"
   },
   "devDependencies": {
     "fake-indexeddb": "^6.2.5",

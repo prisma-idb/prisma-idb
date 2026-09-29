@@ -32,6 +32,7 @@ import { evaluateFilter, shorthandToFilterExpr } from "@prisma-idb/adapter-idb/r
 import type { IdbFilterExpr } from "@prisma-idb/adapter-idb/runtime";
 import type { IdbReferentialAction } from "@prisma-idb/target-idb/pack";
 import type { IdbQueryExecutor } from "./executor";
+import { assertEnumValues } from "./enum-validation";
 import {
   applyCreateDefaults,
   applyUpdateDefaults,
@@ -310,6 +311,7 @@ async function updateFirstGraph(
     const key = extractKeyFromRow(existingRow, keyPath);
     const meta = makePlanMeta(contract);
     const patch = applyUpdateDefaults(contract.execution?.mutations.defaults, storeName, scalarData, defaultsCache);
+    assertEnumValues(contract, modelName, patch);
     await validateScalarFks(scope, contract, modelName, patch, existingRow);
     await applyReferentialActionsForRowOnUpdate(scope, contract, modelName, existingRow, patch);
     const rows = await scope.execute({ meta, kind: "update", storeName, key, patch });
@@ -579,6 +581,7 @@ async function insertSingleRow(
   const storeName = getStoreName(contract, modelName);
   const meta = makePlanMeta(contract);
   const record = applyCreateDefaults(contract.execution?.mutations.defaults, storeName, data, defaultsCache);
+  assertEnumValues(contract, modelName, record);
   await validateScalarFks(scope, contract, modelName, record);
   const rows = await scope.execute({ meta, kind: "add", storeName, record });
   return rows[0] ?? record;
@@ -1321,6 +1324,7 @@ export async function executeScalarUpdateWithFkValidation(options: {
     data,
     createMutationDefaultsCache()
   );
+  assertEnumValues(contract, modelName, patch);
   const { storeNames, enforcesOnUpdate } = collectUpdateStoreNames(contract, modelName, patch);
   const needsRowForFks = fkCheckNeedsExistingRow(contract, modelName, patch);
   return withMutationScope(executor, storeNames, async (scope) => {
@@ -1399,6 +1403,7 @@ export async function executeBulkUpdateWithFkValidation(options: {
     data,
     createMutationDefaultsCache()
   );
+  assertEnumValues(contract, modelName, patch);
   const { storeNames, enforcesOnUpdate } = collectUpdateStoreNames(contract, modelName, patch);
   const needsRowForFks = fkCheckNeedsExistingRow(contract, modelName, patch);
   return withMutationScope(executor, storeNames, async (scope) => {

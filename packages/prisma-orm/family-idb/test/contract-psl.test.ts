@@ -17,10 +17,10 @@ afterEach(() => {
 });
 
 function interpret(schema: string, projection?: ContractProjection) {
-  const { document, sourceFile } = parse(schema);
-  const { table } = buildSymbolTable({
-    document,
-    sourceFile,
+  const { document, sources } = parse(schema, "test.prisma");
+  const { symbolTable: table } = buildSymbolTable({
+    documents: [document],
+    sources,
     pslBlockDescriptors: {},
   });
   return interpretPslDocumentToIdbContract(table, "test.prisma", projection !== undefined ? { projection } : undefined);
@@ -125,6 +125,126 @@ describe("interpretPslDocumentToIdbContract", () => {
       if (!result.ok) return;
       expect(typeof result.value.storage.storageHash).toBe("string");
       expect(typeof result.value.profileHash).toBe("string");
+    });
+
+    it("interprets enum blocks, optional/list enum fields, and enum defaults", () => {
+      const result = interpret(`
+        enum Role {
+          USER
+          ADMIN
+        }
+
+        model User {
+          id            String @id
+          role          Role   @default(USER)
+          invitedAs     Role?
+          previousRoles Role[]
+        }
+      `);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+
+      const ns = result.value.domain.namespaces[NS]!;
+      expect(ns.enum?.["Role"]).toEqual({
+        codecId: "idb/string@1",
+        members: [
+          { name: "USER", value: "USER" },
+          { name: "ADMIN", value: "ADMIN" },
+        ],
+      });
+      expect(ns.models["User"]!.fields["role"]).toMatchObject({
+        nullable: false,
+        type: { kind: "scalar", codecId: "idb/string@1" },
+        valueSet: { plane: "domain", entityKind: "enum", namespaceId: NS, entityName: "Role" },
+      });
+      expect(ns.models["User"]!.fields["invitedAs"]).toMatchObject({ nullable: true });
+      expect(ns.models["User"]!.fields["previousRoles"]).toMatchObject({ many: true });
+      expect(result.value.execution?.mutations.defaults).toContainEqual({
+        ref: { namespace: NS, table: "user", column: "role" },
+        onCreate: { kind: "generator", id: "literal", params: { value: "USER" } },
+      });
+      expect(JSON.parse(JSON.stringify(result.value)).domain.namespaces[NS].enum.Role.members).toEqual([
+        { name: "USER", value: "USER" },
+        { name: "ADMIN", value: "ADMIN" },
+      ]);
+    });
+
+    it("drops enums used only by excluded models or fields in the client projection", () => {
+      const schema = `
+        enum Role { USER ADMIN }
+        enum Secret { A B }
+        enum Audit { X }
+        model User {
+          id     String @id
+          role   Role
+          secret Secret @idb.exclude
+        }
+        model AuditLog {
+          id   String @id
+          kind Audit
+          @@idb.exclude
+        }
+      `;
+      const enumNames = (projection?: ContractProjection) => {
+        const result = interpret(schema, projection);
+        expect(result.ok).toBe(true);
+        if (!result.ok) return [];
+        return Object.keys(result.value.domain.namespaces[NS]!.enum ?? {}).sort();
+      };
+      expect(enumNames()).toEqual(["Audit", "Role", "Secret"]);
+      expect(enumNames("client")).toEqual(["Role"]);
+    });
+
+    it("still diagnoses a malformed enum that only excluded fields use in the client projection", () => {
+      const result = interpret(
+        `
+        enum Secret { }
+        model User {
+          id     String @id
+          secret Secret @idb.exclude
+        }
+      `,
+        "client"
+      );
+      expect(result.ok).toBe(false);
+    });
+
+    it("rejects an enum default that is not a declared member", () => {
+      const result = interpret(`
+        enum Role { USER ADMIN }
+        model User {
+          id   String @id
+          role Role   @default(OWNER)
+        }
+      `);
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.failure.diagnostics).toEqual(
+        expect.arrayContaining([expect.objectContaining({ code: "IDB_INVALID_ENUM_DEFAULT" })])
+      );
+    });
+
+    it('stores a member\'s `= "value"` mapping and uses it for defaults', () => {
+      const result = interpret(`
+        enum Role {
+          USER  = "user"
+          ADMIN = "admin"
+        }
+        model User {
+          id   String @id
+          role Role   @default(USER)
+        }
+      `);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value.domain.namespaces[NS]!.enum?.["Role"]?.members).toEqual([
+        { name: "USER", value: "user" },
+        { name: "ADMIN", value: "admin" },
+      ]);
+      expect(result.value.execution?.mutations.defaults).toContainEqual({
+        ref: { namespace: NS, table: "user", column: "role" },
+        onCreate: { kind: "generator", id: "literal", params: { value: "user" } },
+      });
     });
   });
 
@@ -542,6 +662,33 @@ describe("interpretPslDocumentToIdbContract", () => {
         cardinality: "1:N",
         on: { localFields: ["id"], targetFields: ["userId"] },
       });
+      expect(userModel.relations["posts"]).not.toHaveProperty("nullable");
+    });
+
+    it("marks a to-one relation nullable from the relation field's optionality", () => {
+      const result = interpret(`
+        model User {
+          id       String  @id
+          posts    Post[]
+          comments Comment[]
+        }
+        model Post {
+          id     String @id
+          userId String
+          user   User   @relation(fields: [userId], references: [id])
+        }
+        model Comment {
+          id     String  @id
+          userId String?
+          user   User?   @relation(fields: [userId], references: [id])
+        }
+      `);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+
+      const models = result.value.domain.namespaces[NS]!.models as unknown as Record<string, TestContractModel>;
+      expect(models["Post"]!.relations["user"]).toMatchObject({ cardinality: "N:1", nullable: false });
+      expect(models["Comment"]!.relations["user"]).toMatchObject({ cardinality: "N:1", nullable: true });
     });
 
     it("stores onDelete in IdbModelStorage.relations", () => {

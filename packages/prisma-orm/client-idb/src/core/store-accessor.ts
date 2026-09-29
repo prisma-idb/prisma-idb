@@ -65,6 +65,7 @@ import {
 } from "./aggregate-builder";
 import { type IdbGroupedAccessor, createGroupedAccessor } from "./grouped-accessor";
 import type { IdbQueryExecutor } from "./executor";
+import { assertEnumValues } from "./enum-validation";
 import { applyCreateDefaults, applyUpdateDefaults, createMutationDefaultsCache } from "./mutation-defaults";
 import { loadRelation } from "./relation-loader";
 import {
@@ -602,6 +603,7 @@ export class IdbStoreAccessorImpl<
       record,
       createMutationDefaultsCache()
     );
+    assertEnumValues(this.#contract, this.#modelName, withDefaults);
     if (hasScalarFkFields(this.#contract, this.#modelName, withDefaults)) {
       const row = await executeScalarCreateWithFkValidation({
         executor: requireTransactionExecutor(this.#executor),
@@ -785,6 +787,8 @@ export class IdbStoreAccessorImpl<
       createRecord,
       createMutationDefaultsCache()
     );
+    assertEnumValues(this.#contract, this.#modelName, effectivePatch);
+    assertEnumValues(this.#contract, this.#modelName, createWithDefaults);
     const { storeNames: onUpdateStoreNames } = collectOnUpdateEnforcementStoreNames(
       this.#contract,
       this.#modelName,
@@ -852,8 +856,12 @@ export class IdbStoreAccessorImpl<
       },
     };
     const executorQuery = this.#executor.query.bind(this.#executor);
+    const contract = this.#contract;
+    const modelName = this.#modelName;
     return new AsyncIterableResult(
       (async function* (): AsyncGenerator<DefaultModelRow<TContract, ModelName>, void, unknown> {
+        // The foreign-key path above checks enums per row in `insertSingleRow`.
+        for (const record of records) assertEnumValues(contract, modelName, record);
         for await (const row of executorQuery(plan)) {
           yield row as DefaultModelRow<TContract, ModelName>;
         }

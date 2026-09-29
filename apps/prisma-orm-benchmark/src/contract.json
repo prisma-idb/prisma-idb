@@ -94,6 +94,7 @@
             "relations": {
               "author": {
                 "cardinality": "N:1",
+                "nullable": false,
                 "on": {
                   "localFields": ["authorId"],
                   "targetFields": ["id"]
@@ -105,6 +106,7 @@
               },
               "publisher": {
                 "cardinality": "N:1",
+                "nullable": false,
                 "on": {
                   "localFields": ["publisherId"],
                   "targetFields": ["id"]

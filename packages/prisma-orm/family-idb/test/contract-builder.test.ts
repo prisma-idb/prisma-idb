@@ -1,4 +1,4 @@
-import { domainModelsAtDefaultNamespace } from "@prisma/orm-framework/contract/types";
+import { UNBOUND_DOMAIN_NAMESPACE_ID, domainModelsAtDefaultNamespace } from "@prisma/orm-framework/contract/types";
 import type { MockInstance } from "vitest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { defineContract } from "../src/core/contract-builder";
@@ -13,6 +13,97 @@ beforeEach(() => {
 
 afterEach(() => {
   warnSpy.mockRestore();
+});
+
+describe("defineContract — enums", () => {
+  it("builds domain enums and enum-typed fields, including optional and list fields", () => {
+    const contract = defineContract({
+      family: idbFamilyPack,
+      target: idbTargetPack,
+      enums: { Role: ["USER", "ADMIN"] },
+      models: {
+        User: {
+          store: "users",
+          key: "id",
+          fields: { id: "String", role: "Role", invitedAs: "Role?", previousRoles: "Role[]" },
+          fieldDefaults: { role: "USER" },
+        },
+      },
+    });
+
+    const ns = contract.domain.namespaces[UNBOUND_DOMAIN_NAMESPACE_ID]!;
+    expect(ns.enum?.["Role"]).toEqual({
+      codecId: "idb/string@1",
+      members: [
+        { name: "USER", value: "USER" },
+        { name: "ADMIN", value: "ADMIN" },
+      ],
+    });
+    expect(ns.models["User"]!.fields["role"]).toMatchObject({
+      nullable: false,
+      type: { kind: "scalar", codecId: "idb/string@1" },
+      valueSet: {
+        plane: "domain",
+        entityKind: "enum",
+        namespaceId: UNBOUND_DOMAIN_NAMESPACE_ID,
+        entityName: "Role",
+      },
+    });
+    expect(ns.models["User"]!.fields["invitedAs"]).toMatchObject({ nullable: true });
+    expect(ns.models["User"]!.fields["previousRoles"]).toMatchObject({ many: true });
+  });
+
+  it("validates enum declarations and enum field defaults", () => {
+    expect(() =>
+      defineContract({
+        family: idbFamilyPack,
+        target: idbTargetPack,
+        enums: { Role: ["USER", "ADMIN"] },
+        models: {
+          User: {
+            store: "users",
+            key: "id",
+            fields: { id: "String", role: "Role" },
+            fieldDefaults: { role: "OWNER" },
+          },
+        },
+      })
+    ).toThrow(/not a declared value of enum "Role"/);
+  });
+
+  it("rejects a default on an enum list even when the value is an enum member", () => {
+    expect(() =>
+      defineContract({
+        family: idbFamilyPack,
+        target: idbTargetPack,
+        enums: { Role: ["USER", "ADMIN"] },
+        models: {
+          User: {
+            store: "users",
+            key: "id",
+            fields: { id: "String", previousRoles: "Role[]" },
+            fieldDefaults: { previousRoles: "USER" },
+          },
+        },
+      })
+    ).toThrow(/enum list; list defaults are not supported by IDB/);
+  });
+
+  it("rejects list specs on non-enum types and optional lists", () => {
+    const build = (spec: string) => () =>
+      defineContract({
+        family: idbFamilyPack,
+        target: idbTargetPack,
+        enums: { Role: ["USER", "ADMIN"] },
+        // Cast: an untyped caller can pass specs the `FieldSpec` type rejects.
+        models: { User: { store: "users", key: "id", fields: { id: "String", tags: spec as "String" } } },
+      });
+
+    expect(build("String[]")).toThrow(/Only enum fields can be lists/);
+    expect(build("Json[]")).toThrow(/Only enum fields can be lists/);
+    expect(build("Role[]?")).toThrow(/A list field cannot be optional/);
+    expect(build("Role[]")).not.toThrow();
+  });
 });
 
 describe("defineContract — @idb.exclude projection (ADR 012)", () => {
@@ -206,6 +297,77 @@ describe("defineContract — @idb.exclude projection (ADR 012)", () => {
     );
 
     expect(Object.keys(contract.storage.stores)).toEqual(["users"]);
+  });
+});
+
+describe("defineContract — to-one relation nullability", () => {
+  it("derives nullable from the local FK fields and honors an explicit override", () => {
+    const contract = defineContract({
+      family: idbFamilyPack,
+      target: idbTargetPack,
+      models: {
+        User: {
+          store: "users",
+          key: "id",
+          fields: { id: "String" },
+          relations: {
+            posts: { to: "Post", cardinality: "1:N", on: { local: ["id"], target: ["authorId"] } },
+          },
+        },
+        Post: {
+          store: "posts",
+          key: "id",
+          fields: { id: "String", authorId: "String", editorId: "String?", reviewerId: "String" },
+          relations: {
+            author: { to: "User", cardinality: "N:1", on: { local: ["authorId"], target: ["id"] } },
+            editor: { to: "User", cardinality: "N:1", on: { local: ["editorId"], target: ["id"] } },
+            reviewer: { to: "User", cardinality: "N:1", on: { local: ["reviewerId"], target: ["id"] }, nullable: true },
+          },
+        },
+      },
+    });
+
+    const models = domainModelsAtDefaultNamespace(contract.domain) as Record<
+      string,
+      { relations: Record<string, object> }
+    >;
+    expect(models["Post"]!.relations["author"]).toMatchObject({ nullable: false });
+    expect(models["Post"]!.relations["editor"]).toMatchObject({ nullable: true });
+    expect(models["Post"]!.relations["reviewer"]).toMatchObject({ nullable: true });
+    expect(models["User"]!.relations["posts"]).not.toHaveProperty("nullable");
+  });
+});
+
+describe("defineContract — enums in the client projection", () => {
+  const input = {
+    family: idbFamilyPack,
+    target: idbTargetPack,
+    enums: { Role: ["USER", "ADMIN"], Secret: ["A", "B"], Audit: ["X"] },
+    models: {
+      User: {
+        store: "users",
+        key: "id",
+        fields: { id: "String", role: "Role", secret: "Secret" },
+        excludeFields: ["secret"],
+      },
+      AuditLog: { store: "auditLog", key: "id", fields: { id: "String", kind: "Audit" }, exclude: true },
+    },
+  } as const;
+  const enumNames = (c: ReturnType<typeof defineContract>) =>
+    Object.keys(c.domain.namespaces[UNBOUND_DOMAIN_NAMESPACE_ID]?.enum ?? {}).sort();
+
+  it("keeps every enum in the full projection", () => {
+    expect(enumNames(defineContract(input))).toEqual(["Audit", "Role", "Secret"]);
+  });
+
+  it("drops enums used only by excluded fields or models in the client projection", () => {
+    expect(enumNames(defineContract(input, { projection: "client" }))).toEqual(["Role"]);
+  });
+
+  it("still validates an enum that only excluded fields use", () => {
+    expect(() => defineContract({ ...input, enums: { ...input.enums, Secret: [] } }, { projection: "client" })).toThrow(
+      /enum "Secret" must declare at least one value/
+    );
   });
 });
 

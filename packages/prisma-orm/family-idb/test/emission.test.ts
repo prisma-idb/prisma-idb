@@ -1,6 +1,8 @@
 import type { ContractModel } from "@prisma/orm-framework/contract/types";
 import { domainModelsAtDefaultNamespace } from "@prisma/orm-framework/contract/types";
+import { generateContractDts } from "@prisma/orm-toolchain/emitter";
 import { describe, expect, it } from "vitest";
+import { idbCodecLookup } from "@prisma-idb/target-idb/runtime";
 import { idbEmission } from "../src/core/emission";
 import { validateContract } from "../src/core/validate";
 import { defineContract } from "../src/core/contract-builder";
@@ -43,6 +45,38 @@ function makeRawWithStorage(storage: Record<string, unknown>) {
 // ── emission ──────────────────────────────────────────────────────────────────
 
 describe("idbEmission", () => {
+  it("emits enum value unions for scalar, optional, and list fields", () => {
+    const contract = defineContract({
+      family: idbFamilyPack,
+      target: idbTargetPack,
+      enums: { Role: ["USER", "ADMIN"] },
+      models: {
+        User: {
+          store: "users",
+          key: "id",
+          fields: { id: "String", role: "Role", invitedAs: "Role?", previousRoles: "Role[]" },
+        },
+      },
+    });
+
+    const result = generateContractDts(
+      contract,
+      idbEmission,
+      [],
+      { storageHash: contract.storage.storageHash, profileHash: contract.profileHash },
+      undefined,
+      idbCodecLookup
+    );
+
+    expect(result).toContain('readonly role: "USER" | "ADMIN"');
+    expect(result).toContain('readonly invitedAs: "USER" | "ADMIN" | null');
+    expect(result).toContain('readonly previousRoles: ReadonlyArray<"USER" | "ADMIN">');
+    expect(result).toContain("readonly enum:");
+    expect(result).toContain("readonly Role:");
+    expect(result).toContain('readonly name: "USER"');
+    expect(result).toContain('readonly value: "ADMIN"');
+  });
+
   describe("generateStorageType", () => {
     it("serializes stores into a TypeScript type literal", () => {
       const result = idbEmission.generateStorageType(minimalIdbContract, "StorageHash");
@@ -95,6 +129,33 @@ describe("idbEmission", () => {
       const result = idbEmission.generateStorageType(contract, "H");
       expect(result).toContain("readonly multiEntry: true");
       expect(result).toContain("readonly unique: false");
+    });
+
+    it("emits unique: false for an index whose flag was dropped by canonicalization", () => {
+      const contract = defineContract({
+        family: idbFamilyPack,
+        target: idbTargetPack,
+        models: {
+          Post: {
+            store: "posts",
+            key: "id",
+            fields: { id: "String", authorId: "String" },
+            indexes: { byAuthorId: { keyPath: "authorId", unique: false } },
+          },
+        },
+      });
+      // contract.json omits `unique: false`, and the emitter types the canonical form.
+      const { unique: _dropped, ...canonicalIndex } = contract.storage.stores["posts"]!.indexes!["byAuthorId"]!;
+      const canonical = {
+        ...contract,
+        storage: {
+          ...contract.storage,
+          stores: { posts: { ...contract.storage.stores["posts"]!, indexes: { byAuthorId: canonicalIndex } } },
+        },
+      } as unknown as typeof contract;
+      const result = idbEmission.generateStorageType(canonical, "H");
+      expect(result).toContain("readonly keyPath: 'authorId'; readonly unique: false");
+      expect(result).not.toContain("undefined");
     });
 
     it("serializes a compound (array) store keyPath as a readonly tuple type", () => {

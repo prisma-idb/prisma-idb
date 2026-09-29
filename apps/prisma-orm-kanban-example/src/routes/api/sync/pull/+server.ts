@@ -39,7 +39,7 @@ export const GET: RequestHandler = async ({ url, request }) => {
   const ordered = db.orm.public.Changelog.where({ scopeKey })
     .select("id", "model", "keyPath", "operation")
     .orderBy((c) => c.id.asc());
-  const rows = await (sinceId !== null ? ordered.cursor({ id: sinceId }) : ordered).take(50).all();
+  const rows = await (sinceId !== null ? ordered.cursor({ id: sinceId }) : ordered).limit(50).all();
 
   const pullLogs = rows.map((row) => ({ changelogId: String(row.id), model: row.model, key: row.keyPath }));
   const checks = syncServer.buildPullQueries(pullLogs, { scopeKey });

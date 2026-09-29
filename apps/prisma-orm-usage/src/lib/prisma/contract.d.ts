@@ -22,13 +22,13 @@ export type LaneCodecTypes = CodecTypes;
 export type FieldOutputTypes = {
   readonly __unbound__: {
     readonly Post: {
-      readonly id: CodecTypes["idb/string@1"]["output"];
-      readonly title: CodecTypes["idb/string@1"]["output"];
-      readonly content: CodecTypes["idb/string@1"]["output"] | null;
-      readonly published: CodecTypes["idb/bool@1"]["output"];
-      readonly views: CodecTypes["idb/int32@1"]["output"];
       readonly authorId: CodecTypes["idb/string@1"]["output"];
+      readonly content: CodecTypes["idb/string@1"]["output"] | null;
       readonly createdAt: CodecTypes["idb/date@1"]["output"];
+      readonly id: CodecTypes["idb/string@1"]["output"];
+      readonly published: CodecTypes["idb/bool@1"]["output"];
+      readonly title: CodecTypes["idb/string@1"]["output"];
+      readonly views: CodecTypes["idb/int32@1"]["output"];
     };
     readonly RandomStore: { readonly id: CodecTypes["idb/string@1"]["output"] };
     readonly Tag: {
@@ -37,26 +37,26 @@ export type FieldOutputTypes = {
       readonly postId: CodecTypes["idb/string@1"]["output"];
     };
     readonly User: {
-      readonly id: CodecTypes["idb/string@1"]["output"];
-      readonly name: CodecTypes["idb/string@1"]["output"];
-      readonly email: CodecTypes["idb/string@1"]["output"];
-      readonly bio: CodecTypes["idb/string@1"]["output"] | null;
-      readonly score: CodecTypes["idb/int32@1"]["output"];
       readonly active: CodecTypes["idb/bool@1"]["output"];
+      readonly bio: CodecTypes["idb/string@1"]["output"] | null;
+      readonly email: CodecTypes["idb/string@1"]["output"];
+      readonly id: CodecTypes["idb/string@1"]["output"];
       readonly joinedAt: CodecTypes["idb/date@1"]["output"];
+      readonly name: CodecTypes["idb/string@1"]["output"];
+      readonly score: CodecTypes["idb/int32@1"]["output"];
     };
   };
 };
 export type FieldInputTypes = {
   readonly __unbound__: {
     readonly Post: {
-      readonly id: CodecTypes["idb/string@1"]["input"];
-      readonly title: CodecTypes["idb/string@1"]["input"];
-      readonly content: CodecTypes["idb/string@1"]["input"] | null;
-      readonly published: CodecTypes["idb/bool@1"]["input"];
-      readonly views: CodecTypes["idb/int32@1"]["input"];
       readonly authorId: CodecTypes["idb/string@1"]["input"];
+      readonly content: CodecTypes["idb/string@1"]["input"] | null;
       readonly createdAt: CodecTypes["idb/date@1"]["input"];
+      readonly id: CodecTypes["idb/string@1"]["input"];
+      readonly published: CodecTypes["idb/bool@1"]["input"];
+      readonly title: CodecTypes["idb/string@1"]["input"];
+      readonly views: CodecTypes["idb/int32@1"]["input"];
     };
     readonly RandomStore: { readonly id: CodecTypes["idb/string@1"]["input"] };
     readonly Tag: {
@@ -65,16 +65,63 @@ export type FieldInputTypes = {
       readonly postId: CodecTypes["idb/string@1"]["input"];
     };
     readonly User: {
-      readonly id: CodecTypes["idb/string@1"]["input"];
-      readonly name: CodecTypes["idb/string@1"]["input"];
-      readonly email: CodecTypes["idb/string@1"]["input"];
-      readonly bio: CodecTypes["idb/string@1"]["input"] | null;
-      readonly score: CodecTypes["idb/int32@1"]["input"];
       readonly active: CodecTypes["idb/bool@1"]["input"];
+      readonly bio: CodecTypes["idb/string@1"]["input"] | null;
+      readonly email: CodecTypes["idb/string@1"]["input"];
+      readonly id: CodecTypes["idb/string@1"]["input"];
       readonly joinedAt: CodecTypes["idb/date@1"]["input"];
+      readonly name: CodecTypes["idb/string@1"]["input"];
+      readonly score: CodecTypes["idb/int32@1"]["input"];
     };
   };
 };
+
+export namespace Models {
+  export type unbound_Post = {
+    authorId: CodecTypes["idb/string@1"]["output"];
+    content: CodecTypes["idb/string@1"]["output"] | null;
+    createdAt: CodecTypes["idb/date@1"]["output"];
+    id: CodecTypes["idb/string@1"]["output"];
+    published: CodecTypes["idb/bool@1"]["output"];
+    title: CodecTypes["idb/string@1"]["output"];
+    views: CodecTypes["idb/int32@1"]["output"];
+    author: unbound_User;
+    tags: unbound_Tag[];
+    readonly [RelationKeys]?: "author" | "tags";
+  };
+  export type unbound_RandomStore = {
+    id: CodecTypes["idb/string@1"]["output"];
+    readonly [RelationKeys]?: never;
+  };
+  export type unbound_Tag = {
+    id: CodecTypes["idb/string@1"]["output"];
+    name: CodecTypes["idb/string@1"]["output"];
+    postId: CodecTypes["idb/string@1"]["output"];
+    post: unbound_Post;
+    readonly [RelationKeys]?: "post";
+  };
+  export type unbound_User = {
+    active: CodecTypes["idb/bool@1"]["output"];
+    bio: CodecTypes["idb/string@1"]["output"] | null;
+    email: CodecTypes["idb/string@1"]["output"];
+    id: CodecTypes["idb/string@1"]["output"];
+    joinedAt: CodecTypes["idb/date@1"]["output"];
+    name: CodecTypes["idb/string@1"]["output"];
+    score: CodecTypes["idb/int32@1"]["output"];
+    posts: unbound_Post[];
+    readonly [RelationKeys]?: "posts";
+  };
+}
+
+export declare const models: {
+  __unbound__: {
+    Post: Models.unbound_Post;
+    RandomStore: Models.unbound_RandomStore;
+    Tag: Models.unbound_Tag;
+    User: Models.unbound_User;
+  };
+};
+
 export type TypeMaps = IdbTypeMaps<CodecTypes, FieldOutputTypes, FieldInputTypes>;
 
 type ContractBase = Omit<
@@ -111,13 +158,13 @@ type ContractBase = Omit<
   readonly target: "idb";
   readonly targetFamily: "idb";
   readonly roots: {
-    readonly users: { readonly namespace: "__unbound__" & NamespaceId; readonly model: "User" };
     readonly posts: { readonly namespace: "__unbound__" & NamespaceId; readonly model: "Post" };
-    readonly tags: { readonly namespace: "__unbound__" & NamespaceId; readonly model: "Tag" };
     readonly random_store: {
       readonly namespace: "__unbound__" & NamespaceId;
       readonly model: "RandomStore";
     };
+    readonly tags: { readonly namespace: "__unbound__" & NamespaceId; readonly model: "Tag" };
+    readonly users: { readonly namespace: "__unbound__" & NamespaceId; readonly model: "User" };
   };
   readonly domain: {
     readonly namespaces: {
@@ -125,11 +172,7 @@ type ContractBase = Omit<
         readonly models: {
           readonly Post: {
             readonly fields: {
-              readonly id: {
-                readonly nullable: false;
-                readonly type: { readonly kind: "scalar"; readonly codecId: "idb/string@1" };
-              };
-              readonly title: {
+              readonly authorId: {
                 readonly nullable: false;
                 readonly type: { readonly kind: "scalar"; readonly codecId: "idb/string@1" };
               };
@@ -137,21 +180,25 @@ type ContractBase = Omit<
                 readonly nullable: true;
                 readonly type: { readonly kind: "scalar"; readonly codecId: "idb/string@1" };
               };
+              readonly createdAt: {
+                readonly nullable: false;
+                readonly type: { readonly kind: "scalar"; readonly codecId: "idb/date@1" };
+              };
+              readonly id: {
+                readonly nullable: false;
+                readonly type: { readonly kind: "scalar"; readonly codecId: "idb/string@1" };
+              };
               readonly published: {
                 readonly nullable: false;
                 readonly type: { readonly kind: "scalar"; readonly codecId: "idb/bool@1" };
               };
-              readonly views: {
-                readonly nullable: false;
-                readonly type: { readonly kind: "scalar"; readonly codecId: "idb/int32@1" };
-              };
-              readonly authorId: {
+              readonly title: {
                 readonly nullable: false;
                 readonly type: { readonly kind: "scalar"; readonly codecId: "idb/string@1" };
               };
-              readonly createdAt: {
+              readonly views: {
                 readonly nullable: false;
-                readonly type: { readonly kind: "scalar"; readonly codecId: "idb/date@1" };
+                readonly type: { readonly kind: "scalar"; readonly codecId: "idb/int32@1" };
               };
             };
             readonly relations: {
@@ -161,6 +208,7 @@ type ContractBase = Omit<
                   readonly model: "User";
                 };
                 readonly cardinality: "N:1";
+                readonly nullable: false;
                 readonly on: {
                   readonly localFields: readonly ["authorId"];
                   readonly targetFields: readonly ["id"];
@@ -212,6 +260,7 @@ type ContractBase = Omit<
                   readonly model: "Post";
                 };
                 readonly cardinality: "N:1";
+                readonly nullable: false;
                 readonly on: {
                   readonly localFields: readonly ["postId"];
                   readonly targetFields: readonly ["id"];
@@ -222,33 +271,33 @@ type ContractBase = Omit<
           };
           readonly User: {
             readonly fields: {
-              readonly id: {
+              readonly active: {
                 readonly nullable: false;
-                readonly type: { readonly kind: "scalar"; readonly codecId: "idb/string@1" };
+                readonly type: { readonly kind: "scalar"; readonly codecId: "idb/bool@1" };
               };
-              readonly name: {
-                readonly nullable: false;
+              readonly bio: {
+                readonly nullable: true;
                 readonly type: { readonly kind: "scalar"; readonly codecId: "idb/string@1" };
               };
               readonly email: {
                 readonly nullable: false;
                 readonly type: { readonly kind: "scalar"; readonly codecId: "idb/string@1" };
               };
-              readonly bio: {
-                readonly nullable: true;
+              readonly id: {
+                readonly nullable: false;
+                readonly type: { readonly kind: "scalar"; readonly codecId: "idb/string@1" };
+              };
+              readonly joinedAt: {
+                readonly nullable: false;
+                readonly type: { readonly kind: "scalar"; readonly codecId: "idb/date@1" };
+              };
+              readonly name: {
+                readonly nullable: false;
                 readonly type: { readonly kind: "scalar"; readonly codecId: "idb/string@1" };
               };
               readonly score: {
                 readonly nullable: false;
                 readonly type: { readonly kind: "scalar"; readonly codecId: "idb/int32@1" };
-              };
-              readonly active: {
-                readonly nullable: false;
-                readonly type: { readonly kind: "scalar"; readonly codecId: "idb/bool@1" };
-              };
-              readonly joinedAt: {
-                readonly nullable: false;
-                readonly type: { readonly kind: "scalar"; readonly codecId: "idb/date@1" };
               };
             };
             readonly relations: {
@@ -272,9 +321,8 @@ type ContractBase = Omit<
   };
   readonly capabilities: {
     readonly idb: {
-      readonly compoundKeys: false;
+      readonly compoundKeys: true;
       readonly ddlOnlyInUpgrade: true;
-      readonly returning: false;
       readonly transactionalDDL: true;
     };
   };

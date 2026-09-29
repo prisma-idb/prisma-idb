@@ -1,5 +1,4 @@
 import type { PrismaNextConfig } from "@prisma/orm-toolchain/config-loader";
-import { finalizeConfig } from "@prisma/orm-toolchain/config-loader";
 import type {
   ArgsSpec,
   CommandDefinition,
@@ -16,11 +15,6 @@ import { ormConfigSection } from "./config-section";
 function normalizeError(error: unknown): CliStructuredError {
   if (CliStructuredError.is(error)) return error;
   return new CliStructuredError("IDB-CLI.UNEXPECTED_ERROR", error instanceof Error ? error.message : String(error));
-}
-
-function finalizedConfigContext<TCtx extends { readonly cwd: string; readonly config: unknown }>(ctx: TCtx): TCtx {
-  if (ctx.config === undefined) return ctx;
-  return { ...ctx, config: finalizeConfig(ctx.config as PrismaNextConfig, ctx.cwd) };
 }
 
 /**
@@ -52,12 +46,11 @@ function requireIdbFamily(config: PrismaNextConfig): void {
 
 /**
  * `defineCommand` pre-bound to the `orm` config section (see
- * `config-section.ts`) with a uniform error boundary and path
- * finalization, mirroring `@prisma/orm-toolchain`'s own `defineOrmCommand`
- * (`vendor/prisma/packages/1-framework/3-tooling/cli/src/orm/define-command.ts`):
- * the engine's config loader hands a command `contract.output`/
- * `migrations.dir` exactly as authored (usually relative); finalizing here,
- * once, means handlers always read absolute paths.
+ * `config-section.ts`) with a uniform error boundary, mirroring
+ * `@prisma/orm-toolchain`'s own `defineOrmCommand`. The section's schema
+ * resolves `contract.output`/`migrations.dir` against the config file that
+ * wrote them (and defaults `migrations.dir`), so handlers always read
+ * absolute paths without a separate finalize step.
  */
 export function defineIdbCommand<
   TFlags extends Record<string, FlagSpec<unknown>> = Record<never, FlagSpec<unknown>>,
@@ -76,9 +69,8 @@ export function defineIdbCommand<
     needs: { config: ormConfigSection },
     handler: async (args, ctx) => {
       try {
-        const finalized = finalizedConfigContext(ctx);
-        requireIdbFamily(finalized.config);
-        return await def.handler(args, finalized);
+        requireIdbFamily(ctx.config);
+        return await def.handler(args, ctx);
       } catch (error) {
         return notOk(normalizeError(error));
       }

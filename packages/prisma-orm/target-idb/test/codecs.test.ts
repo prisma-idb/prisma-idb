@@ -1,6 +1,7 @@
 import type { Codec, CodecCallContext } from "@prisma/orm-framework/components/codec";
 import { describe, expect, it } from "vitest";
 import { codecDescriptors } from "../src/core/codecs";
+import { idbTargetDescriptorMeta } from "../src/core/descriptor-meta";
 
 // Instantiate a codec from its descriptor's factory.
 function getCodec(codecId: string): Codec {
@@ -244,6 +245,23 @@ describe("codec registry", () => {
     for (const desc of codecDescriptors) {
       expect(desc.traits.length).toBeGreaterThan(0);
       expect(desc.targetTypes.length).toBeGreaterThan(0);
+    }
+  });
+
+  // The framework refuses to assemble a stack whose codecs name an unregistered
+  // data type (CONTRACT.DATA_TYPE_UNREGISTERED), so the target must register
+  // every type its codecs use.
+  it("every descriptor names a data type the target registers", () => {
+    const registered = new Set(idbTargetDescriptorMeta.dataTypes.map((t) => t.id));
+    for (const desc of codecDescriptors) {
+      expect(desc.dataType, desc.codecId).toBeDefined();
+      expect(registered.has(desc.dataType), `${desc.codecId} → ${desc.dataType}`).toBe(true);
+    }
+  });
+
+  it("maps each codec to the data type of the same name", () => {
+    for (const desc of codecDescriptors) {
+      expect(desc.dataType).toBe(desc.codecId.replace(/@\d+$/, ""));
     }
   });
 });

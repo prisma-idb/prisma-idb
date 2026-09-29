@@ -29,6 +29,11 @@ model User {
   // itself: that's IDB_EXCLUDE_ON_RELATION_FIELD_UNSUPPORTED).
   sessions      Session[]
   accounts      Account[]
+
+  // better-auth queries its tables by lowercase name (user/session/account/
+  // verification); Prisma 8 rc.12+ no longer lowercases table names by
+  // default, so each auth model pins its name explicitly.
+  @@map("user")
 }
 
 // better-auth's own tables (session/account/verification) — never reach the
@@ -51,6 +56,7 @@ model Session {
   userId    String
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
+  @@map("session")
   @@idb.exclude
 }
 
@@ -74,6 +80,7 @@ model Account {
   // concurrent OAuth callbacks for the same provider account could insert
   // two rows and make later lookups non-deterministic.
   @@unique([providerId, accountId])
+  @@map("account")
   @@idb.exclude
 }
 
@@ -85,6 +92,7 @@ model Verification {
   createdAt  DateTime @default(now())
   updatedAt  DateTime
 
+  @@map("verification")
   @@idb.exclude
 }
 

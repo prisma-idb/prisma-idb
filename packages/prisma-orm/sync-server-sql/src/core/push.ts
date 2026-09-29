@@ -1,3 +1,4 @@
+import { domainModelsAtDefaultNamespace } from "@prisma/orm-framework/contract/types";
 import type { GetKeyField, OwnershipCheck, SyncServerContract } from "@prisma-idb/sync-server";
 import { ormRootFor } from "./orm-root";
 import { checkAuthorization } from "./authorization";
@@ -22,6 +23,35 @@ export interface SqlPushResult {
   readonly success: boolean;
   readonly error?: string;
   readonly retryable?: boolean;
+}
+
+/**
+ * Codecs whose application value is a JS `Date`. Their `encode` only accepts
+ * a real `Date`, but a push payload has been through JSON, so the client's
+ * `Date`s arrive as ISO strings.
+ */
+const JS_DATE_CODEC_IDS: ReadonlySet<string> = new Set(["pg/timestamptz-date@1"]);
+
+/**
+ * Turns JSON-wire values back into the values `model`'s codecs encode:
+ * currently ISO strings on JS-`Date` fields. Anything else passes through.
+ */
+export function reviveWireValues(
+  contract: SyncServerContract,
+  model: string,
+  data: Record<string, unknown>
+): Record<string, unknown> {
+  const fields = (
+    domainModelsAtDefaultNamespace(contract.domain)[model] as
+      { fields?: Record<string, { type?: { codecId?: string } }> } | undefined
+  )?.fields;
+  if (!fields) return data;
+  return Object.fromEntries(
+    Object.entries(data).map(([name, value]) => {
+      const codecId = fields[name]?.type?.codecId;
+      return [name, typeof value === "string" && codecId && JS_DATE_CODEC_IDS.has(codecId) ? new Date(value) : value];
+    })
+  );
 }
 
 /** Extracts the shape `sync-server`'s `validatePush` reads `payload[keyField]` from, per operation kind. */
@@ -96,7 +126,7 @@ export async function applyPushEvent(
 
       const root = ormRootFor(tx, model);
       if (event.operation === "create") {
-        await root.select(keyField).create(event.payload as Record<string, unknown>);
+        await root.select(keyField).create(reviveWireValues(contract, model, event.payload as Record<string, unknown>));
       } else if (event.operation === "update" && patch) {
         // `check.key` (resolved by the caller via `toSyncPushPayload`, same
         // value) is what identifies the row — not `event.payload`, which
@@ -105,7 +135,7 @@ export async function applyPushEvent(
         await root
           .select(keyField)
           .where({ [keyField]: check.key })
-          .update(patch);
+          .update(reviveWireValues(contract, model, patch));
       } else {
         await root.where({ [keyField]: (event.payload as { key: unknown }).key }).delete();
       }

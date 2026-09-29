@@ -90,7 +90,11 @@ export const idbEmission = {
       if (Object.keys(indexes).length > 0) {
         const indexEntries: string[] = [];
         for (const [indexName, index] of Object.entries(indexes).sort(([a], [b]) => a.localeCompare(b))) {
-          const indexParts = [`readonly keyPath: ${serializeValue(index.keyPath)}`, `readonly unique: ${index.unique}`];
+          // Canonicalization drops `unique: false`, so an absent flag means a non-unique index.
+          const indexParts = [
+            `readonly keyPath: ${serializeValue(index.keyPath)}`,
+            `readonly unique: ${index.unique ?? false}`,
+          ];
           if (index.multiEntry !== undefined) {
             indexParts.push(`readonly multiEntry: ${index.multiEntry}`);
           }
@@ -144,6 +148,17 @@ export const idbEmission = {
       `{ readonly storeName: ${serializeValue(idbModel.storage.storeName)}`,
       `readonly keyPath: ${serializeValue(idbModel.storage.keyPath)} }`,
     ].join("; ");
+  },
+
+  resolveFieldValueSet(_modelName: string, fieldName: string, model: ContractModel, contract: Contract) {
+    const ref = model.fields[fieldName]?.valueSet;
+    if (ref?.plane !== "domain" || ref.entityKind !== "enum" || ref.spaceId !== undefined) return undefined;
+    const entry = contract.domain.namespaces[ref.namespaceId]?.enum?.[ref.entityName];
+    if (entry === undefined) return undefined;
+    return {
+      codecId: entry.codecId,
+      encodedValues: entry.members.map((member) => member.value),
+    };
   },
 
   /**

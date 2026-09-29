@@ -2,7 +2,7 @@ import type { PrismaNextConfig } from "@prisma/orm-framework/config/config-types
 import { defineConfig as coreDefineConfig } from "@prisma/orm-framework/config/config-types";
 import { ifDefined } from "@prisma/orm-framework/utils/defined";
 import postgresAdapter from "@prisma/orm-postgres/adapter/control";
-import { PG_INT_CODEC_ID, PG_TEXT_CODEC_ID } from "@prisma/orm-postgres/target/codec-ids";
+import { PG_INT_CODEC_ID, PG_TEXT_CODEC_ID, PG_TIMESTAMPTZ_DATE_CODEC_ID } from "@prisma/orm-postgres/target/codec-ids";
 import postgresDriver from "@prisma/orm-postgres/driver/control";
 import sql from "@prisma/orm-postgres/family/control";
 import postgres from "@prisma/orm-postgres/target/control";
@@ -22,6 +22,29 @@ export interface PostgresSyncConfigOptions {
   readonly db?: { readonly connection?: string };
   readonly migrations?: { readonly dir?: string };
 }
+
+/**
+ * `@prisma/orm-postgres`'s adapter with PSL `DateTime` bound to the JS-`Date`
+ * codec. From rc.12 the stock adapter binds it to `pg/timestamptz-temporal@1`,
+ * which throws on decode unless the runtime has a global `Temporal` (Node 24
+ * LTS does not) and hands back `Temporal.Instant`s where every IDB client
+ * reads and writes `Date`s. Same `timestamptz` column either way, so this
+ * changes the JS representation only, not the database schema.
+ */
+const syncPostgresAdapter: typeof postgresAdapter = {
+  ...postgresAdapter,
+  authoring: {
+    ...postgresAdapter.authoring,
+    type: {
+      ...postgresAdapter.authoring?.type,
+      DateTime: {
+        kind: "typeConstructor",
+        documentation: "An instant stored as PostgreSQL timestamptz and represented as a JavaScript Date.",
+        output: { codecId: PG_TIMESTAMPTZ_DATE_CODEC_ID, nativeType: "timestamptz" },
+      },
+    },
+  },
+};
 
 /**
  * The Postgres-target config for a sync server: wires `@prisma/orm-postgres`'s
@@ -51,7 +74,7 @@ export function defineConfig(options: PostgresSyncConfigOptions): PrismaNextConf
   return coreDefineConfig({
     family: sql,
     target: postgres,
-    adapter: postgresAdapter,
+    adapter: syncPostgresAdapter,
     driver: postgresDriver,
     contract: sqlContractWithSync(options.schema, {
       target: postgresPackRef,

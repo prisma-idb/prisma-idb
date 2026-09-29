@@ -140,9 +140,12 @@ describe("applyPushEvent", () => {
     expect(result).toEqual({ id: "evt1", success: true });
     expect(await ormRootFor(db, "User").first({ id: "u1" })).toEqual({ id: "u1", name: "Ann" });
     const changelogRows = await (
-      db.orm["public"] as unknown as { Changelog: { all(): Promise<unknown[]> } }
+      db.orm["public"] as unknown as { Changelog: { all(): Promise<{ createdAt: unknown }[]> } }
     ).Changelog.all();
     expect(changelogRows).toHaveLength(1);
+    // `DateTime` decodes to a JS `Date` (the codec IDB clients sync with), not
+    // rc.12's default `Temporal.Instant`, which needs a global `Temporal`.
+    expect(changelogRows[0]?.createdAt).toBeInstanceOf(Date);
   });
 
   it("rejects with SCOPE_VIOLATION when authorization fails, without writing the row", async () => {
@@ -170,6 +173,46 @@ describe("applyPushEvent", () => {
     );
     expect(result).toEqual({ id: "evt2", success: false, error: "SCOPE_VIOLATION", retryable: false });
     expect(await ormRootFor(db, "Board").first({ id: "b1" })).not.toBeNull();
+  });
+
+  it("revives JSON-wire ISO strings into Dates for DateTime fields on create and update", async () => {
+    const db = await testDb();
+    await seed(db, {
+      User: [{ id: "u1", name: "Ann" }],
+      Board: [{ id: "b1", ownerId: "u1" }],
+    });
+    const check: OwnershipCheck = {
+      kind: "scoped",
+      keyField: "id",
+      key: "t1",
+      rootKeyField: "id",
+      scopeKey: "u1",
+      paths: [["board", "owner"]],
+    };
+    // A client `Date` after JSON.stringify — what an outbox event carries.
+    const created = await applyPushEvent(
+      db,
+      contract,
+      getKeyField,
+      { id: "evt1", operation: "create", payload: { id: "t1", boardId: "b1", dueAt: "2026-01-02T03:04:05.000Z" } },
+      "Todo",
+      check,
+      "u1"
+    );
+    expect(created).toEqual({ id: "evt1", success: true });
+    expect((await ormRootFor(db, "Todo").first({ id: "t1" }))?.["dueAt"]).toEqual(new Date("2026-01-02T03:04:05.000Z"));
+
+    const updated = await applyPushEvent(
+      db,
+      contract,
+      getKeyField,
+      { id: "evt2", operation: "update", payload: { key: "t1", patch: { dueAt: "2026-02-03T04:05:06.000Z" } } },
+      "Todo",
+      check,
+      "u1"
+    );
+    expect(updated).toEqual({ id: "evt2", success: true });
+    expect((await ormRootFor(db, "Todo").first({ id: "t1" }))?.["dueAt"]).toEqual(new Date("2026-02-03T04:05:06.000Z"));
   });
 
   it("is idempotent on the event id — re-applying is a no-op success", async () => {
