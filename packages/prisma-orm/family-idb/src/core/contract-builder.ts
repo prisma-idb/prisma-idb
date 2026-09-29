@@ -440,6 +440,21 @@ function buildEnums(enums: EnumDefs): Record<string, ContractEnum> {
   return result;
 }
 
+/**
+ * Client projection: drop enums that no remaining field uses, so an enum that
+ * only excluded models or fields reference doesn't reach the client contract.
+ * Runs after `buildEnums` has validated the complete map.
+ */
+function keepReferencedEnums(
+  enums: Record<string, ContractEnum>,
+  models: Record<string, ModelDef<string>>
+): Record<string, ContractEnum> {
+  const referenced = new Set(
+    Object.values(models).flatMap((def) => Object.values(def.fields).map((spec) => parseFieldSpec(spec).typeName))
+  );
+  return Object.fromEntries(Object.entries(enums).filter(([name]) => referenced.has(name)));
+}
+
 // ── Helper: derive the `roots` map (storeName → model CrossReference) ─────────
 
 function buildRoots(models: Record<string, ModelDef<string>>): Record<string, CrossReference> {
@@ -567,7 +582,8 @@ export function defineContract<const TEnums extends EnumDefs = Record<never, nev
     ? projectModelsForClient(input.models)
     : input.models;
 
-  const domainEnums = buildEnums(enums);
+  const validatedEnums = buildEnums(enums);
+  const domainEnums = projection === "client" ? keepReferencedEnums(validatedEnums, models) : validatedEnums;
 
   for (const [modelName, def] of Object.entries(models)) {
     validateModelKeyAndIndexes(modelName, def, enums);

@@ -1218,11 +1218,25 @@ export function interpretPslDocumentToIdbContract(
 
   const storage: IdbStorage = { ...storageBlock, storageHash };
 
+  // Every enum block was validated above. In the client projection, keep only
+  // the enums a remaining field uses, so enums that only excluded models or
+  // fields reference don't reach the client contract.
+  const domainEnums =
+    projection === "client"
+      ? Object.fromEntries(
+          Object.entries(enums).filter(([enumName]) =>
+            [...interpretedByName.values()].some((interp) =>
+              Object.values(interp.fields).some((field) => field.valueSet?.entityName === enumName)
+            )
+          )
+        )
+      : enums;
+
   const domain = {
     namespaces: {
       [ns]: {
         models: domainModels,
-        ...(Object.keys(enums).length > 0 ? { enum: enums } : {}),
+        ...(Object.keys(domainEnums).length > 0 ? { enum: domainEnums } : {}),
       },
     },
   } as unknown as ApplicationDomain;

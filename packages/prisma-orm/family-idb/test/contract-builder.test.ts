@@ -338,6 +338,39 @@ describe("defineContract — to-one relation nullability", () => {
   });
 });
 
+describe("defineContract — enums in the client projection", () => {
+  const input = {
+    family: idbFamilyPack,
+    target: idbTargetPack,
+    enums: { Role: ["USER", "ADMIN"], Secret: ["A", "B"], Audit: ["X"] },
+    models: {
+      User: {
+        store: "users",
+        key: "id",
+        fields: { id: "String", role: "Role", secret: "Secret" },
+        excludeFields: ["secret"],
+      },
+      AuditLog: { store: "auditLog", key: "id", fields: { id: "String", kind: "Audit" }, exclude: true },
+    },
+  } as const;
+  const enumNames = (c: ReturnType<typeof defineContract>) =>
+    Object.keys(c.domain.namespaces[UNBOUND_DOMAIN_NAMESPACE_ID]?.enum ?? {}).sort();
+
+  it("keeps every enum in the full projection", () => {
+    expect(enumNames(defineContract(input))).toEqual(["Audit", "Role", "Secret"]);
+  });
+
+  it("drops enums used only by excluded fields or models in the client projection", () => {
+    expect(enumNames(defineContract(input, { projection: "client" }))).toEqual(["Role"]);
+  });
+
+  it("still validates an enum that only excluded fields use", () => {
+    expect(() => defineContract({ ...input, enums: { ...input.enums, Secret: [] } }, { projection: "client" })).toThrow(
+      /enum "Secret" must declare at least one value/
+    );
+  });
+});
+
 describe("defineContract — FK projection cascade (ADR 013)", () => {
   it("drops a required N:1 relation to an excluded model, keeping the model and its FK scalar field", () => {
     const contract = defineContract(

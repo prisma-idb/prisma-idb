@@ -169,6 +169,46 @@ describe("interpretPslDocumentToIdbContract", () => {
       ]);
     });
 
+    it("drops enums used only by excluded models or fields in the client projection", () => {
+      const schema = `
+        enum Role { USER ADMIN }
+        enum Secret { A B }
+        enum Audit { X }
+        model User {
+          id     String @id
+          role   Role
+          secret Secret @idb.exclude
+        }
+        model AuditLog {
+          id   String @id
+          kind Audit
+          @@idb.exclude
+        }
+      `;
+      const enumNames = (projection?: ContractProjection) => {
+        const result = interpret(schema, projection);
+        expect(result.ok).toBe(true);
+        if (!result.ok) return [];
+        return Object.keys(result.value.domain.namespaces[NS]!.enum ?? {}).sort();
+      };
+      expect(enumNames()).toEqual(["Audit", "Role", "Secret"]);
+      expect(enumNames("client")).toEqual(["Role"]);
+    });
+
+    it("still diagnoses a malformed enum that only excluded fields use in the client projection", () => {
+      const result = interpret(
+        `
+        enum Secret { }
+        model User {
+          id     String @id
+          secret Secret @idb.exclude
+        }
+      `,
+        "client"
+      );
+      expect(result.ok).toBe(false);
+    });
+
     it("rejects an enum default that is not a declared member", () => {
       const result = interpret(`
         enum Role { USER ADMIN }
