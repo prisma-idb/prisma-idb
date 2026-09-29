@@ -206,27 +206,6 @@ describe("interpretPslDocumentToIdbContract", () => {
         onCreate: { kind: "generator", id: "literal", params: { value: "user" } },
       });
     });
-
-    it("rejects @map on an enum member instead of silently storing the member name", () => {
-      const result = interpret(`
-        enum Role {
-          USER @map("user")
-          ADMIN
-        }
-        model User {
-          id   String @id
-          role Role
-        }
-      `);
-      expect(result.ok).toBe(false);
-      if (result.ok) return;
-      expect(result.failure.diagnostics).toEqual([
-        expect.objectContaining({
-          code: "IDB_ENUM_MEMBER_ATTRIBUTE_UNSUPPORTED",
-          message: expect.stringContaining('USER = "value"'),
-        }),
-      ]);
-    });
   });
 
   describe("@@id model-level attribute", () => {

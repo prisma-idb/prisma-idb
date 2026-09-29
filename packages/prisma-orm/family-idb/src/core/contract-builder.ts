@@ -33,7 +33,7 @@ type PrismaScalarFieldSpec = PrismaScalarType | `${PrismaScalarType}?`;
 export type FieldSpec<EnumName extends string = never> =
   PrismaScalarFieldSpec | EnumName | `${EnumName}?` | `${EnumName}[]`;
 
-/** A named enum's ordered string values. Names and stored values are identical, matching standard Prisma enum blocks. */
+/** A named enum's ordered string values. Each value is also its member name. */
 export type EnumDef = readonly string[];
 
 export type EnumDefs = Readonly<Record<string, EnumDef>>;
@@ -395,15 +395,21 @@ function buildFields(
     if (codecId === undefined) {
       throw new Error(`Unknown field type "${typeName}" for field "${name}"`);
     }
+    if (many && enumValues === undefined) {
+      throw new Error(`Field "${name}" has list type "${spec}". Only enum fields can be lists.`);
+    }
+    if (many && nullable) {
+      throw new Error(`Field "${name}" has type "${spec}". A list field cannot be optional.`);
+    }
     result[name] = {
       nullable,
       type: { kind: "scalar" as const, codecId },
-      ...(many ? { many: true as const } : {}),
+      ...(many ? { many: true } : {}),
       ...(enumValues !== undefined
         ? {
             valueSet: {
-              plane: "domain" as const,
-              entityKind: "enum" as const,
+              plane: "domain",
+              entityKind: "enum",
               namespaceId,
               entityName: typeName,
             },
@@ -557,10 +563,9 @@ export function defineContract<const TEnums extends EnumDefs = Record<never, nev
 ): Contract<IdbStorage> {
   const projection: ContractProjection = options?.projection ?? "full";
   const enums: EnumDefs = input.enums ?? {};
-  const models = (projection === "client" ? projectModelsForClient(input.models) : input.models) as Record<
-    string,
-    ModelDef<string>
-  >;
+  const models: Record<string, ModelDef<string>> = projection === "client"
+    ? projectModelsForClient(input.models)
+    : input.models;
 
   const domainEnums = buildEnums(enums);
 

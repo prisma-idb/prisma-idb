@@ -3,8 +3,8 @@
  *
  * The generated types already narrow enum fields to their literal union, but
  * nothing below the client checks the values: the `idb/string@1` codec passes
- * any value through and IndexedDB stores whatever it is given. Prisma Client
- * rejects an undeclared enum value at runtime, so every write path runs
+ * any value through and IndexedDB stores whatever it is given. A database with
+ * native enums rejects an undeclared value on write, so every write path runs
  * {@link assertEnumValues} on its final data (after mutation defaults are
  * applied) before the write is planned.
  */
