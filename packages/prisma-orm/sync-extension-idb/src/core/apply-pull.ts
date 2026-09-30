@@ -6,7 +6,7 @@
  *
  * Guards per log entry:
  * 1. **Staleness**: skip if `lastAppliedChangeId >= log.changelogId` (already newer;
- *    compared with `compareChangelogIds`; ids are UUID v7, so string order is time order).
+ *    ids are UUID v7, so string order is time order).
  * 2. **Pending push**: skip if `localChangePending === true` (local mutation
  *    not yet confirmed synced — let it win to avoid last-write-wins races).
  *
@@ -44,7 +44,6 @@ import type { IdbContract } from "@prisma-idb/client-idb/orm";
 import { getStoreName, collectDeleteStoreNames, applyReferentialActionsForRow } from "@prisma-idb/client-idb/orm";
 import { decodeJsonRecord } from "@prisma-idb/target-idb/runtime";
 import type { SyncIdbClient } from "./sync-client";
-import { compareChangelogIds } from "./changelog-id";
 import type { LogWithRecord, ApplyPullResult, VersionMetaRecord } from "../types";
 
 const VERSION_META = "_idb_sync_version_meta";
@@ -79,7 +78,7 @@ export async function applyPull<TContract extends IdbContract>(
 
     if (wasApplied) {
       applied++;
-      if (lastChangelogId === null || compareChangelogIds(log.changelogId, lastChangelogId) > 0) {
+      if (lastChangelogId === null || log.changelogId > lastChangelogId) {
         lastChangelogId = log.changelogId;
       }
     } else {
@@ -121,8 +120,7 @@ async function applyLog<TContract extends IdbContract>(
 
       if (meta) {
         if (meta.localChangePending) return false;
-        if (meta.lastAppliedChangeId !== null && compareChangelogIds(meta.lastAppliedChangeId, log.changelogId) >= 0)
-          return false;
+        if (meta.lastAppliedChangeId !== null && meta.lastAppliedChangeId >= log.changelogId) return false;
       }
 
       if (isDelete) {

@@ -7,7 +7,6 @@ import type { SyncIdbClient } from "./sync-client";
 import type { OutboxEvent } from "./outbox-store";
 import { getNextBatch, markSynced, markFailed } from "./outbox-store";
 import { applyPull } from "./apply-pull";
-import { compareChangelogIds } from "./changelog-id";
 import type { LogWithRecord, PushResult } from "../types";
 
 // ── Public types ──────────────────────────────────────────────────────────────
@@ -181,7 +180,7 @@ export function createSyncWorker<TContract extends IdbContract>(options: SyncWor
 
     if (logs.length > 0) {
       const { applied, skipped, lastChangelogId: newId } = await applyPull(syncClient, logs);
-      if (newId !== null && (lastChangelogId === null || compareChangelogIds(newId, lastChangelogId) > 0)) {
+      if (newId !== null && (lastChangelogId === null || newId > lastChangelogId)) {
         lastChangelogId = newId;
       }
       emit("pullcompleted", { applied, skipped });
