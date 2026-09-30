@@ -78,6 +78,32 @@ describe("applyPush", () => {
     expect(await ormRootFor(db, "User").first({ id: "u1" })).toBeNull();
   });
 
+  it.each([
+    ["create", null],
+    ["create", "text"],
+    ["create", [1]],
+    ["update", null],
+    ["delete", null],
+    ["delete", 5],
+  ])("fails only the event for a %s with payload %j, not the batch", async (operation, payload) => {
+    const db = await testDb();
+    const outcome = await adapter.applyPush(db, {
+      scopeKey: "u1",
+      events: [
+        { id: "bad", entityType: "User", operation: operation as "create", payload },
+        create("good", "User", { id: "u1", name: "Ann" }),
+      ],
+    });
+    expect(outcome).toEqual({
+      ok: true,
+      results: [
+        { id: "bad", success: false, error: `Invalid ${operation} payload: expected an object`, retryable: false },
+        { id: "good", success: true },
+      ],
+    });
+    expect(await ormRootFor(db, "User").first({ id: "u1" })).not.toBeNull();
+  });
+
   it("fails only the bad events, keeping results in input order", async () => {
     const db = await testDb();
     await seed(db, {
@@ -220,12 +246,15 @@ describe("pull", () => {
     expect(byKey["Todo:delete:t1"]).toBeNull();
   });
 
-  it.each([["abc"], [""], [1.5], [Number.NaN], ["1e3x"]])("rejects the invalid cursor %j", async (lastChangelogId) => {
-    expect(await adapter.pull(await testDb(), { scopeKey: "u1", lastChangelogId })).toEqual({
-      ok: false,
-      reason: "invalid-cursor",
-    });
-  });
+  it.each([["abc"], [""], [1.5], [Number.NaN], ["1e3x"], ["2147483648"], [-2147483648 - 1], [Number.MAX_SAFE_INTEGER]])(
+    "rejects the invalid cursor %j",
+    async (lastChangelogId) => {
+      expect(await adapter.pull(await testDb(), { scopeKey: "u1", lastChangelogId })).toEqual({
+        ok: false,
+        reason: "invalid-cursor",
+      });
+    }
+  );
 
   it("works as a standalone function too", async () => {
     const db = await pushAnnAndBo();

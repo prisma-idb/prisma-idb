@@ -52,10 +52,13 @@ interface ChangelogQuery {
   all(): Promise<ChangelogRow[]>;
 }
 
+/** The changelog id is a Postgres `Int` (int4); a larger cursor would make the query itself fail. */
+const MAX_CHANGELOG_ID = 2_147_483_647;
+
 function parseCursor(value: PullInput["lastChangelogId"]): number | null | undefined {
   if (value === null || value === undefined) return null;
   const parsed = typeof value === "string" ? (value.trim() === "" ? NaN : Number(value)) : value;
-  return Number.isInteger(parsed) ? parsed : undefined;
+  return Number.isInteger(parsed) && Math.abs(parsed as number) <= MAX_CHANGELOG_ID ? (parsed as number) : undefined;
 }
 
 /**

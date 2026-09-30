@@ -56,6 +56,14 @@ export function reviveWireValues(
 
 /** Extracts the shape `sync-server`'s `validatePush` reads `payload[keyField]` from, per operation kind. */
 export function toSyncPushPayload(operation: string, payload: unknown, keyField: string): Record<string, unknown> {
+  // The wire schema accepts any JSON here, so a null / primitive / array
+  // payload must fail this one event rather than throw out of the batch.
+  if (operation !== "create" && operation !== "update" && operation !== "delete") {
+    throw new Error(`Unsupported operation "${operation}"`);
+  }
+  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
+    throw new Error(`Invalid ${operation} payload: expected an object`);
+  }
   if (operation === "create") return payload as Record<string, unknown>;
   if (operation === "update") {
     const { key } = payload as { key?: unknown };
@@ -64,8 +72,7 @@ export function toSyncPushPayload(operation: string, payload: unknown, keyField:
     }
     return { [keyField]: key };
   }
-  if (operation === "delete") return { [keyField]: (payload as { key: unknown }).key };
-  throw new Error(`Unsupported operation "${operation}"`);
+  return { [keyField]: (payload as { key: unknown }).key };
 }
 
 /**
