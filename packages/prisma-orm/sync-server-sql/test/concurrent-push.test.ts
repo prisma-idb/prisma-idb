@@ -133,6 +133,86 @@ describe("concurrent pushes on one scope", () => {
   });
 });
 
+describe("the scope lock's ordering guarantee", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it("orders a push after the commit it waited on, even when its own clock reads earlier", async () => {
+    const db = await testDb();
+    await seed(db, { User: [{ id: "u1", name: "Ann" }] });
+
+    // Push A draws its id from a clock an hour ahead, then stalls before committing.
+    const aMs = Date.now() + 10 * 3_600_000;
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(aMs);
+    const a = pausedAfterChangelogInsert(db);
+    const pushA = adapter.applyPush(a.db, { scopeKey: "u1", events: [createBoard("ea", "ba", "u1")] });
+    let pushB: ReturnType<typeof adapter.applyPush> | undefined;
+    try {
+      await a.inserted;
+
+      // Push B's clock reads a minute *before* A's. Its own fresh id would sort
+      // below A's, so it only lands after A's cursor if B reads the scope's max
+      // id after the lock — i.e. sees A's committed row. Reading it before
+      // (B's transaction starts while A is still open) finds an empty scope.
+      vi.setSystemTime(aMs - 60_000);
+      pushB = adapter.applyPush(db, { scopeKey: "u1", events: [createBoard("eb", "bb", "u1")] });
+      await Promise.race([pushB, sleep(300)]);
+    } finally {
+      a.release();
+    }
+    await Promise.all([pushA, pushB]);
+    vi.useRealTimers();
+
+    const all = await pullAll(db, "u1", null);
+    expect(all.map((log) => log.keyPath)).toEqual(["ba", "bb"]);
+    const [idA, idB] = all.map((log) => log.changelogId);
+    expect(idB! > idA!).toBe(true);
+    expect((await pullAll(db, "u1", idA!)).map((log) => log.keyPath)).toEqual(["bb"]);
+  });
+
+  it.each(["REPEATABLE READ", "SERIALIZABLE"] as const)(
+    "refuses to push in a %s transaction, where the max-id read would use a pre-lock snapshot",
+    async (level) => {
+      const db = await testDb();
+      await seed(db, { User: [{ id: "u1", name: "Ann" }] });
+      const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+
+      const atLevel = {
+        orm: db.orm,
+        raw: db.raw,
+        transaction: <T>(fn: (tx: never) => Promise<T>) =>
+          db.transaction(async (tx) => {
+            // Must be the transaction's first statement, as a caller configuring its isolation would.
+            const { sql } = db.raw;
+            const setLevel =
+              level === "REPEATABLE READ"
+                ? sql`SET TRANSACTION ISOLATION LEVEL REPEATABLE READ`
+                : sql`SET TRANSACTION ISOLATION LEVEL SERIALIZABLE`;
+            await tx.execute(setLevel.affectedCount().build());
+            return fn(tx as never);
+          }),
+      };
+      const outcome = await adapter.applyPush(atLevel as never, {
+        scopeKey: "u1",
+        events: [createBoard("ea", "ba", "u1")],
+      });
+
+      // Retryable, so the client keeps the event until the server is fixed.
+      expect(outcome).toEqual({
+        ok: true,
+        results: [{ id: "ea", success: false, error: "Failed to apply event ea", retryable: true }],
+      });
+      const logged = consoleError.mock.calls.flat().find((arg): arg is Error => arg instanceof Error);
+      expect(logged?.message).toMatch(new RegExp(`READ COMMITTED.*${level.toLowerCase()}`));
+      // The whole transaction rolled back: no board, no changelog row.
+      expect(await pullAll(db, "u1", null)).toEqual([]);
+    }
+  );
+});
+
 /** A UUID v7 at `ms` whose 74 random bits are all ones (`highest`) or zeros — the extremes a same-millisecond id from another process can take. */
 function v7At(ms: number, bits: "highest" | "lowest"): string {
   const ts = ms.toString(16).padStart(12, "0");
