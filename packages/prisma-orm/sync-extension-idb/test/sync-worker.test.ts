@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createSyncWorker } from "../src/core/sync-worker";
 import type { SyncIdbClient } from "../src/exports/client";
-import type { OutboxEvent } from "../src/types";
+import type { LogWithRecord, OutboxEvent } from "../src/types";
 import { asAccessors, createTestSyncClient, scanAll } from "./helpers";
 
 // ── Stub client — for state-machine tests where push/pull correctness is
@@ -316,5 +316,180 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
 
     expect(pullCompleted).toEqual({ applied: 1, skipped: 0 });
     expect(await scanAll(client, "users")).toEqual([{ id: "u1", name: "Remote" }]);
+  });
+  describe("pull cursor", () => {
+    const userLog = (changelogId: string, id: string): LogWithRecord => ({
+      changelogId,
+      model: "User",
+      operation: "create",
+      keyPath: id,
+      record: { id, name: id },
+    });
+
+    it("advances the cursor numerically across batches (ids 9 then 10 then 11)", async () => {
+      const { client } = await createTestSyncClient();
+      const batches: LogWithRecord[][] = [[userLog("9", "u9")], [userLog("10", "u10")], [userLog("11", "u11")]];
+      const cursors: (string | null)[] = [];
+      const worker = trackedWorker({
+        syncClient: client,
+        pushHandler: async () => [],
+        pullHandler: async (from) => {
+          cursors.push(from);
+          return batches.shift() ?? [];
+        },
+      });
+
+      await worker.forceSync();
+      await worker.forceSync();
+      await worker.forceSync();
+      await worker.forceSync();
+
+      expect(cursors).toEqual([null, "9", "10", "11"]);
+    });
+
+    it("resumes from getCursor's value on the first pull and loads it only once", async () => {
+      const { client } = await createTestSyncClient();
+      const from: (string | null)[] = [];
+      const getCursor = vi.fn(async () => "42");
+      const worker = trackedWorker({
+        syncClient: client,
+        pushHandler: async () => [],
+        pullHandler: async (cursor) => {
+          from.push(cursor);
+          return [];
+        },
+        getCursor,
+      });
+
+      await worker.forceSync();
+      await worker.forceSync();
+
+      expect(from).toEqual(["42", "42"]);
+      expect(getCursor).toHaveBeenCalledTimes(1);
+    });
+
+    it("treats a null/undefined getCursor result as no cursor", async () => {
+      const { client } = await createTestSyncClient();
+      const from: (string | null)[] = [];
+      const worker = trackedWorker({
+        syncClient: client,
+        pushHandler: async () => [],
+        pullHandler: async (cursor) => {
+          from.push(cursor);
+          return [];
+        },
+        getCursor: () => undefined,
+      });
+
+      await worker.forceSync();
+
+      expect(from).toEqual([null]);
+    });
+
+    it("calls setCursor with the new cursor after a pull applies logs, and not when nothing advanced", async () => {
+      const { client } = await createTestSyncClient();
+      const stored: string[] = [];
+      const batches: LogWithRecord[][] = [[userLog("9", "u9"), userLog("10", "u10")], []];
+      const worker = trackedWorker({
+        syncClient: client,
+        pushHandler: async () => [],
+        pullHandler: async () => batches.shift() ?? [],
+        setCursor: (id) => {
+          stored.push(id);
+        },
+      });
+
+      await worker.forceSync();
+      await worker.forceSync();
+
+      expect(stored).toEqual(["10"]);
+    });
+
+    it("survives a reload: a new worker resumes from what the previous one persisted", async () => {
+      const { client } = await createTestSyncClient();
+      let persisted: string | null = null;
+      const persistence = {
+        getCursor: () => persisted,
+        setCursor: (id: string) => {
+          persisted = id;
+        },
+      };
+
+      const first = trackedWorker({
+        syncClient: client,
+        pushHandler: async () => [],
+        pullHandler: async () => [userLog("9", "u9"), userLog("10", "u10")],
+        ...persistence,
+      });
+      await first.forceSync();
+      first.stop();
+
+      const from: (string | null)[] = [];
+      const second = trackedWorker({
+        syncClient: client,
+        pushHandler: async () => [],
+        pullHandler: async (cursor) => {
+          from.push(cursor);
+          return [];
+        },
+        ...persistence,
+      });
+      await second.forceSync();
+
+      expect(from).toEqual(["10"]);
+    });
+
+    it("retries a failed setCursor on the next cycle without re-pulling from an older cursor", async () => {
+      const { client } = await createTestSyncClient();
+      const stored: string[] = [];
+      let failNext = true;
+      const from: (string | null)[] = [];
+      const batches: LogWithRecord[][] = [[userLog("5", "u5")], []];
+      const worker = trackedWorker({
+        syncClient: client,
+        pushHandler: async () => [],
+        pullHandler: async (cursor) => {
+          from.push(cursor);
+          return batches.shift() ?? [];
+        },
+        setCursor: (id) => {
+          if (failNext) {
+            failNext = false;
+            throw new Error("storage full");
+          }
+          stored.push(id);
+        },
+      });
+
+      await expect(worker.forceSync()).rejects.toThrow("storage full");
+      await worker.forceSync();
+
+      expect(from).toEqual([null, "5"]);
+      expect(stored).toEqual(["5"]);
+    });
+
+    it("fails the cycle when getCursor throws, and retries loading next cycle", async () => {
+      const { client } = await createTestSyncClient();
+      let calls = 0;
+      const from: (string | null)[] = [];
+      const worker = trackedWorker({
+        syncClient: client,
+        pushHandler: async () => [],
+        pullHandler: async (cursor) => {
+          from.push(cursor);
+          return [];
+        },
+        getCursor: () => {
+          if (++calls === 1) throw new Error("db unavailable");
+          return "7";
+        },
+      });
+
+      await expect(worker.forceSync()).rejects.toThrow("db unavailable");
+      expect(from).toEqual([]);
+      await worker.forceSync();
+
+      expect(from).toEqual(["7"]);
+    });
   });
 });

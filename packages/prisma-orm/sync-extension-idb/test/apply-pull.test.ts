@@ -170,4 +170,47 @@ describe("applyPull", () => {
 
     expect(result).toEqual({ applied: 3, skipped: 0, lastChangelogId: "c9" });
   });
+  describe("integer changelog ids (the server's ids are stringified integers)", () => {
+    it("tracks lastChangelogId numerically, not lexicographically", async () => {
+      const { client } = await createTestSyncClient();
+
+      const result = await applyPull(client, [
+        log({ changelogId: "10", operation: "create" }),
+        log({
+          changelogId: "9",
+          model: "Post",
+          keyPath: "p1",
+          operation: "create",
+          record: { id: "p1", title: "Hi", authorId: "u1" },
+        }),
+      ]);
+
+      expect(result).toEqual({ applied: 2, skipped: 0, lastChangelogId: "10" });
+    });
+
+    it("applies a newer log whose id is lexicographically smaller than the stored one", async () => {
+      const { client } = await createTestSyncClient();
+      await applyPull(client, [log({ changelogId: "9", operation: "create" })]);
+
+      const result = await applyPull(client, [
+        log({ changelogId: "10", operation: "update", record: { id: "u1", name: "Alicia" } }),
+      ]);
+
+      expect(result).toEqual({ applied: 1, skipped: 0, lastChangelogId: "10" });
+      expect(await scanAll(client, "users")).toEqual([{ id: "u1", name: "Alicia" }]);
+      expect((await getVersionMeta(client, 'User::"u1"'))?.lastAppliedChangeId).toBe("10");
+    });
+
+    it("skips an older log whose id is lexicographically larger than the stored one", async () => {
+      const { client } = await createTestSyncClient();
+      await applyPull(client, [log({ changelogId: "10", operation: "create" })]);
+
+      const result = await applyPull(client, [
+        log({ changelogId: "9", operation: "update", record: { id: "u1", name: "Stale" } }),
+      ]);
+
+      expect(result).toEqual({ applied: 0, skipped: 1, lastChangelogId: null });
+      expect(await scanAll(client, "users")).toEqual([{ id: "u1", name: "Alice" }]);
+    });
+  });
 });

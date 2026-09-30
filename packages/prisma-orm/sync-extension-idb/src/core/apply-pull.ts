@@ -5,7 +5,8 @@
  * do NOT generate outbox events — tracking them would create a push loop.
  *
  * Guards per log entry:
- * 1. **Staleness**: skip if `lastAppliedChangeId >= log.changelogId` (already newer).
+ * 1. **Staleness**: skip if `lastAppliedChangeId >= log.changelogId` (already newer;
+ *    compared with `compareChangelogIds`, so integer ids order numerically).
  * 2. **Pending push**: skip if `localChangePending === true` (local mutation
  *    not yet confirmed synced — let it win to avoid last-write-wins races).
  *
@@ -23,6 +24,13 @@
  * digit string → `bigint`, base64 → `Uint8Array`, ...) before being written —
  * IDB stores native JS values, not their JSON-safe wire forms.
  *
+ * Enum-typed fields are NOT re-validated here (unlike ORM writes, which reject
+ * undeclared enum values). A pulled record is the server's authoritative
+ * state, already constrained by the SQL enum; rejecting it locally would only
+ * matter when this client's contract is older than the server's (a value added
+ * since), and there the record would be dropped and the cursor left unable to
+ * pass it. Storing the value keeps the local copy faithful to the server.
+ *
  * A `create`/`update` log with `record: null` means the server re-checked
  * ownership (ADR 014's `buildPullQueries` live re-check) and this client is
  * no longer authorized to see the record's current state — e.g. its
@@ -36,6 +44,7 @@ import type { IdbContract } from "@prisma-idb/client-idb/orm";
 import { getStoreName, collectDeleteStoreNames, applyReferentialActionsForRow } from "@prisma-idb/client-idb/orm";
 import { decodeJsonRecord } from "@prisma-idb/target-idb/runtime";
 import type { SyncIdbClient } from "./sync-client";
+import { compareChangelogIds } from "./changelog-id";
 import type { LogWithRecord, ApplyPullResult, VersionMetaRecord } from "../types";
 
 const VERSION_META = "_idb_sync_version_meta";
@@ -70,7 +79,7 @@ export async function applyPull<TContract extends IdbContract>(
 
     if (wasApplied) {
       applied++;
-      if (lastChangelogId === null || log.changelogId > lastChangelogId) {
+      if (lastChangelogId === null || compareChangelogIds(log.changelogId, lastChangelogId) > 0) {
         lastChangelogId = log.changelogId;
       }
     } else {
@@ -112,7 +121,8 @@ async function applyLog<TContract extends IdbContract>(
 
       if (meta) {
         if (meta.localChangePending) return false;
-        if (meta.lastAppliedChangeId !== null && meta.lastAppliedChangeId >= log.changelogId) return false;
+        if (meta.lastAppliedChangeId !== null && compareChangelogIds(meta.lastAppliedChangeId, log.changelogId) >= 0)
+          return false;
       }
 
       if (isDelete) {
