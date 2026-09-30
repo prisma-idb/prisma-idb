@@ -354,7 +354,7 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
     it("resumes from getCursor's value on the first pull and loads it only once", async () => {
       const { client } = await createTestSyncClient();
       const from: (string | null)[] = [];
-      const getCursor = vi.fn(async () => "42");
+      const getCursor = vi.fn(async () => changelogId(42));
       const worker = trackedWorker({
         syncClient: client,
         pushHandler: async () => [],
@@ -368,7 +368,7 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
       await worker.forceSync();
       await worker.forceSync();
 
-      expect(from).toEqual(["42", "42"]);
+      expect(from).toEqual([changelogId(42), changelogId(42)]);
       expect(getCursor).toHaveBeenCalledTimes(1);
     });
 
@@ -448,7 +448,7 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
       const stored: string[] = [];
       let failNext = true;
       const from: (string | null)[] = [];
-      const batches: LogWithRecord[][] = [[userLog("5", "u5")], []];
+      const batches: LogWithRecord[][] = [[userLog(changelogId(5), "u5")], []];
       const worker = trackedWorker({
         syncClient: client,
         pushHandler: async () => [],
@@ -468,8 +468,8 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
       await expect(worker.forceSync()).rejects.toThrow("storage full");
       await worker.forceSync();
 
-      expect(from).toEqual([null, "5"]);
-      expect(stored).toEqual(["5"]);
+      expect(from).toEqual([null, changelogId(5)]);
+      expect(stored).toEqual([changelogId(5)]);
     });
 
     it("fails the cycle when getCursor throws, and retries loading next cycle", async () => {
@@ -485,7 +485,7 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
         },
         getCursor: () => {
           if (++calls === 1) throw new Error("db unavailable");
-          return "7";
+          return changelogId(7);
         },
       });
 
@@ -493,7 +493,7 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
       expect(from).toEqual([]);
       await worker.forceSync();
 
-      expect(from).toEqual(["7"]);
+      expect(from).toEqual([changelogId(7)]);
     });
   });
 });
