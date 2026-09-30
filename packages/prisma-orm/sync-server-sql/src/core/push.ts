@@ -2,6 +2,7 @@ import { domainModelsAtDefaultNamespace } from "@prisma/orm-framework/contract/t
 import type { GetKeyField, OwnershipCheck, SyncServerContract } from "@prisma-idb/sync-server";
 import { ormRootFor } from "./orm-root";
 import { checkAuthorization } from "./authorization";
+import { lockScope } from "./scope-lock";
 
 /**
  * The fields `applyPushEvent` actually reads out of a push request's event —
@@ -153,6 +154,9 @@ export async function applyPushEvent(
         throw new Error(`Unsupported operation "${event.operation}"`);
       }
 
+      // Must precede the insert: the changelog id is drawn when it runs, and
+      // the lock is what makes commit order match id order within the scope.
+      await lockScope(db, tx, contract.target, scopeKey);
       await changelogRoot.select("id").create({
         model,
         keyPath: check.key,
