@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createSqlSyncAdapter } from "../src/core/create-adapter";
 import { seed, testContract, testDb, testSyncServer } from "./helpers";
 
@@ -21,12 +21,14 @@ function pausedAfterChangelogInsert(db: TestDb) {
 
   type Root = {
     first: (where: never) => Promise<unknown>;
+    where: (clause: never) => unknown;
     select: (...fields: string[]) => { create: (data: never) => Promise<unknown> };
   };
   // Plain delegating objects rather than Proxies: the ORM's collection
   // classes use private fields, which throw when `this` is a Proxy.
   const wrapRoot = (root: Root): Root => ({
     first: (where) => root.first(where),
+    where: (clause) => root.where(clause),
     select: (...fields) => ({
       create: async (data) => {
         const result = await root.select(...fields).create(data);
@@ -79,20 +81,24 @@ describe("concurrent pushes on one scope", () => {
     // Push A inserts its changelog row, then stalls before committing.
     const a = pausedAfterChangelogInsert(db);
     const pushA = adapter.applyPush(a.db, { scopeKey: "u1", events: [createBoard("ea", "ba", "u1")] });
-    await a.inserted;
-    // Changelog ids are UUID v7 (ms timestamp prefix) — make B's strictly later.
-    await sleep(10);
+    let pushB: ReturnType<typeof adapter.applyPush> | undefined;
+    let first: Awaited<ReturnType<typeof pullAll>>;
+    try {
+      await a.inserted;
+      // Changelog ids are UUID v7 (ms timestamp prefix) — make B's strictly later.
+      await sleep(10);
 
-    // Push B, same scope, starts while A is still open. Unserialized it
-    // commits immediately with the higher id; serialized it waits for A.
-    const pushB = adapter.applyPush(db, { scopeKey: "u1", events: [createBoard("eb", "bb", "u1")] });
-    await Promise.race([pushB, sleep(300)]);
+      // Push B, same scope, starts while A is still open. Unserialized it
+      // commits immediately with the higher id; serialized it waits for A.
+      pushB = adapter.applyPush(db, { scopeKey: "u1", events: [createBoard("eb", "bb", "u1")] });
+      await Promise.race([pushB, sleep(300)]);
 
-    // A client pulls in between, then keeps the last id it saw as its cursor.
-    const first = await pullAll(db, "u1", null);
+      // A client pulls in between, then keeps the last id it saw as its cursor.
+      first = await pullAll(db, "u1", null);
+    } finally {
+      a.release();
+    }
     const cursor = first.at(-1)?.changelogId ?? null;
-
-    a.release();
     await Promise.all([pushA, pushB]);
 
     const second = await pullAll(db, "u1", cursor);
@@ -110,17 +116,79 @@ describe("concurrent pushes on one scope", () => {
     });
     const a = pausedAfterChangelogInsert(db);
     const pushA = adapter.applyPush(a.db, { scopeKey: "u1", events: [createBoard("ea", "ba", "u1")] });
-    await a.inserted;
+    try {
+      await a.inserted;
 
-    // u1's push is still open; u2's must finish without waiting for it.
-    const outcome = await Promise.race([
-      adapter.applyPush(db, { scopeKey: "u2", events: [createBoard("eb", "bb", "u2")] }),
-      sleep(5_000).then(() => "blocked" as const),
-    ]);
-    expect(outcome).not.toBe("blocked");
-    expect(outcome).toEqual({ ok: true, results: [{ id: "eb", success: true }] });
-
-    a.release();
+      // u1's push is still open; u2's must finish without waiting for it.
+      const outcome = await Promise.race([
+        adapter.applyPush(db, { scopeKey: "u2", events: [createBoard("eb", "bb", "u2")] }),
+        sleep(5_000).then(() => "blocked" as const),
+      ]);
+      expect(outcome).not.toBe("blocked");
+      expect(outcome).toEqual({ ok: true, results: [{ id: "eb", success: true }] });
+    } finally {
+      a.release();
+    }
     await pushA;
+  });
+});
+
+/** A UUID v7 at `ms` whose 74 random bits are all ones (`highest`) or zeros — the extremes a same-millisecond id from another process can take. */
+function v7At(ms: number, bits: "highest" | "lowest"): string {
+  const ts = ms.toString(16).padStart(12, "0");
+  const tail = bits === "highest" ? "7fff-bfff-ffffffffffff" : "7000-8000-000000000000";
+  return `${ts.slice(0, 8)}-${ts.slice(8)}-${tail}`;
+}
+
+describe("changelog ids across app servers", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /**
+   * The scope already holds `existingId` — committed by another app server —
+   * and a client pulled it, so its cursor sits there. A push from this
+   * server, whose clock reads `nowMs`, must still land after that cursor.
+   */
+  async function pushAfterExistingId(existingId: string, nowMs: number) {
+    const db = await testDb();
+    await seed(db, {
+      User: [{ id: "u1", name: "Ann" }],
+      Changelog: [
+        {
+          id: existingId,
+          model: "Board",
+          keyPath: "gone",
+          operation: "delete",
+          scopeKey: "u1",
+          outboxEventId: "other-server",
+        },
+      ],
+    });
+
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(nowMs);
+    const outcome = await adapter.applyPush(db, { scopeKey: "u1", events: [createBoard("ea", "ba", "u1")] });
+    vi.useRealTimers();
+    expect(outcome).toEqual({ ok: true, results: [{ id: "ea", success: true }] });
+
+    return (await pullAll(db, "u1", existingId)).map((log) => log.keyPath);
+  }
+
+  // Both cases put the other server's id in the future, past anything this
+  // process's own (monotonic) id generator has drawn so far, so that without
+  // the fix the push's id sorts below it. Each test uses a later offset than
+  // the one before for the same reason — the generator never steps backwards.
+  const HOUR = 3_600_000;
+
+  it("does not hide a push that shares a millisecond with an id it cannot see", async () => {
+    // Another server drew its id in the same millisecond with a higher counter.
+    const sameMs = Date.now() + HOUR;
+    expect(await pushAfterExistingId(v7At(sameMs, "highest"), sameMs)).toEqual(["ba"]);
+  });
+
+  it("does not hide a push from a server whose clock runs behind", async () => {
+    const otherServerMs = Date.now() + 3 * HOUR;
+    expect(await pushAfterExistingId(v7At(otherServerMs, "lowest"), otherServerMs - 60_000)).toEqual(["ba"]);
   });
 });
