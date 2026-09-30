@@ -148,3 +148,8 @@ export async function createTestSyncClient(options?: {
   });
   return { client, dbName: name, contract };
 }
+
+/** A UUID v7-shaped changelog id whose order follows `n` (same shape the server generates). */
+export function changelogId(n: number): string {
+  return `0198a4f0-0000-7000-8000-${String(n).padStart(12, "0")}`;
+}

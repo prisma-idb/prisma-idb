@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createSyncWorker } from "../src/core/sync-worker";
 import type { SyncIdbClient } from "../src/exports/client";
 import type { LogWithRecord, OutboxEvent } from "../src/types";
-import { asAccessors, createTestSyncClient, scanAll } from "./helpers";
+import { asAccessors, changelogId, createTestSyncClient, scanAll } from "./helpers";
 
 // ── Stub client — for state-machine tests where push/pull correctness is
 // irrelevant and only the worker's own timing/status logic is under test.
@@ -326,9 +326,13 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
       record: { id, name: id },
     });
 
-    it("advances the cursor numerically across batches (ids 9 then 10 then 11)", async () => {
+    it("advances the cursor across batches in id order", async () => {
       const { client } = await createTestSyncClient();
-      const batches: LogWithRecord[][] = [[userLog("9", "u9")], [userLog("10", "u10")], [userLog("11", "u11")]];
+      const batches: LogWithRecord[][] = [
+        [userLog(changelogId(9), "u9")],
+        [userLog(changelogId(10), "u10")],
+        [userLog(changelogId(11), "u11")],
+      ];
       const cursors: (string | null)[] = [];
       const worker = trackedWorker({
         syncClient: client,
@@ -344,7 +348,7 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
       await worker.forceSync();
       await worker.forceSync();
 
-      expect(cursors).toEqual([null, "9", "10", "11"]);
+      expect(cursors).toEqual([null, changelogId(9), changelogId(10), changelogId(11)]);
     });
 
     it("resumes from getCursor's value on the first pull and loads it only once", async () => {
@@ -389,7 +393,7 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
     it("calls setCursor with the new cursor after a pull applies logs, and not when nothing advanced", async () => {
       const { client } = await createTestSyncClient();
       const stored: string[] = [];
-      const batches: LogWithRecord[][] = [[userLog("9", "u9"), userLog("10", "u10")], []];
+      const batches: LogWithRecord[][] = [[userLog(changelogId(9), "u9"), userLog(changelogId(10), "u10")], []];
       const worker = trackedWorker({
         syncClient: client,
         pushHandler: async () => [],
@@ -402,7 +406,7 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
       await worker.forceSync();
       await worker.forceSync();
 
-      expect(stored).toEqual(["10"]);
+      expect(stored).toEqual([changelogId(10)]);
     });
 
     it("survives a reload: a new worker resumes from what the previous one persisted", async () => {
@@ -418,7 +422,7 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
       const first = trackedWorker({
         syncClient: client,
         pushHandler: async () => [],
-        pullHandler: async () => [userLog("9", "u9"), userLog("10", "u10")],
+        pullHandler: async () => [userLog(changelogId(9), "u9"), userLog(changelogId(10), "u10")],
         ...persistence,
       });
       await first.forceSync();
@@ -436,7 +440,7 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
       });
       await second.forceSync();
 
-      expect(from).toEqual(["10"]);
+      expect(from).toEqual([changelogId(10)]);
     });
 
     it("retries a failed setCursor on the next cycle without re-pulling from an older cursor", async () => {

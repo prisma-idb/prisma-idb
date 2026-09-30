@@ -6,7 +6,7 @@
  *
  * Guards per log entry:
  * 1. **Staleness**: skip if `lastAppliedChangeId >= log.changelogId` (already newer;
- *    compared with `compareChangelogIds`, so integer ids order numerically).
+ *    compared with `compareChangelogIds`; ids are UUID v7, so string order is time order).
  * 2. **Pending push**: skip if `localChangePending === true` (local mutation
  *    not yet confirmed synced — let it win to avoid last-write-wins races).
  *
