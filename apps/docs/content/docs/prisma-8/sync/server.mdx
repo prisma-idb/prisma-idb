@@ -114,7 +114,7 @@ enum ChangeOperation {
 }
 
 model Changelog {
-  id            Int             @id @default(autoincrement())
+  id            String          @id @default(uuid(7))
   model         String
   keyPath       String
   operation     ChangeOperation
@@ -126,7 +126,7 @@ model Changelog {
 }
 ```
 
-`outboxEventId` is unique, so pushing the same event twice writes it once. The `[scopeKey, id]` index serves the pull query.
+`outboxEventId` is unique, so pushing the same event twice writes it once. The `[scopeKey, id]` index serves the pull query. The id is a UUID v7, so it sorts correctly as a plain string and the client can treat it as an opaque cursor.
 
 Keep the server's migrations in their own folder, such as `migrations-postgres/`, separate from the browser's `migrations/`. They're separate histories for separate databases.
 

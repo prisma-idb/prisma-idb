@@ -3,7 +3,7 @@ import { sqlContractWithSync } from "../core/sql-contract";
 
 /**
  * Plain PSL-text transform — appends the `Changelog` model (ADR 014's
- * push/pull log shape: real enum, real DB-generated `autoincrement()` id)
+ * push/pull log shape: real enum, UUID v7 id)
  * to raw schema text, unparsed. Doesn't strip `@idb.exclude` — pair with
  * `@prisma-idb/family-idb/contract-psl`'s `stripIdbExcludeAttributes`
  * if the schema you're appending to was authored for family-idb, or use

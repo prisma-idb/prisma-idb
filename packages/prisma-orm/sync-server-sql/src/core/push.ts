@@ -56,16 +56,27 @@ export function reviveWireValues(
 
 /** Extracts the shape `sync-server`'s `validatePush` reads `payload[keyField]` from, per operation kind. */
 export function toSyncPushPayload(operation: string, payload: unknown, keyField: string): Record<string, unknown> {
+  // The wire schema accepts any JSON here, so a null / primitive / array
+  // payload must fail this one event rather than throw out of the batch.
+  if (operation !== "create" && operation !== "update" && operation !== "delete") {
+    throw new Error(`Unsupported operation "${operation}"`);
+  }
+  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
+    throw new Error(`Invalid ${operation} payload: expected an object`);
+  }
   if (operation === "create") return payload as Record<string, unknown>;
   if (operation === "update") {
-    const { key } = payload as { key?: unknown };
+    const { key, patch } = payload as { key?: unknown; patch?: unknown };
     if (key === undefined) {
       throw new Error(`Unsupported update: filter does not pin "${keyField}" by equality`);
     }
+    // Without an object patch, applyPushEvent would fall through to its delete branch.
+    if (typeof patch !== "object" || patch === null || Array.isArray(patch)) {
+      throw new Error("Invalid update payload: expected an object patch");
+    }
     return { [keyField]: key };
   }
-  if (operation === "delete") return { [keyField]: (payload as { key: unknown }).key };
-  throw new Error(`Unsupported operation "${operation}"`);
+  return { [keyField]: (payload as { key: unknown }).key };
 }
 
 /**
@@ -136,8 +147,10 @@ export async function applyPushEvent(
           .select(keyField)
           .where({ [keyField]: check.key })
           .update(reviveWireValues(contract, model, patch));
-      } else {
+      } else if (event.operation === "delete") {
         await root.where({ [keyField]: (event.payload as { key: unknown }).key }).delete();
+      } else {
+        throw new Error(`Unsupported operation "${event.operation}"`);
       }
 
       await changelogRoot.select("id").create({

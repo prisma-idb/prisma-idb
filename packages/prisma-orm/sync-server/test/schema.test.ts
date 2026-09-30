@@ -25,10 +25,10 @@ afterEach(async () => {
 });
 
 describe("injectChangelogModelSql", () => {
-  it("appends a real enum and a DB-generated id", () => {
+  it("appends a real enum and a UUID v7 id", () => {
     const withChangelog = injectChangelogModelSql("model User {\n  id String @id\n}\n");
     expect(withChangelog).toContain("enum ChangeOperation {");
-    expect(withChangelog).toContain("@default(autoincrement())");
+    expect(withChangelog).toMatch(/id\s+String\s+@id @default\(uuid\(7\)\)/);
     expect(withChangelog).toContain("model User {");
   });
 

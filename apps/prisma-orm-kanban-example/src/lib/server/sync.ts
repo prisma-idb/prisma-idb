@@ -18,4 +18,4 @@ export const syncServer = createSyncServer({
   getKeyField: sqlGetKeyField,
 });
 
-export const sqlSyncAdapter = createSqlSyncAdapter({ contract: serverContract });
+export const sqlSyncAdapter = createSqlSyncAdapter({ contract: serverContract, syncServer });

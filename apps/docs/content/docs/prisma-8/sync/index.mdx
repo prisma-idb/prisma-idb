@@ -241,9 +241,10 @@ import { db } from "./db";
 export async function GET(req: Request) {
   const scopeKey = await getAuthenticatedUserId(req);
   const since = new URL(req.url).searchParams.get("since");
-  const sinceId = since ? Number(since) : null;
-  if (sinceId !== null && !Number.isInteger(sinceId)) {
-    return Response.json({ error: "since must be an integer" }, { status: 400 });
+  // The changelog id is a UUID v7 string; pass it back unchanged.
+  const sinceId = since || null;
+  if (sinceId !== null && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(sinceId)) {
+    return Response.json({ error: "since must be a changelog id" }, { status: 400 });
   }
 
   // Always limit the page size: a client that was offline for a long time
@@ -254,12 +255,12 @@ export async function GET(req: Request) {
   const rows = await (sinceId !== null ? ordered.cursor({ id: sinceId }) : ordered).take(50).all();
 
   const checks = syncServer.buildPullQueries(
-    rows.map((r) => ({ changelogId: String(r.id), model: r.model, key: r.keyPath })),
+    rows.map((r) => ({ changelogId: r.id, model: r.model, key: r.keyPath })),
     { scopeKey }
   );
   const logs = await Promise.all(
     checks.map(async ({ changelogId, model, check }) => {
-      const row = rows.find((r) => String(r.id) === changelogId)!;
+      const row = rows.find((r) => r.id === changelogId)!;
       const operation = row.operation as "create" | "update" | "delete";
       const record = await sqlSyncAdapter.resolvePullRecord(db, model, check, row.keyPath, operation);
       return { changelogId, model, operation, keyPath: row.keyPath, record };

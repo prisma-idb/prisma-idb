@@ -1,9 +1,11 @@
 import "dotenv/config";
 import pg from "pg";
 import postgres from "@prisma/orm-postgres/runtime";
+import { createSyncServer } from "@prisma-idb/sync-server";
 import type { SyncServerContract } from "@prisma-idb/sync-server";
 import type { Contract } from "./fixtures/schema.generated.d";
 import contractJson from "./fixtures/schema.generated.json" with { type: "json" };
+import { sqlGetKeyField } from "../src/core/get-key-field";
 import { ormRootFor } from "../src/core/orm-root";
 
 /**
@@ -13,6 +15,38 @@ import { ormRootFor } from "../src/core/orm-root";
  * against a real Postgres client built from this, not a hand-rolled fake.
  */
 export const testContract = contractJson as unknown as SyncServerContract;
+
+/**
+ * The client-projected contract: the server contract minus the synthetic,
+ * server-only `Changelog` model (and its enum), as `@idb.exclude` would drop it.
+ */
+const testClientContract = (() => {
+  const {
+    models,
+    enum: enums,
+    ...rest
+  } = contractJson.domain.namespaces.public as unknown as {
+    models: Record<string, unknown>;
+    enum: Record<string, unknown>;
+  };
+  const without = (entries: Record<string, unknown>, name: string) =>
+    Object.fromEntries(Object.entries(entries).filter(([key]) => key !== name));
+  return {
+    ...contractJson,
+    domain: {
+      namespaces: {
+        public: { ...rest, models: without(models, "Changelog"), enum: without(enums, "ChangeOperation") },
+      },
+    },
+  } as unknown as SyncServerContract;
+})();
+
+export const testSyncServer = createSyncServer({
+  contract: testContract,
+  clientContract: testClientContract,
+  rootModel: "User",
+  getKeyField: (contract, model) => sqlGetKeyField(contract, model),
+});
 
 function requiredDatabaseUrl(): string {
   const url = process.env["DATABASE_URL"];
