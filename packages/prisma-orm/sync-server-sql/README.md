@@ -7,28 +7,44 @@ npm install @prisma-idb/sync-server-sql
 ```
 
 ```ts
-import { createSqlSyncAdapter } from "@prisma-idb/sync-server-sql";
+import { createSyncServer } from "@prisma-idb/sync-server";
+import { createSqlSyncAdapter, sqlGetKeyField } from "@prisma-idb/sync-server-sql";
 
-const sqlSyncAdapter = createSqlSyncAdapter({ contract: serverContract });
+const syncServer = createSyncServer({
+  contract: serverContract,
+  clientContract,
+  rootModel: "User",
+  getKeyField: sqlGetKeyField,
+});
+const sqlSyncAdapter = createSqlSyncAdapter({ contract: serverContract, syncServer });
 
-// In the push endpoint, for each check from syncServer.validatePush():
-const result = await sqlSyncAdapter.applyPushEvent(db, event, model, check, scopeKey);
+// Push endpoint. `scopeKey` comes from the session, never the request body.
+const pushed = await sqlSyncAdapter.applyPush(db, { events: body.events, scopeKey });
+if (!pushed.ok) return json({ error: pushed.reason }, { status: 400 }); // "batch-too-large" | "duplicate-event-id"
+return json(pushed.results);
+
+// Pull endpoint. `lastChangelogId` is the last `changelogId` the client received.
+const pulled = await sqlSyncAdapter.pull(db, { scopeKey, lastChangelogId: url.searchParams.get("since") });
+if (!pulled.ok) return json({ error: pulled.reason }, { status: 400 }); // "invalid-cursor"
+return json(pulled.logs);
 ```
 
 ## API
 
-`createSqlSyncAdapter({ contract, getKeyField? })` returns:
+`createSqlSyncAdapter({ contract, syncServer?, getKeyField? })` returns:
 
-| Member                                                    | Does                                                                                             |
-| --------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| `getKeyField(model)`                                      | The model's primary-key field.                                                                   |
-| `toSyncPushPayload(operation, payload, keyField)`         | Turns a pushed payload into the shape `validatePush` expects.                                    |
-| `applyPushEvent(db, event, model, check, scopeKey)`       | In one transaction: checks ownership, writes the record and its `Changelog` row. Safe to repeat. |
-| `resolvePullRecord(db, model, check, keyPath, operation)` | The record, if the user still owns it, or `null`.                                                |
+| Member                                                    | Does                                                                                                                                                                                                                                                                                                                                             |
+| --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `applyPush(db, { events, scopeKey, maxBatchSize? })`      | The whole push route: validates ownership and applies every event in order. Returns `{ ok: true, results }` (one per event, in order) or `{ ok: false, reason }` for a batch over `maxBatchSize` (default 1000, `"batch-too-large"`) or a repeated event id (`"duplicate-event-id"`). Nothing is applied when `ok` is false. Needs `syncServer`. |
+| `pull(db, { scopeKey, lastChangelogId?, limit? })`        | The whole pull route: the next `limit` (default 50) changes after `lastChangelogId` (an integer or numeric string, exclusive), each re-authorized and resolved to its current `record` (`null` if deleted or no longer the user's). Returns `{ ok: true, logs }` or `{ ok: false, reason: "invalid-cursor" }`. Needs `syncServer`.               |
+| `getKeyField(model)`                                      | The model's primary-key field.                                                                                                                                                                                                                                                                                                                   |
+| `toSyncPushPayload(operation, payload, keyField)`         | Turns a pushed payload into the shape `validatePush` expects.                                                                                                                                                                                                                                                                                    |
+| `applyPushEvent(db, event, model, check, scopeKey)`       | In one transaction: checks ownership, writes the record and its `Changelog` row. Safe to repeat.                                                                                                                                                                                                                                                 |
+| `resolvePullRecord(db, model, check, keyPath, operation)` | The record, if the user still owns it, or `null`.                                                                                                                                                                                                                                                                                                |
 
 `db` is your Prisma 8 SQL client; it needs `.transaction(fn)` and `.orm.public.<Model>`.
 
-Lower-level exports, for building your own adapter: `applyPushEvent`, `toSyncPushPayload` and `resolvePullRecord` as plain functions, `checkAuthorization`, `resolveRootKeyViaPath`, `ormRootFor` and `sqlGetKeyField`.
+Lower-level exports, for building your own adapter: `applyPush`, `pull`, `applyPushEvent`, `toSyncPushPayload` and `resolvePullRecord` as plain functions, `checkAuthorization`, `resolveRootKeyViaPath`, `ormRootFor` and `sqlGetKeyField`.
 
 ## Documentation
 
