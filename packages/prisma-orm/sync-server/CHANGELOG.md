@@ -1,5 +1,11 @@
 # @prisma-idb/sync-server
 
+## 0.5.0
+
+### Minor Changes
+
+- [#240](https://github.com/prisma-idb/prisma-idb/pull/240) [`44b605f`](https://github.com/prisma-idb/prisma-idb/commit/44b605fb9c04373e43e3366dc538737646f2a624) Thanks [@WhyAsh5114](https://github.com/WhyAsh5114)! - The synthetic `Changelog` model now uses a UUID v7 id (`String @id @default(uuid(7))`) instead of an integer autoincrement. Ids sort correctly as plain strings, so the pull cursor stays an opaque string and no numeric comparison is needed. This changes the `Changelog` table: regenerate the contract and migrate (or recreate) any existing `Changelog` table, and reset stored pull cursors, which were integers.
+
 ## 0.4.0
 
 ### Minor Changes
