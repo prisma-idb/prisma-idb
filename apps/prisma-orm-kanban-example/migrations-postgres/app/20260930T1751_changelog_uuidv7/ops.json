@@ -1,0 +1,212 @@
+[
+  {
+    "id": "table.AuditLog",
+    "label": "Rename table \"auditLog\" to \"AuditLog\"",
+    "summary": "Rename table \"auditLog\" to \"AuditLog\"",
+    "operationClass": "destructive",
+    "target": {
+      "id": "postgres",
+      "details": {
+        "schema": "public",
+        "objectType": "table",
+        "name": "AuditLog"
+      }
+    },
+    "precheck": [
+      {
+        "description": "ensure table \"auditLog\" exists and \"AuditLog\" does not",
+        "sql": "SELECT (to_regclass($1) IS NOT NULL AND to_regclass($2) IS NULL) AS \"result\"",
+        "params": ["\"public\".\"auditLog\"", "\"public\".\"AuditLog\""]
+      }
+    ],
+    "execute": [
+      {
+        "description": "rename table \"auditLog\" to \"AuditLog\"",
+        "sql": "ALTER TABLE \"public\".\"auditLog\" RENAME TO \"AuditLog\"",
+        "params": []
+      },
+      {
+        "description": "rename constraint \"auditLog_pkey\" to \"AuditLog_pkey\"",
+        "sql": "ALTER TABLE \"public\".\"AuditLog\" RENAME CONSTRAINT \"auditLog_pkey\" TO \"AuditLog_pkey\"",
+        "params": []
+      }
+    ],
+    "postcheck": [
+      {
+        "description": "verify table \"AuditLog\" exists and \"auditLog\" does not",
+        "sql": "SELECT (to_regclass($1) IS NOT NULL AND to_regclass($2) IS NULL) AS \"result\"",
+        "params": ["\"public\".\"AuditLog\"", "\"public\".\"auditLog\""]
+      }
+    ]
+  },
+  {
+    "id": "table.Board",
+    "label": "Rename table \"board\" to \"Board\"",
+    "summary": "Rename table \"board\" to \"Board\"",
+    "operationClass": "destructive",
+    "target": {
+      "id": "postgres",
+      "details": {
+        "schema": "public",
+        "objectType": "table",
+        "name": "Board"
+      }
+    },
+    "precheck": [
+      {
+        "description": "ensure table \"board\" exists and \"Board\" does not",
+        "sql": "SELECT (to_regclass($1) IS NOT NULL AND to_regclass($2) IS NULL) AS \"result\"",
+        "params": ["\"public\".\"board\"", "\"public\".\"Board\""]
+      }
+    ],
+    "execute": [
+      {
+        "description": "rename table \"board\" to \"Board\"",
+        "sql": "ALTER TABLE \"public\".\"board\" RENAME TO \"Board\"",
+        "params": []
+      },
+      {
+        "description": "rename constraint \"board_pkey\" to \"Board_pkey\"",
+        "sql": "ALTER TABLE \"public\".\"Board\" RENAME CONSTRAINT \"board_pkey\" TO \"Board_pkey\"",
+        "params": []
+      },
+      {
+        "description": "rename constraint \"board_userId_fkey\" to \"Board_userId_fkey\"",
+        "sql": "ALTER TABLE \"public\".\"Board\" RENAME CONSTRAINT \"board_userId_fkey\" TO \"Board_userId_fkey\"",
+        "params": []
+      },
+      {
+        "description": "rename index \"board_userId_idx_a489d58a\" to \"Board_userId_idx_a489d58a\"",
+        "sql": "ALTER INDEX \"public\".\"board_userId_idx_a489d58a\" RENAME TO \"Board_userId_idx_a489d58a\"",
+        "params": []
+      }
+    ],
+    "postcheck": [
+      {
+        "description": "verify table \"Board\" exists and \"board\" does not",
+        "sql": "SELECT (to_regclass($1) IS NOT NULL AND to_regclass($2) IS NULL) AS \"result\"",
+        "params": ["\"public\".\"Board\"", "\"public\".\"board\""]
+      }
+    ]
+  },
+  {
+    "id": "table.Todo",
+    "label": "Rename table \"todo\" to \"Todo\"",
+    "summary": "Rename table \"todo\" to \"Todo\"",
+    "operationClass": "destructive",
+    "target": {
+      "id": "postgres",
+      "details": {
+        "schema": "public",
+        "objectType": "table",
+        "name": "Todo"
+      }
+    },
+    "precheck": [
+      {
+        "description": "ensure table \"todo\" exists and \"Todo\" does not",
+        "sql": "SELECT (to_regclass($1) IS NOT NULL AND to_regclass($2) IS NULL) AS \"result\"",
+        "params": ["\"public\".\"todo\"", "\"public\".\"Todo\""]
+      }
+    ],
+    "execute": [
+      {
+        "description": "rename table \"todo\" to \"Todo\"",
+        "sql": "ALTER TABLE \"public\".\"todo\" RENAME TO \"Todo\"",
+        "params": []
+      },
+      {
+        "description": "rename constraint \"todo_pkey\" to \"Todo_pkey\"",
+        "sql": "ALTER TABLE \"public\".\"Todo\" RENAME CONSTRAINT \"todo_pkey\" TO \"Todo_pkey\"",
+        "params": []
+      },
+      {
+        "description": "rename constraint \"todo_boardId_fkey\" to \"Todo_boardId_fkey\"",
+        "sql": "ALTER TABLE \"public\".\"Todo\" RENAME CONSTRAINT \"todo_boardId_fkey\" TO \"Todo_boardId_fkey\"",
+        "params": []
+      },
+      {
+        "description": "rename index \"todo_boardId_idx_74a7b59d\" to \"Todo_boardId_idx_74a7b59d\"",
+        "sql": "ALTER INDEX \"public\".\"todo_boardId_idx_74a7b59d\" RENAME TO \"Todo_boardId_idx_74a7b59d\"",
+        "params": []
+      }
+    ],
+    "postcheck": [
+      {
+        "description": "verify table \"Todo\" exists and \"todo\" does not",
+        "sql": "SELECT (to_regclass($1) IS NOT NULL AND to_regclass($2) IS NULL) AS \"result\"",
+        "params": ["\"public\".\"Todo\"", "\"public\".\"todo\""]
+      }
+    ]
+  },
+  {
+    "id": "table.Changelog",
+    "label": "Rename table \"changelog\" to \"Changelog\" and make \"id\" a UUID v7 string",
+    "summary": "Rename table \"changelog\" to \"Changelog\" and make \"id\" a UUID v7 string",
+    "operationClass": "destructive",
+    "target": {
+      "id": "postgres",
+      "details": {
+        "schema": "public",
+        "objectType": "table",
+        "name": "Changelog"
+      }
+    },
+    "precheck": [
+      {
+        "description": "ensure table \"changelog\" exists and \"Changelog\" does not",
+        "sql": "SELECT (to_regclass($1) IS NOT NULL AND to_regclass($2) IS NULL) AS \"result\"",
+        "params": ["\"public\".\"changelog\"", "\"public\".\"Changelog\""]
+      }
+    ],
+    "execute": [
+      {
+        "description": "rename table \"changelog\" to \"Changelog\"",
+        "sql": "ALTER TABLE \"public\".\"changelog\" RENAME TO \"Changelog\"",
+        "params": []
+      },
+      {
+        "description": "rename constraint \"changelog_pkey\" to \"Changelog_pkey\"",
+        "sql": "ALTER TABLE \"public\".\"Changelog\" RENAME CONSTRAINT \"changelog_pkey\" TO \"Changelog_pkey\"",
+        "params": []
+      },
+      {
+        "description": "rename constraint \"changelog_outboxEventId_key\" to \"Changelog_outboxEventId_key\"",
+        "sql": "ALTER TABLE \"public\".\"Changelog\" RENAME CONSTRAINT \"changelog_outboxEventId_key\" TO \"Changelog_outboxEventId_key\"",
+        "params": []
+      },
+      {
+        "description": "rename constraint \"changelog_operation_check_ff8db64b\" to \"Changelog_operation_check_ff8db64b\"",
+        "sql": "ALTER TABLE \"public\".\"Changelog\" RENAME CONSTRAINT \"changelog_operation_check_ff8db64b\" TO \"Changelog_operation_check_ff8db64b\"",
+        "params": []
+      },
+      {
+        "description": "rename index \"changelog_scopeKey_id_idx_9635f6eb\" to \"Changelog_scopeKey_id_idx_9635f6eb\"",
+        "sql": "ALTER INDEX \"public\".\"changelog_scopeKey_id_idx_9635f6eb\" RENAME TO \"Changelog_scopeKey_id_idx_9635f6eb\"",
+        "params": []
+      },
+      {
+        "description": "drop the integer default on \"Changelog\".\"id\"",
+        "sql": "ALTER TABLE \"public\".\"Changelog\" ALTER COLUMN \"id\" DROP DEFAULT",
+        "params": []
+      },
+      {
+        "description": "convert \"Changelog\".\"id\" to text, rewriting integers as order-preserving UUID v7 ids",
+        "sql": "ALTER TABLE \"public\".\"Changelog\" ALTER COLUMN \"id\" TYPE text USING ('00000000-0000-7000-8000-' || lpad(\"id\"::text, 12, '0'))",
+        "params": []
+      },
+      {
+        "description": "drop the now-unused id sequence",
+        "sql": "DROP SEQUENCE IF EXISTS \"public\".\"changelog_id_seq\"",
+        "params": []
+      }
+    ],
+    "postcheck": [
+      {
+        "description": "verify table \"Changelog\" exists and \"changelog\" does not",
+        "sql": "SELECT (to_regclass($1) IS NOT NULL AND to_regclass($2) IS NULL) AS \"result\"",
+        "params": ["\"public\".\"Changelog\"", "\"public\".\"changelog\""]
+      }
+    ]
+  }
+]

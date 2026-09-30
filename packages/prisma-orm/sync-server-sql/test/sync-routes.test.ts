@@ -106,6 +106,31 @@ describe("applyPush", () => {
     expect(await ormRootFor(db, "User").first({ id: "u1" })).not.toBeNull();
   });
 
+  it.each([
+    ["missing", undefined],
+    ["null", null],
+    ["a string", "x"],
+    ["an array", [1]],
+  ])("fails an update whose patch is %s instead of deleting the row", async (_label, patch) => {
+    const db = await testDb();
+    await seed(db, { User: [{ id: "u1", name: "Ann" }] });
+    const outcome = await adapter.applyPush(db, {
+      scopeKey: "u1",
+      events: [
+        { id: "bad", entityType: "User", operation: "update", payload: { key: "u1", patch } },
+        create("good", "Board", { id: "b1", ownerId: "u1" }),
+      ],
+    });
+    expect(outcome).toEqual({
+      ok: true,
+      results: [
+        { id: "bad", success: false, error: "Invalid update payload: expected an object patch", retryable: false },
+        { id: "good", success: true },
+      ],
+    });
+    expect(await ormRootFor(db, "User").first({ id: "u1" })).not.toBeNull();
+  });
+
   it("fails only the bad events, keeping results in input order", async () => {
     const db = await testDb();
     await seed(db, {

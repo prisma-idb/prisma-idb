@@ -22,7 +22,7 @@ export const GET: RequestHandler = async ({ url, request }) => {
 
   const outcome = await sqlSyncAdapter.pull(await getPostgres(), {
     scopeKey: session.user.id,
-    lastChangelogId: url.searchParams.get("since"),
+    lastChangelogId: url.searchParams.get("since") || null,
   });
   if (!outcome.ok) return json({ error: "since must be a changelog id" }, { status: 400 });
   return json(outcome.logs);

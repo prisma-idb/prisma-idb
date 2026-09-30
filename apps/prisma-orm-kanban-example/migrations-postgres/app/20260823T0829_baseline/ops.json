@@ -17,146 +17,6 @@
     "postcheck": []
   },
   {
-    "id": "table.AuditLog",
-    "label": "Create table \"AuditLog\"",
-    "summary": "Creates table \"AuditLog\"",
-    "operationClass": "additive",
-    "target": {
-      "id": "postgres",
-      "details": {
-        "schema": "public",
-        "objectType": "table",
-        "name": "AuditLog"
-      }
-    },
-    "precheck": [
-      {
-        "description": "ensure table \"AuditLog\" does not exist",
-        "sql": "SELECT (to_regclass($1)) IS NULL AS \"result\"",
-        "params": ["\"public\".\"AuditLog\""]
-      }
-    ],
-    "execute": [
-      {
-        "description": "create table \"AuditLog\"",
-        "sql": "CREATE TABLE \"public\".\"AuditLog\" (\n  \"action\" text NOT NULL,\n  \"createdAt\" timestamptz NOT NULL,\n  \"id\" text NOT NULL,\n  PRIMARY KEY (\"id\")\n)",
-        "params": []
-      }
-    ],
-    "postcheck": [
-      {
-        "description": "verify table \"AuditLog\" exists",
-        "sql": "SELECT (to_regclass($1)) IS NOT NULL AS \"result\"",
-        "params": ["\"public\".\"AuditLog\""]
-      }
-    ]
-  },
-  {
-    "id": "table.Board",
-    "label": "Create table \"Board\"",
-    "summary": "Creates table \"Board\"",
-    "operationClass": "additive",
-    "target": {
-      "id": "postgres",
-      "details": {
-        "schema": "public",
-        "objectType": "table",
-        "name": "Board"
-      }
-    },
-    "precheck": [
-      {
-        "description": "ensure table \"Board\" does not exist",
-        "sql": "SELECT (to_regclass($1)) IS NULL AS \"result\"",
-        "params": ["\"public\".\"Board\""]
-      }
-    ],
-    "execute": [
-      {
-        "description": "create table \"Board\"",
-        "sql": "CREATE TABLE \"public\".\"Board\" (\n  \"createdAt\" timestamptz NOT NULL,\n  \"id\" text NOT NULL,\n  \"name\" text NOT NULL,\n  \"userId\" text NOT NULL,\n  PRIMARY KEY (\"id\")\n)",
-        "params": []
-      }
-    ],
-    "postcheck": [
-      {
-        "description": "verify table \"Board\" exists",
-        "sql": "SELECT (to_regclass($1)) IS NOT NULL AS \"result\"",
-        "params": ["\"public\".\"Board\""]
-      }
-    ]
-  },
-  {
-    "id": "table.Changelog",
-    "label": "Create table \"Changelog\"",
-    "summary": "Creates table \"Changelog\"",
-    "operationClass": "additive",
-    "target": {
-      "id": "postgres",
-      "details": {
-        "schema": "public",
-        "objectType": "table",
-        "name": "Changelog"
-      }
-    },
-    "precheck": [
-      {
-        "description": "ensure table \"Changelog\" does not exist",
-        "sql": "SELECT (to_regclass($1)) IS NULL AS \"result\"",
-        "params": ["\"public\".\"Changelog\""]
-      }
-    ],
-    "execute": [
-      {
-        "description": "create table \"Changelog\"",
-        "sql": "CREATE TABLE \"public\".\"Changelog\" (\n  \"createdAt\" timestamptz DEFAULT (now()) NOT NULL,\n  \"id\" text NOT NULL,\n  \"keyPath\" text NOT NULL,\n  \"model\" text NOT NULL,\n  \"operation\" text NOT NULL,\n  \"outboxEventId\" text NOT NULL,\n  \"scopeKey\" text NOT NULL,\n  PRIMARY KEY (\"id\"),\n  CONSTRAINT \"Changelog_operation_check_ff8db64b\" CHECK (\"operation\" IN ('create', 'update', 'delete'))\n)",
-        "params": []
-      }
-    ],
-    "postcheck": [
-      {
-        "description": "verify table \"Changelog\" exists",
-        "sql": "SELECT (to_regclass($1)) IS NOT NULL AS \"result\"",
-        "params": ["\"public\".\"Changelog\""]
-      }
-    ]
-  },
-  {
-    "id": "table.Todo",
-    "label": "Create table \"Todo\"",
-    "summary": "Creates table \"Todo\"",
-    "operationClass": "additive",
-    "target": {
-      "id": "postgres",
-      "details": {
-        "schema": "public",
-        "objectType": "table",
-        "name": "Todo"
-      }
-    },
-    "precheck": [
-      {
-        "description": "ensure table \"Todo\" does not exist",
-        "sql": "SELECT (to_regclass($1)) IS NULL AS \"result\"",
-        "params": ["\"public\".\"Todo\""]
-      }
-    ],
-    "execute": [
-      {
-        "description": "create table \"Todo\"",
-        "sql": "CREATE TABLE \"public\".\"Todo\" (\n  \"boardId\" text NOT NULL,\n  \"createdAt\" timestamptz NOT NULL,\n  \"description\" text,\n  \"id\" text NOT NULL,\n  \"isCompleted\" bool NOT NULL,\n  \"title\" text NOT NULL,\n  PRIMARY KEY (\"id\")\n)",
-        "params": []
-      }
-    ],
-    "postcheck": [
-      {
-        "description": "verify table \"Todo\" exists",
-        "sql": "SELECT (to_regclass($1)) IS NOT NULL AS \"result\"",
-        "params": ["\"public\".\"Todo\""]
-      }
-    ]
-  },
-  {
     "id": "table.account",
     "label": "Create table \"account\"",
     "summary": "Creates table \"account\"",
@@ -192,6 +52,111 @@
     ]
   },
   {
+    "id": "table.auditLog",
+    "label": "Create table \"auditLog\"",
+    "summary": "Creates table \"auditLog\"",
+    "operationClass": "additive",
+    "target": {
+      "id": "postgres",
+      "details": {
+        "schema": "public",
+        "objectType": "table",
+        "name": "auditLog"
+      }
+    },
+    "precheck": [
+      {
+        "description": "ensure table \"auditLog\" does not exist",
+        "sql": "SELECT (to_regclass($1)) IS NULL AS \"result\"",
+        "params": ["\"public\".\"auditLog\""]
+      }
+    ],
+    "execute": [
+      {
+        "description": "create table \"auditLog\"",
+        "sql": "CREATE TABLE \"public\".\"auditLog\" (\n  \"action\" text NOT NULL,\n  \"createdAt\" timestamptz NOT NULL,\n  \"id\" text NOT NULL,\n  PRIMARY KEY (\"id\")\n)",
+        "params": []
+      }
+    ],
+    "postcheck": [
+      {
+        "description": "verify table \"auditLog\" exists",
+        "sql": "SELECT (to_regclass($1)) IS NOT NULL AS \"result\"",
+        "params": ["\"public\".\"auditLog\""]
+      }
+    ]
+  },
+  {
+    "id": "table.board",
+    "label": "Create table \"board\"",
+    "summary": "Creates table \"board\"",
+    "operationClass": "additive",
+    "target": {
+      "id": "postgres",
+      "details": {
+        "schema": "public",
+        "objectType": "table",
+        "name": "board"
+      }
+    },
+    "precheck": [
+      {
+        "description": "ensure table \"board\" does not exist",
+        "sql": "SELECT (to_regclass($1)) IS NULL AS \"result\"",
+        "params": ["\"public\".\"board\""]
+      }
+    ],
+    "execute": [
+      {
+        "description": "create table \"board\"",
+        "sql": "CREATE TABLE \"public\".\"board\" (\n  \"createdAt\" timestamptz NOT NULL,\n  \"id\" text NOT NULL,\n  \"name\" text NOT NULL,\n  \"userId\" text NOT NULL,\n  PRIMARY KEY (\"id\")\n)",
+        "params": []
+      }
+    ],
+    "postcheck": [
+      {
+        "description": "verify table \"board\" exists",
+        "sql": "SELECT (to_regclass($1)) IS NOT NULL AS \"result\"",
+        "params": ["\"public\".\"board\""]
+      }
+    ]
+  },
+  {
+    "id": "table.changelog",
+    "label": "Create table \"changelog\"",
+    "summary": "Creates table \"changelog\"",
+    "operationClass": "additive",
+    "target": {
+      "id": "postgres",
+      "details": {
+        "schema": "public",
+        "objectType": "table",
+        "name": "changelog"
+      }
+    },
+    "precheck": [
+      {
+        "description": "ensure table \"changelog\" does not exist",
+        "sql": "SELECT (to_regclass($1)) IS NULL AS \"result\"",
+        "params": ["\"public\".\"changelog\""]
+      }
+    ],
+    "execute": [
+      {
+        "description": "create table \"changelog\"",
+        "sql": "CREATE TABLE \"public\".\"changelog\" (\n  \"createdAt\" timestamptz DEFAULT (now()) NOT NULL,\n  \"id\" SERIAL NOT NULL,\n  \"keyPath\" text NOT NULL,\n  \"model\" text NOT NULL,\n  \"operation\" text NOT NULL,\n  \"outboxEventId\" text NOT NULL,\n  \"scopeKey\" text NOT NULL,\n  PRIMARY KEY (\"id\"),\n  CONSTRAINT \"changelog_operation_check_ff8db64b\" CHECK (\"operation\" IN ('create', 'update', 'delete'))\n)",
+        "params": []
+      }
+    ],
+    "postcheck": [
+      {
+        "description": "verify table \"changelog\" exists",
+        "sql": "SELECT (to_regclass($1)) IS NOT NULL AS \"result\"",
+        "params": ["\"public\".\"changelog\""]
+      }
+    ]
+  },
+  {
     "id": "table.session",
     "label": "Create table \"session\"",
     "summary": "Creates table \"session\"",
@@ -223,6 +188,41 @@
         "description": "verify table \"session\" exists",
         "sql": "SELECT (to_regclass($1)) IS NOT NULL AS \"result\"",
         "params": ["\"public\".\"session\""]
+      }
+    ]
+  },
+  {
+    "id": "table.todo",
+    "label": "Create table \"todo\"",
+    "summary": "Creates table \"todo\"",
+    "operationClass": "additive",
+    "target": {
+      "id": "postgres",
+      "details": {
+        "schema": "public",
+        "objectType": "table",
+        "name": "todo"
+      }
+    },
+    "precheck": [
+      {
+        "description": "ensure table \"todo\" does not exist",
+        "sql": "SELECT (to_regclass($1)) IS NULL AS \"result\"",
+        "params": ["\"public\".\"todo\""]
+      }
+    ],
+    "execute": [
+      {
+        "description": "create table \"todo\"",
+        "sql": "CREATE TABLE \"public\".\"todo\" (\n  \"boardId\" text NOT NULL,\n  \"createdAt\" timestamptz NOT NULL,\n  \"description\" text,\n  \"id\" text NOT NULL,\n  \"isCompleted\" bool NOT NULL,\n  \"title\" text NOT NULL,\n  PRIMARY KEY (\"id\")\n)",
+        "params": []
+      }
+    ],
+    "postcheck": [
+      {
+        "description": "verify table \"todo\" exists",
+        "sql": "SELECT (to_regclass($1)) IS NOT NULL AS \"result\"",
+        "params": ["\"public\".\"todo\""]
       }
     ]
   },
@@ -297,40 +297,6 @@
     ]
   },
   {
-    "id": "unique.Changelog.Changelog_outboxEventId_key",
-    "label": "Add unique constraint on \"Changelog\" (outboxEventId)",
-    "operationClass": "additive",
-    "target": {
-      "id": "postgres",
-      "details": {
-        "schema": "public",
-        "objectType": "unique",
-        "name": "Changelog_outboxEventId_key",
-        "table": "Changelog"
-      }
-    },
-    "precheck": [
-      {
-        "description": "ensure constraint \"Changelog_outboxEventId_key\" does not exist",
-        "sql": "SELECT NOT EXISTS (SELECT 1 AS \"one\" FROM \"pg_constraint\" AS \"c\" INNER JOIN \"pg_namespace\" AS \"n\" ON \"n\".\"oid\" = \"c\".\"connamespace\" WHERE (\"c\".\"conname\" = $1 AND \"n\".\"nspname\" = $2 AND \"c\".\"conrelid\" = to_regclass($3))) AS \"result\"",
-        "params": ["Changelog_outboxEventId_key", "public", "\"public\".\"Changelog\""]
-      }
-    ],
-    "execute": [
-      {
-        "description": "add unique constraint \"Changelog_outboxEventId_key\"",
-        "sql": "ALTER TABLE \"public\".\"Changelog\" ADD CONSTRAINT \"Changelog_outboxEventId_key\" UNIQUE (\"outboxEventId\")"
-      }
-    ],
-    "postcheck": [
-      {
-        "description": "verify constraint \"Changelog_outboxEventId_key\" exists",
-        "sql": "SELECT EXISTS (SELECT 1 AS \"one\" FROM \"pg_constraint\" AS \"c\" INNER JOIN \"pg_namespace\" AS \"n\" ON \"n\".\"oid\" = \"c\".\"connamespace\" WHERE (\"c\".\"conname\" = $1 AND \"n\".\"nspname\" = $2 AND \"c\".\"conrelid\" = to_regclass($3))) AS \"result\"",
-        "params": ["Changelog_outboxEventId_key", "public", "\"public\".\"Changelog\""]
-      }
-    ]
-  },
-  {
     "id": "unique.account.account_providerId_accountId_key",
     "label": "Add unique constraint on \"account\" (providerId, accountId)",
     "operationClass": "additive",
@@ -361,6 +327,40 @@
         "description": "verify constraint \"account_providerId_accountId_key\" exists",
         "sql": "SELECT EXISTS (SELECT 1 AS \"one\" FROM \"pg_constraint\" AS \"c\" INNER JOIN \"pg_namespace\" AS \"n\" ON \"n\".\"oid\" = \"c\".\"connamespace\" WHERE (\"c\".\"conname\" = $1 AND \"n\".\"nspname\" = $2 AND \"c\".\"conrelid\" = to_regclass($3))) AS \"result\"",
         "params": ["account_providerId_accountId_key", "public", "\"public\".\"account\""]
+      }
+    ]
+  },
+  {
+    "id": "unique.changelog.changelog_outboxEventId_key",
+    "label": "Add unique constraint on \"changelog\" (outboxEventId)",
+    "operationClass": "additive",
+    "target": {
+      "id": "postgres",
+      "details": {
+        "schema": "public",
+        "objectType": "unique",
+        "name": "changelog_outboxEventId_key",
+        "table": "changelog"
+      }
+    },
+    "precheck": [
+      {
+        "description": "ensure constraint \"changelog_outboxEventId_key\" does not exist",
+        "sql": "SELECT NOT EXISTS (SELECT 1 AS \"one\" FROM \"pg_constraint\" AS \"c\" INNER JOIN \"pg_namespace\" AS \"n\" ON \"n\".\"oid\" = \"c\".\"connamespace\" WHERE (\"c\".\"conname\" = $1 AND \"n\".\"nspname\" = $2 AND \"c\".\"conrelid\" = to_regclass($3))) AS \"result\"",
+        "params": ["changelog_outboxEventId_key", "public", "\"public\".\"changelog\""]
+      }
+    ],
+    "execute": [
+      {
+        "description": "add unique constraint \"changelog_outboxEventId_key\"",
+        "sql": "ALTER TABLE \"public\".\"changelog\" ADD CONSTRAINT \"changelog_outboxEventId_key\" UNIQUE (\"outboxEventId\")"
+      }
+    ],
+    "postcheck": [
+      {
+        "description": "verify constraint \"changelog_outboxEventId_key\" exists",
+        "sql": "SELECT EXISTS (SELECT 1 AS \"one\" FROM \"pg_constraint\" AS \"c\" INNER JOIN \"pg_namespace\" AS \"n\" ON \"n\".\"oid\" = \"c\".\"connamespace\" WHERE (\"c\".\"conname\" = $1 AND \"n\".\"nspname\" = $2 AND \"c\".\"conrelid\" = to_regclass($3))) AS \"result\"",
+        "params": ["changelog_outboxEventId_key", "public", "\"public\".\"changelog\""]
       }
     ]
   },
@@ -433,111 +433,6 @@
     ]
   },
   {
-    "id": "index.Board.Board_userId_idx_a489d58a",
-    "label": "Create index \"Board_userId_idx_a489d58a\" on \"Board\"",
-    "operationClass": "additive",
-    "target": {
-      "id": "postgres",
-      "details": {
-        "schema": "public",
-        "objectType": "index",
-        "name": "Board_userId_idx_a489d58a",
-        "table": "Board"
-      }
-    },
-    "precheck": [
-      {
-        "description": "ensure index \"Board_userId_idx_a489d58a\" does not exist",
-        "sql": "SELECT (to_regclass($1)) IS NULL AS \"result\"",
-        "params": ["\"public\".\"Board_userId_idx_a489d58a\""]
-      }
-    ],
-    "execute": [
-      {
-        "description": "create index \"Board_userId_idx_a489d58a\"",
-        "sql": "CREATE INDEX \"Board_userId_idx_a489d58a\" ON \"public\".\"Board\" (\"userId\")",
-        "params": []
-      }
-    ],
-    "postcheck": [
-      {
-        "description": "verify index \"Board_userId_idx_a489d58a\" exists",
-        "sql": "SELECT (to_regclass($1)) IS NOT NULL AS \"result\"",
-        "params": ["\"public\".\"Board_userId_idx_a489d58a\""]
-      }
-    ]
-  },
-  {
-    "id": "index.Changelog.Changelog_scopeKey_id_idx_9635f6eb",
-    "label": "Create index \"Changelog_scopeKey_id_idx_9635f6eb\" on \"Changelog\"",
-    "operationClass": "additive",
-    "target": {
-      "id": "postgres",
-      "details": {
-        "schema": "public",
-        "objectType": "index",
-        "name": "Changelog_scopeKey_id_idx_9635f6eb",
-        "table": "Changelog"
-      }
-    },
-    "precheck": [
-      {
-        "description": "ensure index \"Changelog_scopeKey_id_idx_9635f6eb\" does not exist",
-        "sql": "SELECT (to_regclass($1)) IS NULL AS \"result\"",
-        "params": ["\"public\".\"Changelog_scopeKey_id_idx_9635f6eb\""]
-      }
-    ],
-    "execute": [
-      {
-        "description": "create index \"Changelog_scopeKey_id_idx_9635f6eb\"",
-        "sql": "CREATE INDEX \"Changelog_scopeKey_id_idx_9635f6eb\" ON \"public\".\"Changelog\" (\"scopeKey\", \"id\")",
-        "params": []
-      }
-    ],
-    "postcheck": [
-      {
-        "description": "verify index \"Changelog_scopeKey_id_idx_9635f6eb\" exists",
-        "sql": "SELECT (to_regclass($1)) IS NOT NULL AS \"result\"",
-        "params": ["\"public\".\"Changelog_scopeKey_id_idx_9635f6eb\""]
-      }
-    ]
-  },
-  {
-    "id": "index.Todo.Todo_boardId_idx_74a7b59d",
-    "label": "Create index \"Todo_boardId_idx_74a7b59d\" on \"Todo\"",
-    "operationClass": "additive",
-    "target": {
-      "id": "postgres",
-      "details": {
-        "schema": "public",
-        "objectType": "index",
-        "name": "Todo_boardId_idx_74a7b59d",
-        "table": "Todo"
-      }
-    },
-    "precheck": [
-      {
-        "description": "ensure index \"Todo_boardId_idx_74a7b59d\" does not exist",
-        "sql": "SELECT (to_regclass($1)) IS NULL AS \"result\"",
-        "params": ["\"public\".\"Todo_boardId_idx_74a7b59d\""]
-      }
-    ],
-    "execute": [
-      {
-        "description": "create index \"Todo_boardId_idx_74a7b59d\"",
-        "sql": "CREATE INDEX \"Todo_boardId_idx_74a7b59d\" ON \"public\".\"Todo\" (\"boardId\")",
-        "params": []
-      }
-    ],
-    "postcheck": [
-      {
-        "description": "verify index \"Todo_boardId_idx_74a7b59d\" exists",
-        "sql": "SELECT (to_regclass($1)) IS NOT NULL AS \"result\"",
-        "params": ["\"public\".\"Todo_boardId_idx_74a7b59d\""]
-      }
-    ]
-  },
-  {
     "id": "index.account.account_userId_idx_a489d58a",
     "label": "Create index \"account_userId_idx_a489d58a\" on \"account\"",
     "operationClass": "additive",
@@ -569,6 +464,76 @@
         "description": "verify index \"account_userId_idx_a489d58a\" exists",
         "sql": "SELECT (to_regclass($1)) IS NOT NULL AS \"result\"",
         "params": ["\"public\".\"account_userId_idx_a489d58a\""]
+      }
+    ]
+  },
+  {
+    "id": "index.board.board_userId_idx_a489d58a",
+    "label": "Create index \"board_userId_idx_a489d58a\" on \"board\"",
+    "operationClass": "additive",
+    "target": {
+      "id": "postgres",
+      "details": {
+        "schema": "public",
+        "objectType": "index",
+        "name": "board_userId_idx_a489d58a",
+        "table": "board"
+      }
+    },
+    "precheck": [
+      {
+        "description": "ensure index \"board_userId_idx_a489d58a\" does not exist",
+        "sql": "SELECT (to_regclass($1)) IS NULL AS \"result\"",
+        "params": ["\"public\".\"board_userId_idx_a489d58a\""]
+      }
+    ],
+    "execute": [
+      {
+        "description": "create index \"board_userId_idx_a489d58a\"",
+        "sql": "CREATE INDEX \"board_userId_idx_a489d58a\" ON \"public\".\"board\" (\"userId\")",
+        "params": []
+      }
+    ],
+    "postcheck": [
+      {
+        "description": "verify index \"board_userId_idx_a489d58a\" exists",
+        "sql": "SELECT (to_regclass($1)) IS NOT NULL AS \"result\"",
+        "params": ["\"public\".\"board_userId_idx_a489d58a\""]
+      }
+    ]
+  },
+  {
+    "id": "index.changelog.changelog_scopeKey_id_idx_9635f6eb",
+    "label": "Create index \"changelog_scopeKey_id_idx_9635f6eb\" on \"changelog\"",
+    "operationClass": "additive",
+    "target": {
+      "id": "postgres",
+      "details": {
+        "schema": "public",
+        "objectType": "index",
+        "name": "changelog_scopeKey_id_idx_9635f6eb",
+        "table": "changelog"
+      }
+    },
+    "precheck": [
+      {
+        "description": "ensure index \"changelog_scopeKey_id_idx_9635f6eb\" does not exist",
+        "sql": "SELECT (to_regclass($1)) IS NULL AS \"result\"",
+        "params": ["\"public\".\"changelog_scopeKey_id_idx_9635f6eb\""]
+      }
+    ],
+    "execute": [
+      {
+        "description": "create index \"changelog_scopeKey_id_idx_9635f6eb\"",
+        "sql": "CREATE INDEX \"changelog_scopeKey_id_idx_9635f6eb\" ON \"public\".\"changelog\" (\"scopeKey\", \"id\")",
+        "params": []
+      }
+    ],
+    "postcheck": [
+      {
+        "description": "verify index \"changelog_scopeKey_id_idx_9635f6eb\" exists",
+        "sql": "SELECT (to_regclass($1)) IS NOT NULL AS \"result\"",
+        "params": ["\"public\".\"changelog_scopeKey_id_idx_9635f6eb\""]
       }
     ]
   },
@@ -608,70 +573,37 @@
     ]
   },
   {
-    "id": "foreignKey.Board.Board_userId_fkey",
-    "label": "Add foreign key \"Board_userId_fkey\" on \"Board\"",
+    "id": "index.todo.todo_boardId_idx_74a7b59d",
+    "label": "Create index \"todo_boardId_idx_74a7b59d\" on \"todo\"",
     "operationClass": "additive",
     "target": {
       "id": "postgres",
       "details": {
         "schema": "public",
-        "objectType": "foreignKey",
-        "name": "Board_userId_fkey",
-        "table": "Board"
+        "objectType": "index",
+        "name": "todo_boardId_idx_74a7b59d",
+        "table": "todo"
       }
     },
     "precheck": [
       {
-        "description": "ensure FK \"Board_userId_fkey\" does not exist",
-        "sql": "SELECT NOT EXISTS (SELECT 1 AS \"one\" FROM \"pg_constraint\" AS \"c\" INNER JOIN \"pg_namespace\" AS \"n\" ON \"n\".\"oid\" = \"c\".\"connamespace\" WHERE (\"c\".\"conname\" = $1 AND \"n\".\"nspname\" = $2 AND \"c\".\"conrelid\" = to_regclass($3))) AS \"result\"",
-        "params": ["Board_userId_fkey", "public", "\"public\".\"Board\""]
+        "description": "ensure index \"todo_boardId_idx_74a7b59d\" does not exist",
+        "sql": "SELECT (to_regclass($1)) IS NULL AS \"result\"",
+        "params": ["\"public\".\"todo_boardId_idx_74a7b59d\""]
       }
     ],
     "execute": [
       {
-        "description": "add FK \"Board_userId_fkey\"",
-        "sql": "ALTER TABLE \"public\".\"Board\"\nADD CONSTRAINT \"Board_userId_fkey\"\nFOREIGN KEY (\"userId\")\nREFERENCES \"public\".\"user\" (\"id\")\nON DELETE CASCADE"
+        "description": "create index \"todo_boardId_idx_74a7b59d\"",
+        "sql": "CREATE INDEX \"todo_boardId_idx_74a7b59d\" ON \"public\".\"todo\" (\"boardId\")",
+        "params": []
       }
     ],
     "postcheck": [
       {
-        "description": "verify FK \"Board_userId_fkey\" exists",
-        "sql": "SELECT EXISTS (SELECT 1 AS \"one\" FROM \"pg_constraint\" AS \"c\" INNER JOIN \"pg_namespace\" AS \"n\" ON \"n\".\"oid\" = \"c\".\"connamespace\" WHERE (\"c\".\"conname\" = $1 AND \"n\".\"nspname\" = $2 AND \"c\".\"conrelid\" = to_regclass($3))) AS \"result\"",
-        "params": ["Board_userId_fkey", "public", "\"public\".\"Board\""]
-      }
-    ]
-  },
-  {
-    "id": "foreignKey.Todo.Todo_boardId_fkey",
-    "label": "Add foreign key \"Todo_boardId_fkey\" on \"Todo\"",
-    "operationClass": "additive",
-    "target": {
-      "id": "postgres",
-      "details": {
-        "schema": "public",
-        "objectType": "foreignKey",
-        "name": "Todo_boardId_fkey",
-        "table": "Todo"
-      }
-    },
-    "precheck": [
-      {
-        "description": "ensure FK \"Todo_boardId_fkey\" does not exist",
-        "sql": "SELECT NOT EXISTS (SELECT 1 AS \"one\" FROM \"pg_constraint\" AS \"c\" INNER JOIN \"pg_namespace\" AS \"n\" ON \"n\".\"oid\" = \"c\".\"connamespace\" WHERE (\"c\".\"conname\" = $1 AND \"n\".\"nspname\" = $2 AND \"c\".\"conrelid\" = to_regclass($3))) AS \"result\"",
-        "params": ["Todo_boardId_fkey", "public", "\"public\".\"Todo\""]
-      }
-    ],
-    "execute": [
-      {
-        "description": "add FK \"Todo_boardId_fkey\"",
-        "sql": "ALTER TABLE \"public\".\"Todo\"\nADD CONSTRAINT \"Todo_boardId_fkey\"\nFOREIGN KEY (\"boardId\")\nREFERENCES \"public\".\"Board\" (\"id\")\nON DELETE CASCADE"
-      }
-    ],
-    "postcheck": [
-      {
-        "description": "verify FK \"Todo_boardId_fkey\" exists",
-        "sql": "SELECT EXISTS (SELECT 1 AS \"one\" FROM \"pg_constraint\" AS \"c\" INNER JOIN \"pg_namespace\" AS \"n\" ON \"n\".\"oid\" = \"c\".\"connamespace\" WHERE (\"c\".\"conname\" = $1 AND \"n\".\"nspname\" = $2 AND \"c\".\"conrelid\" = to_regclass($3))) AS \"result\"",
-        "params": ["Todo_boardId_fkey", "public", "\"public\".\"Todo\""]
+        "description": "verify index \"todo_boardId_idx_74a7b59d\" exists",
+        "sql": "SELECT (to_regclass($1)) IS NOT NULL AS \"result\"",
+        "params": ["\"public\".\"todo_boardId_idx_74a7b59d\""]
       }
     ]
   },
@@ -710,6 +642,40 @@
     ]
   },
   {
+    "id": "foreignKey.board.board_userId_fkey",
+    "label": "Add foreign key \"board_userId_fkey\" on \"board\"",
+    "operationClass": "additive",
+    "target": {
+      "id": "postgres",
+      "details": {
+        "schema": "public",
+        "objectType": "foreignKey",
+        "name": "board_userId_fkey",
+        "table": "board"
+      }
+    },
+    "precheck": [
+      {
+        "description": "ensure FK \"board_userId_fkey\" does not exist",
+        "sql": "SELECT NOT EXISTS (SELECT 1 AS \"one\" FROM \"pg_constraint\" AS \"c\" INNER JOIN \"pg_namespace\" AS \"n\" ON \"n\".\"oid\" = \"c\".\"connamespace\" WHERE (\"c\".\"conname\" = $1 AND \"n\".\"nspname\" = $2 AND \"c\".\"conrelid\" = to_regclass($3))) AS \"result\"",
+        "params": ["board_userId_fkey", "public", "\"public\".\"board\""]
+      }
+    ],
+    "execute": [
+      {
+        "description": "add FK \"board_userId_fkey\"",
+        "sql": "ALTER TABLE \"public\".\"board\"\nADD CONSTRAINT \"board_userId_fkey\"\nFOREIGN KEY (\"userId\")\nREFERENCES \"public\".\"user\" (\"id\")\nON DELETE CASCADE"
+      }
+    ],
+    "postcheck": [
+      {
+        "description": "verify FK \"board_userId_fkey\" exists",
+        "sql": "SELECT EXISTS (SELECT 1 AS \"one\" FROM \"pg_constraint\" AS \"c\" INNER JOIN \"pg_namespace\" AS \"n\" ON \"n\".\"oid\" = \"c\".\"connamespace\" WHERE (\"c\".\"conname\" = $1 AND \"n\".\"nspname\" = $2 AND \"c\".\"conrelid\" = to_regclass($3))) AS \"result\"",
+        "params": ["board_userId_fkey", "public", "\"public\".\"board\""]
+      }
+    ]
+  },
+  {
     "id": "foreignKey.session.session_userId_fkey",
     "label": "Add foreign key \"session_userId_fkey\" on \"session\"",
     "operationClass": "additive",
@@ -740,6 +706,40 @@
         "description": "verify FK \"session_userId_fkey\" exists",
         "sql": "SELECT EXISTS (SELECT 1 AS \"one\" FROM \"pg_constraint\" AS \"c\" INNER JOIN \"pg_namespace\" AS \"n\" ON \"n\".\"oid\" = \"c\".\"connamespace\" WHERE (\"c\".\"conname\" = $1 AND \"n\".\"nspname\" = $2 AND \"c\".\"conrelid\" = to_regclass($3))) AS \"result\"",
         "params": ["session_userId_fkey", "public", "\"public\".\"session\""]
+      }
+    ]
+  },
+  {
+    "id": "foreignKey.todo.todo_boardId_fkey",
+    "label": "Add foreign key \"todo_boardId_fkey\" on \"todo\"",
+    "operationClass": "additive",
+    "target": {
+      "id": "postgres",
+      "details": {
+        "schema": "public",
+        "objectType": "foreignKey",
+        "name": "todo_boardId_fkey",
+        "table": "todo"
+      }
+    },
+    "precheck": [
+      {
+        "description": "ensure FK \"todo_boardId_fkey\" does not exist",
+        "sql": "SELECT NOT EXISTS (SELECT 1 AS \"one\" FROM \"pg_constraint\" AS \"c\" INNER JOIN \"pg_namespace\" AS \"n\" ON \"n\".\"oid\" = \"c\".\"connamespace\" WHERE (\"c\".\"conname\" = $1 AND \"n\".\"nspname\" = $2 AND \"c\".\"conrelid\" = to_regclass($3))) AS \"result\"",
+        "params": ["todo_boardId_fkey", "public", "\"public\".\"todo\""]
+      }
+    ],
+    "execute": [
+      {
+        "description": "add FK \"todo_boardId_fkey\"",
+        "sql": "ALTER TABLE \"public\".\"todo\"\nADD CONSTRAINT \"todo_boardId_fkey\"\nFOREIGN KEY (\"boardId\")\nREFERENCES \"public\".\"board\" (\"id\")\nON DELETE CASCADE"
+      }
+    ],
+    "postcheck": [
+      {
+        "description": "verify FK \"todo_boardId_fkey\" exists",
+        "sql": "SELECT EXISTS (SELECT 1 AS \"one\" FROM \"pg_constraint\" AS \"c\" INNER JOIN \"pg_namespace\" AS \"n\" ON \"n\".\"oid\" = \"c\".\"connamespace\" WHERE (\"c\".\"conname\" = $1 AND \"n\".\"nspname\" = $2 AND \"c\".\"conrelid\" = to_regclass($3))) AS \"result\"",
+        "params": ["todo_boardId_fkey", "public", "\"public\".\"todo\""]
       }
     ]
   }
