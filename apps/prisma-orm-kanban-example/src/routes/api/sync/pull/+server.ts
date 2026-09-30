@@ -24,6 +24,6 @@ export const GET: RequestHandler = async ({ url, request }) => {
     scopeKey: session.user.id,
     lastChangelogId: url.searchParams.get("since"),
   });
-  if (!outcome.ok) return json({ error: "since must be an integer" }, { status: 400 });
+  if (!outcome.ok) return json({ error: "since must be a changelog id" }, { status: 400 });
   return json(outcome.logs);
 };

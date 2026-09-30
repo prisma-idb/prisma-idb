@@ -9,11 +9,11 @@ export interface PullInput {
   readonly scopeKey: string;
   /**
    * Exclusive cursor: only changelog rows with a greater id are returned.
-   * The changelog id is an integer autoincrement; a numeric string (a query
-   * param, or the wire's string `changelogId`) is accepted too. `null` /
-   * `undefined` pulls from the start.
+   * The changelog id is a UUID v7 string, so pass back the last
+   * `changelogId` the client received, unchanged (a query param works as
+   * is). `null` / `undefined` pulls from the start.
    */
-  readonly lastChangelogId?: number | string | null;
+  readonly lastChangelogId?: string | null;
   /** @default DEFAULT_PULL_LIMIT */
   readonly limit?: number;
 }
@@ -37,7 +37,7 @@ export type PullOutcome =
   | { readonly ok: false; readonly reason: "invalid-cursor" };
 
 interface ChangelogRow {
-  readonly id: number;
+  readonly id: string;
   readonly model: string;
   readonly keyPath: unknown;
   readonly operation: string;
@@ -52,13 +52,16 @@ interface ChangelogQuery {
   all(): Promise<ChangelogRow[]>;
 }
 
-/** The changelog id is a Postgres `Int` (int4); a larger cursor would make the query itself fail. */
-const MAX_CHANGELOG_ID = 2_147_483_647;
+const CHANGELOG_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-function parseCursor(value: PullInput["lastChangelogId"]): number | null | undefined {
+/**
+ * A malformed cursor must be a clean `invalid-cursor`, not a query error.
+ * Ids are generated lowercase and compared as text, so the cursor is
+ * lowercased to match.
+ */
+function parseCursor(value: PullInput["lastChangelogId"]): string | null | undefined {
   if (value === null || value === undefined) return null;
-  const parsed = typeof value === "string" ? (value.trim() === "" ? NaN : Number(value)) : value;
-  return Number.isInteger(parsed) && Math.abs(parsed as number) <= MAX_CHANGELOG_ID ? (parsed as number) : undefined;
+  return typeof value === "string" && CHANGELOG_ID_PATTERN.test(value) ? value.toLowerCase() : undefined;
 }
 
 /**
@@ -87,7 +90,7 @@ export async function pull(
   const rows = await (cursor !== null ? ordered.cursor({ id: cursor }) : ordered).limit(limit).all();
 
   const checks = syncServer.buildPullQueries(
-    rows.map((row) => ({ changelogId: String(row.id), model: row.model, key: row.keyPath })),
+    rows.map((row) => ({ changelogId: row.id, model: row.model, key: row.keyPath })),
     { scopeKey }
   );
 

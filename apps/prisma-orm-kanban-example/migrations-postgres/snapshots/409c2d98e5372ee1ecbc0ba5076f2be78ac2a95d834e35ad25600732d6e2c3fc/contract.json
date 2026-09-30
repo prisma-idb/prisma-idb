@@ -17,6 +17,8 @@
       "checkConstraint": true,
       "defaultInInsert": true,
       "enums": true,
+      "insertOnConflictSkip": true,
+      "insertOnConflictWithoutTarget": true,
       "lateral": true,
       "returning": true,
       "scalarList": true
@@ -39,9 +41,12 @@
           "Account": {
             "fields": {
               "accessToken": { "nullable": true, "type": { "codecId": "pg/text@1", "kind": "scalar" } },
-              "accessTokenExpiresAt": { "nullable": true, "type": { "codecId": "pg/timestamptz@1", "kind": "scalar" } },
+              "accessTokenExpiresAt": {
+                "nullable": true,
+                "type": { "codecId": "pg/timestamptz-date@1", "kind": "scalar" }
+              },
               "accountId": { "nullable": false, "type": { "codecId": "pg/text@1", "kind": "scalar" } },
-              "createdAt": { "nullable": false, "type": { "codecId": "pg/timestamptz@1", "kind": "scalar" } },
+              "createdAt": { "nullable": false, "type": { "codecId": "pg/timestamptz-date@1", "kind": "scalar" } },
               "id": { "nullable": false, "type": { "codecId": "pg/text@1", "kind": "scalar" } },
               "idToken": { "nullable": true, "type": { "codecId": "pg/text@1", "kind": "scalar" } },
               "password": { "nullable": true, "type": { "codecId": "pg/text@1", "kind": "scalar" } },
@@ -49,15 +54,16 @@
               "refreshToken": { "nullable": true, "type": { "codecId": "pg/text@1", "kind": "scalar" } },
               "refreshTokenExpiresAt": {
                 "nullable": true,
-                "type": { "codecId": "pg/timestamptz@1", "kind": "scalar" }
+                "type": { "codecId": "pg/timestamptz-date@1", "kind": "scalar" }
               },
               "scope": { "nullable": true, "type": { "codecId": "pg/text@1", "kind": "scalar" } },
-              "updatedAt": { "nullable": false, "type": { "codecId": "pg/timestamptz@1", "kind": "scalar" } },
+              "updatedAt": { "nullable": false, "type": { "codecId": "pg/timestamptz-date@1", "kind": "scalar" } },
               "userId": { "nullable": false, "type": { "codecId": "pg/text@1", "kind": "scalar" } }
             },
             "relations": {
               "user": {
                 "cardinality": "N:1",
+                "nullable": false,
                 "on": { "localFields": ["userId"], "targetFields": ["id"] },
                 "to": { "model": "User", "namespace": "public" }
               }
@@ -85,7 +91,7 @@
           "AuditLog": {
             "fields": {
               "action": { "nullable": false, "type": { "codecId": "pg/text@1", "kind": "scalar" } },
-              "createdAt": { "nullable": false, "type": { "codecId": "pg/timestamptz@1", "kind": "scalar" } },
+              "createdAt": { "nullable": false, "type": { "codecId": "pg/timestamptz-date@1", "kind": "scalar" } },
               "id": { "nullable": false, "type": { "codecId": "pg/text@1", "kind": "scalar" } }
             },
             "relations": {},
@@ -96,12 +102,12 @@
                 "id": { "column": "id" }
               },
               "namespaceId": "public",
-              "table": "auditLog"
+              "table": "AuditLog"
             }
           },
           "Board": {
             "fields": {
-              "createdAt": { "nullable": false, "type": { "codecId": "pg/timestamptz@1", "kind": "scalar" } },
+              "createdAt": { "nullable": false, "type": { "codecId": "pg/timestamptz-date@1", "kind": "scalar" } },
               "id": { "nullable": false, "type": { "codecId": "pg/text@1", "kind": "scalar" } },
               "name": { "nullable": false, "type": { "codecId": "pg/text@1", "kind": "scalar" } },
               "userId": { "nullable": false, "type": { "codecId": "pg/text@1", "kind": "scalar" } }
@@ -114,6 +120,7 @@
               },
               "user": {
                 "cardinality": "N:1",
+                "nullable": false,
                 "on": { "localFields": ["userId"], "targetFields": ["id"] },
                 "to": { "model": "User", "namespace": "public" }
               }
@@ -126,13 +133,13 @@
                 "userId": { "column": "userId" }
               },
               "namespaceId": "public",
-              "table": "board"
+              "table": "Board"
             }
           },
           "Changelog": {
             "fields": {
-              "createdAt": { "nullable": false, "type": { "codecId": "pg/timestamptz@1", "kind": "scalar" } },
-              "id": { "nullable": false, "type": { "codecId": "pg/int4@1", "kind": "scalar" } },
+              "createdAt": { "nullable": false, "type": { "codecId": "pg/timestamptz-date@1", "kind": "scalar" } },
+              "id": { "nullable": false, "type": { "codecId": "pg/text@1", "kind": "scalar" } },
               "keyPath": { "nullable": false, "type": { "codecId": "pg/text@1", "kind": "scalar" } },
               "model": { "nullable": false, "type": { "codecId": "pg/text@1", "kind": "scalar" } },
               "operation": {
@@ -160,23 +167,24 @@
                 "scopeKey": { "column": "scopeKey" }
               },
               "namespaceId": "public",
-              "table": "changelog"
+              "table": "Changelog"
             }
           },
           "Session": {
             "fields": {
-              "createdAt": { "nullable": false, "type": { "codecId": "pg/timestamptz@1", "kind": "scalar" } },
-              "expiresAt": { "nullable": false, "type": { "codecId": "pg/timestamptz@1", "kind": "scalar" } },
+              "createdAt": { "nullable": false, "type": { "codecId": "pg/timestamptz-date@1", "kind": "scalar" } },
+              "expiresAt": { "nullable": false, "type": { "codecId": "pg/timestamptz-date@1", "kind": "scalar" } },
               "id": { "nullable": false, "type": { "codecId": "pg/text@1", "kind": "scalar" } },
               "ipAddress": { "nullable": true, "type": { "codecId": "pg/text@1", "kind": "scalar" } },
               "token": { "nullable": false, "type": { "codecId": "pg/text@1", "kind": "scalar" } },
-              "updatedAt": { "nullable": false, "type": { "codecId": "pg/timestamptz@1", "kind": "scalar" } },
+              "updatedAt": { "nullable": false, "type": { "codecId": "pg/timestamptz-date@1", "kind": "scalar" } },
               "userAgent": { "nullable": true, "type": { "codecId": "pg/text@1", "kind": "scalar" } },
               "userId": { "nullable": false, "type": { "codecId": "pg/text@1", "kind": "scalar" } }
             },
             "relations": {
               "user": {
                 "cardinality": "N:1",
+                "nullable": false,
                 "on": { "localFields": ["userId"], "targetFields": ["id"] },
                 "to": { "model": "User", "namespace": "public" }
               }
@@ -199,7 +207,7 @@
           "Todo": {
             "fields": {
               "boardId": { "nullable": false, "type": { "codecId": "pg/text@1", "kind": "scalar" } },
-              "createdAt": { "nullable": false, "type": { "codecId": "pg/timestamptz@1", "kind": "scalar" } },
+              "createdAt": { "nullable": false, "type": { "codecId": "pg/timestamptz-date@1", "kind": "scalar" } },
               "description": { "nullable": true, "type": { "codecId": "pg/text@1", "kind": "scalar" } },
               "id": { "nullable": false, "type": { "codecId": "pg/text@1", "kind": "scalar" } },
               "isCompleted": { "nullable": false, "type": { "codecId": "pg/bool@1", "kind": "scalar" } },
@@ -208,6 +216,7 @@
             "relations": {
               "board": {
                 "cardinality": "N:1",
+                "nullable": false,
                 "on": { "localFields": ["boardId"], "targetFields": ["id"] },
                 "to": { "model": "Board", "namespace": "public" }
               }
@@ -222,19 +231,19 @@
                 "title": { "column": "title" }
               },
               "namespaceId": "public",
-              "table": "todo"
+              "table": "Todo"
             }
           },
           "User": {
             "fields": {
-              "createdAt": { "nullable": false, "type": { "codecId": "pg/timestamptz@1", "kind": "scalar" } },
+              "createdAt": { "nullable": false, "type": { "codecId": "pg/timestamptz-date@1", "kind": "scalar" } },
               "email": { "nullable": false, "type": { "codecId": "pg/text@1", "kind": "scalar" } },
               "emailVerified": { "nullable": false, "type": { "codecId": "pg/bool@1", "kind": "scalar" } },
               "id": { "nullable": false, "type": { "codecId": "pg/text@1", "kind": "scalar" } },
               "image": { "nullable": true, "type": { "codecId": "pg/text@1", "kind": "scalar" } },
               "isAnonymous": { "nullable": false, "type": { "codecId": "pg/bool@1", "kind": "scalar" } },
               "name": { "nullable": false, "type": { "codecId": "pg/text@1", "kind": "scalar" } },
-              "updatedAt": { "nullable": false, "type": { "codecId": "pg/timestamptz@1", "kind": "scalar" } }
+              "updatedAt": { "nullable": false, "type": { "codecId": "pg/timestamptz-date@1", "kind": "scalar" } }
             },
             "relations": {
               "accounts": {
@@ -270,11 +279,11 @@
           },
           "Verification": {
             "fields": {
-              "createdAt": { "nullable": false, "type": { "codecId": "pg/timestamptz@1", "kind": "scalar" } },
-              "expiresAt": { "nullable": false, "type": { "codecId": "pg/timestamptz@1", "kind": "scalar" } },
+              "createdAt": { "nullable": false, "type": { "codecId": "pg/timestamptz-date@1", "kind": "scalar" } },
+              "expiresAt": { "nullable": false, "type": { "codecId": "pg/timestamptz-date@1", "kind": "scalar" } },
               "id": { "nullable": false, "type": { "codecId": "pg/text@1", "kind": "scalar" } },
               "identifier": { "nullable": false, "type": { "codecId": "pg/text@1", "kind": "scalar" } },
-              "updatedAt": { "nullable": false, "type": { "codecId": "pg/timestamptz@1", "kind": "scalar" } },
+              "updatedAt": { "nullable": false, "type": { "codecId": "pg/timestamptz-date@1", "kind": "scalar" } },
               "value": { "nullable": false, "type": { "codecId": "pg/text@1", "kind": "scalar" } }
             },
             "relations": {},
@@ -295,16 +304,27 @@
       }
     }
   },
+  "execution": {
+    "executionHash": "bec6305326b570a7250d923bf8ee32069321872a447fc6a71816854c76e8c098",
+    "mutations": {
+      "defaults": [
+        {
+          "onCreate": { "id": "uuidv7", "kind": "generator" },
+          "ref": { "column": "id", "namespace": "public", "table": "Changelog" }
+        }
+      ]
+    }
+  },
   "extensions": {},
   "meta": {},
   "profileHash": "3916f444a8a17ad749191acf9e08dad97d1a327b88c2f1d45d12f240296aa8b2",
   "roots": {
+    "AuditLog": { "model": "AuditLog", "namespace": "public" },
+    "Board": { "model": "Board", "namespace": "public" },
+    "Changelog": { "model": "Changelog", "namespace": "public" },
+    "Todo": { "model": "Todo", "namespace": "public" },
     "account": { "model": "Account", "namespace": "public" },
-    "auditLog": { "model": "AuditLog", "namespace": "public" },
-    "board": { "model": "Board", "namespace": "public" },
-    "changelog": { "model": "Changelog", "namespace": "public" },
     "session": { "model": "Session", "namespace": "public" },
-    "todo": { "model": "Todo", "namespace": "public" },
     "user": { "model": "User", "namespace": "public" },
     "verification": { "model": "Verification", "namespace": "public" }
   },
@@ -314,57 +334,10 @@
       "public": {
         "entries": {
           "table": {
-            "account": {
-              "columns": {
-                "accessToken": { "codecId": "pg/text@1", "nativeType": "text", "nullable": true },
-                "accessTokenExpiresAt": {
-                  "codecId": "pg/timestamptz@1",
-                  "nativeType": "timestamptz",
-                  "nullable": true
-                },
-                "accountId": { "codecId": "pg/text@1", "nativeType": "text", "nullable": false },
-                "createdAt": {
-                  "codecId": "pg/timestamptz@1",
-                  "default": { "expression": "now()", "kind": "function" },
-                  "nativeType": "timestamptz",
-                  "nullable": false
-                },
-                "id": { "codecId": "pg/text@1", "nativeType": "text", "nullable": false },
-                "idToken": { "codecId": "pg/text@1", "nativeType": "text", "nullable": true },
-                "password": { "codecId": "pg/text@1", "nativeType": "text", "nullable": true },
-                "providerId": { "codecId": "pg/text@1", "nativeType": "text", "nullable": false },
-                "refreshToken": { "codecId": "pg/text@1", "nativeType": "text", "nullable": true },
-                "refreshTokenExpiresAt": {
-                  "codecId": "pg/timestamptz@1",
-                  "nativeType": "timestamptz",
-                  "nullable": true
-                },
-                "scope": { "codecId": "pg/text@1", "nativeType": "text", "nullable": true },
-                "updatedAt": { "codecId": "pg/timestamptz@1", "nativeType": "timestamptz", "nullable": false },
-                "userId": { "codecId": "pg/text@1", "nativeType": "text", "nullable": false }
-              },
-              "foreignKeys": [
-                {
-                  "onDelete": "cascade",
-                  "source": { "columns": ["userId"], "namespaceId": "public", "tableName": "account" },
-                  "target": { "columns": ["id"], "namespaceId": "public", "tableName": "user" }
-                }
-              ],
-              "indexes": [
-                {
-                  "columns": ["userId"],
-                  "name": "account_userId_idx_a489d58a",
-                  "prefix": "account_userId_idx",
-                  "unique": false
-                }
-              ],
-              "primaryKey": { "columns": ["id"] },
-              "uniques": [{ "columns": ["providerId", "accountId"] }]
-            },
-            "auditLog": {
+            "AuditLog": {
               "columns": {
                 "action": { "codecId": "pg/text@1", "nativeType": "text", "nullable": false },
-                "createdAt": { "codecId": "pg/timestamptz@1", "nativeType": "timestamptz", "nullable": false },
+                "createdAt": { "codecId": "pg/timestamptz-date@1", "nativeType": "timestamptz", "nullable": false },
                 "id": { "codecId": "pg/text@1", "nativeType": "text", "nullable": false }
               },
               "foreignKeys": [],
@@ -372,9 +345,9 @@
               "primaryKey": { "columns": ["id"] },
               "uniques": []
             },
-            "board": {
+            "Board": {
               "columns": {
-                "createdAt": { "codecId": "pg/timestamptz@1", "nativeType": "timestamptz", "nullable": false },
+                "createdAt": { "codecId": "pg/timestamptz-date@1", "nativeType": "timestamptz", "nullable": false },
                 "id": { "codecId": "pg/text@1", "nativeType": "text", "nullable": false },
                 "name": { "codecId": "pg/text@1", "nativeType": "text", "nullable": false },
                 "userId": { "codecId": "pg/text@1", "nativeType": "text", "nullable": false }
@@ -382,42 +355,37 @@
               "foreignKeys": [
                 {
                   "onDelete": "cascade",
-                  "source": { "columns": ["userId"], "namespaceId": "public", "tableName": "board" },
+                  "source": { "columns": ["userId"], "namespaceId": "public", "tableName": "Board" },
                   "target": { "columns": ["id"], "namespaceId": "public", "tableName": "user" }
                 }
               ],
               "indexes": [
                 {
                   "columns": ["userId"],
-                  "name": "board_userId_idx_a489d58a",
-                  "prefix": "board_userId_idx",
+                  "name": "Board_userId_idx_a489d58a",
+                  "prefix": "Board_userId_idx",
                   "unique": false
                 }
               ],
               "primaryKey": { "columns": ["id"] },
               "uniques": []
             },
-            "changelog": {
+            "Changelog": {
               "checks": [
                 {
                   "expression": "\"operation\" IN ('create', 'update', 'delete')",
-                  "name": "changelog_operation_check_ff8db64b",
-                  "prefix": "changelog_operation_check"
+                  "name": "Changelog_operation_check_ff8db64b",
+                  "prefix": "Changelog_operation_check"
                 }
               ],
               "columns": {
                 "createdAt": {
-                  "codecId": "pg/timestamptz@1",
+                  "codecId": "pg/timestamptz-date@1",
                   "default": { "expression": "now()", "kind": "function" },
                   "nativeType": "timestamptz",
                   "nullable": false
                 },
-                "id": {
-                  "codecId": "pg/int4@1",
-                  "default": { "expression": "autoincrement()", "kind": "function" },
-                  "nativeType": "int4",
-                  "nullable": false
-                },
+                "id": { "codecId": "pg/text@1", "nativeType": "text", "nullable": false },
                 "keyPath": { "codecId": "pg/text@1", "nativeType": "text", "nullable": false },
                 "model": { "codecId": "pg/text@1", "nativeType": "text", "nullable": false },
                 "operation": {
@@ -438,27 +406,101 @@
               "indexes": [
                 {
                   "columns": ["scopeKey", "id"],
-                  "name": "changelog_scopeKey_id_idx_9635f6eb",
-                  "prefix": "changelog_scopeKey_id_idx",
+                  "name": "Changelog_scopeKey_id_idx_9635f6eb",
+                  "prefix": "Changelog_scopeKey_id_idx",
                   "unique": false
                 }
               ],
               "primaryKey": { "columns": ["id"] },
               "uniques": [{ "columns": ["outboxEventId"] }]
             },
-            "session": {
+            "Todo": {
               "columns": {
+                "boardId": { "codecId": "pg/text@1", "nativeType": "text", "nullable": false },
+                "createdAt": { "codecId": "pg/timestamptz-date@1", "nativeType": "timestamptz", "nullable": false },
+                "description": { "codecId": "pg/text@1", "nativeType": "text", "nullable": true },
+                "id": { "codecId": "pg/text@1", "nativeType": "text", "nullable": false },
+                "isCompleted": { "codecId": "pg/bool@1", "nativeType": "bool", "nullable": false },
+                "title": { "codecId": "pg/text@1", "nativeType": "text", "nullable": false }
+              },
+              "foreignKeys": [
+                {
+                  "onDelete": "cascade",
+                  "source": { "columns": ["boardId"], "namespaceId": "public", "tableName": "Todo" },
+                  "target": { "columns": ["id"], "namespaceId": "public", "tableName": "Board" }
+                }
+              ],
+              "indexes": [
+                {
+                  "columns": ["boardId"],
+                  "name": "Todo_boardId_idx_74a7b59d",
+                  "prefix": "Todo_boardId_idx",
+                  "unique": false
+                }
+              ],
+              "primaryKey": { "columns": ["id"] },
+              "uniques": []
+            },
+            "account": {
+              "columns": {
+                "accessToken": { "codecId": "pg/text@1", "nativeType": "text", "nullable": true },
+                "accessTokenExpiresAt": {
+                  "codecId": "pg/timestamptz-date@1",
+                  "nativeType": "timestamptz",
+                  "nullable": true
+                },
+                "accountId": { "codecId": "pg/text@1", "nativeType": "text", "nullable": false },
                 "createdAt": {
-                  "codecId": "pg/timestamptz@1",
+                  "codecId": "pg/timestamptz-date@1",
                   "default": { "expression": "now()", "kind": "function" },
                   "nativeType": "timestamptz",
                   "nullable": false
                 },
-                "expiresAt": { "codecId": "pg/timestamptz@1", "nativeType": "timestamptz", "nullable": false },
+                "id": { "codecId": "pg/text@1", "nativeType": "text", "nullable": false },
+                "idToken": { "codecId": "pg/text@1", "nativeType": "text", "nullable": true },
+                "password": { "codecId": "pg/text@1", "nativeType": "text", "nullable": true },
+                "providerId": { "codecId": "pg/text@1", "nativeType": "text", "nullable": false },
+                "refreshToken": { "codecId": "pg/text@1", "nativeType": "text", "nullable": true },
+                "refreshTokenExpiresAt": {
+                  "codecId": "pg/timestamptz-date@1",
+                  "nativeType": "timestamptz",
+                  "nullable": true
+                },
+                "scope": { "codecId": "pg/text@1", "nativeType": "text", "nullable": true },
+                "updatedAt": { "codecId": "pg/timestamptz-date@1", "nativeType": "timestamptz", "nullable": false },
+                "userId": { "codecId": "pg/text@1", "nativeType": "text", "nullable": false }
+              },
+              "foreignKeys": [
+                {
+                  "onDelete": "cascade",
+                  "source": { "columns": ["userId"], "namespaceId": "public", "tableName": "account" },
+                  "target": { "columns": ["id"], "namespaceId": "public", "tableName": "user" }
+                }
+              ],
+              "indexes": [
+                {
+                  "columns": ["userId"],
+                  "name": "account_userId_idx_a489d58a",
+                  "prefix": "account_userId_idx",
+                  "unique": false
+                }
+              ],
+              "primaryKey": { "columns": ["id"] },
+              "uniques": [{ "columns": ["providerId", "accountId"] }]
+            },
+            "session": {
+              "columns": {
+                "createdAt": {
+                  "codecId": "pg/timestamptz-date@1",
+                  "default": { "expression": "now()", "kind": "function" },
+                  "nativeType": "timestamptz",
+                  "nullable": false
+                },
+                "expiresAt": { "codecId": "pg/timestamptz-date@1", "nativeType": "timestamptz", "nullable": false },
                 "id": { "codecId": "pg/text@1", "nativeType": "text", "nullable": false },
                 "ipAddress": { "codecId": "pg/text@1", "nativeType": "text", "nullable": true },
                 "token": { "codecId": "pg/text@1", "nativeType": "text", "nullable": false },
-                "updatedAt": { "codecId": "pg/timestamptz@1", "nativeType": "timestamptz", "nullable": false },
+                "updatedAt": { "codecId": "pg/timestamptz-date@1", "nativeType": "timestamptz", "nullable": false },
                 "userAgent": { "codecId": "pg/text@1", "nativeType": "text", "nullable": true },
                 "userId": { "codecId": "pg/text@1", "nativeType": "text", "nullable": false }
               },
@@ -480,37 +522,10 @@
               "primaryKey": { "columns": ["id"] },
               "uniques": [{ "columns": ["token"] }]
             },
-            "todo": {
-              "columns": {
-                "boardId": { "codecId": "pg/text@1", "nativeType": "text", "nullable": false },
-                "createdAt": { "codecId": "pg/timestamptz@1", "nativeType": "timestamptz", "nullable": false },
-                "description": { "codecId": "pg/text@1", "nativeType": "text", "nullable": true },
-                "id": { "codecId": "pg/text@1", "nativeType": "text", "nullable": false },
-                "isCompleted": { "codecId": "pg/bool@1", "nativeType": "bool", "nullable": false },
-                "title": { "codecId": "pg/text@1", "nativeType": "text", "nullable": false }
-              },
-              "foreignKeys": [
-                {
-                  "onDelete": "cascade",
-                  "source": { "columns": ["boardId"], "namespaceId": "public", "tableName": "todo" },
-                  "target": { "columns": ["id"], "namespaceId": "public", "tableName": "board" }
-                }
-              ],
-              "indexes": [
-                {
-                  "columns": ["boardId"],
-                  "name": "todo_boardId_idx_74a7b59d",
-                  "prefix": "todo_boardId_idx",
-                  "unique": false
-                }
-              ],
-              "primaryKey": { "columns": ["id"] },
-              "uniques": []
-            },
             "user": {
               "columns": {
                 "createdAt": {
-                  "codecId": "pg/timestamptz@1",
+                  "codecId": "pg/timestamptz-date@1",
                   "default": { "expression": "now()", "kind": "function" },
                   "nativeType": "timestamptz",
                   "nullable": false
@@ -531,7 +546,7 @@
                   "nullable": false
                 },
                 "name": { "codecId": "pg/text@1", "nativeType": "text", "nullable": false },
-                "updatedAt": { "codecId": "pg/timestamptz@1", "nativeType": "timestamptz", "nullable": false }
+                "updatedAt": { "codecId": "pg/timestamptz-date@1", "nativeType": "timestamptz", "nullable": false }
               },
               "foreignKeys": [],
               "indexes": [],
@@ -541,15 +556,15 @@
             "verification": {
               "columns": {
                 "createdAt": {
-                  "codecId": "pg/timestamptz@1",
+                  "codecId": "pg/timestamptz-date@1",
                   "default": { "expression": "now()", "kind": "function" },
                   "nativeType": "timestamptz",
                   "nullable": false
                 },
-                "expiresAt": { "codecId": "pg/timestamptz@1", "nativeType": "timestamptz", "nullable": false },
+                "expiresAt": { "codecId": "pg/timestamptz-date@1", "nativeType": "timestamptz", "nullable": false },
                 "id": { "codecId": "pg/text@1", "nativeType": "text", "nullable": false },
                 "identifier": { "codecId": "pg/text@1", "nativeType": "text", "nullable": false },
-                "updatedAt": { "codecId": "pg/timestamptz@1", "nativeType": "timestamptz", "nullable": false },
+                "updatedAt": { "codecId": "pg/timestamptz-date@1", "nativeType": "timestamptz", "nullable": false },
                 "value": { "codecId": "pg/text@1", "nativeType": "text", "nullable": false }
               },
               "foreignKeys": [],
@@ -564,7 +579,7 @@
         "kind": "postgres-schema"
       }
     },
-    "storageHash": "18e417a39f86b075f9bd8f2d3feabe964280aec2b710841719e891ce35bde3c2"
+    "storageHash": "409c2d98e5372ee1ecbc0ba5076f2be78ac2a95d834e35ad25600732d6e2c3fc"
   },
   "target": "postgres",
   "targetFamily": "sql"

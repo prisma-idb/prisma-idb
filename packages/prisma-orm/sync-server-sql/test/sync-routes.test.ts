@@ -8,6 +8,8 @@ import { seed, testContract, testDb, testSyncServer } from "./helpers";
 
 const adapter = createSqlSyncAdapter({ contract: testContract, syncServer: testSyncServer });
 
+const UUID_V7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
 const create = (id: string, entityType: string, payload: Record<string, unknown>) => ({
   id,
   entityType,
@@ -188,35 +190,56 @@ describe("pull", () => {
       ["Todo", "create", "t1"],
     ]);
     expect(outcome.logs[1]?.record).toEqual({ id: "b1", ownerId: "u1" });
-    const ids = outcome.logs.map((l) => Number(l.changelogId));
-    expect(ids).toEqual([...ids].sort((a, b) => a - b));
+    const ids = outcome.logs.map((l) => l.changelogId);
+    expect(ids.every((id) => UUID_V7.test(id))).toBe(true);
+    expect(ids).toEqual([...ids].sort());
   });
 
-  it("treats lastChangelogId as an exclusive cursor, numeric or numeric string", async () => {
+  it("treats lastChangelogId as an exclusive cursor", async () => {
     const db = await pushAnnAndBo();
     const first = await adapter.pull(db, { scopeKey: "u1", limit: 2 });
     if (!first.ok) throw new Error("unexpected");
     expect(first.logs).toHaveLength(2);
     const cursor = first.logs[1]!.changelogId;
 
-    const rest = await adapter.pull(db, { scopeKey: "u1", lastChangelogId: Number(cursor) });
-    const restFromString = await adapter.pull(db, { scopeKey: "u1", lastChangelogId: cursor });
-    if (!rest.ok || !restFromString.ok) throw new Error("unexpected");
+    const rest = await adapter.pull(db, { scopeKey: "u1", lastChangelogId: cursor });
+    if (!rest.ok) throw new Error("unexpected");
     expect(rest.logs.map((l) => l.keyPath)).toEqual(["t1"]);
-    expect(restFromString.logs).toEqual(rest.logs);
   });
 
-  it('orders ids numerically across a digit boundary ("10" after "9")', async () => {
+  it("accepts an upper-case cursor", async () => {
+    const db = await pushAnnAndBo();
+    const first = await adapter.pull(db, { scopeKey: "u1", limit: 1 });
+    if (!first.ok) throw new Error("unexpected");
+    const rest = await adapter.pull(db, { scopeKey: "u1", lastChangelogId: first.logs[0]!.changelogId.toUpperCase() });
+    if (!rest.ok) throw new Error("unexpected");
+    expect(rest.logs.map((l) => l.keyPath)).toEqual(["b1", "t1"]);
+  });
+
+  it("pages through many rows in order with no gaps or repeats", async () => {
     const db = await testDb();
     await seed(db, { User: [{ id: "u1", name: "Ann" }] });
-    for (let i = 0; i < 12; i++) {
+    for (let i = 0; i < 25; i++) {
       await seed(db, {
         Changelog: [{ model: "User", keyPath: "u1", operation: "update", scopeKey: "u1", outboxEventId: `e${i}` }],
       });
     }
-    const page = await adapter.pull(db, { scopeKey: "u1", lastChangelogId: 8, limit: 10 });
-    if (!page.ok) throw new Error("unexpected");
-    expect(page.logs.map((l) => l.changelogId)).toEqual(["9", "10", "11", "12"]);
+    const seen: string[] = [];
+    let cursor: string | null = null;
+    for (;;) {
+      const page: Awaited<ReturnType<typeof adapter.pull>> = await adapter.pull(db, {
+        scopeKey: "u1",
+        lastChangelogId: cursor,
+        limit: 10,
+      });
+      if (!page.ok) throw new Error("unexpected");
+      if (page.logs.length === 0) break;
+      seen.push(...page.logs.map((l) => l.changelogId));
+      cursor = page.logs.at(-1)!.changelogId;
+    }
+    expect(seen).toHaveLength(25);
+    expect(new Set(seen).size).toBe(25);
+    expect(seen).toEqual([...seen].sort());
   });
 
   it("returns an empty page once caught up", async () => {
@@ -246,15 +269,22 @@ describe("pull", () => {
     expect(byKey["Todo:delete:t1"]).toBeNull();
   });
 
-  it.each([["abc"], [""], [1.5], [Number.NaN], ["1e3x"], ["2147483648"], [-2147483648 - 1], [Number.MAX_SAFE_INTEGER]])(
-    "rejects the invalid cursor %j",
-    async (lastChangelogId) => {
-      expect(await adapter.pull(await testDb(), { scopeKey: "u1", lastChangelogId })).toEqual({
-        ok: false,
-        reason: "invalid-cursor",
-      });
-    }
-  );
+  it.each([
+    ["abc"],
+    [""],
+    ["42"],
+    ["2147483648"],
+    [" 0190a2b4-7c3e-7d2a-8f1b-3c4d5e6f7a8b"],
+    ["0190a2b4-7c3e-7d2a-8f1b-3c4d5e6f7a8"],
+    ["0190a2b4-7c3e-7d2a-8f1b-3c4d5e6f7a8g"],
+    ["0190a2b47c3e7d2a8f1b3c4d5e6f7a8b"],
+    [42],
+  ] as unknown as [string][])("rejects the invalid cursor %j", async (lastChangelogId) => {
+    expect(await adapter.pull(await testDb(), { scopeKey: "u1", lastChangelogId })).toEqual({
+      ok: false,
+      reason: "invalid-cursor",
+    });
+  });
 
   it("works as a standalone function too", async () => {
     const db = await pushAnnAndBo();
