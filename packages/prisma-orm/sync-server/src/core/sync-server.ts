@@ -11,7 +11,10 @@ export interface SyncPushEvent {
   readonly id: string;
   readonly model: string;
   readonly operation: "create" | "update" | "delete";
+  /** Native application values used for contract validation. */
   readonly payload: Record<string, unknown>;
+  /** Pre-revival payload; supply when native keys differ from their JSON wire form. */
+  readonly wirePayload?: Record<string, unknown>;
 }
 
 /**
@@ -190,7 +193,7 @@ export function validatePush(
       getKeyField,
       event.model,
       keyField,
-      event.payload[keyField],
+      (event.wirePayload ?? event.payload)[keyField],
       options.scopeKey
     );
     return { eventId: event.id, model: event.model, check };

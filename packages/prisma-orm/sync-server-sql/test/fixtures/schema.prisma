@@ -22,3 +22,17 @@ model Todo {
   board   Board     @relation(fields: [boardId], references: [id], onDelete: Cascade)
   dueAt   DateTime?
 }
+
+// Wire keys are digit strings; SQL lookups and writes use native bigint values.
+model BigUser {
+  id    BigInt @id
+  name  String
+  items BigItem[]
+}
+
+model BigItem {
+  id      BigInt  @id
+  ownerId BigInt
+  owner   BigUser @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  name    String
+}

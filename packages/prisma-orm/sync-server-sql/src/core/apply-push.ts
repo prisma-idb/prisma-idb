@@ -88,19 +88,13 @@ export async function applyPush(
       keyField = undefined;
     }
     try {
+      const wirePayload = keyField === undefined ? {} : toSyncPushPayload(event.operation, event.payload, keyField);
       pushEvents.push({
         id: event.id,
         model: event.entityType,
         operation: event.operation,
-        payload:
-          keyField === undefined
-            ? {}
-            : reviveWireValues(
-                contract,
-                event.entityType,
-                toSyncPushPayload(event.operation, event.payload, keyField),
-                keyField
-              ),
+        wirePayload,
+        payload: reviveWireValues(contract, event.entityType, wirePayload, keyField),
       });
     } catch (err) {
       resolved.set(event.id, {

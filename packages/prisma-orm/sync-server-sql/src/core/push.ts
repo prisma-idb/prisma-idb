@@ -1,6 +1,7 @@
 import { idbCodecLookup } from "@prisma-idb/target-idb/runtime";
 import { domainModelsAtDefaultNamespace } from "@prisma/orm-framework/contract/types";
 import type { GetKeyField, PushCheck, SyncServerContract } from "@prisma-idb/sync-server";
+import { nativeJsonCodecs } from "./wire-key";
 import { ormRootFor } from "./orm-root";
 import { checkAuthorization } from "./authorization";
 import { lockScope } from "./scope-lock";
@@ -37,14 +38,6 @@ export class PushPayloadValidationError extends Error {
     super(message);
   }
 }
-
-// These SQL codecs use the same JSON representation as the IDB client.
-const nativeJsonCodecs: Record<string, string> = {
-  "pg/timestamptz-date@1": "idb/date@1",
-  "pg/int8@1": "idb/bigint@1",
-  "pg/unboundedint@1": "idb/bigint@1",
-  "pg/bytea@1": "idb/bytes@1",
-};
 
 /** Revive native sync scalar values before shape validation or ORM encoding. */
 export function reviveWireValues(
@@ -170,10 +163,11 @@ export async function applyPushEvent(
       if (alreadyApplied) return { id: event.id, success: true };
 
       const keyField = getKeyField(contract, model);
+      const nativeKey = reviveWireValues(contract, model, { [keyField]: check.key }, keyField)[keyField];
       const startRow: Record<string, unknown> | null =
         event.operation === "create"
-          ? (event.payload as Record<string, unknown>)
-          : await ormRootFor(tx, model).first({ [keyField]: check.key });
+          ? reviveWireValues(contract, model, event.payload as Record<string, unknown>)
+          : await ormRootFor(tx, model).first({ [keyField]: nativeKey });
 
       if (!(await checkAuthorization(tx, contract, getKeyField, model, check, startRow))) {
         return { id: event.id, success: false, error: "SCOPE_VIOLATION", retryable: false };
@@ -185,7 +179,9 @@ export async function applyPushEvent(
       // pre-patch startRow check above but must not be allowed to land the
       // record in a scope the caller doesn't own.
       const patch =
-        event.operation === "update" ? (event.payload as { patch: Record<string, unknown> }).patch : undefined;
+        event.operation === "update"
+          ? reviveWireValues(contract, model, (event.payload as { patch: Record<string, unknown> }).patch)
+          : undefined;
       if (patch) {
         const proposedRow = { ...(startRow as Record<string, unknown>), ...patch };
         if (!(await checkAuthorization(tx, contract, getKeyField, model, check, proposedRow))) {
@@ -197,16 +193,12 @@ export async function applyPushEvent(
       if (event.operation === "create") {
         await root.select(keyField).create(reviveWireValues(contract, model, event.payload as Record<string, unknown>));
       } else if (event.operation === "update" && patch) {
-        // `check.key` (resolved by the caller via `toSyncPushPayload`, same
-        // value) is what identifies the row — not `event.payload`, which
-        // still carries the client's raw outbox record (`{ patch, key }`)
-        // rather than the ORM's `.where()` matcher shape.
         await root
           .select(keyField)
-          .where({ [keyField]: check.key })
-          .update(reviveWireValues(contract, model, patch));
+          .where({ [keyField]: nativeKey })
+          .update(patch);
       } else if (event.operation === "delete") {
-        await root.where({ [keyField]: (event.payload as { key: unknown }).key }).delete();
+        await root.where({ [keyField]: nativeKey }).delete();
       } else {
         throw new Error(`Unsupported operation "${event.operation}"`);
       }

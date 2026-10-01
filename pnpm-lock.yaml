@@ -1181,6 +1181,15 @@ importers:
         specifier: 8.0.0-rc.12
         version: 8.0.0-rc.12(typescript@6.0.3)
     devDependencies:
+      '@prisma-idb/client-idb':
+        specifier: workspace:*
+        version: link:../client-idb
+      '@prisma-idb/family-idb':
+        specifier: workspace:*
+        version: link:../family-idb
+      '@prisma-idb/sync-extension-idb':
+        specifier: workspace:*
+        version: link:../sync-extension-idb
       '@prisma/cli-engine':
         specifier: 0.6.1
         version: 0.6.1(@prisma/management-api-sdk@1.79.0)(magicast@0.5.4)
@@ -1196,6 +1205,9 @@ importers:
       dotenv:
         specifier: ^17.4.2
         version: 17.4.2
+      fake-indexeddb:
+        specifier: ^6.2.5
+        version: 6.2.5
       pg:
         specifier: ^8.23.0
         version: 8.23.0

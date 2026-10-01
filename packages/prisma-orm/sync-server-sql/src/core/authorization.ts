@@ -1,5 +1,6 @@
 import { domainModelsAtDefaultNamespace } from "@prisma/orm-framework/contract/types";
 import type { GetKeyField, OwnershipCheck, SyncServerContract } from "@prisma-idb/sync-server";
+import { encodeWireKey } from "./wire-key";
 import { ormRootFor } from "./orm-root";
 
 /**
@@ -43,7 +44,7 @@ export async function resolveRootKeyViaPath(
     currentModel = targetModel;
   }
 
-  return currentRow ? currentRow[rootKeyField] : null;
+  return currentRow ? encodeWireKey(contract, currentModel, rootKeyField, currentRow[rootKeyField]) : null;
 }
 
 /**

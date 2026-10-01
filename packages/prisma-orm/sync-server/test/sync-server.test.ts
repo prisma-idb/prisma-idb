@@ -56,6 +56,39 @@ describe("createSyncServer", () => {
       expect(getKeyField.mock.calls.map(([, model]) => model)).toEqual(["Todo", "Todo"]);
     });
 
+    it.each([
+      ["pg/int8@1", 42n, "42"],
+      ["pg/unboundedint@1", 42n, "42"],
+      ["pg/bytea@1", new Uint8Array([1, 2]), "AQI="],
+      ["pg/timestamptz-date@1", new Date("2026-01-02T03:04:05.000Z"), "2026-01-02T03:04:05.000Z"],
+    ])("keeps root and scoped keys in wire form for %s", (codecId, nativeKey, wireKey) => {
+      const contract = kanbanContract();
+      for (const model of ["User", "Board"]) {
+        contract.domain.namespaces[Object.keys(contract.domain.namespaces)[0]!]!.models[model]!.fields["id"] = {
+          nullable: false,
+          type: { kind: "scalar", codecId: codecId as string },
+        };
+      }
+      const syncServer = createSyncServer({ contract, clientContract: kanbanClientContract(), rootModel: "User" });
+      const [root, scoped, invalid] = syncServer.validatePush(
+        [
+          { id: "root", model: "User", operation: "delete", payload: { id: nativeKey }, wirePayload: { id: wireKey } },
+          {
+            id: "scoped",
+            model: "Board",
+            operation: "delete",
+            payload: { id: nativeKey },
+            wirePayload: { id: wireKey },
+          },
+          { id: "invalid", model: "User", operation: "delete", payload: { id: false }, wirePayload: { id: wireKey } },
+        ],
+        { scopeKey: wireKey as string }
+      );
+      expect(root?.check).toMatchObject({ kind: "root", key: wireKey, authorized: true });
+      expect(scoped?.check).toMatchObject({ kind: "scoped", key: wireKey });
+      expect(invalid?.check).toMatchObject({ kind: "validation-failure", error: "KEYPATH_VALIDATION_FAILURE" });
+    });
+
     it("checks updates as patches and deletes as key-only events", () => {
       const results = server().validatePush(
         [
