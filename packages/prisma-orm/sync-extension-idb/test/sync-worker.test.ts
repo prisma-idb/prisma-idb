@@ -296,6 +296,44 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
     expect((outbox[0] as { tries: number; lastError: string }).lastError).toBe("server rejected");
   });
 
+  it("keeps events omitted from push results pending without counting a try", async () => {
+    const { client } = await createTestSyncClient();
+    await asAccessors(client.orm)["users"]!.create({ id: "u1", name: "Alice" });
+    await asAccessors(client.orm)["posts"]!.create({ id: "p1", title: "Hello", authorId: "u1" });
+
+    const batches: OutboxEvent[][] = [];
+    const worker = trackedWorker({
+      syncClient: client,
+      pushHandler: async (events) => {
+        batches.push([...events]);
+        if (batches.length === 1) {
+          return [{ id: events[0]!.id, success: false, error: "temporary failure", retryable: true }];
+        }
+        return events.map((event) => ({ id: event.id, success: true }));
+      },
+      pullHandler: async () => [],
+    });
+
+    await worker.forceSync();
+    const firstBatch = batches[0]!;
+    expect(firstBatch).toHaveLength(2);
+    const outbox = await scanAll(client, "_idb_sync_outbox");
+    expect(outbox.find((event) => event["id"] === firstBatch[0]!.id)).toMatchObject({
+      synced: false,
+      retryable: true,
+      tries: 1,
+    });
+    expect(outbox.find((event) => event["id"] === firstBatch[1]!.id)).toMatchObject({
+      synced: false,
+      retryable: true,
+      tries: 0,
+    });
+
+    await worker.forceSync();
+    expect(batches[1]!.map((event) => event.id)).toEqual(firstBatch.map((event) => event.id));
+    expect((await scanAll(client, "_idb_sync_outbox")).every((event) => event["synced"])).toBe(true);
+  });
+
   it("applies pulled logs via applyPull and emits pullcompleted", async () => {
     const { client } = await createTestSyncClient();
 

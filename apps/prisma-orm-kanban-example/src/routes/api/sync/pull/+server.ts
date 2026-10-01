@@ -24,6 +24,12 @@ export const GET: RequestHandler = async ({ url, request }) => {
     scopeKey: session.user.id,
     lastChangelogId: url.searchParams.get("since") || null,
   });
-  if (!outcome.ok) return json({ error: "since must be a changelog id" }, { status: 400 });
+  if (!outcome.ok) {
+    switch (outcome.reason) {
+      case "invalid-cursor":
+        return json({ error: "since must be a changelog id" }, { status: 400 });
+    }
+    throw new Error(`Unhandled pull reason: ${outcome.reason satisfies never}`);
+  }
   return json(outcome.logs);
 };

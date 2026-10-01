@@ -33,6 +33,8 @@ export interface ApplyPushInput {
  * `batch-too-large` and `duplicate-event-id` describe a request that no
  * well-behaved client sends, so the caller should reject it outright (HTTP
  * 400/413) instead of returning per-event results. Nothing was applied.
+ * The `reason` union may gain new values in future releases; callers should
+ * handle each known reason explicitly and review new values when upgrading.
  */
 export type ApplyPushOutcome =
   | { readonly ok: true; readonly results: readonly SqlPushResult[] }
@@ -41,13 +43,16 @@ export type ApplyPushOutcome =
 
 /**
  * Validates and applies a whole push batch, one call. Results are returned in
- * `events` order, one per event: an unknown entity type or unsupported
+ * `events` order: an unknown entity type or unsupported
  * operation fails only that event (non-retryable), never the batch.
  *
  * Events are applied sequentially, not concurrently: a batch can carry data
  * dependencies (a Todo created right after the Board it belongs to), and
  * running them concurrently makes the Todo's ownership walk race the Board's
  * not-yet-committed transaction.
+ * Stop at the first retryable failure, including its result but omitting all
+ * later events. The client keeps omitted events pending without counting a
+ * try, so dependent events can succeed after their parent is retried.
  */
 export async function applyPush(
   db: unknown,
@@ -99,11 +104,19 @@ export async function applyPush(
     }
   }
 
-  const eventsById = new Map(events.map((event) => [event.id, event]));
-  for (const { eventId, model, check } of syncServer.validatePush(pushEvents, { scopeKey })) {
-    const event = eventsById.get(eventId)!;
-    resolved.set(eventId, await applyPushEvent(db, contract, getKeyField, event, model, check, scopeKey));
+  const checksById = new Map(
+    syncServer.validatePush(pushEvents, { scopeKey }).map((validation) => [validation.eventId, validation])
+  );
+  const results: SqlPushResult[] = [];
+  for (const event of events) {
+    let result = resolved.get(event.id);
+    if (!result) {
+      const { model, check } = checksById.get(event.id)!;
+      result = await applyPushEvent(db, contract, getKeyField, event, model, check, scopeKey);
+    }
+    results.push(result);
+    if (!result.success && result.retryable) break;
   }
 
-  return { ok: true, results: events.map((event) => resolved.get(event.id)!) };
+  return { ok: true, results };
 }

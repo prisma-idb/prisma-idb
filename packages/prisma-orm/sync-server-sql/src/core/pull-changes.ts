@@ -14,7 +14,7 @@ export interface PullInput {
    * is). `null` / `undefined` pulls from the start.
    */
   readonly lastChangelogId?: string | null;
-  /** @default DEFAULT_PULL_LIMIT */
+  /** Positive, finite integer. Invalid values throw `RangeError`. @default DEFAULT_PULL_LIMIT */
   readonly limit?: number;
 }
 
@@ -32,6 +32,7 @@ export interface SqlPullLog {
   readonly record: Record<string, unknown> | null;
 }
 
+/** The `reason` union may gain new values in future releases; handle each known reason explicitly. */
 export type PullOutcome =
   | { readonly ok: true; readonly logs: readonly SqlPullLog[] }
   | { readonly ok: false; readonly reason: "invalid-cursor" };
@@ -71,6 +72,7 @@ function parseCursor(value: PullInput["lastChangelogId"]): string | null | undef
  *
  * Rows come back in changelog-id order; the client's next cursor is the last
  * `changelogId`. An empty page means the client is caught up.
+ * @throws {RangeError} If `limit` is not a positive, finite integer.
  */
 export async function pull(
   db: unknown,
@@ -80,6 +82,9 @@ export async function pull(
   input: PullInput
 ): Promise<PullOutcome> {
   const { scopeKey, limit = DEFAULT_PULL_LIMIT } = input;
+  if (!Number.isInteger(limit) || limit <= 0) {
+    throw new RangeError("limit must be a positive, finite integer");
+  }
   const cursor = parseCursor(input.lastChangelogId);
   if (cursor === undefined) return { ok: false, reason: "invalid-cursor" };
 
@@ -89,14 +94,18 @@ export async function pull(
     .orderBy((row) => row.id.asc());
   const rows = await (cursor !== null ? ordered.cursor({ id: cursor }) : ordered).limit(limit).all();
 
-  const checks = syncServer.buildPullQueries(
-    rows.map((row) => ({ changelogId: row.id, model: row.model, key: row.keyPath })),
-    { scopeKey }
+  const checksById = new Map(
+    syncServer
+      .buildPullQueries(
+        rows.map((row) => ({ changelogId: row.id, model: row.model, key: row.keyPath })),
+        { scopeKey }
+      )
+      .map((result) => [result.changelogId, result])
   );
 
   const logs = await Promise.all(
-    checks.map(async ({ changelogId, model, check }, index) => {
-      const { keyPath, operation } = rows[index]!;
+    rows.map(async ({ id: changelogId, keyPath, operation }) => {
+      const { model, check } = checksById.get(changelogId)!;
       const op = operation as SqlPullLog["operation"];
       const record = await resolvePullRecord(db, contract, getKeyField, model, check, keyPath, op);
       return { changelogId, model, operation: op, keyPath, record };
