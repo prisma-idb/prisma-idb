@@ -72,6 +72,10 @@ function buildField(contract: ContractWithDomain, field: ContractField, lookup: 
   // Nullable applies to the container. List elements remain non-nullable.
   if (field.many) validator = validator.array();
   if (field.dict) validator = type({ "[string]": validator });
+  // JSON null is a scalar value (Prisma JsonNull), independent of database nullability.
+  const jsonScalar =
+    field.type.kind === "scalar" && ["idb/json@1", "pg/json@1", "pg/jsonb@1"].includes(field.type.codecId);
+  if (jsonScalar && !field.many && !field.dict) return validator.narrow((value) => value !== undefined);
   return field.nullable ? validator.or("null") : validator.exclude("null | undefined");
 }
 

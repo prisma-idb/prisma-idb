@@ -93,6 +93,24 @@ describe("validateRecord", () => {
       expect(validateRecord(schema, "Item", { ...valid, ...patch }).ok).toBe(false);
     }
   });
+  it.each(["idb/json@1", "pg/json@1", "pg/jsonb@1"])("accepts JSON null in a required %s scalar", (codecId) => {
+    const schema = contract({ json: field(codecId) });
+    const options = {
+      codecLookup: {
+        targetTypesFor: (id: string) => (id === codecId ? ["unknown"] : idbCodecLookup.targetTypesFor(id)),
+      },
+    };
+    expect(validateRecord(schema, "Item", { id: "a", json: null }, options)).toEqual({ ok: true });
+    expect(validateRecord(schema, "Item", { id: "a", json: { nested: null } }, options)).toEqual({ ok: true });
+    expect(validateRecord(schema, "Item", { id: "a" }, options).ok).toBe(false);
+    expect(validateRecord(schema, "Item", { id: "a", json: undefined }, options).ok).toBe(false);
+    for (const extra of [{ many: true }, { dict: true }] as const) {
+      expect(
+        validateRecord(contract({ json: field(codecId, extra) }), "Item", { id: "a", json: null }, options).ok
+      ).toBe(false);
+    }
+  });
+
   it("honors mapped enum values on scalars and lists", () => {
     const status = field("idb/string@1", {
       valueSet: { plane: "domain", namespaceId: "default", entityKind: "enum", entityName: "Status" },

@@ -24,6 +24,8 @@ Each field derives its native application type from codec metadata. All `idb/*` 
 
 **Extra fields are rejected**, including in nested value objects and partial patches. Nothing is stripped silently. Full records require every declared field, including nullable fields: nullability permits `null`, not a missing field. List and dictionary containers are built from the scalar validator, then nullability is applied to the container; their elements do not become nullable. This follows the contract's field-level nullability.
 
+A required JSON scalar (`idb/json@1`, `pg/json@1` or `pg/jsonb@1`) accepts JSON `null`, while still requiring the field and rejecting `undefined`. JSON null is a value, independent of database NULL; this corresponds to [Prisma's `JsonNull` distinction](https://www.prisma.io/docs/orm/v7/prisma-client/special-fields-and-types/working-with-json-fields#using-null-values). Sync carries the JSON value itself, not Prisma Client's null sentinel objects. Non-nullable list/dictionary containers still reject `null`.
+
 ### Shared implementation, server contract
 
 The implementation stays in `target-idb` next to `decodeJsonRecord`, and `sync-server` adds a runtime dependency on its browser-safe runtime export. The record builder itself only needs the framework's `ContractWithDomain`, not IndexedDB storage. Its optional codec lookup supplies native application types from another family.
@@ -36,7 +38,9 @@ The implementation stays in `target-idb` next to `decodeJsonRecord`, and `sync-s
 
 Creates validate full input, allowing omitted nullable fields because the server ORM fills them with null. Updates validate supplied patch fields; absent fields remain unchanged. Deletes validate only the key. The standalone `validateRecord` default remains strict for complete synced records.
 
-The SQL batch adapter includes update patches in validation and revives JSON date, bigint and bytes values before calling `validatePush`. It returns non-retryable validation error codes without opening an ownership/write transaction. Updates cannot reassign the primary key through a patch. Its lower-level `applyPushEvent` also accepts and short-circuits validation-failure checks.
+The SQL batch adapter includes update patches in validation and revives JSON date, bigint and bytes values before calling `validatePush`. It returns non-retryable validation error codes without opening an ownership/write transaction. Updates cannot reassign the primary key through a patch. The pre-revival payload is retained as `SyncPushEvent.wirePayload`: ownership checks and changelog `keyPath` use its wire key, while native values are validated and used for ORM queries. Root scope comparisons use wire keys too. SQL BigInt keys can round-trip to an IDB string-key projection; native bigint IndexedDB primary keys remain unsupported.
+
+Its lower-level `applyPushEvent` also accepts and short-circuits validation-failure checks.
 
 ### Pull validation and reporting
 
@@ -44,7 +48,7 @@ The SQL batch adapter includes update patches in validation and revives JSON dat
 
 `ApplyPullResult` and the worker's `pullcompleted` event expose `validationFailed`, a subset of the total `skipped` count. Callers can distinguish corrupt server data from stale rows, pending local changes and transaction failures without losing the aggregate count.
 
-The returned `lastChangelogId` is the highest applied **or validation-failed** id. A corrupt final row, or a wholly corrupt batch, therefore advances the transport cursor and its existing persistence hook. IDs retain the server's lexicographic UUID v7 ordering. Per-record version metadata advances only on successful writes. Other skip reasons retain their existing cursor behavior; transaction failures are not newly consumed by validation. Existing behavior can still pass a failed row when a later row applies in the same batch.
+The returned `lastChangelogId` is the highest applied **or validation-failed** id. A corrupt final row, or a wholly corrupt batch, therefore advances the transport cursor and its existing persistence hook. IDs retain the server's lexicographic UUID v7 ordering. Per-record version metadata advances only on successful writes. Other skip reasons retain their existing cursor behavior. A transaction failure does not itself advance the cursor, but the maximum applied or validation-failed id can pass an earlier failed row in the same batch. This pre-existing behavior is unchanged; failed rows are not guaranteed to be retried.
 
 ### Why arktype
 

@@ -79,6 +79,6 @@ export interface ApplyPullResult {
   skipped: number;
   /** Subset of skipped: invalid decoded records, keys, or wire values. */
   validationFailed: number;
-  /** Highest applied or corrupt-row id; transient transaction failures are not consumed. */
+  /** Highest applied or corrupt-row id; advancing can pass earlier transaction failures in the batch. */
   lastChangelogId: string | null;
 }
