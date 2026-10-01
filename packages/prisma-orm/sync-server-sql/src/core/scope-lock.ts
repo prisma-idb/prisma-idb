@@ -26,12 +26,10 @@
 const SCOPE_LOCK_CLASS = 0x70_69_64_62; // "pidb"
 
 interface RawSqlBuilder {
-  affectedCount(): { build(): unknown };
   returnsRow(spec: Record<string, string>): { build(): unknown };
 }
 
 interface SqlScope {
-  execute(plan: never): Promise<unknown>;
   query(plan: never): Promise<unknown>;
 }
 
@@ -45,17 +43,22 @@ const SNAPSHOT_ISOLATION_LEVELS = new Set(["repeatable read", "serializable"]);
  * contracts (SQLite has a single writer, so pushes are already serialized).
  *
  * Throws if the transaction runs at REPEATABLE READ or SERIALIZABLE (see the
- * file comment); checked before waiting for the lock, so it fails fast.
+ * file comment). The isolation setting comes back with the lock query to
+ * avoid an extra round trip; an unsupported transaction may wait for the
+ * lock before being rejected.
  */
 export async function lockScope(db: unknown, tx: unknown, target: unknown, scopeKey: string): Promise<void> {
   if (target !== "postgres") return;
   const { sql } = (db as { raw: { sql: (strings: TemplateStringsArray, ...values: unknown[]) => RawSqlBuilder } }).raw;
   const scope = tx as SqlScope;
 
-  const levelPlan = sql`SELECT current_setting('transaction_isolation') AS level`
+  // Keep the max-id read in a separate statement after this query returns:
+  // this statement's snapshot is taken before any wait for the lock.
+  const lockPlan = sql`SELECT current_setting('transaction_isolation') AS level
+    FROM pg_advisory_xact_lock(${SCOPE_LOCK_CLASS}::int4, hashtext(${scopeKey}))`
     .returnsRow({ level: "pg/text@1" })
     .build();
-  const [row] = (await scope.query(levelPlan as never)) as { level: string }[];
+  const [row] = (await scope.query(lockPlan as never)) as { level: string }[];
   const level = row?.level;
   if (level === undefined || SNAPSHOT_ISOLATION_LEVELS.has(level)) {
     throw new Error(
@@ -64,9 +67,4 @@ export async function lockScope(db: unknown, tx: unknown, target: unknown, scope
       }: the changelog id is ordered against the scope's highest id, which a snapshot taken before the scope lock can miss.`
     );
   }
-
-  const lockPlan = sql`SELECT pg_advisory_xact_lock(${SCOPE_LOCK_CLASS}::int4, hashtext(${scopeKey}))`
-    .affectedCount()
-    .build();
-  await scope.execute(lockPlan as never);
 }

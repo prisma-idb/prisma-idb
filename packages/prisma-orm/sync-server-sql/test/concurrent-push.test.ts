@@ -139,6 +139,31 @@ describe("the scope lock's ordering guarantee", () => {
     vi.restoreAllMocks();
   });
 
+  it("checks isolation and takes the scope lock in one raw query per new event", async () => {
+    const db = await testDb();
+    await seed(db, { User: [{ id: "u1", name: "Ann" }] });
+    const query = vi.fn();
+    const execute = vi.fn();
+    const counted = {
+      orm: db.orm,
+      raw: db.raw,
+      transaction: <T>(fn: (tx: never) => Promise<T>) =>
+        db.transaction((tx) => {
+          query.mockImplementation(tx.query.bind(tx));
+          execute.mockImplementation(tx.execute.bind(tx));
+          return fn({ orm: tx.orm, query, execute } as never);
+        }),
+    };
+
+    expect(await adapter.applyPush(counted, { scopeKey: "u1", events: [createBoard("ea", "ba", "u1")] })).toEqual({
+      ok: true,
+      results: [{ id: "ea", success: true }],
+    });
+    expect(query).toHaveBeenCalledTimes(1);
+    expect(execute).not.toHaveBeenCalled();
+    expect((await pullAll(db, "u1", null)).map((log) => log.keyPath)).toEqual(["ba"]);
+  });
+
   it("orders a push after the commit it waited on, even when its own clock reads earlier", async () => {
     const db = await testDb();
     await seed(db, { User: [{ id: "u1", name: "Ann" }] });
