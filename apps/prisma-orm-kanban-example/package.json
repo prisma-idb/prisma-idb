@@ -1,7 +1,7 @@
 {
   "name": "@prisma-idb/prisma-orm-kanban-example",
   "private": true,
-  "version": "0.0.15",
+  "version": "0.0.16",
   "type": "module",
   "scripts": {
     "dev": "vite dev",

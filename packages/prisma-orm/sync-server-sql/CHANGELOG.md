@@ -1,5 +1,11 @@
 # @prisma-idb/sync-server-sql
 
+## 0.4.1
+
+### Patch Changes
+
+- [#244](https://github.com/prisma-idb/prisma-idb/pull/244) [`2dfd655`](https://github.com/prisma-idb/prisma-idb/commit/2dfd6558694e3490ca9fc213d2020b15543e52cf) Thanks [@WhyAsh5114](https://github.com/WhyAsh5114)! - Stop push batches at the first retryable failure so dependent events stay pending for retry. Validate pull limits, pair ownership checks by changelog id, and document extensible outcome reasons.
+
 ## 0.4.0
 
 ### Minor Changes
