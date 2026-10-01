@@ -9,4 +9,4 @@ export type {
   IndexDef,
   RelationDef,
 } from "../core/contract-builder";
-export type { ContractProjection } from "../core/psl-interpreter";
+export type { ContractProjection, DefaultGenerator, FieldDefault } from "../core/contract-builder";

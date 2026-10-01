@@ -4,7 +4,7 @@ import { UNBOUND_DOMAIN_NAMESPACE_ID } from "@prisma/orm-framework/contract/type
 import type { MockInstance } from "vitest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ContractProjection } from "../src/core/psl-interpreter";
-import { interpretPslDocumentToIdbContract } from "../src/core/psl-interpreter";
+import { interpretWithOracle } from "./_psl-oracle";
 
 let warnSpy: MockInstance<(...args: unknown[]) => void>;
 
@@ -23,7 +23,7 @@ function interpret(schema: string, projection?: ContractProjection) {
     sources,
     pslBlockDescriptors: {},
   });
-  return interpretPslDocumentToIdbContract(table, "test.prisma", projection !== undefined ? { projection } : undefined);
+  return interpretWithOracle(table, "test.prisma", projection !== undefined ? { projection } : undefined);
 }
 
 const NS = UNBOUND_DOMAIN_NAMESPACE_ID;
