@@ -1,5 +1,14 @@
 # @prisma-idb/sync-extension-idb
 
+## 0.6.0
+
+### Minor Changes
+
+- [#239](https://github.com/prisma-idb/prisma-idb/pull/239) [`6ab9c63`](https://github.com/prisma-idb/prisma-idb/commit/6ab9c63486a660ea2761ed0498aa58d96c90945d) Thanks [@WhyAsh5114](https://github.com/WhyAsh5114)! - Fix pull cursor ordering and let the cursor survive a reload.
+
+  - Both the pull cursor and the per-record staleness guard compare UUID v7 changelog ids as plain strings. String order is time order, and ordering is covered by tests with real v7-shaped ids.
+  - `createSyncWorker` accepts `getCursor` and `setCursor` to persist the pull cursor. `getCursor` runs once before the first pull; `setCursor` runs after a pull advances the cursor.
+
 ## 0.5.0
 
 ### Minor Changes
