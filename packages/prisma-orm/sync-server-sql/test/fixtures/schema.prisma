@@ -4,9 +4,10 @@
 // contract gets emitted from. `writeSqlSchemaWithSync` (see
 // ../../prisma.config.ts) appends the synthetic `Changelog` model.
 model User {
-  id     String  @id
-  name   String
-  boards Board[]
+  id        String @id
+  name      String
+  boards    Board[]
+  jsonItems JsonItem[]
 }
 
 model Board {
@@ -35,4 +36,14 @@ model BigItem {
   ownerId BigInt
   owner   BigUser @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   name    String
+}
+
+// Required JSON distinguishes JSON null from a forbidden SQL NULL.
+model JsonItem {
+  id            String @id
+  ownerId       String
+  owner         User   @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  value         Jsonb
+  jsonValue     Json
+  optionalValue Json?
 }

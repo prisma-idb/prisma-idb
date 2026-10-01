@@ -71,6 +71,32 @@ export function reviveWireValues(
   );
 }
 
+// Prisma 8 rc.12 short-circuits bare null parameters to SQL NULL before
+// calling the JSON codec. Its pg/json and pg/jsonb codecs use JSON.stringify,
+// so this write-only value reaches the codec and encodes to the text "null".
+const jsonNull = Object.freeze({ toJSON: () => null });
+
+function ormWriteValues(
+  contract: SyncServerContract,
+  model: string,
+  data: Record<string, unknown>
+): Record<string, unknown> {
+  const fields = domainModelsAtDefaultNamespace(contract.domain)[model]?.fields;
+  return Object.fromEntries(
+    Object.entries(data).map(([name, value]) => {
+      const field = fields?.[name];
+      const requiredJson =
+        field &&
+        !field.nullable &&
+        !field.many &&
+        !field.dict &&
+        field.type.kind === "scalar" &&
+        ["pg/json@1", "pg/jsonb@1"].includes(field.type.codecId);
+      return [name, value === null && requiredJson ? jsonNull : value];
+    })
+  );
+}
+
 /** Extracts the shape `sync-server`'s `validatePush` reads `payload[keyField]` from, per operation kind. */
 export function toSyncPushPayload(operation: string, payload: unknown, keyField: string): Record<string, unknown> {
   // The wire schema accepts any JSON here, so a null / primitive / array
@@ -191,12 +217,12 @@ export async function applyPushEvent(
 
       const root = ormRootFor(tx, model);
       if (event.operation === "create") {
-        await root.select(keyField).create(reviveWireValues(contract, model, event.payload as Record<string, unknown>));
+        await root.select(keyField).create(ormWriteValues(contract, model, startRow!));
       } else if (event.operation === "update" && patch) {
         await root
           .select(keyField)
           .where({ [keyField]: nativeKey })
-          .update(patch);
+          .update(ormWriteValues(contract, model, patch));
       } else if (event.operation === "delete") {
         await root.where({ [keyField]: nativeKey }).delete();
       } else {
