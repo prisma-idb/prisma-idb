@@ -5,7 +5,8 @@
  * do NOT generate outbox events — tracking them would create a push loop.
  *
  * Guards per log entry:
- * 1. **Staleness**: skip if `lastAppliedChangeId >= log.changelogId` (already newer).
+ * 1. **Staleness**: skip if `lastAppliedChangeId >= log.changelogId` (already newer;
+ *    ids are UUID v7, so string order is time order).
  * 2. **Pending push**: skip if `localChangePending === true` (local mutation
  *    not yet confirmed synced — let it win to avoid last-write-wins races).
  *
@@ -22,6 +23,13 @@
  * remote), so it's run through `decodeJsonRecord` (ISO string → `Date`,
  * digit string → `bigint`, base64 → `Uint8Array`, ...) before being written —
  * IDB stores native JS values, not their JSON-safe wire forms.
+ *
+ * Enum-typed fields are NOT re-validated here (unlike ORM writes, which reject
+ * undeclared enum values). A pulled record is the server's authoritative
+ * state, already constrained by the SQL enum; rejecting it locally would only
+ * matter when this client's contract is older than the server's (a value added
+ * since), and there the record would be dropped and the cursor left unable to
+ * pass it. Storing the value keeps the local copy faithful to the server.
  *
  * A `create`/`update` log with `record: null` means the server re-checked
  * ownership (ADR 014's `buildPullQueries` live re-check) and this client is

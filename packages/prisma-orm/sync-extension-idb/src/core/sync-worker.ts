@@ -17,8 +17,22 @@ export interface SyncWorkerOptions<TContract extends IdbContract> {
   readonly syncClient: SyncIdbClient<TContract>;
   /** Called with a batch of unsynced events. Must return per-event results. */
   readonly pushHandler: (events: OutboxEvent[], signal: AbortSignal) => Promise<PushResult[]>;
-  /** Called with the last applied changelog ID (null if none). Returns new logs. */
+  /** Called with the last applied changelog ID (null if none). Returns new logs. See `getCursor`/`setCursor` to persist the ID across reloads. */
   readonly pullHandler: (fromChangelogId: string | null, signal: AbortSignal) => Promise<LogWithRecord[]>;
+  /**
+   * Loads the persisted pull cursor. Called once, before the worker's first
+   * pull, so a reload resumes from where the last session stopped instead of
+   * re-pulling from the start (`null`/`undefined` = no cursor stored yet).
+   * Without it the cursor lives in memory only.
+   */
+  readonly getCursor?: () => string | null | undefined | Promise<string | null | undefined>;
+  /**
+   * Persists the pull cursor after a pull advances it. If it throws, the cycle
+   * fails (status `"error"`, normal backoff) and the write is retried on the
+   * next cycle — the applied logs themselves are safe either way, since a
+   * re-pull from an older cursor is skipped by `applyPull`'s staleness guard.
+   */
+  readonly setCursor?: (changelogId: string) => void | Promise<void>;
   /** Max events per push batch. Default 20. */
   readonly batchSize?: number;
   /** Milliseconds between sync cycles when idle. Default 5000. */
@@ -97,6 +111,8 @@ export function createSyncWorker<TContract extends IdbContract>(options: SyncWor
     syncClient,
     pushHandler,
     pullHandler,
+    getCursor,
+    setCursor,
     batchSize = 20,
     intervalMs = 5_000,
     backoffBaseMs = 1_000,
@@ -109,6 +125,8 @@ export function createSyncWorker<TContract extends IdbContract>(options: SyncWor
   let timer: ReturnType<typeof setTimeout> | null = null;
   let consecutiveFailures = 0;
   let lastChangelogId: string | null = null;
+  let cursorLoaded = getCursor === undefined;
+  let persistedCursor: string | null = null;
   // Shared across tick() and forceSync() so at most one push/pull cycle runs
   // at a time — otherwise both can call getNextBatch concurrently and push
   // the same unsynced events twice.
@@ -153,14 +171,26 @@ export function createSyncWorker<TContract extends IdbContract>(options: SyncWor
 
     // ── Pull ─────────────────────────────────────────────────────────────────
     setStatus("pulling");
+    if (!cursorLoaded) {
+      lastChangelogId = (await getCursor!()) ?? null;
+      persistedCursor = lastChangelogId;
+      cursorLoaded = true;
+    }
     const logs = await withTimeout((signal) => pullHandler(lastChangelogId, signal), requestTimeoutMs, "pullHandler");
 
     if (logs.length > 0) {
       const { applied, skipped, lastChangelogId: newId } = await applyPull(syncClient, logs);
-      if (newId !== null) lastChangelogId = newId;
+      if (newId !== null && (lastChangelogId === null || newId > lastChangelogId)) {
+        lastChangelogId = newId;
+      }
       emit("pullcompleted", { applied, skipped });
     } else {
       emit("pullcompleted", { applied: 0, skipped: 0 });
+    }
+
+    if (setCursor && lastChangelogId !== null && lastChangelogId !== persistedCursor) {
+      await setCursor(lastChangelogId);
+      persistedCursor = lastChangelogId;
     }
   }
 
