@@ -1,4 +1,7 @@
 import { domainModelsAtDefaultNamespace } from "@prisma/orm-framework/contract/types";
+import { validateRecord, validateKeyFields } from "@prisma-idb/target-idb/runtime";
+import type { ValidationCodecLookup } from "@prisma-idb/target-idb/runtime";
+import { defaultValidationCodecs } from "./validation-codecs";
 import { resolveAuthorizationPaths } from "./authorization-paths";
 import { buildOwnershipDag } from "./ownership-dag";
 import type { OwnershipDag, SyncServerContract } from "./ownership-dag";
@@ -57,10 +60,18 @@ export type OwnershipCheck =
       readonly paths: readonly (readonly string[])[];
     };
 
+export type PushCheck =
+  | OwnershipCheck
+  | {
+      readonly kind: "validation-failure";
+      readonly error: "RECORD_VALIDATION_FAILURE" | "KEYPATH_VALIDATION_FAILURE";
+      readonly issues: readonly string[];
+    };
+
 export interface PushValidationResult {
   readonly eventId: string;
   readonly model: string;
-  readonly check: OwnershipCheck;
+  readonly check: PushCheck;
 }
 
 export interface PullScopeResult {
@@ -128,7 +139,7 @@ export function validatePush(
   contract: SyncServerContract,
   getKeyField: GetKeyField,
   events: readonly SyncPushEvent[],
-  options: { readonly scopeKey: string }
+  options: { readonly scopeKey: string; readonly codecLookup?: ValidationCodecLookup }
 ): readonly PushValidationResult[] {
   const models = domainModelsAtDefaultNamespace(contract.domain);
 
@@ -137,6 +148,42 @@ export function validatePush(
       return { eventId: event.id, model: event.model, check: { kind: "unknown-model" } };
     }
     const keyField = getKeyField(contract, event.model);
+    const codecLookup = options.codecLookup ?? defaultValidationCodecs;
+    const keyValue = event.payload?.[keyField];
+    const keyResult = validateKeyFields(contract, event.model, { [keyField]: keyValue }, [keyField], { codecLookup });
+    if (!keyResult.ok) {
+      return {
+        eventId: event.id,
+        model: event.model,
+        check: {
+          kind: "validation-failure",
+          error: "KEYPATH_VALIDATION_FAILURE",
+          issues: keyResult.issues,
+        },
+      };
+    }
+    if (event.operation !== "delete") {
+      // SQL creates may omit nullable fields; patches validate only supplied fields.
+      const optionalFields = Object.entries(models[event.model]!.fields)
+        .filter(([, field]) => field.nullable)
+        .map(([name]) => name);
+      const result = validateRecord(contract, event.model, event.payload, {
+        codecLookup,
+        partial: event.operation === "update",
+        optionalFields,
+      });
+      if (!result.ok) {
+        return {
+          eventId: event.id,
+          model: event.model,
+          check: {
+            kind: "validation-failure",
+            error: "RECORD_VALIDATION_FAILURE",
+            issues: result.issues,
+          },
+        };
+      }
+    }
     const check = buildOwnershipCheck(
       dag,
       contract,
@@ -177,6 +224,8 @@ export interface CreateSyncServerOptions {
   readonly rootModel: string;
   /** @default defaultGetKeyField (IDB-shaped storage.keyPath) */
   readonly getKeyField?: GetKeyField;
+  /** Additional families can supply their codecs' native application types. */
+  readonly codecLookup?: ValidationCodecLookup;
 }
 
 export interface SyncServer {
@@ -203,7 +252,11 @@ export function createSyncServer(options: CreateSyncServerOptions): SyncServer {
 
   return {
     rootModel: dag.rootModel,
-    validatePush: (events, pushOptions) => validatePush(dag, options.contract, getKeyField, events, pushOptions),
+    validatePush: (events, pushOptions) =>
+      validatePush(dag, options.contract, getKeyField, events, {
+        ...pushOptions,
+        ...(options.codecLookup ? { codecLookup: options.codecLookup } : {}),
+      }),
     buildPullQueries: (logs, pullOptions) => buildPullQueries(dag, options.contract, getKeyField, logs, pullOptions),
   };
 }

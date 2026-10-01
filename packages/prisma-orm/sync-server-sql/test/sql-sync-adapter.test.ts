@@ -2,11 +2,34 @@ import { describe, expect, it } from "vitest";
 import type { OwnershipCheck } from "@prisma-idb/sync-server";
 import { sqlGetKeyField } from "../src/core/get-key-field";
 import { ormRootFor } from "../src/core/orm-root";
-import { toSyncPushPayload, applyPushEvent } from "../src/core/push";
+import { toSyncPushPayload, applyPushEvent, reviveWireValues } from "../src/core/push";
 import { checkAuthorization } from "../src/core/authorization";
 import { resolvePullRecord } from "../src/core/pull";
 import { createSqlSyncAdapter } from "../src/core/create-adapter";
 import { testContract, testDb, seed } from "./helpers";
+
+describe("wire revival", () => {
+  it("decodes dates, bigint, bytes and scalar lists before native validation", () => {
+    const contract = structuredClone(testContract);
+    const fields = contract.domain.namespaces["public"]!.models["Todo"]!.fields;
+    fields["big"] = { nullable: false, type: { kind: "scalar", codecId: "pg/int8@1" } };
+    fields["bytes"] = { nullable: false, type: { kind: "scalar", codecId: "pg/bytea@1" } };
+    fields["dates"] = { nullable: false, many: true, type: { kind: "scalar", codecId: "pg/timestamptz-date@1" } };
+    const date = "2026-01-02T03:04:05.000Z";
+    const wire = { dueAt: date, big: "42", bytes: "AQI=", dates: [date] };
+    expect(reviveWireValues(contract, "Todo", wire)).toEqual({
+      dueAt: new Date(date),
+      big: 42n,
+      bytes: new Uint8Array([1, 2]),
+      dates: [new Date(date)],
+    });
+    expect(wire.big).toBe("42");
+    expect(() => reviveWireValues(contract, "Todo", { big: "invalid" })).toThrow();
+    expect(() => reviveWireValues(contract, "Todo", { big: "invalid" }, "big")).toThrowError(
+      expect.objectContaining({ code: "KEYPATH_VALIDATION_FAILURE" })
+    );
+  });
+});
 
 describe("sqlGetKeyField", () => {
   it("resolves the single-column primary key from the contract's SQL storage", () => {
@@ -39,7 +62,11 @@ describe("toSyncPushPayload", () => {
   });
 
   it("extracts the key field from an update payload", () => {
-    expect(toSyncPushPayload("update", { key: "1", patch: { name: "Bo" } }, "id")).toEqual({ id: "1" });
+    expect(toSyncPushPayload("update", { key: "1", patch: { name: "Bo" } }, "id")).toEqual({ name: "Bo", id: "1" });
+  });
+
+  it("rejects patches that would override the event's ownership key", () => {
+    expect(() => toSyncPushPayload("update", { key: "1", patch: { id: "2" } }, "id")).toThrow(/primary key/);
   });
 
   it("throws on an update payload missing a key", () => {

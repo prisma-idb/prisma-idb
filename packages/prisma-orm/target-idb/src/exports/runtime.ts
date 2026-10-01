@@ -2,6 +2,8 @@ import type { RuntimeTargetDescriptor, RuntimeTargetInstance } from "@prisma/orm
 import { idbTargetDescriptorMeta } from "../core/descriptor-meta";
 export { idbCodecLookup } from "../core/codecs";
 export { decodeJsonRecord } from "../core/decode-json-record";
+export { validateRecord, validateKeyFields, validateKeyPath } from "../core/validate-record";
+export type { ValidationResult, ValidationCodecLookup, RecordValidationOptions } from "../core/validate-record";
 export {
   compareFieldValues,
   fieldValueToken,

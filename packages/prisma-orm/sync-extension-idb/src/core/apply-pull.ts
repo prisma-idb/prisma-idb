@@ -24,12 +24,9 @@
  * digit string → `bigint`, base64 → `Uint8Array`, ...) before being written —
  * IDB stores native JS values, not their JSON-safe wire forms.
  *
- * Enum-typed fields are NOT re-validated here (unlike ORM writes, which reject
- * undeclared enum values). A pulled record is the server's authoritative
- * state, already constrained by the SQL enum; rejecting it locally would only
- * matter when this client's contract is older than the server's (a value added
- * since), and there the record would be dropped and the cursor left unable to
- * pass it. Storing the value keeps the local copy faithful to the server.
+ * Decoded records and keys are checked against the client contract. Corrupt
+ * rows are counted separately and consumed by the cursor; they never open a
+ * write transaction. Nullable records still signal a revoked ownership delete.
  *
  * A `create`/`update` log with `record: null` means the server re-checked
  * ownership (ADR 014's `buildPullQueries` live re-check) and this client is
@@ -42,7 +39,8 @@
 import type { IdbAtomicPlan } from "@prisma-idb/driver-idb/runtime";
 import type { IdbContract } from "@prisma-idb/client-idb/orm";
 import { getStoreName, collectDeleteStoreNames, applyReferentialActionsForRow } from "@prisma-idb/client-idb/orm";
-import { decodeJsonRecord } from "@prisma-idb/target-idb/runtime";
+import { decodeJsonRecord, validateRecord, validateKeyPath, keyEquals } from "@prisma-idb/target-idb/runtime";
+import { domainModelsAtDefaultNamespace } from "@prisma/orm-framework/contract/types";
 import type { SyncIdbClient } from "./sync-client";
 import type { LogWithRecord, ApplyPullResult, VersionMetaRecord } from "../types";
 
@@ -58,6 +56,7 @@ export async function applyPull<TContract extends IdbContract>(
 ): Promise<ApplyPullResult> {
   let applied = 0;
   let skipped = 0;
+  let validationFailed = 0;
   let lastChangelogId: string | null = null;
   const contract = syncClient.contract;
 
@@ -76,8 +75,12 @@ export async function applyPull<TContract extends IdbContract>(
 
     const wasApplied = await applyLog(syncClient, contract, log);
 
-    if (wasApplied) {
-      applied++;
+    if (wasApplied === "applied" || wasApplied === "validation-failure") {
+      if (wasApplied === "applied") applied++;
+      else {
+        skipped++;
+        validationFailed++;
+      }
       if (lastChangelogId === null || log.changelogId > lastChangelogId) {
         lastChangelogId = log.changelogId;
       }
@@ -86,7 +89,7 @@ export async function applyPull<TContract extends IdbContract>(
     }
   }
 
-  return { applied, skipped, lastChangelogId };
+  return { applied, skipped, validationFailed, lastChangelogId };
 }
 
 /**
@@ -102,15 +105,45 @@ async function applyLog<TContract extends IdbContract>(
   syncClient: SyncIdbClient<TContract>,
   contract: TContract,
   log: LogWithRecord
-): Promise<boolean> {
-  const metaId = versionMetaKey(log.model, log.keyPath);
+): Promise<"applied" | "skipped" | "validation-failure"> {
   const storeName = getStoreName(contract, log.model);
   const isDelete = log.operation === "delete" || log.record === null;
   const storeNames = isDelete ? collectDeleteStoreNames(contract, log.model) : [storeName];
-  const decodedRecord = log.record !== null ? decodeJsonRecord(contract.domain, log.model, log.record) : null;
+  let metaId: string;
+  let decodedRecord: Record<string, unknown> | null = null;
+  let decodedKey: unknown;
+  try {
+    const keyPath = domainModelsAtDefaultNamespace(contract.domain)[log.model]!.storage["keyPath"];
+    const fields = typeof keyPath === "string" ? [keyPath] : (keyPath as string[]);
+    if (
+      !Array.isArray(fields) ||
+      (typeof keyPath !== "string" && (!Array.isArray(log.keyPath) || log.keyPath.length !== fields.length))
+    )
+      return "validation-failure";
+    const keyRecord = decodeJsonRecord(
+      contract.domain,
+      log.model,
+      Object.fromEntries(
+        fields.map((name, i) => [name, typeof keyPath === "string" ? log.keyPath : (log.keyPath as unknown[])[i]])
+      )
+    );
+    decodedKey = typeof keyPath === "string" ? keyRecord[keyPath] : fields.map((name) => keyRecord[name]);
+    if (!validateKeyPath(contract, log.model, decodedKey).ok) return "validation-failure";
+    metaId = versionMetaKey(log.model, log.keyPath);
+    if (!isDelete) {
+      decodedRecord = decodeJsonRecord(contract.domain, log.model, log.record!);
+      if (!validateRecord(contract, log.model, decodedRecord).ok) return "validation-failure";
+      const recordKey =
+        typeof keyPath === "string" ? decodedRecord[keyPath] : fields.map((name) => decodedRecord![name]);
+      if (!keyEquals(decodedKey as IDBValidKey, recordKey as IDBValidKey)) return "validation-failure";
+    }
+  } catch {
+    // Decode failures (for example an invalid bigint wire value) are corrupt rows too.
+    return "validation-failure";
+  }
 
   try {
-    return await syncClient.withTransaction([VERSION_META, ...storeNames], async (scope) => {
+    const applied = await syncClient.withTransaction([VERSION_META, ...storeNames], async (scope) => {
       const metaRows = await scope.execute({
         kind: "key-get",
         storeName: VERSION_META,
@@ -127,7 +160,7 @@ async function applyLog<TContract extends IdbContract>(
         const rows = await scope.execute({
           kind: "key-get",
           storeName,
-          key: log.keyPath as IDBValidKey,
+          key: decodedKey as IDBValidKey,
         } as unknown as IdbAtomicPlan);
         const row = rows[0];
         if (row) {
@@ -135,7 +168,7 @@ async function applyLog<TContract extends IdbContract>(
           await scope.execute({
             kind: "delete",
             storeName,
-            key: log.keyPath as IDBValidKey,
+            key: decodedKey as IDBValidKey,
           } as unknown as IdbAtomicPlan);
         }
       } else {
@@ -160,9 +193,10 @@ async function applyLog<TContract extends IdbContract>(
 
       return true;
     });
+    return applied ? "applied" : "skipped";
   } catch {
     // e.g. a `restrict` referential action or a write failure mid-transaction —
     // skip silently, retry next pull.
-    return false;
+    return "skipped";
   }
 }

@@ -35,7 +35,8 @@
   },
   "dependencies": {
     "@prisma-idb/sync-server": "workspace:*",
-    "@prisma/orm-framework": "8.0.0-rc.12"
+    "@prisma/orm-framework": "8.0.0-rc.12",
+    "@prisma-idb/target-idb": "workspace:*"
   },
   "devDependencies": {
     "@prisma/cli-engine": "0.6.1",

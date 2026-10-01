@@ -18,6 +18,37 @@ const create = (id: string, entityType: string, payload: Record<string, unknown>
 });
 
 describe("applyPush", () => {
+  it("rejects malformed creates, patches and keys without opening an ownership transaction", async () => {
+    const transaction = vi.fn();
+    const outcome = await adapter.applyPush(
+      { transaction },
+      {
+        scopeKey: "u1",
+        events: [
+          create("create", "User", { id: "u1", name: 42 }),
+          {
+            id: "update",
+            entityType: "Todo",
+            operation: "update",
+            payload: { key: "t1", patch: { dueAt: "invalid-date" } },
+          },
+          { id: "key", entityType: "User", operation: "delete", payload: { key: 42 } },
+          { id: "rekey", entityType: "User", operation: "update", payload: { key: "u1", patch: { id: "u2" } } },
+        ],
+      }
+    );
+    expect(outcome).toEqual({
+      ok: true,
+      results: [
+        { id: "create", success: false, error: "RECORD_VALIDATION_FAILURE", retryable: false },
+        { id: "update", success: false, error: "RECORD_VALIDATION_FAILURE", retryable: false },
+        { id: "key", success: false, error: "KEYPATH_VALIDATION_FAILURE", retryable: false },
+        { id: "rekey", success: false, error: "KEYPATH_VALIDATION_FAILURE", retryable: false },
+      ],
+    });
+    expect(transaction).not.toHaveBeenCalled();
+  });
+
   it("applies a batch with data dependencies in order and returns one result per event", async () => {
     const db = await testDb();
     const outcome = await adapter.applyPush(db, {
@@ -76,7 +107,7 @@ describe("applyPush", () => {
         results: [
           { id: "board", success: true },
           { id: "todo", success: true },
-          { id: "malformed", success: false, error: "Invalid create payload: expected an object", retryable: false },
+          { id: "malformed", success: false, error: "RECORD_VALIDATION_FAILURE", retryable: false },
         ],
       });
       expect(await ormRootFor(db, "Todo").first({ id: "t1" })).toMatchObject({ id: "t1", boardId: "b1" });
@@ -143,7 +174,7 @@ describe("applyPush", () => {
     expect(outcome).toEqual({
       ok: true,
       results: [
-        { id: "bad", success: false, error: `Invalid ${operation} payload: expected an object`, retryable: false },
+        { id: "bad", success: false, error: "RECORD_VALIDATION_FAILURE", retryable: false },
         { id: "good", success: true },
       ],
     });
@@ -168,7 +199,7 @@ describe("applyPush", () => {
     expect(outcome).toEqual({
       ok: true,
       results: [
-        { id: "bad", success: false, error: "Invalid update payload: expected an object patch", retryable: false },
+        { id: "bad", success: false, error: "RECORD_VALIDATION_FAILURE", retryable: false },
         { id: "good", success: true },
       ],
     });
@@ -198,7 +229,7 @@ describe("applyPush", () => {
         {
           id: "e3",
           success: false,
-          error: 'Unsupported update: filter does not pin "id" by equality',
+          error: "KEYPATH_VALIDATION_FAILURE",
           retryable: false,
         },
         { id: "e4", success: false, error: "SCOPE_VIOLATION", retryable: false },

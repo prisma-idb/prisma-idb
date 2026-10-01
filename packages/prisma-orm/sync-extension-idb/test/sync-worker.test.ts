@@ -352,7 +352,7 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
 
     await worker.forceSync();
 
-    expect(pullCompleted).toEqual({ applied: 1, skipped: 0 });
+    expect(pullCompleted).toEqual({ applied: 1, skipped: 0, validationFailed: 0 });
     expect(await scanAll(client, "users")).toEqual([{ id: "u1", name: "Remote" }]);
   });
   describe("pull cursor", () => {
@@ -362,6 +362,41 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
       operation: "create",
       keyPath: id,
       record: { id, name: id },
+    });
+
+    it("persists a corrupt tail row's cursor, reports corruption and resumes past it", async () => {
+      const { client } = await createTestSyncClient();
+      let persisted: string | null = null;
+      const setCursor = vi.fn((id: string) => {
+        persisted = id;
+      });
+      const pullHandler = vi.fn(async (_cursor: string | null): Promise<LogWithRecord[]> => []);
+      pullHandler.mockResolvedValueOnce([
+        userLog(changelogId(9), "u9"),
+        { ...userLog(changelogId(10), "u10"), record: { id: "u10", name: 42 } },
+      ]);
+      const worker = trackedWorker({
+        syncClient: client,
+        pushHandler: async () => [],
+        pullHandler,
+        getCursor: () => persisted,
+        setCursor,
+      });
+      const completed = vi.fn();
+      worker.on("pullcompleted", completed);
+      await worker.forceSync();
+      expect(completed).toHaveBeenCalledWith({ applied: 1, skipped: 1, validationFailed: 1 });
+      expect(setCursor).toHaveBeenCalledWith(changelogId(10));
+      const restarted = trackedWorker({
+        syncClient: client,
+        pushHandler: async () => [],
+        pullHandler,
+        getCursor: () => persisted,
+        setCursor,
+      });
+      await restarted.forceSync();
+      expect(pullHandler.mock.calls[1]?.[0]).toBe(changelogId(10));
+      expect(await scanAll(client, "users")).toEqual([{ id: "u9", name: "u9" }]);
     });
 
     it("advances the cursor across batches in id order", async () => {

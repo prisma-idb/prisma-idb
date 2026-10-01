@@ -1,5 +1,5 @@
 import type { GetKeyField, SyncServer, SyncPushEvent, SyncServerContract } from "@prisma-idb/sync-server";
-import { applyPushEvent, toSyncPushPayload } from "./push";
+import { applyPushEvent, toSyncPushPayload, reviveWireValues, PushPayloadValidationError } from "./push";
 import type { SqlPushResult } from "./push";
 
 /**
@@ -92,13 +92,26 @@ export async function applyPush(
         id: event.id,
         model: event.entityType,
         operation: event.operation,
-        payload: keyField === undefined ? {} : toSyncPushPayload(event.operation, event.payload, keyField),
+        payload:
+          keyField === undefined
+            ? {}
+            : reviveWireValues(
+                contract,
+                event.entityType,
+                toSyncPushPayload(event.operation, event.payload, keyField),
+                keyField
+              ),
       });
     } catch (err) {
       resolved.set(event.id, {
         id: event.id,
         success: false,
-        error: err instanceof Error ? err.message : "Unsupported event",
+        error:
+          err instanceof PushPayloadValidationError
+            ? err.code
+            : err instanceof Error
+              ? err.message
+              : "Unsupported event",
         retryable: false,
       });
     }

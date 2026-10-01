@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createSyncServer } from "../src/core/sync-server";
 import type { SyncServerContract } from "../src/core/ownership-dag";
 import { kanbanClientContract, kanbanContract } from "./helpers";
@@ -34,6 +34,43 @@ describe("createSyncServer", () => {
   });
 
   describe("validatePush", () => {
+    it("rejects malformed records and keys before resolving ownership paths", () => {
+      const contract = kanbanContract();
+      const getKeyField = vi.fn((_contract: SyncServerContract, _model: string) => "id");
+      const syncServer = createSyncServer({
+        contract,
+        clientContract: kanbanClientContract(),
+        rootModel: "User",
+        getKeyField,
+      });
+      const [badRecord, badKey] = syncServer.validatePush(
+        [
+          { id: "e1", model: "Todo", operation: "create", payload: { id: "t1", boardId: 42 } },
+          { id: "e2", model: "Todo", operation: "delete", payload: { id: 42 } },
+        ],
+        { scopeKey: "user-1" }
+      );
+      expect(badRecord?.check).toMatchObject({ kind: "validation-failure", error: "RECORD_VALIDATION_FAILURE" });
+      expect(badKey?.check).toMatchObject({ kind: "validation-failure", error: "KEYPATH_VALIDATION_FAILURE" });
+      // A scoped ownership check would additionally resolve the root's key field.
+      expect(getKeyField.mock.calls.map(([, model]) => model)).toEqual(["Todo", "Todo"]);
+    });
+
+    it("checks updates as patches and deletes as key-only events", () => {
+      const results = server().validatePush(
+        [
+          { id: "missing", model: "User", operation: "create", payload: { id: "user-1" } },
+          { id: "update", model: "User", operation: "update", payload: { id: "user-1", name: 42 } },
+          { id: "extra", model: "User", operation: "update", payload: { id: "user-1", extra: true } },
+          { id: "delete", model: "User", operation: "delete", payload: { id: "user-1" } },
+        ],
+        { scopeKey: "user-1" }
+      );
+      for (const result of results.slice(0, 3))
+        expect(result.check).toMatchObject({ kind: "validation-failure", error: "RECORD_VALIDATION_FAILURE" });
+      expect(results[3]?.check).toMatchObject({ kind: "root", authorized: true });
+    });
+
     it("resolves the root model directly, no paths needed", () => {
       const [result] = server().validatePush(
         [{ id: "e1", model: "User", operation: "update", payload: { id: "user-1", name: "Ada" } }],
@@ -76,7 +113,7 @@ describe("createSyncServer", () => {
 
     it("resolves all paths for a model reachable more than one way", () => {
       const [result] = server().validatePush(
-        [{ id: "e1", model: "Comment", operation: "create", payload: { id: "c1", authorId: "user-1" } }],
+        [{ id: "e1", model: "Comment", operation: "create", payload: { id: "c1", todoId: null, authorId: "user-1" } }],
         { scopeKey: "user-1" }
       );
 

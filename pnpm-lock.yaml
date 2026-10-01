@@ -1143,6 +1143,9 @@ importers:
       '@prisma-idb/family-idb':
         specifier: workspace:*
         version: link:../family-idb
+      '@prisma-idb/target-idb':
+        specifier: workspace:*
+        version: link:../target-idb
       '@prisma/orm-family-sql':
         specifier: 8.0.0-rc.12
         version: 8.0.0-rc.12(@prisma/cli-engine@0.6.1(magicast@0.5.4))(magicast@0.5.4)(typanion@3.14.0)(typescript@6.0.3)(vite@8.2.1(@types/node@24.13.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.15)(yaml@2.9.1))
@@ -1153,9 +1156,6 @@ importers:
         specifier: 8.0.0-rc.12
         version: 8.0.0-rc.12(@prisma/cli-engine@0.6.1(magicast@0.5.4))(magicast@0.5.4)(typanion@3.14.0)(typescript@6.0.3)(vite@8.2.1(@types/node@24.13.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.15)(yaml@2.9.1))
     devDependencies:
-      '@prisma-idb/target-idb':
-        specifier: workspace:*
-        version: link:../target-idb
       '@types/node':
         specifier: ^24.10.9
         version: 24.13.6
@@ -1174,6 +1174,9 @@ importers:
       '@prisma-idb/sync-server':
         specifier: workspace:*
         version: link:../sync-server
+      '@prisma-idb/target-idb':
+        specifier: workspace:*
+        version: link:../target-idb
       '@prisma/orm-framework':
         specifier: 8.0.0-rc.12
         version: 8.0.0-rc.12(typescript@6.0.3)
@@ -1217,6 +1220,9 @@ importers:
       '@prisma/orm-toolchain':
         specifier: 8.0.0-rc.12
         version: 8.0.0-rc.12(@prisma/cli-engine@0.6.1(magicast@0.5.4))(magicast@0.5.4)(typanion@3.14.0)(typescript@6.0.3)(vite@8.2.1(@types/node@24.13.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.15)(yaml@2.9.1))
+      arktype:
+        specifier: ^2.2.3
+        version: 2.2.3
       pathe:
         specifier: ^2.0.3
         version: 2.0.3

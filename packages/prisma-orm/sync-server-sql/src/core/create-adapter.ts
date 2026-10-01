@@ -1,4 +1,4 @@
-import type { GetKeyField, OwnershipCheck, SyncServer, SyncServerContract } from "@prisma-idb/sync-server";
+import type { GetKeyField, OwnershipCheck, PushCheck, SyncServer, SyncServerContract } from "@prisma-idb/sync-server";
 import type { ApplyPushInput, ApplyPushOutcome } from "./apply-push";
 import type { PullInput, PullOutcome } from "./pull-changes";
 import type { SqlPushEvent, SqlPushResult } from "./push";
@@ -27,7 +27,7 @@ export interface SqlSyncAdapter {
     db: unknown,
     event: SqlPushEvent,
     model: string,
-    check: OwnershipCheck,
+    check: PushCheck,
     scopeKey: string
   ): Promise<SqlPushResult>;
   resolvePullRecord(

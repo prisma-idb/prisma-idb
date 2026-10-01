@@ -9,6 +9,7 @@ export type {
   OwnershipCheck,
   PullScopeResult,
   PushValidationResult,
+  PushCheck,
   SyncPullLogEntry,
   SyncPushEvent,
   SyncServer,

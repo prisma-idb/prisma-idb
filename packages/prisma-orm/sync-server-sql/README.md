@@ -44,6 +44,8 @@ return json(pulled.logs);
 
 `db` is your Prisma 8 SQL client; it needs `.transaction(fn)` and `.orm.public.<Model>`.
 
+Malformed records and patches return `RECORD_VALIDATION_FAILURE`; malformed keys return `KEYPATH_VALIDATION_FAILURE`. These failures are non-retryable and open no transaction. The batch helper revives native dates, bigint and bytes from their JSON representations before validating against the server contract. Updates cannot change the primary key. Lower-level `applyPushEvent` accepts `validatePush`'s `validation-failure` check and returns its code directly.
+
 Push results stop at the first retryable failure. Later events are omitted even if their payloads are malformed: the client worker keeps events without results pending and does not count a try against them. This lets a dependent Todo wait until its Board succeeds on retry.
 
 The `reason` unions in `ApplyPushOutcome` and `PullOutcome` may gain new values in future releases. Handle each known reason explicitly, and review new values when upgrading (an exhaustive TypeScript check can flag them).

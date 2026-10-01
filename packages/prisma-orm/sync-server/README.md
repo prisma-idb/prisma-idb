@@ -17,8 +17,18 @@ const syncServer = createSyncServer({
   getKeyField: sqlGetKeyField, // for a SQL contract
 });
 
+// payloads use native application values (Date, bigint, Uint8Array).
 const checks = syncServer.validatePush(events, { scopeKey: signedInUserId });
+for (const { check } of checks) {
+  if (check.kind === "validation-failure") {
+    // Reject with check.error: RECORD_VALIDATION_FAILURE or KEYPATH_VALIDATION_FAILURE.
+    continue;
+  }
+  // Execute the ownership check using your database.
+}
 ```
+
+Records reject extra fields and undeclared enum values. Creates require all non-nullable fields; updates validate supplied fields, and deletes validate only keys. Validation failures occur before ownership paths are resolved. Other families can provide a native-type `codecLookup` when constructing the server.
 
 For a SQL database, [`@prisma-idb/sync-server-sql`](https://www.npmjs.com/package/@prisma-idb/sync-server-sql) runs the checks and writes for you.
 

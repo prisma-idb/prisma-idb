@@ -77,5 +77,8 @@ export interface PushResult {
 export interface ApplyPullResult {
   applied: number;
   skipped: number;
+  /** Subset of skipped: invalid decoded records, keys, or wire values. */
+  validationFailed: number;
+  /** Highest applied or corrupt-row id; transient transaction failures are not consumed. */
   lastChangelogId: string | null;
 }

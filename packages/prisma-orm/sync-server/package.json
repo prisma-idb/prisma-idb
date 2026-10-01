@@ -42,10 +42,10 @@
     "@prisma-idb/family-idb": "workspace:*",
     "@prisma/orm-family-sql": "8.0.0-rc.12",
     "@prisma/orm-framework": "8.0.0-rc.12",
-    "@prisma/orm-postgres": "8.0.0-rc.12"
+    "@prisma/orm-postgres": "8.0.0-rc.12",
+    "@prisma-idb/target-idb": "workspace:*"
   },
   "devDependencies": {
-    "@prisma-idb/target-idb": "workspace:*",
     "@types/node": "^24.13.3",
     "tsdown": "^0.22.14",
     "typescript": "^6.0.3",

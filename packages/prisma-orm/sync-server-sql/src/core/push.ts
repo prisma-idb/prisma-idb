@@ -1,5 +1,6 @@
+import { idbCodecLookup } from "@prisma-idb/target-idb/runtime";
 import { domainModelsAtDefaultNamespace } from "@prisma/orm-framework/contract/types";
-import type { GetKeyField, OwnershipCheck, SyncServerContract } from "@prisma-idb/sync-server";
+import type { GetKeyField, PushCheck, SyncServerContract } from "@prisma-idb/sync-server";
 import { ormRootFor } from "./orm-root";
 import { checkAuthorization } from "./authorization";
 import { lockScope } from "./scope-lock";
@@ -27,31 +28,52 @@ export interface SqlPushResult {
   readonly retryable?: boolean;
 }
 
-/**
- * Codecs whose application value is a JS `Date`. Their `encode` only accepts
- * a real `Date`, but a push payload has been through JSON, so the client's
- * `Date`s arrive as ISO strings.
- */
-const JS_DATE_CODEC_IDS: ReadonlySet<string> = new Set(["pg/timestamptz-date@1"]);
+/** Internal payload errors preserve diagnostics for direct callers and stable wire codes. */
+export class PushPayloadValidationError extends Error {
+  constructor(
+    readonly code: "RECORD_VALIDATION_FAILURE" | "KEYPATH_VALIDATION_FAILURE",
+    message: string
+  ) {
+    super(message);
+  }
+}
 
-/**
- * Turns JSON-wire values back into the values `model`'s codecs encode:
- * currently ISO strings on JS-`Date` fields. Anything else passes through.
- */
+// These SQL codecs use the same JSON representation as the IDB client.
+const nativeJsonCodecs: Record<string, string> = {
+  "pg/timestamptz-date@1": "idb/date@1",
+  "pg/int8@1": "idb/bigint@1",
+  "pg/unboundedint@1": "idb/bigint@1",
+  "pg/bytea@1": "idb/bytes@1",
+};
+
+/** Revive native sync scalar values before shape validation or ORM encoding. */
 export function reviveWireValues(
   contract: SyncServerContract,
   model: string,
-  data: Record<string, unknown>
+  data: Record<string, unknown>,
+  keyField?: string
 ): Record<string, unknown> {
-  const fields = (
-    domainModelsAtDefaultNamespace(contract.domain)[model] as
-      { fields?: Record<string, { type?: { codecId?: string } }> } | undefined
-  )?.fields;
+  const fields = domainModelsAtDefaultNamespace(contract.domain)[model]?.fields;
   if (!fields) return data;
   return Object.fromEntries(
     Object.entries(data).map(([name, value]) => {
-      const codecId = fields[name]?.type?.codecId;
-      return [name, typeof value === "string" && codecId && JS_DATE_CODEC_IDS.has(codecId) ? new Date(value) : value];
+      const field = fields[name];
+      const codecId = field?.type.kind === "scalar" ? nativeJsonCodecs[field.type.codecId] : undefined;
+      const codec = codecId ? idbCodecLookup.get(codecId) : undefined;
+      if (!codec) return [name, value];
+      const revive = (input: unknown): unknown => {
+        if (typeof input !== "string") return input;
+        try {
+          return codec.decodeJson(input);
+        } catch {
+          throw new PushPayloadValidationError(
+            name === keyField ? "KEYPATH_VALIDATION_FAILURE" : "RECORD_VALIDATION_FAILURE",
+            "Unable to decode sync field"
+          );
+        }
+      };
+      if (field?.many && Array.isArray(value)) return [name, value.map(revive)];
+      return [name, revive(value)];
     })
   );
 }
@@ -64,19 +86,31 @@ export function toSyncPushPayload(operation: string, payload: unknown, keyField:
     throw new Error(`Unsupported operation "${operation}"`);
   }
   if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
-    throw new Error(`Invalid ${operation} payload: expected an object`);
+    throw new PushPayloadValidationError(
+      "RECORD_VALIDATION_FAILURE",
+      `Invalid ${operation} payload: expected an object`
+    );
   }
   if (operation === "create") return payload as Record<string, unknown>;
   if (operation === "update") {
     const { key, patch } = payload as { key?: unknown; patch?: unknown };
     if (key === undefined) {
-      throw new Error(`Unsupported update: filter does not pin "${keyField}" by equality`);
+      throw new PushPayloadValidationError(
+        "KEYPATH_VALIDATION_FAILURE",
+        `Unsupported update: filter does not pin "${keyField}" by equality`
+      );
     }
     // Without an object patch, applyPushEvent would fall through to its delete branch.
     if (typeof patch !== "object" || patch === null || Array.isArray(patch)) {
-      throw new Error("Invalid update payload: expected an object patch");
+      throw new PushPayloadValidationError(
+        "RECORD_VALIDATION_FAILURE",
+        "Invalid update payload: expected an object patch"
+      );
     }
-    return { [keyField]: key };
+    if (keyField in patch && !Object.is((patch as Record<string, unknown>)[keyField], key)) {
+      throw new PushPayloadValidationError("KEYPATH_VALIDATION_FAILURE", "Updates cannot change the primary key");
+    }
+    return { ...(patch as Record<string, unknown>), [keyField]: key };
   }
   return { [keyField]: (payload as { key: unknown }).key };
 }
@@ -119,9 +153,12 @@ export async function applyPushEvent(
   getKeyField: GetKeyField,
   event: SqlPushEvent,
   model: string,
-  check: OwnershipCheck,
+  check: PushCheck,
   scopeKey: string
 ): Promise<SqlPushResult> {
+  if (check.kind === "validation-failure") {
+    return { id: event.id, success: false, error: check.error, retryable: false };
+  }
   if (check.kind === "unknown-model") {
     return { id: event.id, success: false, error: "Unknown model", retryable: false };
   }
