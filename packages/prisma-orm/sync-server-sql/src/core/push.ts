@@ -2,6 +2,8 @@ import { domainModelsAtDefaultNamespace } from "@prisma/orm-framework/contract/t
 import type { GetKeyField, OwnershipCheck, SyncServerContract } from "@prisma-idb/sync-server";
 import { ormRootFor } from "./orm-root";
 import { checkAuthorization } from "./authorization";
+import { lockScope } from "./scope-lock";
+import { nextChangelogId } from "./changelog-id";
 
 /**
  * The fields `applyPushEvent` actually reads out of a push request's event —
@@ -79,6 +81,25 @@ export function toSyncPushPayload(operation: string, payload: unknown, keyField:
   return { [keyField]: (payload as { key: unknown }).key };
 }
 
+interface ChangelogIdQuery {
+  where(clause: Record<string, unknown>): ChangelogIdQuery;
+  select(...fields: string[]): ChangelogIdQuery;
+  orderBy(fn: (row: { id: { desc(): unknown } }) => unknown): ChangelogIdQuery;
+  limit(n: number): ChangelogIdQuery;
+  all(): Promise<{ id: string }[]>;
+}
+
+/** The highest changelog id `scopeKey` has, or `null` for an empty scope (an index seek on `(scopeKey, id)`). */
+async function maxChangelogId(tx: unknown, scopeKey: string): Promise<string | null> {
+  const [latest] = await (ormRootFor(tx, "Changelog") as unknown as ChangelogIdQuery)
+    .where({ scopeKey })
+    .select("id")
+    .orderBy((row) => row.id.desc())
+    .limit(1)
+    .all();
+  return latest?.id ?? null;
+}
+
 /**
  * Authorizes, then applies, one outbox event: writes the model row + a
  * stamped `Changelog` row, atomically. Idempotent on the event's id.
@@ -153,7 +174,13 @@ export async function applyPushEvent(
         throw new Error(`Unsupported operation "${event.operation}"`);
       }
 
+      // The lock is what makes commit order match the order ids are drawn in;
+      // drawing each id above the scope's current max (read under the lock,
+      // so it includes every earlier push's committed row) makes that order
+      // match id order too — whatever process or clock the push ran on.
+      await lockScope(db, tx, contract.target, scopeKey);
       await changelogRoot.select("id").create({
+        id: nextChangelogId(await maxChangelogId(tx, scopeKey), Date.now()),
         model,
         keyPath: check.key,
         operation: event.operation,

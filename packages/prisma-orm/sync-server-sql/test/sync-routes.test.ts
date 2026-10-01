@@ -55,7 +55,7 @@ describe("applyPush", () => {
       { id: "malformed", entityType: "Todo", operation: "create" as const, payload: null },
     ];
     try {
-      expect(await adapter.applyPush({ transaction }, { scopeKey: "u1", events })).toEqual({
+      expect(await adapter.applyPush({ raw: db.raw, transaction }, { scopeKey: "u1", events })).toEqual({
         ok: true,
         results: [
           { id: "user", success: true },
@@ -63,6 +63,10 @@ describe("applyPush", () => {
         ],
       });
       expect(transaction).toHaveBeenCalledTimes(2);
+      expect(errorLog).toHaveBeenCalledExactlyOnceWith(
+        "push apply failed for event board",
+        new Error("temporary database failure")
+      );
       expect(await ormRootFor(db, "Board").first({ id: "b1" })).toBeNull();
       expect(await ormRootFor(db, "Todo").first({ id: "t1" })).toBeNull();
       expect(await ormRootFor(db, "Changelog").first({ outboxEventId: "todo" })).toBeNull();
