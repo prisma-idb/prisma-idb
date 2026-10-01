@@ -45,15 +45,13 @@ export const POST: RequestHandler = async ({ request }) => {
     maxBatchSize: MAX_PUSH_BATCH_SIZE,
   });
   if (!outcome.ok) {
-    return json(
-      {
-        error:
-          outcome.reason === "batch-too-large"
-            ? `events exceeds max batch size of ${outcome.maxBatchSize}`
-            : "Duplicate event id in push batch",
-      },
-      { status: 400 }
-    );
+    switch (outcome.reason) {
+      case "batch-too-large":
+        return json({ error: `events exceeds max batch size of ${outcome.maxBatchSize}` }, { status: 400 });
+      case "duplicate-event-id":
+        return json({ error: "Duplicate event id in push batch" }, { status: 400 });
+    }
+    throw new Error(`Unhandled push outcome: ${outcome satisfies never}`);
   }
   return json(outcome.results satisfies readonly PushResultBody[]);
 };

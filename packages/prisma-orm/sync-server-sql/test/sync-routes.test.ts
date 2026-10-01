@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createSqlSyncAdapter } from "../src/core/create-adapter";
 import { applyPush, DEFAULT_MAX_PUSH_BATCH_SIZE } from "../src/core/apply-push";
 import { pull } from "../src/core/pull-changes";
@@ -39,6 +39,46 @@ describe("applyPush", () => {
       results: ["e1", "e2", "e3", "e4"].map((id) => ({ id, success: true })),
     });
     expect((await ormRootFor(db, "Todo").first({ id: "t1" }))?.["dueAt"]).toEqual(new Date("2026-01-02T03:04:05.000Z"));
+  });
+
+  it("leaves dependent and malformed events pending after a retryable failure, then applies them on retry", async () => {
+    const db = await testDb();
+    const transaction = vi
+      .fn(db.transaction.bind(db))
+      .mockImplementationOnce(db.transaction.bind(db))
+      .mockRejectedValueOnce(new Error("temporary database failure"));
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+    const events = [
+      create("user", "User", { id: "u1", name: "Ann" }),
+      create("board", "Board", { id: "b1", ownerId: "u1" }),
+      create("todo", "Todo", { id: "t1", boardId: "b1" }),
+      { id: "malformed", entityType: "Todo", operation: "create" as const, payload: null },
+    ];
+    try {
+      expect(await adapter.applyPush({ transaction }, { scopeKey: "u1", events })).toEqual({
+        ok: true,
+        results: [
+          { id: "user", success: true },
+          { id: "board", success: false, error: "Failed to apply event board", retryable: true },
+        ],
+      });
+      expect(transaction).toHaveBeenCalledTimes(2);
+      expect(await ormRootFor(db, "Board").first({ id: "b1" })).toBeNull();
+      expect(await ormRootFor(db, "Todo").first({ id: "t1" })).toBeNull();
+      expect(await ormRootFor(db, "Changelog").first({ outboxEventId: "todo" })).toBeNull();
+
+      expect(await adapter.applyPush(db, { scopeKey: "u1", events: events.slice(1) })).toEqual({
+        ok: true,
+        results: [
+          { id: "board", success: true },
+          { id: "todo", success: true },
+          { id: "malformed", success: false, error: "Invalid create payload: expected an object", retryable: false },
+        ],
+      });
+      expect(await ormRootFor(db, "Todo").first({ id: "t1" })).toMatchObject({ id: "t1", boardId: "b1" });
+    } finally {
+      errorLog.mockRestore();
+    }
   });
 
   it("signals an oversized batch without applying anything", async () => {
@@ -218,6 +258,35 @@ describe("pull", () => {
     const ids = outcome.logs.map((l) => l.changelogId);
     expect(ids.every((id) => UUID_V7.test(id))).toBe(true);
     expect(ids).toEqual([...ids].sort());
+  });
+
+  it.each([0, -1, 0.5, 1.5, NaN, Infinity, -Infinity])("rejects invalid limit %s before querying", async (limit) => {
+    await expect(adapter.pull(null, { scopeKey: "u1", limit })).rejects.toThrow(RangeError);
+  });
+
+  it("defaults limit to 50", async () => {
+    const db = await testDb();
+    await seed(db, { User: [{ id: "u1", name: "Ann" }] });
+    for (let i = 0; i < 51; i++) {
+      await seed(db, {
+        Changelog: [{ model: "User", keyPath: "u1", operation: "update", scopeKey: "u1", outboxEventId: `e${i}` }],
+      });
+    }
+    const outcome = await adapter.pull(db, { scopeKey: "u1" });
+    expect(outcome.ok && outcome.logs).toHaveLength(50);
+  });
+
+  it("pairs reordered ownership checks by changelog id and preserves page order", async () => {
+    const db = await pushAnnAndBo();
+    const baseline = await adapter.pull(db, { scopeKey: "u1" });
+    const reordered = createSqlSyncAdapter({
+      contract: testContract,
+      syncServer: {
+        ...testSyncServer,
+        buildPullQueries: (logs, options) => [...testSyncServer.buildPullQueries(logs, options)].reverse(),
+      },
+    });
+    expect(await reordered.pull(db, { scopeKey: "u1" })).toEqual(baseline);
   });
 
   it("treats lastChangelogId as an exclusive cursor", async () => {
