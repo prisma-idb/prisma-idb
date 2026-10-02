@@ -405,9 +405,9 @@ describe("pull", () => {
       model: "BigItem",
       keyPath: "invalid-bigint",
       operation: "update",
-      record: null,
+      validationError: "KEYPATH_VALIDATION_FAILURE",
     });
-    expect(logs.filter((log) => log.record !== null).map((log) => log.record)).toEqual([
+    expect(logs.filter((log) => log.validationError === undefined).map((log) => log.record)).toEqual([
       { id: 11n, ownerId: 1n, name: "item 11" },
       { id: 12n, ownerId: 1n, name: "item 12" },
     ]);

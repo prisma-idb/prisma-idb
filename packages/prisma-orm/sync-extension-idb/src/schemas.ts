@@ -35,12 +35,26 @@ export const pushResultSchema = z.object({
 });
 export type PushResultBody = z.infer<typeof pushResultSchema>;
 
-/** One pulled changelog row with its materialized record — what a pull endpoint must respond with. */
-export const logWithRecordSchema = z.object({
+const pullLogIdentitySchema = z.object({
   changelogId: z.string(),
   model: z.string(),
   operation: z.enum(["create", "update", "delete"]),
   keyPath: z.unknown(),
-  record: z.record(z.string(), z.unknown()).nullable(),
 });
+
+/**
+ * Shared pull wire contract. Ordinary logs retain their record (null means
+ * delete/revocation). A server-side key validation failure omits record and
+ * is consumed as corruption, never as a local delete.
+ */
+export const logWithRecordSchema = z.union([
+  pullLogIdentitySchema.extend({
+    record: z.record(z.string(), z.unknown()).nullable(),
+    validationError: z.never().optional(),
+  }),
+  pullLogIdentitySchema.extend({
+    validationError: z.literal("KEYPATH_VALIDATION_FAILURE"),
+    record: z.never().optional(),
+  }),
+]);
 export type LogWithRecordBody = z.infer<typeof logWithRecordSchema>;

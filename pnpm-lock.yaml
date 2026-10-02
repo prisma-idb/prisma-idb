@@ -1171,6 +1171,9 @@ importers:
 
   packages/prisma-orm/sync-server-sql:
     dependencies:
+      '@prisma-idb/sync-extension-idb':
+        specifier: workspace:*
+        version: link:../sync-extension-idb
       '@prisma-idb/sync-server':
         specifier: workspace:*
         version: link:../sync-server
@@ -1187,9 +1190,6 @@ importers:
       '@prisma-idb/family-idb':
         specifier: workspace:*
         version: link:../family-idb
-      '@prisma-idb/sync-extension-idb':
-        specifier: workspace:*
-        version: link:../sync-extension-idb
       '@prisma/cli-engine':
         specifier: 0.6.1
         version: 0.6.1(@prisma/management-api-sdk@1.79.0)(magicast@0.5.4)

@@ -1,3 +1,5 @@
+import type { LogWithRecordBody } from "./schemas";
+
 /**
  * One tracked mutation's outbox write — model, operation, resolved key (when
  * statically knowable), and the exact payload written to the outbox record.
@@ -51,13 +53,7 @@ export interface VersionMetaRecord {
 }
 
 /** Server changelog entry returned by the pull endpoint. */
-export interface LogWithRecord {
-  changelogId: string;
-  model: string;
-  operation: "create" | "update" | "delete";
-  keyPath: unknown;
-  record: Record<string, unknown> | null;
-}
+export type LogWithRecord = LogWithRecordBody;
 
 /**
  * Per-event result from the push endpoint. `retryable` (present only for

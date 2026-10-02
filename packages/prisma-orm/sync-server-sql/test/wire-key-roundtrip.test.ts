@@ -1,13 +1,14 @@
 import "fake-indexeddb/auto";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { defineContract } from "@prisma-idb/family-idb/contract-ts";
 import idbFamilyPack from "@prisma-idb/family-idb/pack";
 import idbTargetPack from "@prisma-idb/target-idb/pack";
 import type { IdbContract } from "@prisma-idb/client-idb/orm";
 import { applyPull, createSyncIdbClient } from "@prisma-idb/sync-extension-idb/client";
+import { logWithRecordSchema } from "@prisma-idb/sync-extension-idb/schemas";
 import { createSqlSyncAdapter } from "../src/core/create-adapter";
 import { ormRootFor } from "../src/core/orm-root";
-import { testBigSyncServer, testContract, testDb } from "./helpers";
+import { testBigSyncServer, testContract, testDb, seed } from "./helpers";
 
 async function browserClient() {
   // IndexedDB has no bigint key type. The client projection retains digit strings.
@@ -37,6 +38,83 @@ async function browserClient() {
 }
 
 describe("wire-form SQL keys", () => {
+  it.each(["create", "update", "delete"] as const)(
+    "preserves a local string-key row when a malformed SQL BigInt %s log is pulled",
+    async (operation) => {
+      const db = await testDb();
+      const adapter = createSqlSyncAdapter({ contract: testContract, syncServer: testBigSyncServer });
+      await seed(db, {
+        Changelog: [{ model: "BigItem", keyPath: "invalid-bigint", operation, scopeKey: "1", outboxEventId: "bad" }],
+      });
+      const client = await browserClient();
+      try {
+        const record = { id: "invalid-bigint", ownerId: "1", name: "keep me" };
+        await client.withTransaction(["bigItems"], (scope) =>
+          scope.execute({ kind: "put", storeName: "bigItems", record } as never)
+        );
+        const pulled = await adapter.pull(db, { scopeKey: "1" });
+        if (!pulled.ok) throw new Error("pull failed");
+        const logs = logWithRecordSchema.array().parse(JSON.parse(JSON.stringify(pulled.logs)));
+        const transaction = vi.spyOn(client, "withTransaction");
+        expect(await applyPull(client, logs)).toEqual({
+          applied: 0,
+          skipped: 1,
+          validationFailed: 1,
+          lastChangelogId: pulled.logs[0]!.changelogId,
+        });
+        expect(transaction).not.toHaveBeenCalled();
+        expect(
+          await client.withTransaction(["bigItems"], (scope) =>
+            scope.execute({ kind: "key-get", storeName: "bigItems", key: record.id } as never)
+          )
+        ).toEqual([record]);
+        expect(
+          await client.withTransaction(["_idb_sync_version_meta"], (scope) =>
+            scope.execute({ kind: "cursor-scan", storeName: "_idb_sync_version_meta" } as never)
+          )
+        ).toEqual([]);
+      } finally {
+        await client.close();
+      }
+    }
+  );
+
+  it("still deletes a local BigItem when live ownership is revoked and the pull record is null", async () => {
+    const db = await testDb();
+    const adapter = createSqlSyncAdapter({ contract: testContract, syncServer: testBigSyncServer });
+    for (const id of [1n, 2n]) await ormRootFor(db, "BigUser").select("id").create({ id, name: "owner" });
+    await ormRootFor(db, "BigItem").select("id").create({ id: 11n, ownerId: 2n, name: "reassigned" });
+    await seed(db, {
+      Changelog: [{ model: "BigItem", keyPath: "11", operation: "update", scopeKey: "1", outboxEventId: "revoked" }],
+    });
+    const client = await browserClient();
+    try {
+      await client.withTransaction(["bigItems"], (scope) =>
+        scope.execute({
+          kind: "put",
+          storeName: "bigItems",
+          record: { id: "11", ownerId: "1", name: "previously owned" },
+        } as never)
+      );
+      const pulled = await adapter.pull(db, { scopeKey: "1" });
+      if (!pulled.ok) throw new Error("pull failed");
+      expect(pulled.logs).toMatchObject([{ operation: "update", keyPath: "11", record: null }]);
+      expect(await applyPull(client, [...pulled.logs])).toEqual({
+        applied: 1,
+        skipped: 0,
+        validationFailed: 0,
+        lastChangelogId: pulled.logs[0]!.changelogId,
+      });
+      expect(
+        await client.withTransaction(["bigItems"], (scope) =>
+          scope.execute({ kind: "key-get", storeName: "bigItems", key: "11" } as never)
+        )
+      ).toEqual([]);
+    } finally {
+      await client.close();
+    }
+  });
+
   it("rejects another BigInt scope and ownership reassignment", async () => {
     const db = await testDb();
     const adapter = createSqlSyncAdapter({ contract: testContract, syncServer: testBigSyncServer });

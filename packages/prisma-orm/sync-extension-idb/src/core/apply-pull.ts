@@ -26,7 +26,9 @@
  *
  * Decoded records and keys are checked against the client contract. Corrupt
  * rows are counted separately and consumed by the cursor; they never open a
- * write transaction. Nullable records still signal a revoked ownership delete.
+ * write transaction. Server `validationError` markers are consumed the same
+ * way, without decoding or deleting. Nullable records still signal a revoked
+ * ownership delete.
  *
  * A `create`/`update` log with `record: null` means the server re-checked
  * ownership (ADR 014's `buildPullQueries` live re-check) and this client is
@@ -106,6 +108,8 @@ async function applyLog<TContract extends IdbContract>(
   contract: TContract,
   log: LogWithRecord
 ): Promise<"applied" | "skipped" | "validation-failure"> {
+  if (log.validationError === "KEYPATH_VALIDATION_FAILURE") return "validation-failure";
+
   const storeName = getStoreName(contract, log.model);
   const isDelete = log.operation === "delete" || log.record === null;
   const storeNames = isDelete ? collectDeleteStoreNames(contract, log.model) : [storeName];

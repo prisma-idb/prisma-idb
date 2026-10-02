@@ -35,6 +35,7 @@
   },
   "dependencies": {
     "@prisma-idb/sync-server": "workspace:*",
+    "@prisma-idb/sync-extension-idb": "workspace:*",
     "@prisma/orm-framework": "8.0.0-rc.12",
     "@prisma-idb/target-idb": "workspace:*"
   },
@@ -51,7 +52,6 @@
     "vitest": "^4.1.11",
     "@prisma-idb/client-idb": "workspace:*",
     "@prisma-idb/family-idb": "workspace:*",
-    "@prisma-idb/sync-extension-idb": "workspace:*",
     "fake-indexeddb": "^6.2.5"
   },
   "publishConfig": {

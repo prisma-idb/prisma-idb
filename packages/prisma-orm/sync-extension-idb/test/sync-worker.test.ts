@@ -356,7 +356,7 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
     expect(await scanAll(client, "users")).toEqual([{ id: "u1", name: "Remote" }]);
   });
   describe("pull cursor", () => {
-    const userLog = (changelogId: string, id: string): LogWithRecord => ({
+    const userLog = (changelogId: string, id: string): Extract<LogWithRecord, { record: unknown }> => ({
       changelogId,
       model: "User",
       operation: "create",
@@ -364,40 +364,51 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
       record: { id, name: id },
     });
 
-    it("persists a corrupt tail row's cursor, reports corruption and resumes past it", async () => {
-      const { client } = await createTestSyncClient();
-      let persisted: string | null = null;
-      const setCursor = vi.fn((id: string) => {
-        persisted = id;
-      });
-      const pullHandler = vi.fn(async (_cursor: string | null): Promise<LogWithRecord[]> => []);
-      pullHandler.mockResolvedValueOnce([
-        userLog(changelogId(9), "u9"),
-        { ...userLog(changelogId(10), "u10"), record: { id: "u10", name: 42 } },
-      ]);
-      const worker = trackedWorker({
-        syncClient: client,
-        pushHandler: async () => [],
-        pullHandler,
-        getCursor: () => persisted,
-        setCursor,
-      });
-      const completed = vi.fn();
-      worker.on("pullcompleted", completed);
-      await worker.forceSync();
-      expect(completed).toHaveBeenCalledWith({ applied: 1, skipped: 1, validationFailed: 1 });
-      expect(setCursor).toHaveBeenCalledWith(changelogId(10));
-      const restarted = trackedWorker({
-        syncClient: client,
-        pushHandler: async () => [],
-        pullHandler,
-        getCursor: () => persisted,
-        setCursor,
-      });
-      await restarted.forceSync();
-      expect(pullHandler.mock.calls[1]?.[0]).toBe(changelogId(10));
-      expect(await scanAll(client, "users")).toEqual([{ id: "u9", name: "u9" }]);
-    });
+    it.each(["invalid-record", "server-marker"])(
+      "persists a corrupt tail row's cursor, reports %s corruption and resumes past it",
+      async (kind) => {
+        const { client } = await createTestSyncClient();
+        let persisted: string | null = null;
+        const setCursor = vi.fn((id: string) => {
+          persisted = id;
+        });
+        const pullHandler = vi.fn(async (_cursor: string | null): Promise<LogWithRecord[]> => []);
+        pullHandler.mockResolvedValueOnce([
+          userLog(changelogId(9), "u9"),
+          kind === "invalid-record"
+            ? { ...userLog(changelogId(10), "u10"), record: { id: "u10", name: 42 } }
+            : {
+                changelogId: changelogId(10),
+                model: "User",
+                operation: "delete",
+                keyPath: "u10",
+                validationError: "KEYPATH_VALIDATION_FAILURE",
+              },
+        ]);
+        const worker = trackedWorker({
+          syncClient: client,
+          pushHandler: async () => [],
+          pullHandler,
+          getCursor: () => persisted,
+          setCursor,
+        });
+        const completed = vi.fn();
+        worker.on("pullcompleted", completed);
+        await worker.forceSync();
+        expect(completed).toHaveBeenCalledWith({ applied: 1, skipped: 1, validationFailed: 1 });
+        expect(setCursor).toHaveBeenCalledWith(changelogId(10));
+        const restarted = trackedWorker({
+          syncClient: client,
+          pushHandler: async () => [],
+          pullHandler,
+          getCursor: () => persisted,
+          setCursor,
+        });
+        await restarted.forceSync();
+        expect(pullHandler.mock.calls[1]?.[0]).toBe(changelogId(10));
+        expect(await scanAll(client, "users")).toEqual([{ id: "u9", name: "u9" }]);
+      }
+    );
 
     it("advances the cursor across batches in id order", async () => {
       const { client } = await createTestSyncClient();

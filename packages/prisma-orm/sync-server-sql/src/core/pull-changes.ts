@@ -1,4 +1,5 @@
 import type { GetKeyField, SyncServer, SyncServerContract } from "@prisma-idb/sync-server";
+import type { LogWithRecordBody } from "@prisma-idb/sync-extension-idb/schemas";
 import { ormRootFor } from "./orm-root";
 import { resolvePullRecord } from "./pull";
 import { PushPayloadValidationError } from "./push";
@@ -23,15 +24,9 @@ export interface PullInput {
  * One pulled change — the wire shape `applyPull` (sync-extension-idb)
  * consumes. `record` is the row's *current* state, or `null` when it was
  * deleted or is no longer the caller's, which the client applies as a local
- * delete.
+ * delete. Malformed keys instead carry `validationError` and omit `record`.
  */
-export interface SqlPullLog {
-  readonly changelogId: string;
-  readonly model: string;
-  readonly operation: "create" | "update" | "delete";
-  readonly keyPath: unknown;
-  readonly record: Record<string, unknown> | null;
-}
+export type SqlPullLog = Readonly<LogWithRecordBody>;
 
 /** The `reason` union may gain new values in future releases; handle each known reason explicitly. */
 export type PullOutcome =
@@ -105,7 +100,7 @@ export async function pull(
   );
 
   const logs = await Promise.all(
-    rows.map(async ({ id: changelogId, keyPath, operation }) => {
+    rows.map(async ({ id: changelogId, keyPath, operation }): Promise<SqlPullLog> => {
       const { model, check } = checksById.get(changelogId)!;
       const op = operation as SqlPullLog["operation"];
       let record: Record<string, unknown> | null;
@@ -113,8 +108,8 @@ export async function pull(
         record = await resolvePullRecord(db, contract, getKeyField, model, check, keyPath, op);
       } catch (error) {
         if (!(error instanceof PushPayloadValidationError) || error.code !== "KEYPATH_VALIDATION_FAILURE") throw error;
-        // Preserve the row and its cursor so client pull validation can report and consume it.
-        record = null;
+        // Preserve identity/cursor, but never signal a revoked-ownership delete.
+        return { changelogId, model, operation: op, keyPath, validationError: error.code };
       }
       return { changelogId, model, operation: op, keyPath, record };
     })

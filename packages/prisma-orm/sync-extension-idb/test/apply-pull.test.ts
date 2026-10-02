@@ -3,7 +3,9 @@ import { applyPull } from "../src/core/apply-pull";
 import type { LogWithRecord, VersionMetaRecord } from "../src/types";
 import { changelogId, createTestSyncClient, keyGet, scanAll } from "./helpers";
 
-function log(overrides: Partial<LogWithRecord> & Pick<LogWithRecord, "changelogId" | "operation">): LogWithRecord {
+function log(
+  overrides: Partial<Extract<LogWithRecord, { record: unknown }>> & Pick<LogWithRecord, "changelogId" | "operation">
+): LogWithRecord {
   return {
     model: "User",
     keyPath: "u1",
