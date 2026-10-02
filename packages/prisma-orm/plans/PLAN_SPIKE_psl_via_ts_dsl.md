@@ -1,112 +1,182 @@
-# Spike — PSL lowered through the TS-DSL
+# Spike results: one lowering for PSL and `defineContract`
 
-Alternative to `PLAN_SPIKE_shared_authoring_spec.md` (spike 1, branch
-`spike/shared-authoring-spec`, committed 03db1289). Branch
-`spike/psl-via-ts-dsl`, cut from main, uncommitted.
+## Summary
 
-## Question
+**Question.** The IDB family has two authoring surfaces: a PSL interpreter and
+the TypeScript `defineContract` builder. Each re-implements the same
+validation, client projection and contract assembly. Can both go through one
+implementation instead?
 
-Instead of a new internal `AuthoredSchema` that both surfaces produce, can PSL
-be translated into the public `defineContract` input (the TS-DSL), with the
-builder as the only validation and lowering?
+**Answer.** Yes. We tried two designs. Both produce the same contracts as
+today and both cut the code by more than a third.
 
-## What was done
+| Design                                            | Branch                        | Code vs. main |
+| ------------------------------------------------- | ----------------------------- | ------------- |
+| Spike 1: shared internal spec, `lowerToContract`  | `spike/shared-authoring-spec` | −37% lines    |
+| Spike 2: PSL translated to `defineContract` input | `spike/psl-via-ts-dsl`        | −42% lines    |
 
-- `contract-builder.ts` became the single lowering. `buildContract(input,
-{ projection, validateOnly })` collects every issue as
-  `{ code, message, at }`, where `at` is a location. `defineContract` throws the
-  first issue's message, as before. Its validation and assembly are spike 1's
-  lowering, rewritten to read the DSL shapes directly.
-- `psl-interpreter.ts` became `pslToDsl` (symbol table → `defineContract`
-  input + span map + PSL-only issues) followed by `buildContract`.
-- The same harness as spike 1: `psl-interpreter.legacy.ts` and
-  `contract-builder.legacy.ts` (main's copies), `test/_psl-oracle.ts` and
-  `test/_ts-oracle.ts` wired into the two suites, `test/authoring-parity.test.ts`.
+The two designs behave the same. The difference is where the shared
+representation lives:
 
-### Public TS-DSL additions this forced
+- **Spike 1** adds an internal type. The public TS API stays the same.
+- **Spike 2** adds no internal type, but the public TS API grows, because the
+  builder must express everything PSL can.
 
-PSL can only go through the DSL if the DSL can say everything PSL can:
+Choosing between them is an API decision, not a technical one (see
+[Recommendation](#recommendation)).
 
-- `EnumDef` also accepts a map from member name to stored value
-  (`{ ACTIVE: "active" }`).
-- `fieldDefaults` values also accept `{ generator: "now" | "uuid" | "uuidv7" |
-"cuid" | "autoincrement" }`, and every default now feeds `create()`
-  (`execution.mutations.defaults`), not only `setDefault`.
-- `ModelDef.updatedAt: string[]`.
-- `RelationDef.index: boolean` (the implicit FK index; dropped with the relation
-  in the client projection).
+Both spikes address the concerns raised upstream:
 
-These are the same concepts spike 1 needed; spike 1 kept them internal, here
-they are public API. Plan §6 of spike 1 put "execution defaults on the public
-TS DSL" out of scope; this approach can't avoid it.
+| Concern                                          | Result                                                                                                                              |
+| ------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------- |
+| "An extra layer is questionable."                | Spike 2 has no extra layer. Spike 1's layer costs about 85 lines, and the whole design still saves about 580.                       |
+| "One representation may not fit the other."      | Four places did not fit (see [What did not fit](#what-did-not-fit)). Each needed one flag or one rule, not a second representation. |
+| "Contract authoring is more work than it looks." | True for the harness: an oracle that diffs old and new code was needed to be confident. The rewrite itself was small.               |
 
-## Results
+## How we checked
 
-- PSL oracle (95 tests): same as spike 1. 93 identical including spans, order
-  and contract bytes; the same 2 intended changes.
-- TS oracle (50 tests): same as spike 1. Identical except the `execution` block
-  (2 tests) and message wording.
-- Real schemas: all four re-emitted `contract.json` identical to the checked-in
-  ones, hashes included. client-idb, sync-extension-idb, sync-server tests and
-  typechecks green.
-- Parity test: 14 pass, 2 expected-fail (TS side of the implicit FK index; a
-  TS author can now write `index: true` to match).
+We kept copies of the old code (`psl-interpreter.legacy.ts`,
+`contract-builder.legacy.ts`) and ran the old and new implementations side by
+side on every existing test. A test fails when they differ in any of these:
 
-### Size (code lines without comments or blanks)
+- the contract, compared with `toEqual` and as JSON bytes (so hashes match);
+- the diagnostics: `code`, `sourceId` and `span`, in order;
+- the `console.warn` calls.
 
-|                                        | lines | chars | tokens¹ | branches |
-| -------------------------------------- | ----- | ----- | ------- | -------- |
-| main (psl 1068 + builder 515)          | 1583  | 54004 | 12237   | 248      |
-| spike 1 (psl + builder + spec + lower) | 1000  | 38218 | 10136   | 186      |
-| spike 2 (psl 345 + builder 571)        | 916   | 35519 | 9514    | 190      |
+## Results (spike 2)
 
-¹ String literals counted as one token.
+| Check                                                     | Result                                                                                                                                          |
+| --------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| PSL suite (95 tests) against the old interpreter          | 93 identical. 2 differ on purpose (see below).                                                                                                  |
+| TS suite (50 tests) against the old builder               | Identical, except the new `execution` block (2 tests) and reworded messages.                                                                    |
+| Re-emitted `contract.json` for the four real schemas      | Identical to the checked-in files, including hashes.                                                                                            |
+| Downstream packages (client, sync extension, sync server) | Tests and typechecks pass.                                                                                                                      |
+| `family-idb` suite                                        | 282 pass, 2 expected failures.                                                                                                                  |
+| PSL-vs-TS parity test (same schema through both)          | 27 pass, 2 expected failures. The expected failures are a TS schema that does not ask for the FK index (see [Open decisions](#open-decisions)). |
 
-Spike 2 is about 8% smaller than spike 1. The saving is exactly the layer it
-drops: the `AuthoredSchema` types and the `tsToSpec` adapter.
+The 2 intended PSL differences: when an `@idb.exclude` is on a relation field,
+or on a scalar that backs a relation's foreign key, the old interpreter also
+reported `IDB_UNRESOLVED_BACKRELATION`. That was a side effect of the first
+error. The new code reports only the real problem, at the same span.
 
-### Where it is worse than spike 1
+### Size
 
-1. **Lossy translation.** The DSL speaks in values, PSL in names, so a few PSL
-   rules must run in the converter instead of the shared builder:
-   - Enum defaults: PSL `@default(ACTIVE)` names a member; the DSL takes the
-     stored value. The first cut passed unknown names through, which accepted
-     `@default(x)` when `x` was another member's _value_ (a regression the
-     probe caught). Fixed by resolving names in the converter, which reports
-     `IDB_INVALID_ENUM_DEFAULT` for PSL. The builder keeps its own value check
-     for TS. Same code, two checks.
-   - Default functions: the DSL has a closed generator set, so `foo()` and
-     `uuid(9)` are rejected in the converter (`IDB_UNKNOWN_DEFAULT_FUNCTION`,
-     `IDB_INVALID_DEFAULT_FUNCTION_ARGUMENT`). On an optional field, legacy
-     reported `IDB_EXECUTION_DEFAULT_ON_OPTIONAL_FIELD` instead; this reports
-     the unknown function.
-2. **String round trip.** The converter formats field specs (`"Role[]?"`) and
-   the builder parses them back. Harmless, but it is a representation neither
-   side wants.
-3. **Public API grows with every PSL feature.** Each new PSL construct has to
-   be designed as TS-DSL API first. That is also the upside (below).
+Counts exclude comments and blank lines. "Tokens" count each string literal
+as one token.
 
-### Where it is better
+|                                           | Lines       | Characters   | Tokens       | Branches   |
+| ----------------------------------------- | ----------- | ------------ | ------------ | ---------- |
+| main (PSL 1068 + builder 515)             | 1583        | 54004        | 12237        | 248        |
+| Spike 1 (PSL + builder + spec + lowering) | 1000 (−37%) | 38218 (−29%) | 10136 (−17%) | 186 (−25%) |
+| Spike 2 (PSL 345 + builder 571)           | 916 (−42%)  | 35519 (−34%) | 9514 (−22%)  | 190 (−23%) |
 
-- One representation, and it's the one users see. No internal layer to learn.
-- Parity is by construction at the public API: anything PSL can express, a TS
-  author can write too. Spike 1 left TS users without execution defaults.
-- Slightly less code.
+Line counts overstate the saving. The new code is denser, so characters and
+tokens fall less than lines. The real saving is the removed duplication: the
+branch count, which does not depend on formatting, still drops about a quarter.
 
-## Verdict
+Spike 2 is about 8% smaller than spike 1 because it has no internal spec type
+and no adapter for the TS side.
 
-Both land in the same place on behaviour (identical oracle results, same
-behaviour-change list, plus the two lossy spots above). Choosing between them
-is an API decision, not a technical one:
+## What did not fit
 
-- Pick **spike 2** if the TS-DSL should reach PSL feature parity anyway. It is
-  smaller, has one representation, and turns the §2.5 "TS-only/PSL-only escape
-  hatch" question into ordinary public API. The two lossy spots are small and
-  handled in the converter.
-- Pick **spike 1** if the TS-DSL should stay minimal and not grow execution
-  defaults and name/value enums. It keeps the public API unchanged and costs
-  one internal layer (~85 lines).
+These are the places where PSL and the TS builder disagreed. None needed a
+second representation.
 
-Open decisions carried over from spike 1: TS FK index default, PSL-flavoured
-messages, `temporal.updatedAt()?` now rejected. The TS `fieldDefaults`
-semantics change applies to both.
+1. **Implicit foreign-key index.** PSL adds an index on every FK field. The TS
+   builder did not, so the same schema produced different `storageHash`
+   values. We model it as a flag on the relation, applied after client
+   projection (so an excluded relation drops its index). TS authors can now
+   write `index: true`. Whether TS should default to `true` is open.
+2. **Enum member name versus stored value.** PSL `@default(ACTIVE)` names a
+   member and stores its value. The TS builder took only values. The shared
+   code carries both.
+3. **Execution defaults** (`uuid()`, `now()`, `@updatedAt`, `autoincrement`).
+   Only PSL supported these. Spike 1 keeps them internal. Spike 2 makes them
+   public, because PSL can only go through the TS builder if the builder can
+   express them.
+4. **Diagnostics shape.** PSL collects every problem with a span. The builder
+   throws the first. Both now come from one function that returns a list of
+   `{ code, message, at }`. PSL maps `at` to a span through one lookup table.
+   `defineContract` throws the first message.
+
+Rules that stayed PSL-only are syntax and name resolution: unsupported
+blocks and type constructors, unresolved back-relations, missing `@relation`
+attributes, `@id` count, and `@default` function arguments.
+
+## Behavior changes from the old code
+
+Both spikes behave the same here. Each change makes PSL and TS agree.
+
+- PSL now rejects what TS already rejected: `Role[]?`, `String[]`, and an
+  enum named like a built-in scalar (`enum String`).
+- PSL now rejects `@@index([unknown])` and `@@id([unknown])`.
+- `@idb.exclude` on a back-relation list is now rejected.
+- A field with `@unique` declared after `@relation` no longer loses its
+  uniqueness.
+- `temporal.updatedAt()?` is now rejected. `temporal.updatedAt() @unique` now
+  gets an index.
+- TS `fieldDefaults` now also fill values in `create()`
+  (`execution.mutations.defaults`), not only for `setDefault`.
+- Some TS error messages now use PSL wording.
+
+## Where spike 2 is worse than spike 1
+
+1. **Translation loses information.** The TS builder takes values, PSL uses
+   names, so two PSL rules run in the converter instead of the shared code:
+   - _Enum defaults._ The first version passed an unknown `@default(x)`
+     through, and it was accepted whenever `x` matched another member's
+     value. A probe caught this. The converter now resolves member names and
+     reports `IDB_INVALID_ENUM_DEFAULT`. The builder keeps its own value
+     check for TS, so the same rule exists twice.
+   - _Default functions._ The builder has a fixed set of generators, so the
+     converter rejects `foo()` and `uuid(9)`. On an optional field the old
+     code reported `IDB_EXECUTION_DEFAULT_ON_OPTIONAL_FIELD`; the new code
+     reports the unknown function.
+2. **String round trip.** The converter formats field specs such as
+   `"Role[]?"` and the builder parses them back.
+3. **The public API grows with every PSL feature.** Each new PSL construct
+   must first be designed as TS API.
+
+## Where spike 2 is better
+
+- One representation, and it is the one users already write.
+- Anything PSL can say, a TS author can say. Spike 1 leaves TS users without
+  execution defaults.
+- About 8% less code.
+
+## Recommendation
+
+Both are viable. The choice depends on one question: **should the TS builder
+reach feature parity with PSL?**
+
+- **Yes: choose spike 2.** It is smaller, has one representation, and the
+  "TS-only or PSL-only" question becomes ordinary public API design.
+- **No: choose spike 1.** It keeps the public API unchanged and costs about 85
+  lines for the internal spec and the TS adapter.
+
+Either way, the next step is to land the change on a clean branch in reviewed
+chunks, not to merge a spike branch. The old-versus-new oracle should run
+until the last chunk lands.
+
+## Open decisions
+
+- Should the TS builder add the FK index by default, as PSL does? Today TS
+  authors opt in with `index: true`. A default changes `storageHash` for
+  existing TS contracts.
+- Should shared error messages stay PSL-flavored, or should each surface get
+  its own wording?
+- Should `fieldDefaults` filling `create()` be a deliberate TS change? It
+  applies to both spikes.
+
+## Reproduce
+
+```sh
+git checkout spike/psl-via-ts-dsl   # or spike/shared-authoring-spec
+pnpm --filter @prisma-idb/family-idb build
+pnpm --filter @prisma-idb/family-idb test
+```
+
+The oracle files are `test/_psl-oracle.ts` and `test/_ts-oracle.ts`. Set
+`ORACLE_NOTES=<file>` to log message and key-order differences.
+Spike 2 is uncommitted on its branch. Spike 1 is commit 03db1289; its fuller
+write-up is `PLAN_SPIKE_shared_authoring_spec.md`.
