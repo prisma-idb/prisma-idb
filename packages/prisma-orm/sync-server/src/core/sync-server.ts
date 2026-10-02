@@ -140,14 +140,16 @@ function buildOwnershipCheck(
 export function validatePush(
   dag: OwnershipDag,
   contract: SyncServerContract,
+  clientContract: SyncServerContract,
   getKeyField: GetKeyField,
   events: readonly SyncPushEvent[],
   options: { readonly scopeKey: string; readonly codecLookup?: ValidationCodecLookup }
 ): readonly PushValidationResult[] {
   const models = domainModelsAtDefaultNamespace(contract.domain);
+  const clientModels = domainModelsAtDefaultNamespace(clientContract.domain);
 
   return events.map((event) => {
-    if (!dag.clientModels.has(event.model) || !models[event.model]) {
+    if (!dag.clientModels.has(event.model) || !models[event.model] || !clientModels[event.model]) {
       return { eventId: event.id, model: event.model, check: { kind: "unknown-model" } };
     }
     const keyField = getKeyField(contract, event.model);
@@ -167,10 +169,10 @@ export function validatePush(
     }
     if (event.operation !== "delete") {
       // SQL creates may omit nullable fields; patches validate only supplied fields.
-      const optionalFields = Object.entries(models[event.model]!.fields)
+      const optionalFields = Object.entries(clientModels[event.model]!.fields)
         .filter(([, field]) => field.nullable)
         .map(([name]) => name);
-      const result = validateRecord(contract, event.model, event.payload, {
+      const result = validateRecord(clientContract, event.model, event.payload, {
         codecLookup,
         partial: event.operation === "update",
         optionalFields,
@@ -222,7 +224,7 @@ export function buildPullQueries(
 export interface CreateSyncServerOptions {
   /** The full server-side contract (ADR 012) — includes client-excluded models. Any family. */
   readonly contract: SyncServerContract;
-  /** The client-projected contract (ADR 012) — defines which models are ever synced. Any family. */
+  /** The client-projected contract (ADR 012) — defines the synced models and fields to validate. Any family. */
   readonly clientContract: SyncServerContract;
   readonly rootModel: string;
   /** @default defaultGetKeyField (IDB-shaped storage.keyPath) */
@@ -255,7 +257,7 @@ export function createSyncServer(options: CreateSyncServerOptions): SyncServer {
   const codecLookup = options.codecLookup ?? defaultValidationCodecs;
   for (const model of dag.clientModels) {
     try {
-      assertRecordValidator(options.contract, model, { codecLookup });
+      assertRecordValidator(options.clientContract, model, { codecLookup });
     } catch (error) {
       const reason = error instanceof Error ? error.message : "Unable to build record validator";
       throw new Error(
@@ -269,7 +271,7 @@ export function createSyncServer(options: CreateSyncServerOptions): SyncServer {
   return {
     rootModel: dag.rootModel,
     validatePush: (events, pushOptions) =>
-      validatePush(dag, options.contract, getKeyField, events, {
+      validatePush(dag, options.contract, options.clientContract, getKeyField, events, {
         ...pushOptions,
         codecLookup,
       }),

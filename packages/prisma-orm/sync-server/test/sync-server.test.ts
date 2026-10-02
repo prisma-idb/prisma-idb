@@ -89,6 +89,40 @@ describe("createSyncServer", () => {
       expect(invalid?.check).toMatchObject({ kind: "validation-failure", error: "KEYPATH_VALIDATION_FAILURE" });
     });
 
+    it("validates only client-visible fields while resolving ownership from the full model", () => {
+      const contract = kanbanContract();
+      const clientContract = kanbanClientContract();
+      const clientBoard = Object.values(clientContract.domain.namespaces)[0]!.models["Board"]!;
+      delete clientBoard.fields["ownerId"];
+      delete clientBoard.relations["owner"];
+      clientBoard.fields["label"] = { nullable: true, type: { kind: "scalar", codecId: "idb/string@1" } };
+      const getKeyField = vi.fn((_contract: SyncServerContract, _model: string) => "id");
+      const syncServer = createSyncServer({ contract, clientContract, rootModel: "User", getKeyField });
+      const [valid, missingKey, hiddenField, badVisibleCreate, badVisibleUpdate] = syncServer.validatePush(
+        [
+          { id: "valid", model: "Board", operation: "create", payload: { id: "b1" } },
+          { id: "key", model: "Board", operation: "create", payload: {} },
+          { id: "hidden", model: "Board", operation: "update", payload: { id: "b1", ownerId: "u1" } },
+          { id: "create", model: "Board", operation: "create", payload: { id: "b1", label: 42 } },
+          { id: "update", model: "Board", operation: "update", payload: { id: "b1", label: 42 } },
+        ],
+        { scopeKey: "u1" }
+      );
+      expect(valid?.check).toEqual({
+        kind: "scoped",
+        keyField: "id",
+        key: "b1",
+        rootKeyField: "id",
+        scopeKey: "u1",
+        paths: [["owner"]],
+      });
+      expect(missingKey?.check).toMatchObject({ kind: "validation-failure", error: "KEYPATH_VALIDATION_FAILURE" });
+      for (const result of [hiddenField, badVisibleCreate, badVisibleUpdate]) {
+        expect(result?.check).toMatchObject({ kind: "validation-failure", error: "RECORD_VALIDATION_FAILURE" });
+      }
+      expect(getKeyField.mock.calls.every(([checkedContract]) => checkedContract === contract)).toBe(true);
+    });
+
     it("checks updates as patches and deletes as key-only events", () => {
       const results = server().validatePush(
         [
