@@ -9,6 +9,17 @@ import { createSqlSyncAdapter } from "../src/core/create-adapter";
 import { testContract, testDb, seed } from "./helpers";
 
 describe("wire revival", () => {
+  it.each(["pg/date@1", "pg/timestamp@1", "pg/timestamptz@1", "sql/timestamp@1"])(
+    "revives historical %s Date values and keys before validation",
+    (codecId) => {
+      const contract = structuredClone(testContract);
+      const fields = contract.domain.namespaces["public"]!.models["Todo"]!.fields;
+      fields["dueAt"] = { ...fields["dueAt"]!, type: { kind: "scalar", codecId } };
+      const date = "2026-01-02T03:04:05.000Z";
+      expect(reviveWireValues(contract, "Todo", { dueAt: date }, "dueAt")).toEqual({ dueAt: new Date(date) });
+    }
+  );
+
   it("decodes dates, bigint, bytes and scalar lists before native validation", () => {
     const contract = structuredClone(testContract);
     const fields = contract.domain.namespaces["public"]!.models["Todo"]!.fields;

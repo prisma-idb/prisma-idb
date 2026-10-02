@@ -15,3 +15,5 @@ export type {
   SyncServer,
 } from "../core/sync-server";
 export { buildPullQueries, createSyncServer, defaultGetKeyField, validatePush } from "../core/sync-server";
+
+export { defaultValidationCodecs } from "../core/validation-codecs";

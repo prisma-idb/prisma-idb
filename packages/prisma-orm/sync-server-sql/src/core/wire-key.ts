@@ -4,7 +4,11 @@ import type { SyncServerContract } from "@prisma-idb/sync-server";
 
 // These SQL codecs use the same JSON representation as the IDB client.
 export const nativeJsonCodecs: Record<string, string> = {
+  "pg/date@1": "idb/date@1",
+  "pg/timestamp@1": "idb/date@1",
+  "pg/timestamptz@1": "idb/date@1",
   "pg/timestamptz-date@1": "idb/date@1",
+  "sql/timestamp@1": "idb/date@1",
   "pg/int8@1": "idb/bigint@1",
   "pg/unboundedint@1": "idb/bigint@1",
   "pg/bytea@1": "idb/bytes@1",

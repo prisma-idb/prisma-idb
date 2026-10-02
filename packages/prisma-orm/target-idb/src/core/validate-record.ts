@@ -23,6 +23,7 @@ export interface RecordValidationOptions {
 
 const scalarTypes: Record<string, Type> = {
   string: type("string"),
+  "string[]": type("string[]"),
   number: type("number").narrow(Number.isFinite),
   boolean: type("boolean"),
   bigint: type("bigint"),
@@ -116,6 +117,17 @@ function validate(
   } catch (error) {
     return { ok: false, issues: [error instanceof Error ? error.message : "Unable to validate record"] };
   }
+}
+
+/** Throws on unsupported contract validators before a runtime accepts records. */
+export function assertRecordValidator(
+  contract: ContractWithDomain,
+  modelName: string,
+  options: RecordValidationOptions = {}
+): void {
+  const model = domainModelsAtDefaultNamespace(contract.domain)[modelName];
+  if (!model) throw new Error(`Unknown model "${modelName}"`);
+  buildShape(contract, model.fields, options.codecLookup ?? idbCodecLookup, options);
 }
 
 /** Validates native records without stripping extra fields or mutating the input. */

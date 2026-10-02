@@ -16,6 +16,7 @@ for (const name of [
   "inet",
   "bit",
   "varbit",
+  "time",
   "timetz",
   "date-string",
   "timestamp-string",
@@ -30,7 +31,15 @@ for (const name of ["int", "int2", "int4", "int8number", "float", "float4", "flo
 }
 for (const name of ["int8", "unboundedint"]) sqlApplicationTypes[`pg/${name}@1`] = ["bigint"];
 sqlApplicationTypes["pg/bool@1"] = ["boolean"];
-sqlApplicationTypes["pg/timestamptz-date@1"] = ["Date"];
+// rc.5 date/timestamp codecs carry Date; pg/time carries string. rc.6 removed
+// these IDs, but historical contracts still need the same native validation.
+for (const name of ["date", "timestamp", "timestamptz", "timestamptz-date"]) {
+  sqlApplicationTypes[`pg/${name}@1`] = ["Date"];
+}
+sqlApplicationTypes["sql/timestamp@1"] = ["Date"];
+sqlApplicationTypes["pg/text-array@1"] = ["string[]"];
+// Temporal codecs and pg/interval@1 carry objects, not Date/string. They have
+// no default validator; createSyncServer rejects them before accepting pushes.
 sqlApplicationTypes["pg/bytea@1"] = ["Uint8Array"];
 sqlApplicationTypes["pg/json@1"] = ["unknown"];
 sqlApplicationTypes["pg/jsonb@1"] = ["unknown"];

@@ -28,7 +28,11 @@ for (const { check } of checks) {
 }
 ```
 
-Records reject extra fields and undeclared enum values. Creates require all non-nullable fields; updates validate supplied fields, and deletes validate only keys. Validation failures occur before ownership paths are resolved. Other families can provide a native-type `codecLookup` when constructing the server.
+Records reject extra fields and undeclared enum values. Creates require all non-nullable fields; updates validate supplied fields, and deletes validate only keys. Validation failures occur before ownership paths are resolved. The server builds validators for every client-visible model at construction and throws with the model and codec ID if a validator is unavailable. Server-only models are excluded from this check.
+
+The default SQL lookup validates Date codecs (including legacy `pg/date@1`, `pg/timestamp@1`, `pg/timestamptz@1` and `sql/timestamp@1`), string date/time codecs, primitive scalars, JSON, bytes and text arrays against their application values. `pg/*-temporal@1` values are Temporal objects, and `pg/interval@1` values are `{ months, days, micros }` objects; neither has a default validator. Choose Date/string representations for synced date/time fields. Historical codec validation does not restore codecs removed from the installed SQL runtime: re-emit old contracts before using them with rc.12.
+
+Other families can extend the exported `defaultValidationCodecs` with a `codecLookup` that returns supported application names: `string`, `string[]`, `number`, `boolean`, `bigint`, `Date`, `Uint8Array` or `unknown`. Names such as `Temporal.Instant` are rejected at construction. `unknown` deliberately skips scalar type checking and requires the caller to validate that codec's value before pushing; it is not a Temporal or interval validator.
 
 For a SQL database, [`@prisma-idb/sync-server-sql`](https://www.npmjs.com/package/@prisma-idb/sync-server-sql) runs the checks and writes for you.
 

@@ -1,5 +1,5 @@
 import { domainModelsAtDefaultNamespace } from "@prisma/orm-framework/contract/types";
-import { validateRecord, validateKeyFields } from "@prisma-idb/target-idb/runtime";
+import { assertRecordValidator, validateRecord, validateKeyFields } from "@prisma-idb/target-idb/runtime";
 import type { ValidationCodecLookup } from "@prisma-idb/target-idb/runtime";
 import { defaultValidationCodecs } from "./validation-codecs";
 import { resolveAuthorizationPaths } from "./authorization-paths";
@@ -227,7 +227,7 @@ export interface CreateSyncServerOptions {
   readonly rootModel: string;
   /** @default defaultGetKeyField (IDB-shaped storage.keyPath) */
   readonly getKeyField?: GetKeyField;
-  /** Additional families can supply their codecs' native application types. */
+  /** Native application types; unsupported validators throw at construction. */
   readonly codecLookup?: ValidationCodecLookup;
 }
 
@@ -252,13 +252,26 @@ export interface SyncServer {
 export function createSyncServer(options: CreateSyncServerOptions): SyncServer {
   const dag = buildOwnershipDag(options.contract, options.clientContract, options.rootModel);
   const getKeyField = options.getKeyField ?? defaultGetKeyField;
+  const codecLookup = options.codecLookup ?? defaultValidationCodecs;
+  for (const model of dag.clientModels) {
+    try {
+      assertRecordValidator(options.contract, model, { codecLookup });
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : "Unable to build record validator";
+      throw new Error(
+        `createSyncServer: cannot validate model "${model}": ${reason}. ` +
+          "Provide a codecLookup with supported application types or select a Date/string codec. " +
+          "Temporal and interval objects have no default validator."
+      );
+    }
+  }
 
   return {
     rootModel: dag.rootModel,
     validatePush: (events, pushOptions) =>
       validatePush(dag, options.contract, getKeyField, events, {
         ...pushOptions,
-        ...(options.codecLookup ? { codecLookup: options.codecLookup } : {}),
+        codecLookup,
       }),
     buildPullQueries: (logs, pullOptions) => buildPullQueries(dag, options.contract, getKeyField, logs, pullOptions),
   };

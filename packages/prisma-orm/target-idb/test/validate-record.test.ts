@@ -4,7 +4,7 @@ import type {
   ContractField,
   ContractWithDomain,
 } from "@prisma/orm-framework/contract/types";
-import { validateRecord, validateKeyFields, validateKeyPath } from "../src/core/validate-record";
+import { assertRecordValidator, validateRecord, validateKeyFields, validateKeyPath } from "../src/core/validate-record";
 import { idbCodecLookup } from "../src/core/codecs";
 
 function field(codecId: string, extra: Partial<ContractField> = {}): ContractField {
@@ -188,5 +188,26 @@ describe("key validation", () => {
   it("rejects invalid IDB key values even when their codec supports them", () => {
     const schema = contract({ id: field("idb/bool@1") });
     expect(validateKeyPath(schema, "Item", true).ok).toBe(false);
+  });
+});
+
+describe("assertRecordValidator", () => {
+  it("throws for unsupported codecs, including nested value objects", () => {
+    const schema = contract({ details: { nullable: false, type: { kind: "valueObject", name: "Details" } } }, "id", {
+      valueObjects: { Details: { fields: { value: field("custom/object@1") } } },
+    });
+    expect(() => assertRecordValidator(schema, "Item")).toThrow('No validator for codec "custom/object@1"');
+    expect(() => assertRecordValidator(schema, "Ghost")).toThrow('Unknown model "Ghost"');
+  });
+
+  it("supports native string-array codecs without weakening element validation", () => {
+    const schema = contract({ tags: field("custom/text-array@1") });
+    const codecLookup = {
+      targetTypesFor: (id: string) => (id === "custom/text-array@1" ? ["string[]"] : idbCodecLookup.targetTypesFor(id)),
+    };
+    expect(() => assertRecordValidator(schema, "Item", { codecLookup })).not.toThrow();
+    expect(validateRecord(schema, "Item", { id: "a", tags: ["ok"] }, { codecLookup }).ok).toBe(true);
+    for (const tags of ["ok", [null], [1]])
+      expect(validateRecord(schema, "Item", { id: "a", tags }, { codecLookup }).ok).toBe(false);
   });
 });

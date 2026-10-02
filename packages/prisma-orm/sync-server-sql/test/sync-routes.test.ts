@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { createSyncServer, defaultValidationCodecs } from "@prisma-idb/sync-server";
 import { createSqlSyncAdapter } from "../src/core/create-adapter";
 import { applyPush, DEFAULT_MAX_PUSH_BATCH_SIZE } from "../src/core/apply-push";
 import { pull } from "../src/core/pull-changes";
@@ -17,7 +18,79 @@ const create = (id: string, entityType: string, payload: Record<string, unknown>
   payload,
 });
 
+describe("SQL fixture codecs", () => {
+  it("resolves every scalar codec emitted in the fixture contracts", () => {
+    const walk = (value: unknown): void => {
+      if (!value || typeof value !== "object") return;
+      if ("codecId" in value && typeof value.codecId === "string") {
+        expect(defaultValidationCodecs.targetTypesFor(value.codecId), value.codecId).toBeDefined();
+      }
+      for (const child of Object.values(value)) walk(child);
+    };
+    walk(testContract);
+  });
+});
+
 describe("applyPush", () => {
+  it.each(["pg/timestamptz-date@1", "pg/timestamptz@1"])(
+    "validates and applies DateTime creates and updates with %s",
+    async (codecId) => {
+      // rc.12's ORM uses the current Date codec; sync validation also accepts
+      // its historical ID for the same Date-valued timestamptz column.
+      const contract = structuredClone(testContract);
+      const fields = contract.domain.namespaces["public"]!.models["Todo"]!.fields;
+      fields["dueAt"] = { ...fields["dueAt"]!, type: { kind: "scalar", codecId } };
+      const syncServer = createSyncServer({
+        contract,
+        clientContract: {
+          ...contract,
+          domain: {
+            namespaces: {
+              public: {
+                models: Object.fromEntries(
+                  Object.entries(contract.domain.namespaces["public"]!.models).filter(([name]) =>
+                    ["User", "Board", "Todo"].includes(name)
+                  )
+                ),
+              },
+            },
+          },
+        },
+        rootModel: "User",
+        getKeyField: sqlGetKeyField,
+      });
+      const dateAdapter = createSqlSyncAdapter({ contract, syncServer });
+      const db = await testDb();
+      const firstDate = "2026-01-02T03:04:05.000Z";
+      const nextDate = "2026-02-03T04:05:06.000Z";
+      expect(
+        await dateAdapter.applyPush(db, {
+          scopeKey: "u1",
+          events: [
+            create("u", "User", { id: "u1", name: "Ada" }),
+            create("b", "Board", { id: "b1", ownerId: "u1" }),
+            create("t", "Todo", { id: "t1", boardId: "b1", dueAt: firstDate }),
+          ],
+        })
+      ).toEqual({ ok: true, results: ["u", "b", "t"].map((id) => ({ id, success: true })) });
+      expect((await ormRootFor(db, "Todo").first({ id: "t1" }))?.["dueAt"]).toEqual(new Date(firstDate));
+      expect(
+        await dateAdapter.applyPush(db, {
+          scopeKey: "u1",
+          events: [
+            {
+              id: "update-date",
+              entityType: "Todo",
+              operation: "update",
+              payload: { key: "t1", patch: { dueAt: nextDate } },
+            },
+          ],
+        })
+      ).toEqual({ ok: true, results: [{ id: "update-date", success: true }] });
+      expect((await ormRootFor(db, "Todo").first({ id: "t1" }))?.["dueAt"]).toEqual(new Date(nextDate));
+    }
+  );
+
   it("rejects malformed creates, patches and keys without opening an ownership transaction", async () => {
     const transaction = vi.fn();
     const outcome = await adapter.applyPush(
