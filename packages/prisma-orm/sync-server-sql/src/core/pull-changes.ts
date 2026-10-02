@@ -1,6 +1,7 @@
 import type { GetKeyField, SyncServer, SyncServerContract } from "@prisma-idb/sync-server";
 import { ormRootFor } from "./orm-root";
 import { resolvePullRecord } from "./pull";
+import { PushPayloadValidationError } from "./push";
 
 export const DEFAULT_PULL_LIMIT = 50;
 
@@ -107,7 +108,14 @@ export async function pull(
     rows.map(async ({ id: changelogId, keyPath, operation }) => {
       const { model, check } = checksById.get(changelogId)!;
       const op = operation as SqlPullLog["operation"];
-      const record = await resolvePullRecord(db, contract, getKeyField, model, check, keyPath, op);
+      let record: Record<string, unknown> | null;
+      try {
+        record = await resolvePullRecord(db, contract, getKeyField, model, check, keyPath, op);
+      } catch (error) {
+        if (!(error instanceof PushPayloadValidationError) || error.code !== "KEYPATH_VALIDATION_FAILURE") throw error;
+        // Preserve the row and its cursor so client pull validation can report and consume it.
+        record = null;
+      }
       return { changelogId, model, operation: op, keyPath, record };
     })
   );

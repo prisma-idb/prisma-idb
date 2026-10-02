@@ -5,7 +5,8 @@ import { applyPush, DEFAULT_MAX_PUSH_BATCH_SIZE } from "../src/core/apply-push";
 import { pull } from "../src/core/pull-changes";
 import { sqlGetKeyField } from "../src/core/get-key-field";
 import { ormRootFor } from "../src/core/orm-root";
-import { seed, testContract, testDb, testSyncServer } from "./helpers";
+import { PushPayloadValidationError } from "../src/core/push";
+import { seed, testBigSyncServer, testContract, testDb, testSyncServer } from "./helpers";
 
 const adapter = createSqlSyncAdapter({ contract: testContract, syncServer: testSyncServer });
 
@@ -366,6 +367,73 @@ describe("pull", () => {
     const ids = outcome.logs.map((l) => l.changelogId);
     expect(ids.every((id) => UUID_V7.test(id))).toBe(true);
     expect(ids).toEqual([...ids].sort());
+  });
+
+  it.each([0, 1, 2])("preserves malformed key row %s and valid rows across pull pages", async (malformedIndex) => {
+    const db = await testDb();
+    const bigAdapter = createSqlSyncAdapter({ contract: testContract, syncServer: testBigSyncServer });
+    await ormRootFor(db, "BigUser").select("id").create({ id: 1n, name: "Ann" });
+    for (const id of [11n, 12n]) {
+      await ormRootFor(db, "BigItem")
+        .select("id")
+        .create({ id, ownerId: 1n, name: `item ${id}` });
+    }
+    const keys = ["11", "12"];
+    keys.splice(malformedIndex, 0, "invalid-bigint");
+    const ids = keys.map((_, index) => `0190a2b4-7c3e-7d2a-8f1b-3c4d5e6f7a8${index}`);
+    await seed(db, {
+      Changelog: keys.map((keyPath, index) => ({
+        id: ids[index],
+        model: "BigItem",
+        keyPath,
+        operation: "update",
+        scopeKey: "1",
+        outboxEventId: `e${index}`,
+      })),
+    });
+
+    const first = await bigAdapter.pull(db, { scopeKey: "1", limit: 2 });
+    if (!first.ok) throw new Error(first.reason);
+    expect(first.logs.map((log) => log.changelogId)).toEqual(ids.slice(0, 2));
+    const rest = await bigAdapter.pull(db, { scopeKey: "1", lastChangelogId: first.logs.at(-1)!.changelogId });
+    if (!rest.ok) throw new Error(rest.reason);
+    const logs = [...first.logs, ...rest.logs];
+    expect(logs.map((log) => log.changelogId)).toEqual(ids);
+    expect(logs.map((log) => log.keyPath)).toEqual(keys);
+    expect(logs[malformedIndex]).toEqual({
+      changelogId: ids[malformedIndex],
+      model: "BigItem",
+      keyPath: "invalid-bigint",
+      operation: "update",
+      record: null,
+    });
+    expect(logs.filter((log) => log.record !== null).map((log) => log.record)).toEqual([
+      { id: 11n, ownerId: 1n, name: "item 11" },
+      { id: 12n, ownerId: 1n, name: "item 12" },
+    ]);
+    expect(await bigAdapter.pull(db, { scopeKey: "1", lastChangelogId: logs.at(-1)!.changelogId })).toEqual({
+      ok: true,
+      logs: [],
+    });
+  });
+
+  it.each([
+    new Error("database unavailable"),
+    new Error("KEYPATH_VALIDATION_FAILURE"),
+    new PushPayloadValidationError("RECORD_VALIDATION_FAILURE", "unexpected record failure"),
+  ])("propagates record lookup errors: %s", async (error) => {
+    const db = await pushAnnAndBo();
+    const failingDb = {
+      orm: {
+        public: {
+          Changelog: ormRootFor(db, "Changelog"),
+          User: ormRootFor(db, "User"),
+          Todo: ormRootFor(db, "Todo"),
+          Board: { first: vi.fn().mockRejectedValue(error) },
+        },
+      },
+    };
+    await expect(adapter.pull(failingDb, { scopeKey: "u1" })).rejects.toBe(error);
   });
 
   it.each([0, -1, 0.5, 1.5, NaN, Infinity, -Infinity])("rejects invalid limit %s before querying", async (limit) => {
