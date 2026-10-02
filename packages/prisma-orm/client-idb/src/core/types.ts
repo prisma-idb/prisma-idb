@@ -640,41 +640,6 @@ export function extractKeyFromRow(row: Record<string, unknown>, keyPath: IdbKeyP
 }
 
 /**
- * Find the IDB index name for `fieldName` on the given object store, searching
- * `contract.storage.stores[storeName].indexes` by `keyPath` equality.
- *
- * Returns the index name (e.g. `"byEmail"`) when a single-field index whose
- * `keyPath` equals `fieldName` exists, or `undefined` otherwise.
- * Compound (array-`keyPath`) and multi-entry indexes are skipped — the
- * equality-acceleration path this map feeds (`query-shaping.ts`) only peels
- * off a single-field `eq` condition, so a compound index can't be point-range
- * queried from a single field alone. Whether/how to accelerate a compound
- * index (matching *all* its member fields against an AND'd filter) is a
- * cost-based planner decision, deferred to Phase 10.
- */
-export function getIndexForField(contract: IdbContract, storeName: string, fieldName: string): string | undefined {
-  return buildFieldToIndexMap(contract, storeName)[fieldName];
-}
-
-/**
- * Build a field → indexName lookup for every single-field, non-multi-entry
- * index on `storeName`. Shared by {@link getIndexForField} (relation loader,
- * single-field lookups) and {@link IdbStoreAccessorImpl} (top-level scans,
- * which need the whole map to probe combined filter expressions).
- */
-export function buildFieldToIndexMap(contract: IdbContract, storeName: string): Record<string, string> {
-  const storeDef = contract.storage.stores[storeName];
-  const result: Record<string, string> = {};
-  if (storeDef?.indexes === undefined) return result;
-  for (const [indexName, indexDef] of Object.entries(storeDef.indexes)) {
-    if (typeof indexDef.keyPath === "string" && indexDef.multiEntry !== true) {
-      result[indexDef.keyPath] = indexName;
-    }
-  }
-  return result;
-}
-
-/**
  * Resolve a model's named relation to a {@link ContractReferenceRelation} at
  * runtime, or `undefined` when the relation is absent or an embedded relation
  * (no `on` join block). Used by `include()` to find the related model name and
