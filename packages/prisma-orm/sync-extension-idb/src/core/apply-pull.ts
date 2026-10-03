@@ -38,7 +38,6 @@
  * unauthorized record has to stop existing locally, not just stop updating.
  */
 
-import type { IdbAtomicPlan } from "@prisma-idb/driver-idb/runtime";
 import type { IdbContract } from "@prisma-idb/client-idb/orm";
 import {
   getStoreName,
@@ -49,6 +48,7 @@ import {
 } from "@prisma-idb/client-idb/orm";
 import { decodeJsonRecord, validateRecord, validateKeyPath, keyEquals } from "@prisma-idb/target-idb/runtime";
 import type { SyncIdbClient } from "./sync-client";
+import { deleteRecord, getRecord, putRecord } from "./raw-store";
 import { VERSION_META_STORE, versionMetaKey } from "./version-meta";
 import type { LogWithRecord, ApplyPullResult, VersionMetaRecord } from "../types";
 
@@ -155,12 +155,7 @@ async function applyLog<TContract extends IdbContract>(
 
   try {
     const applied = await syncClient.withTransaction([VERSION_META_STORE, ...storeNames], async (scope) => {
-      const metaRows = await scope.execute({
-        kind: "key-get",
-        storeName: VERSION_META_STORE,
-        key: metaId,
-      } as unknown as IdbAtomicPlan);
-      const meta = metaRows[0] as VersionMetaRecord | undefined;
+      const meta = await getRecord<VersionMetaRecord>(scope, VERSION_META_STORE, metaId);
 
       if (meta) {
         if (meta.localChangePending) return false;
@@ -168,39 +163,22 @@ async function applyLog<TContract extends IdbContract>(
       }
 
       if (isDelete) {
-        const rows = await scope.execute({
-          kind: "key-get",
-          storeName,
-          key,
-        } as unknown as IdbAtomicPlan);
-        const row = rows[0];
+        const row = await getRecord(scope, storeName, key);
         if (row) {
           await applyReferentialActionsForRow(scope, contract, log.model, row);
-          await scope.execute({
-            kind: "delete",
-            storeName,
-            key,
-          } as unknown as IdbAtomicPlan);
+          await deleteRecord(scope, storeName, key);
         }
       } else {
-        await scope.execute({
-          kind: "put",
-          storeName,
-          record: record!,
-        } as unknown as IdbAtomicPlan);
+        await putRecord(scope, storeName, record!);
       }
 
-      await scope.execute({
-        kind: "put",
-        storeName: VERSION_META_STORE,
-        record: {
-          id: metaId,
-          model: log.model,
-          key: log.keyPath,
-          lastAppliedChangeId: log.changelogId,
-          localChangePending: false,
-        } satisfies VersionMetaRecord,
-      } as unknown as IdbAtomicPlan);
+      await putRecord(scope, VERSION_META_STORE, {
+        id: metaId,
+        model: log.model,
+        key: log.keyPath,
+        lastAppliedChangeId: log.changelogId,
+        localChangePending: false,
+      } satisfies VersionMetaRecord);
 
       return true;
     });

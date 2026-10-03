@@ -50,11 +50,10 @@ import { extractKeyFromRow, getKeyPath, getStoreName } from "@prisma-idb/client-
 import type { IdbKeyPath } from "@prisma-idb/client-idb/orm";
 import { domainModelsAtDefaultNamespace } from "@prisma/orm-framework/contract/types";
 import type { OutboxEvent, OutboxWriteEntry } from "../types";
+import { OUTBOX_STORE } from "./outbox-store";
 import { VERSION_META_STORE, versionMetaKey } from "./version-meta";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
-
-const OUTBOX_STORE = "_idb_sync_outbox";
 
 type MutationAst = IdbCreateAst | IdbDeleteAst | IdbUpdateAst | IdbCreateAllAst | IdbDeleteAllAst | IdbUpdateAllAst;
 

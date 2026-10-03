@@ -6,15 +6,20 @@
  * through the ORM so as not to trigger the sync interceptor.
  */
 
-import type { IdbAtomicPlan, IdbTransactionScope } from "@prisma-idb/driver-idb/runtime";
+import type { IdbTransactionScope } from "@prisma-idb/driver-idb/runtime";
 import type { IdbClient } from "@prisma-idb/client-idb/client";
 import type { IdbContract } from "@prisma-idb/client-idb/orm";
 import type { OutboxEvent } from "../types";
+import { getRecord, putRecord, scanStore } from "./raw-store";
 import { VERSION_META_STORE } from "./version-meta";
 
 export type { OutboxEvent };
 
-const OUTBOX = "_idb_sync_outbox";
+/** The object store holding pending and finished outbox events. */
+export const OUTBOX_STORE = "_idb_sync_outbox";
+
+/** An event the next push may still send: not yet synced, and not given up on. */
+const isPending = (event: OutboxEvent) => !event.synced && event.retryable;
 
 // ── Read helpers ──────────────────────────────────────────────────────────────
 
@@ -36,19 +41,12 @@ export async function getNextBatch<TContract extends IdbContract>(
   const limit = options?.limit ?? 20;
   const events: OutboxEvent[] = [];
 
-  await client.withTransaction([OUTBOX], async (scope) => {
-    const rows = await scope.execute({
-      kind: "cursor-scan",
-      storeName: OUTBOX,
-    } as unknown as IdbAtomicPlan);
+  await client.withTransaction([OUTBOX_STORE], async (scope) => {
     // Sort by createdAt ascending and apply limit in-memory.
-    const unsorted = rows as unknown as OutboxEvent[];
-    const sorted = unsorted
-      .filter((e) => !e.synced && e.retryable)
-      .sort((a, b) => {
-        const at = (d: Date | null) => (d instanceof Date ? d.getTime() : 0);
-        return at(a.createdAt) - at(b.createdAt);
-      });
+    const sorted = (await scanStore<OutboxEvent>(scope, OUTBOX_STORE)).filter(isPending).sort((a, b) => {
+      const at = (d: Date | null) => (d instanceof Date ? d.getTime() : 0);
+      return at(a.createdAt) - at(b.createdAt);
+    });
     for (const e of sorted.slice(0, limit)) events.push(e);
   });
 
@@ -66,12 +64,8 @@ export async function getNextBatch<TContract extends IdbContract>(
  * naturally doesn't match here — no need to also exclude it by id.
  */
 async function hasOtherPendingOutboxEvents(scope: IdbTransactionScope, versionMetaId: string): Promise<boolean> {
-  const rows = await scope.execute({
-    kind: "cursor-scan",
-    storeName: OUTBOX,
-  } as unknown as IdbAtomicPlan);
-  const events = rows as unknown as OutboxEvent[];
-  return events.some((e) => e.versionMetaId === versionMetaId && !e.synced && e.retryable);
+  const events = await scanStore<OutboxEvent>(scope, OUTBOX_STORE);
+  return events.some((e) => e.versionMetaId === versionMetaId && isPending(e));
 }
 
 /**
@@ -95,34 +89,16 @@ async function clearLocalChangePending(scope: IdbTransactionScope, versionMetaId
   // flag set — clearing it now would let a pull land in between and clobber
   // that still-pending local change.
   if (await hasOtherPendingOutboxEvents(scope, versionMetaId)) return;
-  const metaRows = await scope.execute({
-    kind: "key-get",
-    storeName: VERSION_META_STORE,
-    key: versionMetaId,
-  } as unknown as IdbAtomicPlan);
-  const meta = metaRows[0] as Record<string, unknown> | undefined;
+  const meta = await getRecord(scope, VERSION_META_STORE, versionMetaId);
   if (!meta) return;
-  await scope.execute({
-    kind: "put",
-    storeName: VERSION_META_STORE,
-    record: { ...meta, localChangePending: false },
-  } as unknown as IdbAtomicPlan);
+  await putRecord(scope, VERSION_META_STORE, { ...meta, localChangePending: false });
 }
 
 /** Mark an outbox event as successfully synced. */
 export async function markSynced(scope: IdbTransactionScope, id: string): Promise<void> {
-  const rows = await scope.execute({ kind: "key-get", storeName: OUTBOX, key: id } as unknown as IdbAtomicPlan);
-  const existing = rows[0] as OutboxEvent | undefined;
+  const existing = await getRecord<OutboxEvent>(scope, OUTBOX_STORE, id);
   if (!existing) return;
-  await scope.execute({
-    kind: "put",
-    storeName: OUTBOX,
-    record: {
-      ...existing,
-      synced: true,
-      syncedAt: new Date(),
-    } as unknown as Record<string, unknown>,
-  } as unknown as IdbAtomicPlan);
+  await putRecord(scope, OUTBOX_STORE, { ...existing, synced: true, syncedAt: new Date() });
   await clearLocalChangePending(scope, existing.versionMetaId);
 }
 
@@ -147,21 +123,16 @@ export async function markFailed(
   error: string,
   serverRetryable?: boolean
 ): Promise<void> {
-  const rows = await scope.execute({ kind: "key-get", storeName: OUTBOX, key: id } as unknown as IdbAtomicPlan);
-  const existing = rows[0] as OutboxEvent | undefined;
+  const existing = await getRecord<OutboxEvent>(scope, OUTBOX_STORE, id);
   if (!existing) return;
   const tries = existing.tries + 1;
   const retryable = serverRetryable !== false && tries < 10;
-  await scope.execute({
-    kind: "put",
-    storeName: OUTBOX,
-    record: {
-      ...existing,
-      tries,
-      lastError: error,
-      lastAttemptedAt: new Date(),
-      retryable,
-    } as unknown as Record<string, unknown>,
-  } as unknown as IdbAtomicPlan);
+  await putRecord(scope, OUTBOX_STORE, {
+    ...existing,
+    tries,
+    lastError: error,
+    lastAttemptedAt: new Date(),
+    retryable,
+  });
   if (!retryable) await clearLocalChangePending(scope, existing.versionMetaId);
 }

@@ -5,10 +5,11 @@
 import type { IdbContract } from "@prisma-idb/client-idb/orm";
 import type { SyncIdbClient } from "./sync-client";
 import type { OutboxEvent } from "./outbox-store";
-import { getNextBatch, markSynced, markFailed } from "./outbox-store";
+import { getNextBatch, markSynced, markFailed, OUTBOX_STORE } from "./outbox-store";
 import { applyPull } from "./apply-pull";
 import { createEmitter } from "./emitter";
 import { createPullCursor } from "./pull-cursor";
+import { VERSION_META_STORE } from "./version-meta";
 import type { LogWithRecord, PushResult } from "../types";
 
 // ── Public types ──────────────────────────────────────────────────────────────
@@ -147,7 +148,7 @@ export function createSyncWorker<TContract extends IdbContract>(options: SyncWor
     let pushSynced = 0;
     let pushFailed = 0;
     const results = await withTimeout((signal) => pushHandler(events, signal), requestTimeoutMs, "pushHandler");
-    await syncClient.withTransaction(["_idb_sync_outbox", "_idb_sync_version_meta"], async (scope) => {
+    await syncClient.withTransaction([OUTBOX_STORE, VERSION_META_STORE], async (scope) => {
       for (const result of results) {
         if (result.success) {
           await markSynced(scope, result.id);
