@@ -41,7 +41,8 @@ and `BENCHMARK_RESULT_PATH` override the defaults. To run it by hand, start
 `pnpm dev` and use the form on the page.
 
 In CI, `.github/workflows/benchmark.yml` runs the suite on the PR head and
-the PR base on the same runner. It then gates on a bootstrap 95% confidence
+the PR base on the same runner, twice each in the order head, base, base,
+head, and pools each tree's runs. It then gates on a bootstrap 95% confidence
 interval of the median change (see `@prisma-idb/benchmark-kit`).
 
 ## Changing the schema
