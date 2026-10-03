@@ -1,11 +1,9 @@
-import { idbCodecLookup } from "@prisma-idb/target-idb/runtime";
 import { domainModelsAtDefaultNamespace } from "@prisma/orm-framework/contract/types";
 import type { GetKeyField, PushCheck, SyncServerContract } from "@prisma-idb/sync-server";
-import { nativeJsonCodecs } from "./wire-key";
 import { ormRootFor } from "./orm-root";
 import { checkAuthorization } from "./authorization";
-import { lockScope } from "./scope-lock";
-import { nextChangelogId } from "./changelog-id";
+import { appendChangelogRow, isEventApplied } from "./changelog";
+import { reviveWireValues, WireValidationError } from "./wire-values";
 
 /**
  * The fields `applyPushEvent` actually reads out of a push request's event —
@@ -27,48 +25,6 @@ export interface SqlPushResult {
   readonly success: boolean;
   readonly error?: string;
   readonly retryable?: boolean;
-}
-
-/** Internal payload errors preserve diagnostics for direct callers and stable wire codes. */
-export class PushPayloadValidationError extends Error {
-  constructor(
-    readonly code: "RECORD_VALIDATION_FAILURE" | "KEYPATH_VALIDATION_FAILURE",
-    message: string
-  ) {
-    super(message);
-  }
-}
-
-/** Revive native sync scalar values before shape validation or ORM encoding. */
-export function reviveWireValues(
-  contract: SyncServerContract,
-  model: string,
-  data: Record<string, unknown>,
-  keyField?: string
-): Record<string, unknown> {
-  const fields = domainModelsAtDefaultNamespace(contract.domain)[model]?.fields;
-  if (!fields) return data;
-  return Object.fromEntries(
-    Object.entries(data).map(([name, value]) => {
-      const field = fields[name];
-      const codecId = field?.type.kind === "scalar" ? nativeJsonCodecs[field.type.codecId] : undefined;
-      const codec = codecId ? idbCodecLookup.get(codecId) : undefined;
-      if (!codec) return [name, value];
-      const revive = (input: unknown): unknown => {
-        if (typeof input !== "string") return input;
-        try {
-          return codec.decodeJson(input);
-        } catch {
-          throw new PushPayloadValidationError(
-            name === keyField ? "KEYPATH_VALIDATION_FAILURE" : "RECORD_VALIDATION_FAILURE",
-            "Unable to decode sync field"
-          );
-        }
-      };
-      if (field?.many && Array.isArray(value)) return [name, value.map(revive)];
-      return [name, revive(value)];
-    })
-  );
 }
 
 // Prisma 8 rc.12 short-circuits bare null parameters to SQL NULL before
@@ -105,52 +61,27 @@ export function toSyncPushPayload(operation: string, payload: unknown, keyField:
     throw new Error(`Unsupported operation "${operation}"`);
   }
   if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
-    throw new PushPayloadValidationError(
-      "RECORD_VALIDATION_FAILURE",
-      `Invalid ${operation} payload: expected an object`
-    );
+    throw new WireValidationError("RECORD_VALIDATION_FAILURE", `Invalid ${operation} payload: expected an object`);
   }
   if (operation === "create") return payload as Record<string, unknown>;
   if (operation === "update") {
     const { key, patch } = payload as { key?: unknown; patch?: unknown };
     if (key === undefined) {
-      throw new PushPayloadValidationError(
+      throw new WireValidationError(
         "KEYPATH_VALIDATION_FAILURE",
         `Unsupported update: filter does not pin "${keyField}" by equality`
       );
     }
     // Without an object patch, applyPushEvent would fall through to its delete branch.
     if (typeof patch !== "object" || patch === null || Array.isArray(patch)) {
-      throw new PushPayloadValidationError(
-        "RECORD_VALIDATION_FAILURE",
-        "Invalid update payload: expected an object patch"
-      );
+      throw new WireValidationError("RECORD_VALIDATION_FAILURE", "Invalid update payload: expected an object patch");
     }
     if (keyField in patch && !Object.is((patch as Record<string, unknown>)[keyField], key)) {
-      throw new PushPayloadValidationError("KEYPATH_VALIDATION_FAILURE", "Updates cannot change the primary key");
+      throw new WireValidationError("KEYPATH_VALIDATION_FAILURE", "Updates cannot change the primary key");
     }
     return { ...(patch as Record<string, unknown>), [keyField]: key };
   }
   return { [keyField]: (payload as { key: unknown }).key };
-}
-
-interface ChangelogIdQuery {
-  where(clause: Record<string, unknown>): ChangelogIdQuery;
-  select(...fields: string[]): ChangelogIdQuery;
-  orderBy(fn: (row: { id: { desc(): unknown } }) => unknown): ChangelogIdQuery;
-  limit(n: number): ChangelogIdQuery;
-  all(): Promise<{ id: string }[]>;
-}
-
-/** The highest changelog id `scopeKey` has, or `null` for an empty scope (an index seek on `(scopeKey, id)`). */
-async function maxChangelogId(tx: unknown, scopeKey: string): Promise<string | null> {
-  const [latest] = await (ormRootFor(tx, "Changelog") as unknown as ChangelogIdQuery)
-    .where({ scopeKey })
-    .select("id")
-    .orderBy((row) => row.id.desc())
-    .limit(1)
-    .all();
-  return latest?.id ?? null;
 }
 
 /**
@@ -184,9 +115,7 @@ export async function applyPushEvent(
 
   try {
     return await (db as { transaction<T>(fn: (tx: unknown) => Promise<T>): Promise<T> }).transaction(async (tx) => {
-      const changelogRoot = ormRootFor(tx, "Changelog");
-      const alreadyApplied = await changelogRoot.first({ outboxEventId: event.id });
-      if (alreadyApplied) return { id: event.id, success: true };
+      if (await isEventApplied(tx, event.id)) return { id: event.id, success: true };
 
       const keyField = getKeyField(contract, model);
       const nativeKey = reviveWireValues(contract, model, { [keyField]: check.key }, keyField)[keyField];
@@ -195,9 +124,16 @@ export async function applyPushEvent(
           ? reviveWireValues(contract, model, event.payload as Record<string, unknown>)
           : await ormRootFor(tx, model).first({ [keyField]: nativeKey });
 
-      if (!(await checkAuthorization(tx, contract, getKeyField, model, check, startRow))) {
-        return { id: event.id, success: false, error: "SCOPE_VIOLATION", retryable: false };
-      }
+      const isAuthorized = (row: Record<string, unknown> | null) =>
+        checkAuthorization(tx, contract, getKeyField, model, check, row);
+      const scopeViolation: SqlPushResult = {
+        id: event.id,
+        success: false,
+        error: "SCOPE_VIOLATION",
+        retryable: false,
+      };
+
+      if (!(await isAuthorized(startRow))) return scopeViolation;
 
       // For updates, also re-check ownership against the row *as the patch
       // would leave it* — a patch that reassigns a parent FK (e.g. moves a
@@ -208,11 +144,8 @@ export async function applyPushEvent(
         event.operation === "update"
           ? reviveWireValues(contract, model, (event.payload as { patch: Record<string, unknown> }).patch)
           : undefined;
-      if (patch) {
-        const proposedRow = { ...(startRow as Record<string, unknown>), ...patch };
-        if (!(await checkAuthorization(tx, contract, getKeyField, model, check, proposedRow))) {
-          return { id: event.id, success: false, error: "SCOPE_VIOLATION", retryable: false };
-        }
+      if (patch && !(await isAuthorized({ ...(startRow as Record<string, unknown>), ...patch }))) {
+        return scopeViolation;
       }
 
       const root = ormRootFor(tx, model);
@@ -229,17 +162,10 @@ export async function applyPushEvent(
         throw new Error(`Unsupported operation "${event.operation}"`);
       }
 
-      // The lock is what makes commit order match the order ids are drawn in;
-      // drawing each id above the scope's current max (read under the lock,
-      // so it includes every earlier push's committed row) makes that order
-      // match id order too — whatever process or clock the push ran on.
-      await lockScope(db, tx, contract.target, scopeKey);
-      await changelogRoot.select("id").create({
-        id: nextChangelogId(await maxChangelogId(tx, scopeKey), Date.now()),
+      await appendChangelogRow(db, tx, contract, scopeKey, {
         model,
         keyPath: check.key,
         operation: event.operation,
-        scopeKey,
         outboxEventId: event.id,
       });
 

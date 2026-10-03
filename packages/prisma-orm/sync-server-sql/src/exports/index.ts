@@ -11,10 +11,10 @@ export { checkAuthorization, resolveRootKeyViaPath } from "../core/authorization
 export { applyPushEvent, toSyncPushPayload } from "../core/push";
 export type { SqlPushEvent, SqlPushResult } from "../core/push";
 
-export { resolvePullRecord } from "../core/pull";
+export { resolvePullRecord } from "../core/resolve-pull-record";
 
 export { applyPush, DEFAULT_MAX_PUSH_BATCH_SIZE } from "../core/apply-push";
 export type { ApplyPushInput, ApplyPushOutcome, SqlPushWireEvent } from "../core/apply-push";
 
-export { DEFAULT_PULL_LIMIT, pull } from "../core/pull-changes";
-export type { PullInput, PullOutcome, SqlPullLog } from "../core/pull-changes";
+export { DEFAULT_PULL_LIMIT, pull } from "../core/pull";
+export type { PullInput, PullOutcome, SqlPullLog } from "../core/pull";
