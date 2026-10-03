@@ -147,25 +147,19 @@ export function validatePush(
 ): readonly PushValidationResult[] {
   const models = domainModelsAtDefaultNamespace(contract.domain);
   const clientModels = domainModelsAtDefaultNamespace(clientContract.domain);
+  const codecLookup = options.codecLookup ?? defaultValidationCodecs;
 
-  return events.map((event) => {
+  // Shape checks run before the ownership walk (ADR 015), so a malformed
+  // event never reaches an ownership query.
+  function checkEvent(event: SyncPushEvent): PushCheck {
     if (!dag.clientModels.has(event.model) || !models[event.model] || !clientModels[event.model]) {
-      return { eventId: event.id, model: event.model, check: { kind: "unknown-model" } };
+      return { kind: "unknown-model" };
     }
     const keyField = getKeyField(contract, event.model);
-    const codecLookup = options.codecLookup ?? defaultValidationCodecs;
     const keyValue = event.payload?.[keyField];
     const keyResult = validateKeyFields(contract, event.model, { [keyField]: keyValue }, [keyField], { codecLookup });
     if (!keyResult.ok) {
-      return {
-        eventId: event.id,
-        model: event.model,
-        check: {
-          kind: "validation-failure",
-          error: "KEYPATH_VALIDATION_FAILURE",
-          issues: keyResult.issues,
-        },
-      };
+      return { kind: "validation-failure", error: "KEYPATH_VALIDATION_FAILURE", issues: keyResult.issues };
     }
     if (event.operation !== "delete") {
       // SQL creates may omit nullable fields; patches validate only supplied fields.
@@ -178,18 +172,10 @@ export function validatePush(
         optionalFields,
       });
       if (!result.ok) {
-        return {
-          eventId: event.id,
-          model: event.model,
-          check: {
-            kind: "validation-failure",
-            error: "RECORD_VALIDATION_FAILURE",
-            issues: result.issues,
-          },
-        };
+        return { kind: "validation-failure", error: "RECORD_VALIDATION_FAILURE", issues: result.issues };
       }
     }
-    const check = buildOwnershipCheck(
+    return buildOwnershipCheck(
       dag,
       contract,
       getKeyField,
@@ -198,8 +184,9 @@ export function validatePush(
       (event.wirePayload ?? event.payload)[keyField],
       options.scopeKey
     );
-    return { eventId: event.id, model: event.model, check };
-  });
+  }
+
+  return events.map((event) => ({ eventId: event.id, model: event.model, check: checkEvent(event) }));
 }
 
 export function buildPullQueries(

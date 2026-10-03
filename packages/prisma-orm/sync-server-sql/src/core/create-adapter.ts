@@ -1,12 +1,12 @@
 import type { GetKeyField, OwnershipCheck, PushCheck, SyncServer, SyncServerContract } from "@prisma-idb/sync-server";
 import type { ApplyPushInput, ApplyPushOutcome } from "./apply-push";
-import type { PullInput, PullOutcome } from "./pull-changes";
+import type { PullInput, PullOutcome } from "./pull";
 import type { SqlPushEvent, SqlPushResult } from "./push";
 import { sqlGetKeyField } from "./get-key-field";
 import { applyPushEvent as applyPushEventImpl, toSyncPushPayload } from "./push";
-import { resolvePullRecord as resolvePullRecordImpl } from "./pull";
+import { resolvePullRecord as resolvePullRecordImpl } from "./resolve-pull-record";
 import { applyPush as applyPushImpl } from "./apply-push";
-import { pull as pullImpl } from "./pull-changes";
+import { pull as pullImpl } from "./pull";
 
 export interface CreateSqlSyncAdapterOptions {
   readonly contract: SyncServerContract;

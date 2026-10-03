@@ -40,17 +40,19 @@
 
 import type { IdbAtomicPlan } from "@prisma-idb/driver-idb/runtime";
 import type { IdbContract } from "@prisma-idb/client-idb/orm";
-import { getStoreName, collectDeleteStoreNames, applyReferentialActionsForRow } from "@prisma-idb/client-idb/orm";
+import {
+  getStoreName,
+  getKeyPath,
+  extractKeyFromRow,
+  collectDeleteStoreNames,
+  applyReferentialActionsForRow,
+} from "@prisma-idb/client-idb/orm";
 import { decodeJsonRecord, validateRecord, validateKeyPath, keyEquals } from "@prisma-idb/target-idb/runtime";
-import { domainModelsAtDefaultNamespace } from "@prisma/orm-framework/contract/types";
 import type { SyncIdbClient } from "./sync-client";
+import { VERSION_META_STORE, versionMetaKey } from "./version-meta";
 import type { LogWithRecord, ApplyPullResult, VersionMetaRecord } from "../types";
 
-const VERSION_META = "_idb_sync_version_meta";
-
-function versionMetaKey(model: string, key: unknown): string {
-  return `${model}::${JSON.stringify(key)}`;
-}
+type LogOutcome = "applied" | "skipped" | "validation-failure";
 
 export async function applyPull<TContract extends IdbContract>(
   syncClient: SyncIdbClient<TContract>,
@@ -62,7 +64,7 @@ export async function applyPull<TContract extends IdbContract>(
   let lastChangelogId: string | null = null;
   const contract = syncClient.contract;
 
-  const rawOrmAny = syncClient.rawClient.orm as unknown as Record<string, unknown>;
+  const rawOrm = syncClient.rawClient.orm as unknown as Record<string, unknown>;
 
   for (const log of logs) {
     // The ORM's accessors are keyed by store name (contract.roots keys), not
@@ -70,28 +72,61 @@ export async function applyPull<TContract extends IdbContract>(
     // to `"users"` before it's a valid lookup key here. Comparing against
     // `log.model` directly always missed (store name almost never equals
     // model name), so every log was silently treated as "unknown model".
-    if (!rawOrmAny[getStoreName(contract, log.model)]) {
+    if (!rawOrm[getStoreName(contract, log.model)]) {
       skipped++;
       continue;
     }
 
-    const wasApplied = await applyLog(syncClient, contract, log);
+    const outcome = await applyLog(syncClient, contract, log);
 
-    if (wasApplied === "applied" || wasApplied === "validation-failure") {
-      if (wasApplied === "applied") applied++;
-      else {
-        skipped++;
-        validationFailed++;
-      }
-      if (lastChangelogId === null || log.changelogId > lastChangelogId) {
-        lastChangelogId = log.changelogId;
-      }
-    } else {
-      skipped++;
+    if (outcome === "applied") applied++;
+    else skipped++;
+    if (outcome === "validation-failure") validationFailed++;
+
+    // Applied and corrupt rows are consumed by the cursor; other skips are not.
+    if (outcome !== "skipped" && (lastChangelogId === null || log.changelogId > lastChangelogId)) {
+      lastChangelogId = log.changelogId;
     }
   }
 
   return { applied, skipped, validationFailed, lastChangelogId };
+}
+
+/**
+ * Decodes a pulled log's key and record to native values and validates them
+ * against the client contract, all before any transaction opens. `null`
+ * means the log is corrupt, including any decode failure (for example an
+ * invalid bigint wire value). A delete or revoked-ownership log has no
+ * record to validate, so its `record` is `null`.
+ */
+function decodePullLog<TContract extends IdbContract>(
+  contract: TContract,
+  log: LogWithRecord,
+  isDelete: boolean
+): { key: IDBValidKey; record: Record<string, unknown> | null } | null {
+  try {
+    const keyPath = getKeyPath(contract, log.model);
+    const fields = typeof keyPath === "string" ? [keyPath] : keyPath;
+    // A compound key arrives as an array, one wire value per key field.
+    const wireValues = typeof keyPath === "string" ? [log.keyPath] : log.keyPath;
+    if (!Array.isArray(wireValues) || wireValues.length !== fields.length) return null;
+
+    const keyRecord = decodeJsonRecord(
+      contract.domain,
+      log.model,
+      Object.fromEntries(fields.map((name, i) => [name, wireValues[i]]))
+    );
+    const key = extractKeyFromRow(keyRecord, keyPath);
+    if (!validateKeyPath(contract, log.model, key).ok) return null;
+    if (isDelete) return { key, record: null };
+
+    const record = decodeJsonRecord(contract.domain, log.model, log.record!);
+    if (!validateRecord(contract, log.model, record).ok) return null;
+    if (!keyEquals(key, extractKeyFromRow(record, keyPath))) return null;
+    return { key, record };
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -107,50 +142,22 @@ async function applyLog<TContract extends IdbContract>(
   syncClient: SyncIdbClient<TContract>,
   contract: TContract,
   log: LogWithRecord
-): Promise<"applied" | "skipped" | "validation-failure"> {
+): Promise<LogOutcome> {
   if (log.validationError === "KEYPATH_VALIDATION_FAILURE") return "validation-failure";
 
   const storeName = getStoreName(contract, log.model);
   const isDelete = log.operation === "delete" || log.record === null;
   const storeNames = isDelete ? collectDeleteStoreNames(contract, log.model) : [storeName];
-  let metaId: string;
-  let decodedRecord: Record<string, unknown> | null = null;
-  let decodedKey: unknown;
-  try {
-    const keyPath = domainModelsAtDefaultNamespace(contract.domain)[log.model]!.storage["keyPath"];
-    const fields = typeof keyPath === "string" ? [keyPath] : (keyPath as string[]);
-    if (
-      !Array.isArray(fields) ||
-      (typeof keyPath !== "string" && (!Array.isArray(log.keyPath) || log.keyPath.length !== fields.length))
-    )
-      return "validation-failure";
-    const keyRecord = decodeJsonRecord(
-      contract.domain,
-      log.model,
-      Object.fromEntries(
-        fields.map((name, i) => [name, typeof keyPath === "string" ? log.keyPath : (log.keyPath as unknown[])[i]])
-      )
-    );
-    decodedKey = typeof keyPath === "string" ? keyRecord[keyPath] : fields.map((name) => keyRecord[name]);
-    if (!validateKeyPath(contract, log.model, decodedKey).ok) return "validation-failure";
-    metaId = versionMetaKey(log.model, log.keyPath);
-    if (!isDelete) {
-      decodedRecord = decodeJsonRecord(contract.domain, log.model, log.record!);
-      if (!validateRecord(contract, log.model, decodedRecord).ok) return "validation-failure";
-      const recordKey =
-        typeof keyPath === "string" ? decodedRecord[keyPath] : fields.map((name) => decodedRecord![name]);
-      if (!keyEquals(decodedKey as IDBValidKey, recordKey as IDBValidKey)) return "validation-failure";
-    }
-  } catch {
-    // Decode failures (for example an invalid bigint wire value) are corrupt rows too.
-    return "validation-failure";
-  }
+  const decoded = decodePullLog(contract, log, isDelete);
+  if (!decoded) return "validation-failure";
+  const { key, record } = decoded;
+  const metaId = versionMetaKey(log.model, log.keyPath);
 
   try {
-    const applied = await syncClient.withTransaction([VERSION_META, ...storeNames], async (scope) => {
+    const applied = await syncClient.withTransaction([VERSION_META_STORE, ...storeNames], async (scope) => {
       const metaRows = await scope.execute({
         kind: "key-get",
-        storeName: VERSION_META,
+        storeName: VERSION_META_STORE,
         key: metaId,
       } as unknown as IdbAtomicPlan);
       const meta = metaRows[0] as VersionMetaRecord | undefined;
@@ -164,7 +171,7 @@ async function applyLog<TContract extends IdbContract>(
         const rows = await scope.execute({
           kind: "key-get",
           storeName,
-          key: decodedKey as IDBValidKey,
+          key,
         } as unknown as IdbAtomicPlan);
         const row = rows[0];
         if (row) {
@@ -172,20 +179,20 @@ async function applyLog<TContract extends IdbContract>(
           await scope.execute({
             kind: "delete",
             storeName,
-            key: decodedKey as IDBValidKey,
+            key,
           } as unknown as IdbAtomicPlan);
         }
       } else {
         await scope.execute({
           kind: "put",
           storeName,
-          record: decodedRecord!,
+          record: record!,
         } as unknown as IdbAtomicPlan);
       }
 
       await scope.execute({
         kind: "put",
-        storeName: VERSION_META,
+        storeName: VERSION_META_STORE,
         record: {
           id: metaId,
           model: log.model,

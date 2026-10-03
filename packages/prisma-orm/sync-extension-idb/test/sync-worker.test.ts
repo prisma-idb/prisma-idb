@@ -435,6 +435,26 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
       expect(cursors).toEqual([null, changelogId(9), changelogId(10), changelogId(11)]);
     });
 
+    it("never moves the cursor back when a batch only carries older ids", async () => {
+      const { client } = await createTestSyncClient();
+      const batches: LogWithRecord[][] = [[userLog(changelogId(10), "u10")], [userLog(changelogId(9), "u9")]];
+      const cursors: (string | null)[] = [];
+      const worker = trackedWorker({
+        syncClient: client,
+        pushHandler: async () => [],
+        pullHandler: async (from) => {
+          cursors.push(from);
+          return batches.shift() ?? [];
+        },
+      });
+
+      await worker.forceSync();
+      await worker.forceSync();
+      await worker.forceSync();
+
+      expect(cursors).toEqual([null, changelogId(10), changelogId(10)]);
+    });
+
     it("resumes from getCursor's value on the first pull and loads it only once", async () => {
       const { client } = await createTestSyncClient();
       const from: (string | null)[] = [];

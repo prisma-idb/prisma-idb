@@ -1,6 +1,7 @@
 import type { GetKeyField, SyncServer, SyncPushEvent, SyncServerContract } from "@prisma-idb/sync-server";
-import { applyPushEvent, toSyncPushPayload, reviveWireValues, PushPayloadValidationError } from "./push";
+import { applyPushEvent, toSyncPushPayload } from "./push";
 import type { SqlPushResult } from "./push";
+import { reviveWireValues, WireValidationError } from "./wire-values";
 
 /**
  * Generous headroom over the browser client's own batch size (default 20) —
@@ -100,12 +101,7 @@ export async function applyPush(
       resolved.set(event.id, {
         id: event.id,
         success: false,
-        error:
-          err instanceof PushPayloadValidationError
-            ? err.code
-            : err instanceof Error
-              ? err.message
-              : "Unsupported event",
+        error: err instanceof WireValidationError ? err.code : err instanceof Error ? err.message : "Unsupported event",
         retryable: false,
       });
     }

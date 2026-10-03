@@ -2,10 +2,10 @@ import { describe, expect, it, vi } from "vitest";
 import { createSyncServer, defaultValidationCodecs } from "@prisma-idb/sync-server";
 import { createSqlSyncAdapter } from "../src/core/create-adapter";
 import { applyPush, DEFAULT_MAX_PUSH_BATCH_SIZE } from "../src/core/apply-push";
-import { pull } from "../src/core/pull-changes";
+import { pull } from "../src/core/pull";
 import { sqlGetKeyField } from "../src/core/get-key-field";
 import { ormRootFor } from "../src/core/orm-root";
-import { PushPayloadValidationError } from "../src/core/push";
+import { WireValidationError } from "../src/core/wire-values";
 import { seed, testBigSyncServer, testContract, testDb, testSyncServer } from "./helpers";
 
 const adapter = createSqlSyncAdapter({ contract: testContract, syncServer: testSyncServer });
@@ -420,7 +420,7 @@ describe("pull", () => {
   it.each([
     new Error("database unavailable"),
     new Error("KEYPATH_VALIDATION_FAILURE"),
-    new PushPayloadValidationError("RECORD_VALIDATION_FAILURE", "unexpected record failure"),
+    new WireValidationError("RECORD_VALIDATION_FAILURE", "unexpected record failure"),
   ])("propagates record lookup errors: %s", async (error) => {
     const db = await pushAnnAndBo();
     const failingDb = {
