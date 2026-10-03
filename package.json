@@ -14,6 +14,7 @@
     "test:generator-sync": "turbo run test --filter=@prisma-idb/kanban-example",
     "test:generator-schema": "turbo run test --filter=@prisma-idb/schema-gen-tests",
     "test:benchmark": "turbo run test --filter=@prisma-idb/benchmark",
+    "test:benchmark-unit": "turbo run test:unit --filter=@prisma-idb/benchmark-kit --filter=@prisma-idb/prisma-orm-benchmark",
     "test:prisma-orm-benchmark": "turbo run test --filter=@prisma-idb/prisma-orm-benchmark",
     "benchmark:local": "bash scripts/benchmark-local.sh",
     "test:watch": "turbo run test:watch --no-cache",

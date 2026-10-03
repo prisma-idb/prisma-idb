@@ -2,6 +2,8 @@ import { defineConfig, devices } from "@playwright/test";
 
 export default defineConfig({
   testDir: "./test",
+  // `*.test.ts` files are vitest unit tests.
+  testMatch: "**/*.spec.ts",
   fullyParallel: false,
   workers: 1,
   timeout: 20 * 60 * 1000,

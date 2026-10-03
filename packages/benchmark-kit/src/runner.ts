@@ -4,14 +4,19 @@ import type { BenchmarkConfig, BenchmarkOperationResult, BenchmarkProgress, Benc
 /**
  * One benchmarked operation.
  *
- * `prepare` runs before every warmup and measured sample and is not timed.
- * Only `run` is timed. The context `prepare` returns is passed to `run`.
+ * `prepare` runs before every warmup and measured sample and `cleanup` runs
+ * after it. Neither is timed, only `run` is. The context `prepare` returns is
+ * passed to `run` and `cleanup`.
+ * Samples of different operations are interleaved, so no operation may leak
+ * data into the next sample: either `cleanup` removes whatever `run` added, or
+ * every `prepare` rebuilds the data from scratch, as the generator suite does.
  */
 export interface BenchmarkOperationDefinition<Client, Context, OperationId extends string = string> {
   operationId: OperationId;
   label: string;
   prepare: (client: Client, datasetSize: number) => Promise<Context>;
   run: (client: Client, datasetSize: number, context: Context) => Promise<void>;
+  cleanup?: (client: Client, datasetSize: number, context: Context) => Promise<void>;
 }
 
 export interface RunBenchmarkSuiteOptions<Client, Context, OperationId extends string> {
@@ -32,9 +37,15 @@ function throwIfAborted(signal?: AbortSignal): void {
 }
 
 /**
- * Runs every operation's warmup and measured samples in order, and returns
- * the per-operation samples and summaries. Runs in the browser: it reads
- * `navigator.userAgent` and `performance.now()`.
+ * Runs the warmup and measured samples and returns the per-operation samples
+ * and summaries. Runs in the browser: it reads `navigator.userAgent` and
+ * `performance.now()`.
+ *
+ * Samples are taken round-robin, one per operation per round, rather than all
+ * of one operation's samples back to back. A slow stretch on a shared CI
+ * machine (a noisy neighbour, a GC pause) then spreads thinly over every
+ * operation instead of shifting all samples of one, which the comparison
+ * would read as a regression.
  */
 export async function runBenchmarkSuite<Client, Context, OperationId extends string>(
   options: RunBenchmarkSuiteOptions<Client, Context, OperationId>
@@ -46,50 +57,32 @@ export async function runBenchmarkSuite<Client, Context, OperationId extends str
   const totalSteps = definitions.length * (config.warmupRuns + config.measuredRuns);
   let completedSteps = 0;
 
-  const operations: BenchmarkOperationResult<OperationId>[] = [];
+  const samplesByOperation = definitions.map((): number[] => []);
 
-  for (const definition of definitions) {
-    for (let warmup = 0; warmup < config.warmupRuns; warmup += 1) {
-      throwIfAborted(signal);
-      const context = await definition.prepare(client, config.datasetSize);
-      throwIfAborted(signal);
-      await definition.run(client, config.datasetSize, context);
-      completedSteps += 1;
-      onProgress?.({
-        completedSteps,
-        totalSteps,
-        currentOperationLabel: definition.label,
-        phase: "warmup",
-      });
-    }
+  for (let round = 0; round < config.warmupRuns + config.measuredRuns; round += 1) {
+    const phase = round < config.warmupRuns ? "warmup" : "measure";
 
-    const samplesMs: number[] = [];
-
-    for (let measureIndex = 0; measureIndex < config.measuredRuns; measureIndex += 1) {
+    for (const [index, definition] of definitions.entries()) {
       throwIfAborted(signal);
       const context = await definition.prepare(client, config.datasetSize);
       throwIfAborted(signal);
       const start = performance.now();
       await definition.run(client, config.datasetSize, context);
       const end = performance.now();
-      samplesMs.push(end - start);
+      await definition.cleanup?.(client, config.datasetSize, context);
+      if (phase === "measure") samplesByOperation[index].push(end - start);
       throwIfAborted(signal);
       completedSteps += 1;
-      onProgress?.({
-        completedSteps,
-        totalSteps,
-        currentOperationLabel: definition.label,
-        phase: "measure",
-      });
+      onProgress?.({ completedSteps, totalSteps, currentOperationLabel: definition.label, phase });
     }
-
-    operations.push({
-      operationId: definition.operationId,
-      label: definition.label,
-      samplesMs,
-      summary: summarizeSamples(samplesMs),
-    });
   }
+
+  const operations: BenchmarkOperationResult<OperationId>[] = definitions.map((definition, index) => ({
+    operationId: definition.operationId,
+    label: definition.label,
+    samplesMs: samplesByOperation[index],
+    summary: summarizeSamples(samplesByOperation[index]),
+  }));
 
   const runEnd = performance.now();
   const completedAt = nowIso();

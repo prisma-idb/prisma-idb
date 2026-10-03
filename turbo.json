@@ -47,6 +47,10 @@
       ],
       "outputs": []
     },
+    "test:unit": {
+      "dependsOn": ["^build"],
+      "outputs": []
+    },
     "generate": {
       "outputs": ["src/lib/generated/**", "prisma/generated/**"],
       "dependsOn": ["@prisma-idb/idb-client-generator#build"],

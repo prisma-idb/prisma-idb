@@ -4,7 +4,13 @@ name: Benchmark Regression
 # - generator:  apps/benchmark, the old code generator's client.
 # - prisma-orm: apps/prisma-orm-benchmark, the @prisma-idb/client-idb ORM.
 # Both use @prisma-idb/benchmark-kit for the runner, the bootstrap-CI
-# comparison and the PR comment.
+# comparison and the PR comment. The suites share one PR comment, which the
+# `publish-benchmark-pr-comment` job assembles from their reports.
+#
+# A PR is compared against its base in the order head, base, base, head. One
+# run per tree in a fixed order measured whichever ran first as slower, even
+# on PRs that change nothing a benchmark touches. The two runs of each tree
+# are pooled.
 
 on:
   push:
@@ -49,22 +55,19 @@ jobs:
       matrix:
         suite:
           - id: generator
-            title: Benchmark Regression Report (generator client)
+            title: generator client
             dir: apps/benchmark
             # The generated client is gitignored, so it's regenerated per checkout.
             prepare: pnpm generate
             dataset-size: "1000"
-            # Kept unsuffixed so the existing PR comment keeps being updated.
-            marker: "<!-- benchmark-regression-report -->"
           - id: prisma-orm
-            title: Benchmark Regression Report (prisma-orm client)
+            title: prisma-orm client
             dir: apps/prisma-orm-benchmark
             # The app consumes the built dist/ of the workspace packages.
             prepare: pnpm turbo run build --filter=@prisma-idb/prisma-orm-benchmark^...
             # Large enough that a full scan costs clearly more than the
             # gate's 5ms absolute floor.
             dataset-size: "5000"
-            marker: "<!-- benchmark-regression-report:prisma-orm -->"
 
     env:
       BENCHMARK_DATASET_SIZE: ${{ matrix.suite.dataset-size }}
@@ -109,7 +112,7 @@ jobs:
       - name: Run benchmark suite (PR head)
         working-directory: ${{ matrix.suite.dir }}
         env:
-          BENCHMARK_RESULT_PATH: ${{ runner.temp }}/benchmark-results/current.json
+          BENCHMARK_RESULT_PATH: ${{ runner.temp }}/benchmark-results/current-1.json
           NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN: ""
           NEXT_PUBLIC_POSTHOG_HOST: "https://us.i.posthog.com"
         run: |
@@ -182,7 +185,16 @@ jobs:
         if: steps.base.outputs.has-suite == 'true'
         working-directory: ${{ matrix.suite.dir }}
         env:
-          BENCHMARK_RESULT_PATH: ${{ runner.temp }}/benchmark-results/baseline.json
+          BENCHMARK_RESULT_PATH: ${{ runner.temp }}/benchmark-results/baseline-1.json
+          NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN: ""
+          NEXT_PUBLIC_POSTHOG_HOST: "https://us.i.posthog.com"
+        run: pnpm benchmark:ci
+
+      - name: Run benchmark suite again (PR base)
+        if: steps.base.outputs.has-suite == 'true'
+        working-directory: ${{ matrix.suite.dir }}
+        env:
+          BENCHMARK_RESULT_PATH: ${{ runner.temp }}/benchmark-results/baseline-2.json
           NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN: ""
           NEXT_PUBLIC_POSTHOG_HOST: "https://us.i.posthog.com"
         run: pnpm benchmark:ci
@@ -193,15 +205,29 @@ jobs:
           find . -name node_modules -type d -prune -exec rm -rf {} +
           pnpm install --frozen-lockfile
 
+      - name: Prepare benchmark app (PR head, again)
+        if: steps.base.outputs.has-suite == 'true'
+        working-directory: ${{ matrix.suite.dir }}
+        run: ${{ matrix.suite.prepare }}
+        env:
+          DATABASE_URL: "postgresql://placeholder@localhost:5432/placeholder"
+
+      - name: Run benchmark suite again (PR head)
+        if: steps.base.outputs.has-suite == 'true'
+        working-directory: ${{ matrix.suite.dir }}
+        env:
+          BENCHMARK_RESULT_PATH: ${{ runner.temp }}/benchmark-results/current-2.json
+          NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN: ""
+          NEXT_PUBLIC_POSTHOG_HOST: "https://us.i.posthog.com"
+        run: pnpm benchmark:ci
+
       - name: Compare benchmarks
         if: steps.base.outputs.has-suite == 'true'
         working-directory: ${{ matrix.suite.dir }}
         run: |
-          test -f "$RESULTS_DIR/baseline.json"
-          test -f "$RESULTS_DIR/current.json"
           pnpm benchmark:compare \
-            --baseline "$RESULTS_DIR/baseline.json" \
-            --current "$RESULTS_DIR/current.json" \
+            --baseline "$RESULTS_DIR/baseline-1.json,$RESULTS_DIR/baseline-2.json" \
+            --current "$RESULTS_DIR/current-1.json,$RESULTS_DIR/current-2.json" \
             --threshold 10 \
             --title "${{ matrix.suite.title }}" \
             --json-out "$RESULTS_DIR/report.json" \
@@ -213,10 +239,13 @@ jobs:
           NOTICE="The PR base has no ${{ matrix.suite.dir }}, so there is no baseline to compare against."
           jq -n --arg notice "$NOTICE" '{isAdvisory: true, shouldFail: false, notices: [$notice]}' > "$RESULTS_DIR/report.json"
           {
-            echo "## ${{ matrix.suite.title }}"
+            echo "<details>"
+            echo "<summary><b>${{ matrix.suite.title }}</b>: ℹ️ advisory</summary>"
             echo
             echo "> [!NOTE]"
             echo "> $NOTICE This run's results are in the workflow artifacts."
+            echo
+            echo "</details>"
           } > "$RESULTS_DIR/report.md"
 
       - name: Enforce benchmark regression gate
@@ -227,14 +256,6 @@ jobs:
             exit 1
           fi
 
-      - name: Publish benchmark PR comment
-        if: ${{ !cancelled() && github.event.pull_request.head.repo.full_name == github.repository }}
-        continue-on-error: true
-        working-directory: ${{ matrix.suite.dir }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: pnpm benchmark:comment --body-file "$RESULTS_DIR/report.md" --marker "${{ matrix.suite.marker }}"
-
       - name: Upload benchmark artifacts
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -242,6 +263,58 @@ jobs:
           name: benchmark-results-${{ matrix.suite.id }}
           path: ${{ runner.temp }}/benchmark-results/
           retention-days: 30
+
+  # One comment for both suites: the matrix legs each upload a report, and this
+  # job joins them. It runs even when a leg failed, since a failing gate is
+  # what the comment is for.
+  publish-benchmark-pr-comment:
+    needs: benchmark-pr-compare
+    if: ${{ !cancelled() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: lts/*
+          cache: pnpm
+
+      - name: Install benchmark-kit dependencies
+        run: pnpm install --frozen-lockfile --filter @prisma-idb/benchmark-kit
+
+      - name: Download suite reports
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          pattern: benchmark-results-*
+          path: ${{ runner.temp }}/downloaded
+
+      - name: Assemble comment
+        run: |
+          {
+            echo "## Benchmark regression report"
+            echo
+            for suite in generator prisma-orm; do
+              REPORT="$RUNNER_TEMP/downloaded/benchmark-results-$suite/report.md"
+              if [ -f "$REPORT" ]; then
+                cat "$REPORT"
+              else
+                echo "- ⚠️ **$suite client**: no report was produced, see the workflow run."
+              fi
+              echo
+            done
+            echo "<sub>[Workflow run]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)</sub>"
+          } > "$RUNNER_TEMP/comment.md"
+
+      - name: Publish benchmark PR comment
+        working-directory: packages/benchmark-kit
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: pnpm exec tsx src/cli/publish-benchmark-pr-comment.ts --body-file "$RUNNER_TEMP/comment.md"
 
   run-main-benchmark:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'

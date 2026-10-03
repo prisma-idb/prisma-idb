@@ -4,8 +4,10 @@ import { authorId, BOOKS_PER_AUTHOR, itemId, type BenchmarkClient } from "./data
 
 /**
  * Read operations run against the database seeded once before the suite.
- * Mutating operations insert the rows they destroy in `prepare` (untimed),
- * so every store keeps its seeded size from one sample to the next.
+ * Mutating operations insert the rows they destroy in `prepare` and delete
+ * the rows they create in `cleanup` (both untimed), so every store keeps its
+ * seeded size from one sample to the next. The runner interleaves operations,
+ * so none may leave data behind for another to see.
  *
  * The shapes mirror the plan-shape gate in `client-idb`: each one is either
  * a query an index can serve, a control that must scan (no usable index),
@@ -76,6 +78,8 @@ function read(
 }
 
 let uniqueCounter = 0;
+
+const createdBookId = (i: number) => `book-created-${i}`;
 
 export const operationDefinitions: readonly Definition[] = [
   // ── Controls and already-accelerated shapes ──
@@ -231,20 +235,21 @@ export const operationDefinitions: readonly Definition[] = [
     },
   },
   {
-    // Last: every sample adds books, so later operations would see a
-    // larger store.
     operationId: "create-with-fk-check",
     label: `create, foreign key validation (×${QUICK})`,
     prepare: noop,
     run: async (c) => {
       for (let i = 0; i < QUICK; i++) {
         await c.orm.books.create({
-          id: `book-created-${++uniqueCounter}`,
+          id: createdBookId(i),
           authorId: authorId(1),
           publisherId: "p-main",
           title: "Created",
         });
       }
+    },
+    cleanup: async (c) => {
+      for (let i = 0; i < QUICK; i++) await c.orm.books.delete(createdBookId(i));
     },
   },
 ];

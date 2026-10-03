@@ -27,7 +27,10 @@ plan-shape gate:
 
 The database is seeded once per run, with 5000 rows per store by default.
 Read operations reuse it. Mutating operations insert the rows they delete in
-their untimed `prepare` step, so store sizes stay constant across samples.
+their untimed `prepare` step and delete the rows they create in their untimed
+`cleanup` step, so store sizes stay constant across samples. The runner takes
+samples round-robin across operations, so no operation may leave data behind
+for the next one. `pnpm test:unit` checks this against `fake-indexeddb`.
 
 ## Running it
 
@@ -41,7 +44,8 @@ and `BENCHMARK_RESULT_PATH` override the defaults. To run it by hand, start
 `pnpm dev` and use the form on the page.
 
 In CI, `.github/workflows/benchmark.yml` runs the suite on the PR head and
-the PR base on the same runner. It then gates on a bootstrap 95% confidence
+the PR base on the same runner, twice each in the order head, base, base,
+head, and pools each tree's runs. It then gates on a bootstrap 95% confidence
 interval of the median change (see `@prisma-idb/benchmark-kit`).
 
 ## Changing the schema

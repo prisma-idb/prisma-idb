@@ -8,6 +8,7 @@
     "build": "vite build",
     "preview": "vite preview --host 127.0.0.1 --port 4176 --strictPort",
     "test": "PLAYWRIGHT_HTML_OPEN=never playwright test --reporter=list",
+    "test:unit": "vitest run",
     "benchmark:ci": "pnpm test",
     "benchmark:compare": "benchmark-compare",
     "benchmark:comment": "benchmark-comment",
@@ -28,9 +29,11 @@
     "@prisma-idb/driver-idb": "workspace:*",
     "@prisma/cli-engine": "0.6.1",
     "@types/node": "^24.13.3",
+    "fake-indexeddb": "^6.2.5",
     "prisma": "8.0.0-rc.17",
     "tsx": "^4.23.11",
     "typescript": "^6.0.3",
-    "vite": "^8.2.1"
+    "vite": "^8.2.1",
+    "vitest": "^4.1.11"
   }
 }
