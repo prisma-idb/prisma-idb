@@ -79,9 +79,9 @@ async function hasOtherPendingOutboxEvents(scope: IdbTransactionScope, versionMe
  * keyed under, if any — shared by `markSynced` (the event's own write
  * succeeded) and `markFailed` (the event is dead and will never succeed, see
  * that function's doc comment). Reads the id persisted at write time
- * (`SyncInterceptorExecutor`'s `versionMetaKey(modelName, key)`) rather than
- * re-deriving it from the payload — the payload shape differs per operation
- * (create/update/delete) and re-deriving it here previously matched only
+ * (`versionMetaKey(modelName, key)`) rather than re-deriving it from the
+ * payload — the payload shape differs per operation (create/update/delete)
+ * and re-deriving it here previously matched only
  * `create` on models keyed by a literal `id` field, so `localChangePending`
  * never cleared for update/delete and `applyPull` skipped all future server
  * changes for that record. Leaves the flag set (rather than clearing it) when

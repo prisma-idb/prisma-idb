@@ -7,6 +7,7 @@
 
 export const VERSION_META_STORE = "_idb_sync_version_meta";
 
+/** The `_idb_sync_version_meta` id for the record of `modelName` stored under `key`. */
 export function versionMetaKey(modelName: string, key: unknown): string {
   return `${modelName}::${JSON.stringify(key)}`;
 }

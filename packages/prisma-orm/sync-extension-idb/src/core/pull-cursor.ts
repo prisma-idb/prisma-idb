@@ -11,6 +11,11 @@
 import type { IdbContract } from "@prisma-idb/client-idb/orm";
 import type { SyncWorkerOptions } from "./sync-worker";
 
+/**
+ * A forward-only pull cursor with optional persistence. `load`, `advance` and
+ * `save` are called by the worker around each pull; see the module comment for
+ * the ordering guarantee.
+ */
 export interface PullCursor {
   /** The last consumed changelog id, or `null` before the first pull. */
   readonly value: string | null;
@@ -22,6 +27,11 @@ export interface PullCursor {
   save(): Promise<void>;
 }
 
+/**
+ * Creates a cursor that starts unset and is loaded from `getCursor` on first
+ * `load()`. Without `getCursor` it starts as `null` and counts as loaded;
+ * without `setCursor`, `save()` does nothing.
+ */
 export function createPullCursor({
   getCursor,
   setCursor,
