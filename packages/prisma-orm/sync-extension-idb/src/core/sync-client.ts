@@ -16,6 +16,7 @@ import { idbCodecLookup } from "@prisma-idb/target-idb/runtime";
 import { idbOrm } from "@prisma-idb/client-idb/orm";
 import type { IdbOrmClient, IdbContract } from "@prisma-idb/client-idb/orm";
 import type { IdbClient } from "@prisma-idb/client-idb/client";
+import { createEmitter } from "./emitter";
 import { SyncInterceptorExecutor } from "./sync-executor";
 import type { SyncWorkerOptions } from "./sync-worker";
 import { createSyncWorker } from "./sync-worker";
@@ -26,7 +27,7 @@ import type { OutboxWriteEntry } from "../types";
 /**
  * Events `SyncIdbClient.on(...)` can subscribe to. Just one today —
  * `"outboxwrite"` — but keyed the same way as `SyncWorker`'s `SyncEventMap`
- * (see sync-worker.ts) so both use one subscription shape instead of two.
+ * (see sync-worker.ts), and both subscribe through the same emitter.
  */
 export type SyncClientEventMap = {
   outboxwrite: readonly OutboxWriteEntry[];
@@ -156,27 +157,7 @@ export function createSyncIdbClient<TContract extends IdbContract>(
 ): SyncIdbClient<TContract> {
   const trackedModels = options.trackedModels ?? "*";
 
-  // Same shape as SyncWorker's own listener map (sync-worker.ts) — one event
-  // today, but keyed so adding another later doesn't need a new Set/method pair.
-  const listeners = new Map<keyof SyncClientEventMap, Set<(payload: unknown) => void>>();
-  function emit<K extends keyof SyncClientEventMap>(event: K, payload: SyncClientEventMap[K]): void {
-    const set = listeners.get(event);
-    if (!set) return;
-    for (const cb of set) cb(payload);
-  }
-  function on<K extends keyof SyncClientEventMap>(
-    event: K,
-    callback: (payload: SyncClientEventMap[K]) => void
-  ): () => void {
-    let set = listeners.get(event);
-    if (!set) {
-      set = new Set();
-      listeners.set(event, set);
-    }
-    const wrapped = callback as (payload: unknown) => void;
-    set.add(wrapped);
-    return () => set.delete(wrapped);
-  }
+  const { emit, on } = createEmitter<SyncClientEventMap>();
 
   const driver = createIDBRuntimeDriver(
     options.dbName,

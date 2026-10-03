@@ -7,6 +7,7 @@ import type { SyncIdbClient } from "./sync-client";
 import type { OutboxEvent } from "./outbox-store";
 import { getNextBatch, markSynced, markFailed } from "./outbox-store";
 import { applyPull } from "./apply-pull";
+import { createEmitter } from "./emitter";
 import { createPullCursor } from "./pull-cursor";
 import type { LogWithRecord, PushResult } from "../types";
 
@@ -130,13 +131,7 @@ export function createSyncWorker<TContract extends IdbContract>(options: SyncWor
   // the same unsynced events twice.
   let inFlightCycle: Promise<void> | null = null;
 
-  const listeners = new Map<keyof SyncEventMap, Set<(payload: unknown) => void>>();
-
-  function emit<K extends keyof SyncEventMap>(event: K, payload: SyncEventMap[K]): void {
-    const set = listeners.get(event);
-    if (!set) return;
-    for (const cb of set) cb(payload);
-  }
+  const { emit, on } = createEmitter<SyncEventMap>();
 
   function setStatus(next: SyncWorkerStatus): void {
     if (status === next) return;
@@ -261,11 +256,6 @@ export function createSyncWorker<TContract extends IdbContract>(options: SyncWor
         }
       }
     },
-    on<K extends keyof SyncEventMap>(event: K, cb: (payload: SyncEventMap[K]) => void): () => void {
-      if (!listeners.has(event)) listeners.set(event, new Set());
-      const set = listeners.get(event)!;
-      set.add(cb as (payload: unknown) => void);
-      return () => set.delete(cb as (payload: unknown) => void);
-    },
+    on,
   };
 }
