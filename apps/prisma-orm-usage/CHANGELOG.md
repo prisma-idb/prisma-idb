@@ -1,5 +1,12 @@
 # @prisma-idb/prisma-orm-usage
 
+## 0.0.13
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @prisma-idb/client-idb@0.9.0
+
 ## 0.0.12
 
 ### Patch Changes

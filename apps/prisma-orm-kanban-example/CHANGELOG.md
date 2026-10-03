@@ -1,5 +1,15 @@
 # @prisma-idb/prisma-orm-kanban-example
 
+## 0.0.17
+
+### Patch Changes
+
+- Updated dependencies [[`e8146ff`](https://github.com/prisma-idb/prisma-idb/commit/e8146fffb0d5bbc543640ee5e5d25ad05a05e04f), [`43be273`](https://github.com/prisma-idb/prisma-idb/commit/43be2738366dcaf2b34517fc9c32af36db844c7e)]:
+  - @prisma-idb/sync-server@0.6.0
+  - @prisma-idb/sync-server-sql@0.5.0
+  - @prisma-idb/sync-extension-idb@0.7.0
+  - @prisma-idb/client-idb@0.9.0
+
 ## 0.0.16
 
 ### Patch Changes
