@@ -1,7 +1,21 @@
 import { describe, expect, it, vi } from "vitest";
 import { applyPull } from "../src/core/apply-pull";
 import type { LogWithRecord, VersionMetaRecord } from "../src/types";
-import { changelogId, createTestSyncClient, keyGet, scanAll } from "./helpers";
+import { defineContract } from "@prisma-idb/family-idb/contract-ts";
+import idbFamilyPack from "@prisma-idb/family-idb/pack";
+import idbTargetPack from "@prisma-idb/target-idb/pack";
+import type { IdbContract } from "@prisma-idb/client-idb/orm";
+import { createSyncIdbClient } from "../src/exports/client";
+import {
+  OUTBOX_STORE,
+  VERSION_META_STORE,
+  changelogId,
+  createTestSyncClient,
+  keyGet,
+  openTestDb,
+  scanAll,
+  testDbName,
+} from "./helpers";
 
 function log(
   overrides: Partial<Extract<LogWithRecord, { record: unknown }>> & Pick<LogWithRecord, "changelogId" | "operation">
@@ -256,5 +270,65 @@ describe("applyPull", () => {
       expect(result).toEqual({ applied: 0, skipped: 1, validationFailed: 0, lastChangelogId: null });
       expect(await scanAll(client, "users")).toEqual([{ id: "u1", name: "Alice" }]);
     });
+  });
+});
+
+describe("applyPull with a compound key", () => {
+  async function createMembershipClient() {
+    const name = testDbName();
+    const bootstrapDb = await openTestDb(name, [
+      { name: "memberships", keyPath: ["orgId", "userId"] },
+      OUTBOX_STORE,
+      VERSION_META_STORE,
+    ]);
+    bootstrapDb.close();
+    const contract = defineContract({
+      family: idbFamilyPack,
+      target: idbTargetPack,
+      models: {
+        Membership: {
+          store: "memberships",
+          key: ["orgId", "userId"],
+          fields: { orgId: "String", userId: "String", role: "String" },
+        },
+      },
+    }) as unknown as IdbContract;
+    return createSyncIdbClient({ contract, dbName: name, trackedModels: "*" });
+  }
+
+  const membership = { orgId: "o1", userId: "u1", role: "admin" };
+
+  it("applies a create and then a delete addressed by the key array", async () => {
+    const client = await createMembershipClient();
+    const keyPath = ["o1", "u1"];
+    const created = await applyPull(client, [
+      { changelogId: changelogId(1), model: "Membership", operation: "create", keyPath, record: membership },
+    ]);
+    expect(created).toEqual({ applied: 1, skipped: 0, validationFailed: 0, lastChangelogId: changelogId(1) });
+    expect(await scanAll(client, "memberships")).toEqual([membership]);
+    expect((await getVersionMeta(client, 'Membership::["o1","u1"]'))?.lastAppliedChangeId).toBe(changelogId(1));
+
+    await applyPull(client, [
+      { changelogId: changelogId(2), model: "Membership", operation: "delete", keyPath, record: null },
+    ]);
+    expect(await scanAll(client, "memberships")).toEqual([]);
+  });
+
+  it("rejects a key that is not an array of the right length, or that does not match the record", async () => {
+    const client = await createMembershipClient();
+    const transaction = vi.spyOn(client, "withTransaction");
+    const result = await applyPull(client, [
+      { changelogId: changelogId(1), model: "Membership", operation: "create", keyPath: "o1", record: membership },
+      { changelogId: changelogId(2), model: "Membership", operation: "create", keyPath: ["o1"], record: membership },
+      {
+        changelogId: changelogId(3),
+        model: "Membership",
+        operation: "create",
+        keyPath: ["o1", "someone-else"],
+        record: membership,
+      },
+    ]);
+    expect(result).toEqual({ applied: 0, skipped: 3, validationFailed: 3, lastChangelogId: changelogId(3) });
+    expect(transaction).not.toHaveBeenCalled();
   });
 });

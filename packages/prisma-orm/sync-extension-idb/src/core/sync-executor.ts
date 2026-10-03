@@ -50,11 +50,11 @@ import { extractKeyFromRow, getKeyPath, getStoreName } from "@prisma-idb/client-
 import type { IdbKeyPath } from "@prisma-idb/client-idb/orm";
 import { domainModelsAtDefaultNamespace } from "@prisma/orm-framework/contract/types";
 import type { OutboxEvent, OutboxWriteEntry } from "../types";
+import { VERSION_META_STORE, versionMetaKey } from "./version-meta";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 const OUTBOX_STORE = "_idb_sync_outbox";
-const VERSION_META_STORE = "_idb_sync_version_meta";
 
 type MutationAst = IdbCreateAst | IdbDeleteAst | IdbUpdateAst | IdbCreateAllAst | IdbDeleteAllAst | IdbUpdateAllAst;
 
@@ -135,10 +135,6 @@ function outboxAddOp(
 }
 
 // ── VersionMeta record builders ──────────────────────────────────────────────
-
-function versionMetaKey(modelName: string, key: unknown): string {
-  return `${modelName}::${JSON.stringify(key)}`;
-}
 
 function versionMetaPutOp(modelName: string, key: unknown, meta: IdbQueryPlan<unknown>["meta"]): IdbPutPlan {
   const id = versionMetaKey(modelName, key);

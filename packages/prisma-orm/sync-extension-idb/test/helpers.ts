@@ -20,7 +20,7 @@ export function testDbName(): string {
 }
 
 type StoreIndex = { name: string; keyPath: string; unique?: boolean };
-type StoreSpec = { name: string; keyPath: string; indexes?: StoreIndex[] };
+type StoreSpec = { name: string; keyPath: string | string[]; indexes?: StoreIndex[] };
 
 export const USERS_STORE: StoreSpec = { name: "users", keyPath: "id" };
 export const POSTS_STORE: StoreSpec = {

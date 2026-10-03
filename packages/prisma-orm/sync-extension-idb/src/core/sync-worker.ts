@@ -7,6 +7,7 @@ import type { SyncIdbClient } from "./sync-client";
 import type { OutboxEvent } from "./outbox-store";
 import { getNextBatch, markSynced, markFailed } from "./outbox-store";
 import { applyPull } from "./apply-pull";
+import { createPullCursor } from "./pull-cursor";
 import type { LogWithRecord, PushResult } from "../types";
 
 // ── Public types ──────────────────────────────────────────────────────────────
@@ -112,8 +113,6 @@ export function createSyncWorker<TContract extends IdbContract>(options: SyncWor
     syncClient,
     pushHandler,
     pullHandler,
-    getCursor,
-    setCursor,
     batchSize = 20,
     intervalMs = 5_000,
     backoffBaseMs = 1_000,
@@ -125,9 +124,7 @@ export function createSyncWorker<TContract extends IdbContract>(options: SyncWor
   let stopped = false;
   let timer: ReturnType<typeof setTimeout> | null = null;
   let consecutiveFailures = 0;
-  let lastChangelogId: string | null = null;
-  let cursorLoaded = getCursor === undefined;
-  let persistedCursor: string | null = null;
+  const cursor = createPullCursor(options);
   // Shared across tick() and forceSync() so at most one push/pull cycle runs
   // at a time — otherwise both can call getNextBatch concurrently and push
   // the same unsynced events twice.
@@ -147,52 +144,41 @@ export function createSyncWorker<TContract extends IdbContract>(options: SyncWor
     emit("statuschange", next);
   }
 
-  async function runCycle(): Promise<void> {
-    // ── Push ─────────────────────────────────────────────────────────────────
+  async function pushPending(): Promise<void> {
     setStatus("pushing");
     const events = await getNextBatch(syncClient.rawClient, { limit: batchSize });
+    if (events.length === 0) return;
 
-    if (events.length > 0) {
-      let pushSynced = 0;
-      let pushFailed = 0;
-      const results = await withTimeout((signal) => pushHandler(events, signal), requestTimeoutMs, "pushHandler");
-      await syncClient.withTransaction(["_idb_sync_outbox", "_idb_sync_version_meta"], async (scope) => {
-        for (const result of results) {
-          if (result.success) {
-            await markSynced(scope, result.id);
-            pushSynced++;
-          } else {
-            await markFailed(scope, result.id, result.error ?? "unknown error", result.retryable);
-            pushFailed++;
-          }
+    let pushSynced = 0;
+    let pushFailed = 0;
+    const results = await withTimeout((signal) => pushHandler(events, signal), requestTimeoutMs, "pushHandler");
+    await syncClient.withTransaction(["_idb_sync_outbox", "_idb_sync_version_meta"], async (scope) => {
+      for (const result of results) {
+        if (result.success) {
+          await markSynced(scope, result.id);
+          pushSynced++;
+        } else {
+          await markFailed(scope, result.id, result.error ?? "unknown error", result.retryable);
+          pushFailed++;
         }
-      });
-      emit("pushcompleted", { synced: pushSynced, failed: pushFailed });
-    }
-
-    // ── Pull ─────────────────────────────────────────────────────────────────
-    setStatus("pulling");
-    if (!cursorLoaded) {
-      lastChangelogId = (await getCursor!()) ?? null;
-      persistedCursor = lastChangelogId;
-      cursorLoaded = true;
-    }
-    const logs = await withTimeout((signal) => pullHandler(lastChangelogId, signal), requestTimeoutMs, "pullHandler");
-
-    if (logs.length > 0) {
-      const { applied, skipped, validationFailed, lastChangelogId: newId } = await applyPull(syncClient, logs);
-      if (newId !== null && (lastChangelogId === null || newId > lastChangelogId)) {
-        lastChangelogId = newId;
       }
-      emit("pullcompleted", { applied, skipped, validationFailed });
-    } else {
-      emit("pullcompleted", { applied: 0, skipped: 0, validationFailed: 0 });
-    }
+    });
+    emit("pushcompleted", { synced: pushSynced, failed: pushFailed });
+  }
 
-    if (setCursor && lastChangelogId !== null && lastChangelogId !== persistedCursor) {
-      await setCursor(lastChangelogId);
-      persistedCursor = lastChangelogId;
-    }
+  async function pullChanges(): Promise<void> {
+    setStatus("pulling");
+    await cursor.load();
+    const logs = await withTimeout((signal) => pullHandler(cursor.value, signal), requestTimeoutMs, "pullHandler");
+    const { applied, skipped, validationFailed, lastChangelogId } = await applyPull(syncClient, logs);
+    cursor.advance(lastChangelogId);
+    emit("pullcompleted", { applied, skipped, validationFailed });
+    await cursor.save();
+  }
+
+  async function runCycle(): Promise<void> {
+    await pushPending();
+    await pullChanges();
   }
 
   /** Runs `runCycle`, joining an already-in-flight cycle instead of starting a second one. */

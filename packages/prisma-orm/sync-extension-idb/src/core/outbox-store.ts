@@ -10,11 +10,11 @@ import type { IdbAtomicPlan, IdbTransactionScope } from "@prisma-idb/driver-idb/
 import type { IdbClient } from "@prisma-idb/client-idb/client";
 import type { IdbContract } from "@prisma-idb/client-idb/orm";
 import type { OutboxEvent } from "../types";
+import { VERSION_META_STORE } from "./version-meta";
 
 export type { OutboxEvent };
 
 const OUTBOX = "_idb_sync_outbox";
-const VERSION_META = "_idb_sync_version_meta";
 
 // ── Read helpers ──────────────────────────────────────────────────────────────
 
@@ -97,14 +97,14 @@ async function clearLocalChangePending(scope: IdbTransactionScope, versionMetaId
   if (await hasOtherPendingOutboxEvents(scope, versionMetaId)) return;
   const metaRows = await scope.execute({
     kind: "key-get",
-    storeName: VERSION_META,
+    storeName: VERSION_META_STORE,
     key: versionMetaId,
   } as unknown as IdbAtomicPlan);
   const meta = metaRows[0] as Record<string, unknown> | undefined;
   if (!meta) return;
   await scope.execute({
     kind: "put",
-    storeName: VERSION_META,
+    storeName: VERSION_META_STORE,
     record: { ...meta, localChangePending: false },
   } as unknown as IdbAtomicPlan);
 }
