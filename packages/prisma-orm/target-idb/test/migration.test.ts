@@ -326,6 +326,23 @@ describe("IdbMigrationPlanner", () => {
     expect(result.plan.origin).toMatchObject({ storageHash: "old-hash" });
   });
 
+  it('plan(): uses "unknown" for a storage hash the contract does not carry', () => {
+    const from = { storage: { stores: { users: { keyPath: "id" } } } };
+    const to = { storage: { stores: { users: { keyPath: "id" }, posts: { keyPath: "id" } } } };
+    const result = planner.plan({
+      contract: to,
+      schema: null,
+      policy: ALLOW_ALL,
+      fromContract: from as never,
+      frameworkComponents: [],
+      spaceId: "app",
+    });
+    expect(result.kind).toBe("success");
+    if (result.kind !== "success") return;
+    expect(result.plan.origin).toEqual({ storageHash: "unknown" });
+    expect(result.plan.destination).toEqual({ storageHash: "unknown" });
+  });
+
   it("plan(): returns empty ops when schemas are identical", () => {
     const contract = { storage: { storageHash: "x", stores: { users: { keyPath: "id" } } } };
     const result = planner.plan({
