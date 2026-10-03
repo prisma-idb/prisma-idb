@@ -1,6 +1,7 @@
 #!/usr/bin/env tsx
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
+import { summarizeSamples } from "../stats";
 import { BENCHMARK_REGRESSION_GATE } from "../types";
 import { getStringArg, hasFlag, parseArgs } from "./cli-args";
 
@@ -201,15 +202,6 @@ function isClearSpeedup(row: ComparisonRow, threshold: number): boolean {
   return exceedsAbsolute && exceedsThresholdInDirection(row.bootstrap.ciUpperPercent, threshold, "negative");
 }
 
-function describeTrend(row: ComparisonRow, threshold: number): string {
-  if (!row.bootstrap) return "No sample data";
-  if (row.status === "FAIL") return row.noisy ? "Noisy slowdown" : "Slowdown";
-  if (row.status === "WARN") return "Possible slowdown";
-  if (isClearSpeedup(row, threshold)) return "Speedup";
-  if (exceedsThresholdInDirection(row.bootstrap.medianDeltaPercent, threshold, "negative")) return "Leaning faster";
-  return "No clear change";
-}
-
 function formatCIBound(value: number): string {
   if (!Number.isFinite(value)) return value > 0 ? "+∞" : "-∞";
   const sign = value > 0 ? "+" : "";
@@ -240,38 +232,40 @@ function pairMetric(baseline: number, current: number): MetricPair {
   };
 }
 
-function renderMarkdown(summary: ComparisonSummary, threshold: number, title: string): string {
-  const noisyRegressions = summary.rows.filter((r) => r.status === "FAIL" && r.noisy).length;
-  const potentialRegressions = summary.rows.filter((r) => r.status === "WARN").length;
-  const clearSpeedups = summary.rows.filter((r) => isClearSpeedup(r, threshold)).length;
-  const leaningFaster = summary.rows.filter(
-    (r) =>
-      !isClearSpeedup(r, threshold) &&
-      r.bootstrap &&
-      exceedsThresholdInDirection(r.bootstrap.medianDeltaPercent, threshold, "negative")
-  ).length;
+function statusIcon(row: ComparisonRow, threshold: number): string {
+  if (row.status === "FAIL") return row.noisy ? "🟠" : "🔴";
+  if (row.status === "WARN") return "🟡";
+  return isClearSpeedup(row, threshold) ? "🔵" : "🟢";
+}
 
-  const gateLabel = summary.isAdvisory
-    ? "ℹ️ advisory only (non-blocking)"
-    : summary.shouldFail
-      ? "❌ failed"
-      : "✅ passed";
+function renderRowsTable(rows: ComparisonRow[], threshold: number): string[] {
+  const lines = ["| | Operation | Median Δ | 95% CI | Baseline → current (ms) |", "| :-: | :-- | ---: | :-- | :-- |"];
+  for (const row of rows) {
+    const medianDelta = row.bootstrap ? formatDeltaCompact(row.bootstrap.medianDeltaPercent) : "n/a";
+    const ciRange = row.bootstrap
+      ? `${formatCIBound(row.bootstrap.ciLowerPercent)} … ${formatCIBound(row.bootstrap.ciUpperPercent)}`
+      : "n/a";
+    lines.push(
+      `| ${statusIcon(row, threshold)} | \`${row.operationId}\` | ${medianDelta} | ${ciRange} | ${formatMetric(row.median.baseline)} → ${formatMetric(row.median.current)} |`
+    );
+  }
+  return lines;
+}
+
+/**
+ * Renders one suite as a collapsible block, so several suites can share one PR
+ * comment. The block starts open only when the gate failed, and lists the
+ * flagged operations before the full table.
+ */
+function renderMarkdown(summary: ComparisonSummary, threshold: number, title: string): string {
+  const flagged = summary.rows.filter((r) => r.status !== "PASS");
+
+  const gateLabel = summary.isAdvisory ? "ℹ️ advisory" : summary.shouldFail ? "❌ failed" : "✅ passed";
+  const flaggedLabel = flagged.length > 0 ? ` · ${flagged.length} flagged` : "";
 
   const lines: string[] = [
-    `## ${title}`,
-    "",
-    `| Summary | |`,
-    `| :-- | :-- |`,
-    `| **Gate metric** | bootstrap 95% CI on median delta |`,
-    `| **Gate mode** | ${gateLabel} |`,
-    `| **Regression threshold** | CI lower bound > +${threshold}% and ≥${BENCHMARK_REGRESSION_GATE.minAbsoluteDeltaMs}ms absolute median change |`,
-    `| **Compared operations** | ${summary.rows.length} |`,
-    `| **Blocking regressions** | ${summary.regressions.length} |`,
-    `| **Potential regressions** | ${potentialRegressions} |`,
-    `| **Noisy regressions (non-blocking)** | ${noisyRegressions} |`,
-    `| **Clear speedups** | ${clearSpeedups} |`,
-    `| **Leaning faster** | ${leaningFaster} |`,
-    `| **Added / Removed** | ${summary.addedOperations.length} / ${summary.removedOperations.length} |`,
+    `<details${summary.shouldFail ? " open" : ""}>`,
+    `<summary><b>${title}</b>: ${gateLabel} · ${summary.rows.length} operations${flaggedLabel}</summary>`,
     "",
   ];
 
@@ -282,106 +276,25 @@ function renderMarkdown(summary: ComparisonSummary, threshold: number, title: st
     lines.push("");
   }
 
-  lines.push("> [!TIP]");
-  lines.push(
-    "> Gate status is based only on the median CI column below. p95/mean are context metrics and can disagree."
-  );
-  lines.push("");
-
-  lines.push(
-    "| Status | Operation | Trend | Gate decision | Median Δ | 95% CI | Baseline median | Current median |",
-    "| :---: | :-- | :-- | :-- | ---: | :-- | ---: | ---: |"
-  );
-
-  for (const row of summary.rows) {
-    const clearSpeedup = isClearSpeedup(row, threshold);
-    const leaningSpeedup =
-      !clearSpeedup &&
-      row.bootstrap !== null &&
-      exceedsThresholdInDirection(row.bootstrap.medianDeltaPercent, threshold, "negative");
-
-    const statusIcon =
-      row.status === "FAIL"
-        ? row.noisy
-          ? "\uD83D\uDFE0"
-          : "\uD83D\uDD34"
-        : row.status === "WARN"
-          ? "\uD83D\uDFE1"
-          : clearSpeedup
-            ? "\uD83D\uDD35"
-            : leaningSpeedup
-              ? "\uD83D\uDFE9"
-              : "\uD83D\uDFE2";
-    const noisyTag = row.noisy ? " \uD83C\uDFB2" : "";
-    const decision =
-      row.status === "FAIL"
-        ? row.noisy
-          ? `CI lower > +${threshold}%, but high variance (non-blocking)`
-          : `CI lower > +${threshold}%`
-        : row.status === "WARN"
-          ? `Point estimate > +${threshold}% but CI lower <= +${threshold}%`
-          : clearSpeedup
-            ? `CI upper < -${threshold}% (confident speedup)`
-            : leaningSpeedup
-              ? `Median indicates speedup, but CI still overlaps the neutral band`
-              : `CI lower <= +${threshold}%`;
-    const medianDelta = row.bootstrap ? formatDeltaCompact(row.bootstrap.medianDeltaPercent) : "n/a";
-    const ciRange = row.bootstrap
-      ? `${formatCIBound(row.bootstrap.ciLowerPercent)} … ${formatCIBound(row.bootstrap.ciUpperPercent)}`
-      : "n/a";
-    const trend = describeTrend(row, threshold);
-    lines.push(
-      `| ${statusIcon} | \`${row.operationId}\`${noisyTag} | ${trend} | ${decision} | ${medianDelta} | ${ciRange} | ${formatMetric(row.median.baseline)} | ${formatMetric(row.median.current)} |`
-    );
+  if (flagged.length > 0) {
+    lines.push(...renderRowsTable(flagged, threshold), "");
   }
 
-  lines.push("");
-  lines.push("<details><summary>Context Metrics (Not Used For Gate)</summary>");
-  lines.push("");
-  lines.push("| Operation | Δ p95 | Δ mean |");
-  lines.push("| :-- | ---: | ---: |");
-  for (const row of summary.rows) {
-    lines.push(
-      `| \`${row.operationId}\` | ${formatDeltaCompact(row.p95.delta)} | ${formatDeltaCompact(row.mean.delta)} |`
-    );
-  }
-  lines.push("", "</details>");
+  lines.push("<details><summary>All operations</summary>", "", ...renderRowsTable(summary.rows, threshold), "");
+  lines.push("</details>", "");
 
   for (const [heading, ids] of [
-    ["Added Operations", summary.addedOperations],
-    ["Removed Operations", summary.removedOperations],
+    ["Added", summary.addedOperations],
+    ["Removed (fails the gate)", summary.removedOperations],
   ] as const) {
-    if (ids.length > 0) {
-      lines.push("", `### ${heading}`, "");
-      for (const id of ids) lines.push(`- \`${id}\``);
-    }
+    if (ids.length > 0) lines.push(`${heading}: ${ids.map((id) => `\`${id}\``).join(", ")}`, "");
   }
 
-  const hasNoisyFail = summary.rows.some((r) => r.noisy && r.status === "FAIL");
-  const hasHighCV = summary.rows.some((r) => r.noisy);
-
-  lines.push("");
-  lines.push("<details><summary>Legend</summary>", "");
-  lines.push("| Symbol | Meaning |");
-  lines.push("| :---: | :-- |");
-  lines.push(`| 🟢 | Pass — CI lower <= +${threshold}% |`);
-  lines.push(`| 🔵 | Clear speedup — CI upper < -${threshold}% |`);
-  lines.push(`| 🟩 | Leaning faster — median shows speedup, but CI still overlaps neutral |`);
-  lines.push("| 🟡 | Warn — point estimate exceeds threshold but CI lower bound does not (likely noise) |");
-  lines.push(`| 🔴 | Fail — CI lower > +${threshold}% |`);
-  if (hasNoisyFail) {
-    lines.push("| 🟠 | Fail but noisy — high variance makes this unreliable |");
-  }
-  if (hasHighCV) {
-    lines.push(
-      `| 🎲 | High coefficient of variation (CV > ${(CV_THRESHOLD * 100).toFixed(0)}%) — samples are spread out |`
-    );
-  }
-  lines.push(`| 📈 | Regression > ${threshold}% |`);
-  lines.push(`| 📉 | Improvement > ${threshold}% |`);
-  lines.push("", "</details>");
-
-  lines.push("", `_Generated at ${new Date().toISOString()}_`);
+  lines.push(
+    `<sub>Blocking regression: 95% bootstrap CI lower bound on the median change above +${threshold}% and a median change of at least ${BENCHMARK_REGRESSION_GATE.minAbsoluteDeltaMs}ms. 🔴 blocking · 🟠 high variance, non-blocking · 🟡 point estimate over the threshold, CI not · 🔵 clear speedup · 🟢 no clear change</sub>`,
+    "",
+    "</details>"
+  );
   return `${lines.join("\n")}\n`;
 }
 
@@ -392,6 +305,33 @@ async function loadJson(path: string): Promise<BenchmarkRun> {
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(`Failed to parse ${path}: ${message}`);
   }
+}
+
+/** Merges runs of one tree into a single run, concatenating each operation's samples. */
+function mergeRuns(runs: BenchmarkRun[]): BenchmarkRun {
+  const merged = new Map<string, BenchmarkOperation>();
+  for (const operation of runs.flatMap((run) => run.operations ?? [])) {
+    const previous = merged.get(operation.operationId);
+    const samplesMs = previous
+      ? previous.samplesMs && operation.samplesMs && [...previous.samplesMs, ...operation.samplesMs]
+      : operation.samplesMs;
+    merged.set(operation.operationId, {
+      operationId: operation.operationId,
+      samplesMs,
+      summary: samplesMs ? summarizeSamples(samplesMs) : operation.summary,
+    });
+  }
+  return { ...runs[0], id: runs.map((run) => run.id).join(","), operations: [...merged.values()] };
+}
+
+/**
+ * Loads the runs named by a comma-separated list of result files. Several
+ * runs of one tree are merged so that a drift in machine speed between runs
+ * is spread over both trees being compared.
+ */
+async function loadRuns(pathList: string): Promise<BenchmarkRun> {
+  const runs = await Promise.all(pathList.split(",").map((path) => loadJson(resolve(process.cwd(), path))));
+  return mergeRuns(runs);
 }
 
 function getMeasuredSampleCount(run: BenchmarkRun): { count: number | null; hasPartialData: boolean } {
@@ -452,7 +392,7 @@ async function main() {
 
   if (!baselinePath || !currentPath) {
     throw new Error(
-      "Usage: compare-benchmark-results.ts --baseline <path> --current <path> [--threshold 10] [--title <text>] [--json-out <path>] [--markdown-out <path>] [--exit-on-fail]"
+      "Usage: compare-benchmark-results.ts --baseline <path[,path…]> --current <path[,path…]> [--threshold 10] [--title <text>] [--json-out <path>] [--markdown-out <path>] [--exit-on-fail]"
     );
   }
 
@@ -461,10 +401,7 @@ async function main() {
     throw new Error("--threshold must be a positive number");
   }
 
-  const [baseline, current] = await Promise.all([
-    loadJson(resolve(process.cwd(), baselinePath)),
-    loadJson(resolve(process.cwd(), currentPath)),
-  ]);
+  const [baseline, current] = await Promise.all([loadRuns(baselinePath), loadRuns(currentPath)]);
 
   const baselineMap = new Map((baseline.operations ?? []).map((op) => [op.operationId, op]));
   const currentMap = new Map((current.operations ?? []).map((op) => [op.operationId, op]));
