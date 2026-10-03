@@ -1,6 +1,6 @@
 import { domainModelsAtDefaultNamespace } from "@prisma/orm-framework/contract/types";
 import type { GetKeyField, OwnershipCheck, SyncServerContract } from "@prisma-idb/sync-server";
-import { encodeWireKey } from "./wire-key";
+import { encodeWireKey } from "./wire-values";
 import { ormRootFor } from "./orm-root";
 
 /**

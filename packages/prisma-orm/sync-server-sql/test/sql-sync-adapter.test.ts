@@ -2,9 +2,10 @@ import { describe, expect, it } from "vitest";
 import type { OwnershipCheck } from "@prisma-idb/sync-server";
 import { sqlGetKeyField } from "../src/core/get-key-field";
 import { ormRootFor } from "../src/core/orm-root";
-import { toSyncPushPayload, applyPushEvent, reviveWireValues } from "../src/core/push";
+import { toSyncPushPayload, applyPushEvent } from "../src/core/push";
+import { reviveWireValues } from "../src/core/wire-values";
 import { checkAuthorization } from "../src/core/authorization";
-import { resolvePullRecord } from "../src/core/pull";
+import { resolvePullRecord } from "../src/core/resolve-pull-record";
 import { createSqlSyncAdapter } from "../src/core/create-adapter";
 import { testContract, testDb, seed } from "./helpers";
 
