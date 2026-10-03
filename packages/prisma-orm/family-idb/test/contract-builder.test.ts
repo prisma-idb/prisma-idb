@@ -1,7 +1,7 @@
 import { UNBOUND_DOMAIN_NAMESPACE_ID, domainModelsAtDefaultNamespace } from "@prisma/orm-framework/contract/types";
 import type { MockInstance } from "vitest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { defineContract } from "../src/core/contract-builder";
+import { defineContract } from "./_ts-oracle";
 import idbFamilyPack from "../src/exports/pack";
 import idbTargetPack from "@prisma-idb/target-idb/pack";
 
