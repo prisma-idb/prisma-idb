@@ -6,6 +6,8 @@ import type { BenchmarkConfig, BenchmarkOperationResult, BenchmarkProgress, Benc
  *
  * `prepare` runs before every warmup and measured sample and is not timed.
  * Only `run` is timed. The context `prepare` returns is passed to `run`.
+ * Samples of different operations are interleaved, so an operation must leave
+ * the data as it found it.
  */
 export interface BenchmarkOperationDefinition<Client, Context, OperationId extends string = string> {
   operationId: OperationId;
