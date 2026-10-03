@@ -1,5 +1,11 @@
 # @prisma-idb/sync-extension-idb
 
+## 0.7.1
+
+### Patch Changes
+
+- [#249](https://github.com/prisma-idb/prisma-idb/pull/249) [`7a61070`](https://github.com/prisma-idb/prisma-idb/commit/7a61070ff8b2cbc6d3135c34b8f28fe9e6d15516) Thanks [@WhyAsh5114](https://github.com/WhyAsh5114)! - Internal cleanup of the pull path with no behavior change: `applyPull` decodes and validates a log in one place, the pull cursor lives in its own module, and the version-meta id is defined once.
+
 ## 0.7.0
 
 ### Minor Changes
