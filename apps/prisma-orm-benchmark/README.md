@@ -27,7 +27,10 @@ plan-shape gate:
 
 The database is seeded once per run, with 5000 rows per store by default.
 Read operations reuse it. Mutating operations insert the rows they delete in
-their untimed `prepare` step, so store sizes stay constant across samples.
+their untimed `prepare` step and delete the rows they create in their untimed
+`cleanup` step, so store sizes stay constant across samples. The runner takes
+samples round-robin across operations, so no operation may leave data behind
+for the next one. `pnpm test:unit` checks this against `fake-indexeddb`.
 
 ## Running it
 

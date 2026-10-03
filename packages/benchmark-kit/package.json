@@ -15,11 +15,13 @@
   "scripts": {
     "check": "tsc --noEmit",
     "lint": "prettier --check . && eslint .",
-    "format": "prettier --write ."
+    "format": "prettier --write .",
+    "test:unit": "vitest run"
   },
   "devDependencies": {
     "@types/node": "^24.13.3",
-    "typescript": "^6.0.3"
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.11"
   },
   "dependencies": {
     "tsx": "^4.23.11"

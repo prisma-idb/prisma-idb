@@ -4,16 +4,18 @@ import type { BenchmarkConfig, BenchmarkOperationResult, BenchmarkProgress, Benc
 /**
  * One benchmarked operation.
  *
- * `prepare` runs before every warmup and measured sample and is not timed.
- * Only `run` is timed. The context `prepare` returns is passed to `run`.
+ * `prepare` runs before every warmup and measured sample and `cleanup` runs
+ * after it. Neither is timed, only `run` is. The context `prepare` returns is
+ * passed to `run` and `cleanup`.
  * Samples of different operations are interleaved, so an operation must leave
- * the data as it found it.
+ * the data as it found it: `cleanup` removes whatever `run` added.
  */
 export interface BenchmarkOperationDefinition<Client, Context, OperationId extends string = string> {
   operationId: OperationId;
   label: string;
   prepare: (client: Client, datasetSize: number) => Promise<Context>;
   run: (client: Client, datasetSize: number, context: Context) => Promise<void>;
+  cleanup?: (client: Client, datasetSize: number, context: Context) => Promise<void>;
 }
 
 export interface RunBenchmarkSuiteOptions<Client, Context, OperationId extends string> {
@@ -66,6 +68,7 @@ export async function runBenchmarkSuite<Client, Context, OperationId extends str
       const start = performance.now();
       await definition.run(client, config.datasetSize, context);
       const end = performance.now();
+      await definition.cleanup?.(client, config.datasetSize, context);
       if (phase === "measure") samplesByOperation[index].push(end - start);
       throwIfAborted(signal);
       completedSteps += 1;
