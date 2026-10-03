@@ -58,6 +58,8 @@ jobs:
         with:
           paths: |
             packages/prisma-orm
+            packages/benchmark-kit
+            apps/prisma-orm-benchmark
             tests/prisma-idb-cli
             pnpm-lock.yaml
 
@@ -241,6 +243,9 @@ jobs:
 
       - name: Run Prisma 8 unit tests
         run: pnpm test:prisma-idb
+
+      - name: Run benchmark unit tests
+        run: pnpm test:benchmark-unit
 
   test-prisma-idb-e2e:
     needs: changes
