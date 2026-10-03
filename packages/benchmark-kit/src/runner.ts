@@ -7,8 +7,9 @@ import type { BenchmarkConfig, BenchmarkOperationResult, BenchmarkProgress, Benc
  * `prepare` runs before every warmup and measured sample and `cleanup` runs
  * after it. Neither is timed, only `run` is. The context `prepare` returns is
  * passed to `run` and `cleanup`.
- * Samples of different operations are interleaved, so an operation must leave
- * the data as it found it: `cleanup` removes whatever `run` added.
+ * Samples of different operations are interleaved, so no operation may leak
+ * data into the next sample: either `cleanup` removes whatever `run` added, or
+ * every `prepare` rebuilds the data from scratch, as the generator suite does.
  */
 export interface BenchmarkOperationDefinition<Client, Context, OperationId extends string = string> {
   operationId: OperationId;
