@@ -28,11 +28,39 @@ import type {
   IdbScanWritePlan,
   IdbUpdatePlan,
 } from "../plan-body";
-import { IdbExecuteError, isTransactionInactiveError, transactionInactiveError } from "./error";
+import {
+  IdbExecuteError,
+  isTransactionInactiveError,
+  transactionInactiveError,
+  type IdbExecuteErrorCode,
+} from "./error";
 
 type Row = Record<string, unknown>;
 type OnComplete = (rows: Row[]) => void;
 type OnError = (err: unknown) => void;
+
+/**
+ * The error for a failed request: `IDB <what> failed on <target>: <cause>`.
+ * `target` defaults to the plan's store; pass it when the message also names an index.
+ */
+function opError(
+  code: IdbExecuteErrorCode,
+  plan: IdbAtomicPlan,
+  what: string,
+  cause: unknown,
+  target = `store "${plan.storeName}"`
+): IdbExecuteError {
+  return new IdbExecuteError(
+    { code, planKind: plan.kind, storeName: plan.storeName, cause },
+    `IDB ${what} failed on ${target}: ${String(cause)}`
+  );
+}
+
+/** `store "users"` or `store "users" (index "by_name")`, for plans that may read through an index. */
+function storeTarget(plan: { storeName: string; indexName?: string }): string {
+  const index = plan.indexName !== undefined ? ` (index "${plan.indexName}")` : "";
+  return `store "${plan.storeName}"${index}`;
+}
 
 // ── Public API ───────────────────────────────────────────────────────────────
 
@@ -109,54 +137,26 @@ function execKeyGet(store: IDBObjectStore, plan: IdbKeyGetPlan, onComplete: OnCo
     const value = req.result as Row | undefined;
     onComplete(value !== undefined ? [value] : []);
   };
-  req.onerror = () =>
-    onError(
-      new IdbExecuteError(
-        { code: "KEY_GET_FAILED", planKind: "key-get", storeName: plan.storeName, cause: req.error },
-        `IDB key-get failed on store "${plan.storeName}": ${String(req.error)}`
-      )
-    );
+  req.onerror = () => onError(opError("KEY_GET_FAILED", plan, "key-get", req.error));
 }
 
 function execIndexGet(store: IDBObjectStore, plan: IdbIndexGetPlan, onComplete: OnComplete, onError: OnError): void {
   const req = store.index(plan.indexName).getAll(plan.range);
   req.onsuccess = () => onComplete(req.result as Row[]);
   req.onerror = () =>
-    onError(
-      new IdbExecuteError(
-        {
-          code: "INDEX_GET_FAILED",
-          planKind: "index-get",
-          storeName: plan.storeName,
-          cause: req.error,
-        },
-        `IDB index-get failed on "${plan.storeName}"/"${plan.indexName}": ${String(req.error)}`
-      )
-    );
+    onError(opError("INDEX_GET_FAILED", plan, "index-get", req.error, `"${plan.storeName}"/"${plan.indexName}"`));
 }
 
 function execCount(store: IDBObjectStore, plan: IdbCountPlan, onComplete: OnComplete, onError: OnError): void {
   const source: IDBObjectStore | IDBIndex = plan.indexName !== undefined ? store.index(plan.indexName) : store;
   const req = plan.range !== undefined ? source.count(plan.range) : source.count();
   req.onsuccess = () => onComplete([{ count: req.result }]);
-  req.onerror = () =>
-    onError(
-      new IdbExecuteError(
-        { code: "COUNT_FAILED", planKind: "count", storeName: plan.storeName, cause: req.error },
-        `IDB count failed on store "${plan.storeName}"${plan.indexName !== undefined ? ` (index "${plan.indexName}")` : ""}: ${String(req.error)}`
-      )
-    );
+  req.onerror = () => onError(opError("COUNT_FAILED", plan, "count", req.error, storeTarget(plan)));
 }
 
 function execKeys(store: IDBObjectStore, plan: IdbKeysPlan, onComplete: OnComplete, onError: OnError): void {
   const source: IDBObjectStore | IDBIndex = plan.indexName !== undefined ? store.index(plan.indexName) : store;
-  const fail = (cause: unknown) =>
-    onError(
-      new IdbExecuteError(
-        { code: "KEYS_FAILED", planKind: "keys", storeName: plan.storeName, cause },
-        `IDB keys read failed on store "${plan.storeName}"${plan.indexName !== undefined ? ` (index "${plan.indexName}")` : ""}: ${String(cause)}`
-      )
-    );
+  const fail = (cause: unknown) => onError(opError("KEYS_FAILED", plan, "keys read", cause, storeTarget(plan)));
 
   // getKey() requires a query (null/absent throws), so a range-less single-key
   // read is expressed as getAllKeys(undefined, 1) instead.
@@ -240,18 +240,7 @@ function execCursorScan(
     cursor.continue();
   };
 
-  req.onerror = () =>
-    onError(
-      new IdbExecuteError(
-        {
-          code: "CURSOR_SCAN_FAILED",
-          planKind: "cursor-scan",
-          storeName: plan.storeName,
-          cause: req.error,
-        },
-        `IDB cursor-scan failed on store "${plan.storeName}": ${String(req.error)}`
-      )
-    );
+  req.onerror = () => onError(opError("CURSOR_SCAN_FAILED", plan, "cursor-scan", req.error));
 }
 
 /**
@@ -275,13 +264,7 @@ function execAdd(store: IDBObjectStore, plan: IdbAddPlan, onComplete: OnComplete
   const req = plan.key !== undefined ? store.add(plan.record, plan.key) : store.add(plan.record);
   // Echo the record back — IDB has no RETURNING clause.
   req.onsuccess = () => onComplete([withGeneratedKey(store, plan.record, req.result)]);
-  req.onerror = () =>
-    onError(
-      new IdbExecuteError(
-        { code: "ADD_FAILED", planKind: "add", storeName: plan.storeName, cause: req.error },
-        `IDB add failed on store "${plan.storeName}": ${String(req.error)}`
-      )
-    );
+  req.onerror = () => onError(opError("ADD_FAILED", plan, "add", req.error));
 }
 
 function execPut(store: IDBObjectStore, plan: IdbPutPlan, onComplete: OnComplete, onError: OnError): void {
@@ -290,13 +273,7 @@ function execPut(store: IDBObjectStore, plan: IdbPutPlan, onComplete: OnComplete
   const req = plan.key !== undefined ? store.put(plan.record, plan.key) : store.put(plan.record);
   // Echo the record back — IDB has no RETURNING clause.
   req.onsuccess = () => onComplete([withGeneratedKey(store, plan.record, req.result)]);
-  req.onerror = () =>
-    onError(
-      new IdbExecuteError(
-        { code: "PUT_FAILED", planKind: "put", storeName: plan.storeName, cause: req.error },
-        `IDB put failed on store "${plan.storeName}": ${String(req.error)}`
-      )
-    );
+  req.onerror = () => onError(opError("PUT_FAILED", plan, "put", req.error));
 }
 
 function execUpdate(store: IDBObjectStore, plan: IdbUpdatePlan, onComplete: OnComplete, onError: OnError): void {
@@ -309,21 +286,9 @@ function execUpdate(store: IDBObjectStore, plan: IdbUpdatePlan, onComplete: OnCo
     // Step 3: write the merged record back.
     const putReq = store.put(merged);
     putReq.onsuccess = () => onComplete([merged]);
-    putReq.onerror = () =>
-      onError(
-        new IdbExecuteError(
-          { code: "PUT_FAILED", planKind: "update", storeName: plan.storeName, cause: putReq.error },
-          `IDB update (put phase) failed on store "${plan.storeName}": ${String(putReq.error)}`
-        )
-      );
+    putReq.onerror = () => onError(opError("PUT_FAILED", plan, "update (put phase)", putReq.error));
   };
-  getReq.onerror = () =>
-    onError(
-      new IdbExecuteError(
-        { code: "KEY_GET_FAILED", planKind: "update", storeName: plan.storeName, cause: getReq.error },
-        `IDB update (get phase) failed on store "${plan.storeName}": ${String(getReq.error)}`
-      )
-    );
+  getReq.onerror = () => onError(opError("KEY_GET_FAILED", plan, "update (get phase)", getReq.error));
 }
 
 function execDelete(store: IDBObjectStore, plan: IdbDeletePlan, onComplete: OnComplete, onError: OnError): void {
@@ -345,21 +310,9 @@ function execDelete(store: IDBObjectStore, plan: IdbDeletePlan, onComplete: OnCo
     collected.push(cursor.value as Row);
     const delReq = cursor.delete();
     delReq.onsuccess = () => cursor.continue();
-    delReq.onerror = () =>
-      onError(
-        new IdbExecuteError(
-          { code: "DELETE_FAILED", planKind: "delete", storeName: plan.storeName, cause: delReq.error },
-          `IDB delete failed on store "${plan.storeName}": ${String(delReq.error)}`
-        )
-      );
+    delReq.onerror = () => onError(opError("DELETE_FAILED", plan, "delete", delReq.error));
   };
-  req.onerror = () =>
-    onError(
-      new IdbExecuteError(
-        { code: "DELETE_FAILED", planKind: "delete", storeName: plan.storeName, cause: req.error },
-        `IDB delete failed on store "${plan.storeName}": ${String(req.error)}`
-      )
-    );
+  req.onerror = () => onError(opError("DELETE_FAILED", plan, "delete", req.error));
 }
 
 function execScanWrite(store: IDBObjectStore, plan: IdbScanWritePlan, onComplete: OnComplete, onError: OnError): void {
@@ -395,13 +348,7 @@ function execScanWrite(store: IDBObjectStore, plan: IdbScanWritePlan, onComplete
         }
         cursor.continue();
       };
-      delReq.onerror = () =>
-        onError(
-          new IdbExecuteError(
-            { code: "DELETE_FAILED", planKind: "scan-write", storeName: plan.storeName, cause: delReq.error },
-            `IDB scan-write (delete) failed on store "${plan.storeName}": ${String(delReq.error)}`
-          )
-        );
+      delReq.onerror = () => onError(opError("DELETE_FAILED", plan, "scan-write (delete)", delReq.error));
     } else {
       // put-merged: shallow-merge patch onto existing row, write back in-place.
       const merged: Row = { ...row, ...plan.patch };
@@ -414,21 +361,9 @@ function execScanWrite(store: IDBObjectStore, plan: IdbScanWritePlan, onComplete
         }
         cursor.continue();
       };
-      updReq.onerror = () =>
-        onError(
-          new IdbExecuteError(
-            { code: "PUT_FAILED", planKind: "scan-write", storeName: plan.storeName, cause: updReq.error },
-            `IDB scan-write (put-merged) failed on store "${plan.storeName}": ${String(updReq.error)}`
-          )
-        );
+      updReq.onerror = () => onError(opError("PUT_FAILED", plan, "scan-write (put-merged)", updReq.error));
     }
   };
 
-  req.onerror = () =>
-    onError(
-      new IdbExecuteError(
-        { code: "CURSOR_SCAN_FAILED", planKind: "scan-write", storeName: plan.storeName, cause: req.error },
-        `IDB scan-write cursor failed on store "${plan.storeName}": ${String(req.error)}`
-      )
-    );
+  req.onerror = () => onError(opError("CURSOR_SCAN_FAILED", plan, "scan-write cursor", req.error));
 }

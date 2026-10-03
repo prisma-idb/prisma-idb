@@ -30,13 +30,13 @@ export { createTransactionScope } from "../core/transaction-scope";
 /**
  * Creates a runtime driver descriptor for IndexedDB.
  *
- * The returned descriptor's `create()` opens the named IDB database
- * lazily — the connection resolves in the background and is awaited by
- * the adapter inside `runDriver()` for the first query.
+ * The returned descriptor's `create()` starts opening the named IDB database
+ * in the background; the driver awaits the connection before its first query.
  *
  * @param dbName  - The IDB database name to open.
- * @param version - The IDB version number (default: 1). Bumping this
- *   triggers `upgradeneeded`-based migrations via `IdbMigrationRunner`.
+ * @param version - The IDB version number. When omitted, IndexedDB opens the
+ *   database at its current version (version 1 for a new database). The
+ *   driver never runs migrations; `openAndUpgrade` (target-idb) bumps the version.
  *
  * @example
  * ```ts
