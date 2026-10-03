@@ -1,5 +1,15 @@
 # @prisma-idb/sync-server-sql
 
+## 0.5.1
+
+### Patch Changes
+
+- [#249](https://github.com/prisma-idb/prisma-idb/pull/249) [`45eb49c`](https://github.com/prisma-idb/prisma-idb/commit/45eb49cd7d435fa527d3e362582192764dec9094) Thanks [@WhyAsh5114](https://github.com/WhyAsh5114)! - Internal cleanup of push and pull with no behavior change: wire value encoding and revival live in one module, the `Changelog` table is read and written through one module, and the pull files are named after what they export.
+
+- Updated dependencies [[`7a61070`](https://github.com/prisma-idb/prisma-idb/commit/7a61070ff8b2cbc6d3135c34b8f28fe9e6d15516), [`b2e3619`](https://github.com/prisma-idb/prisma-idb/commit/b2e3619e49417e3cdf23528bc3cfda6d44c9f7d5)]:
+  - @prisma-idb/sync-extension-idb@0.7.1
+  - @prisma-idb/sync-server@0.6.1
+
 ## 0.5.0
 
 ### Minor Changes

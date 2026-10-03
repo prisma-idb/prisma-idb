@@ -1,5 +1,11 @@
 # @prisma-idb/sync-server
 
+## 0.6.1
+
+### Patch Changes
+
+- [#249](https://github.com/prisma-idb/prisma-idb/pull/249) [`b2e3619`](https://github.com/prisma-idb/prisma-idb/commit/b2e3619e49417e3cdf23528bc3cfda6d44c9f7d5) Thanks [@WhyAsh5114](https://github.com/WhyAsh5114)! - Internal cleanup of `validatePush` with no behavior change: the per-event key, record and ownership checks read as one short function, and the repeated validation-failure results are built once.
+
 ## 0.6.0
 
 ### Minor Changes
