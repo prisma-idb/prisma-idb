@@ -1,10 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
+import { createSyncServer, defaultValidationCodecs } from "@prisma-idb/sync-server";
 import { createSqlSyncAdapter } from "../src/core/create-adapter";
 import { applyPush, DEFAULT_MAX_PUSH_BATCH_SIZE } from "../src/core/apply-push";
 import { pull } from "../src/core/pull-changes";
 import { sqlGetKeyField } from "../src/core/get-key-field";
 import { ormRootFor } from "../src/core/orm-root";
-import { seed, testContract, testDb, testSyncServer } from "./helpers";
+import { PushPayloadValidationError } from "../src/core/push";
+import { seed, testBigSyncServer, testContract, testDb, testSyncServer } from "./helpers";
 
 const adapter = createSqlSyncAdapter({ contract: testContract, syncServer: testSyncServer });
 
@@ -17,7 +19,110 @@ const create = (id: string, entityType: string, payload: Record<string, unknown>
   payload,
 });
 
+describe("SQL fixture codecs", () => {
+  it("resolves every scalar codec emitted in the fixture contracts", () => {
+    const walk = (value: unknown): void => {
+      if (!value || typeof value !== "object") return;
+      if ("codecId" in value && typeof value.codecId === "string") {
+        expect(defaultValidationCodecs.targetTypesFor(value.codecId), value.codecId).toBeDefined();
+      }
+      for (const child of Object.values(value)) walk(child);
+    };
+    walk(testContract);
+  });
+});
+
 describe("applyPush", () => {
+  it.each(["pg/timestamptz-date@1", "pg/timestamptz@1"])(
+    "validates and applies DateTime creates and updates with %s",
+    async (codecId) => {
+      // rc.12's ORM uses the current Date codec; sync validation also accepts
+      // its historical ID for the same Date-valued timestamptz column.
+      const contract = structuredClone(testContract);
+      const fields = contract.domain.namespaces["public"]!.models["Todo"]!.fields;
+      fields["dueAt"] = { ...fields["dueAt"]!, type: { kind: "scalar", codecId } };
+      const syncServer = createSyncServer({
+        contract,
+        clientContract: {
+          ...contract,
+          domain: {
+            namespaces: {
+              public: {
+                models: Object.fromEntries(
+                  Object.entries(contract.domain.namespaces["public"]!.models).filter(([name]) =>
+                    ["User", "Board", "Todo"].includes(name)
+                  )
+                ),
+              },
+            },
+          },
+        },
+        rootModel: "User",
+        getKeyField: sqlGetKeyField,
+      });
+      const dateAdapter = createSqlSyncAdapter({ contract, syncServer });
+      const db = await testDb();
+      const firstDate = "2026-01-02T03:04:05.000Z";
+      const nextDate = "2026-02-03T04:05:06.000Z";
+      expect(
+        await dateAdapter.applyPush(db, {
+          scopeKey: "u1",
+          events: [
+            create("u", "User", { id: "u1", name: "Ada" }),
+            create("b", "Board", { id: "b1", ownerId: "u1" }),
+            create("t", "Todo", { id: "t1", boardId: "b1", dueAt: firstDate }),
+          ],
+        })
+      ).toEqual({ ok: true, results: ["u", "b", "t"].map((id) => ({ id, success: true })) });
+      expect((await ormRootFor(db, "Todo").first({ id: "t1" }))?.["dueAt"]).toEqual(new Date(firstDate));
+      expect(
+        await dateAdapter.applyPush(db, {
+          scopeKey: "u1",
+          events: [
+            {
+              id: "update-date",
+              entityType: "Todo",
+              operation: "update",
+              payload: { key: "t1", patch: { dueAt: nextDate } },
+            },
+          ],
+        })
+      ).toEqual({ ok: true, results: [{ id: "update-date", success: true }] });
+      expect((await ormRootFor(db, "Todo").first({ id: "t1" }))?.["dueAt"]).toEqual(new Date(nextDate));
+    }
+  );
+
+  it("rejects malformed creates, patches and keys without opening an ownership transaction", async () => {
+    const transaction = vi.fn();
+    const outcome = await adapter.applyPush(
+      { transaction },
+      {
+        scopeKey: "u1",
+        events: [
+          create("create", "User", { id: "u1", name: 42 }),
+          {
+            id: "update",
+            entityType: "Todo",
+            operation: "update",
+            payload: { key: "t1", patch: { dueAt: "invalid-date" } },
+          },
+          { id: "key", entityType: "User", operation: "delete", payload: { key: 42 } },
+          { id: "rekey", entityType: "User", operation: "update", payload: { key: "u1", patch: { id: "u2" } } },
+        ],
+      }
+    );
+    expect(outcome).toEqual({
+      ok: true,
+      results: [
+        { id: "create", success: false, error: "RECORD_VALIDATION_FAILURE", retryable: false },
+        { id: "update", success: false, error: "RECORD_VALIDATION_FAILURE", retryable: false },
+        { id: "key", success: false, error: "KEYPATH_VALIDATION_FAILURE", retryable: false },
+        { id: "rekey", success: false, error: "KEYPATH_VALIDATION_FAILURE", retryable: false },
+      ],
+    });
+    expect(transaction).not.toHaveBeenCalled();
+  });
+
   it("applies a batch with data dependencies in order and returns one result per event", async () => {
     const db = await testDb();
     const outcome = await adapter.applyPush(db, {
@@ -76,7 +181,7 @@ describe("applyPush", () => {
         results: [
           { id: "board", success: true },
           { id: "todo", success: true },
-          { id: "malformed", success: false, error: "Invalid create payload: expected an object", retryable: false },
+          { id: "malformed", success: false, error: "RECORD_VALIDATION_FAILURE", retryable: false },
         ],
       });
       expect(await ormRootFor(db, "Todo").first({ id: "t1" })).toMatchObject({ id: "t1", boardId: "b1" });
@@ -143,7 +248,7 @@ describe("applyPush", () => {
     expect(outcome).toEqual({
       ok: true,
       results: [
-        { id: "bad", success: false, error: `Invalid ${operation} payload: expected an object`, retryable: false },
+        { id: "bad", success: false, error: "RECORD_VALIDATION_FAILURE", retryable: false },
         { id: "good", success: true },
       ],
     });
@@ -168,7 +273,7 @@ describe("applyPush", () => {
     expect(outcome).toEqual({
       ok: true,
       results: [
-        { id: "bad", success: false, error: "Invalid update payload: expected an object patch", retryable: false },
+        { id: "bad", success: false, error: "RECORD_VALIDATION_FAILURE", retryable: false },
         { id: "good", success: true },
       ],
     });
@@ -198,7 +303,7 @@ describe("applyPush", () => {
         {
           id: "e3",
           success: false,
-          error: 'Unsupported update: filter does not pin "id" by equality',
+          error: "KEYPATH_VALIDATION_FAILURE",
           retryable: false,
         },
         { id: "e4", success: false, error: "SCOPE_VIOLATION", retryable: false },
@@ -262,6 +367,73 @@ describe("pull", () => {
     const ids = outcome.logs.map((l) => l.changelogId);
     expect(ids.every((id) => UUID_V7.test(id))).toBe(true);
     expect(ids).toEqual([...ids].sort());
+  });
+
+  it.each([0, 1, 2])("preserves malformed key row %s and valid rows across pull pages", async (malformedIndex) => {
+    const db = await testDb();
+    const bigAdapter = createSqlSyncAdapter({ contract: testContract, syncServer: testBigSyncServer });
+    await ormRootFor(db, "BigUser").select("id").create({ id: 1n, name: "Ann" });
+    for (const id of [11n, 12n]) {
+      await ormRootFor(db, "BigItem")
+        .select("id")
+        .create({ id, ownerId: 1n, name: `item ${id}` });
+    }
+    const keys = ["11", "12"];
+    keys.splice(malformedIndex, 0, "invalid-bigint");
+    const ids = keys.map((_, index) => `0190a2b4-7c3e-7d2a-8f1b-3c4d5e6f7a8${index}`);
+    await seed(db, {
+      Changelog: keys.map((keyPath, index) => ({
+        id: ids[index],
+        model: "BigItem",
+        keyPath,
+        operation: "update",
+        scopeKey: "1",
+        outboxEventId: `e${index}`,
+      })),
+    });
+
+    const first = await bigAdapter.pull(db, { scopeKey: "1", limit: 2 });
+    if (!first.ok) throw new Error(first.reason);
+    expect(first.logs.map((log) => log.changelogId)).toEqual(ids.slice(0, 2));
+    const rest = await bigAdapter.pull(db, { scopeKey: "1", lastChangelogId: first.logs.at(-1)!.changelogId });
+    if (!rest.ok) throw new Error(rest.reason);
+    const logs = [...first.logs, ...rest.logs];
+    expect(logs.map((log) => log.changelogId)).toEqual(ids);
+    expect(logs.map((log) => log.keyPath)).toEqual(keys);
+    expect(logs[malformedIndex]).toEqual({
+      changelogId: ids[malformedIndex],
+      model: "BigItem",
+      keyPath: "invalid-bigint",
+      operation: "update",
+      validationError: "KEYPATH_VALIDATION_FAILURE",
+    });
+    expect(logs.filter((log) => log.validationError === undefined).map((log) => log.record)).toEqual([
+      { id: 11n, ownerId: 1n, name: "item 11" },
+      { id: 12n, ownerId: 1n, name: "item 12" },
+    ]);
+    expect(await bigAdapter.pull(db, { scopeKey: "1", lastChangelogId: logs.at(-1)!.changelogId })).toEqual({
+      ok: true,
+      logs: [],
+    });
+  });
+
+  it.each([
+    new Error("database unavailable"),
+    new Error("KEYPATH_VALIDATION_FAILURE"),
+    new PushPayloadValidationError("RECORD_VALIDATION_FAILURE", "unexpected record failure"),
+  ])("propagates record lookup errors: %s", async (error) => {
+    const db = await pushAnnAndBo();
+    const failingDb = {
+      orm: {
+        public: {
+          Changelog: ormRootFor(db, "Changelog"),
+          User: ormRootFor(db, "User"),
+          Todo: ormRootFor(db, "Todo"),
+          Board: { first: vi.fn().mockRejectedValue(error) },
+        },
+      },
+    };
+    await expect(adapter.pull(failingDb, { scopeKey: "u1" })).rejects.toBe(error);
   });
 
   it.each([0, -1, 0.5, 1.5, NaN, Infinity, -Infinity])("rejects invalid limit %s before querying", async (limit) => {

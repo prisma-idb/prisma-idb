@@ -95,6 +95,6 @@ describe("sync-extension-idb end-to-end", () => {
     expect(allPosts.find((p) => p.id === "p3")?.title).toBe("Not yet synced");
 
     // One applied (p2's create), one skipped (p3's conflicting update).
-    expect(pullStats).toEqual({ applied: 1, skipped: 1 });
+    expect(pullStats).toEqual({ applied: 1, skipped: 1, validationFailed: 0 });
   });
 });

@@ -35,7 +35,13 @@ const testClientContract = (() => {
     ...contractJson,
     domain: {
       namespaces: {
-        public: { ...rest, models: without(models, "Changelog"), enum: without(enums, "ChangeOperation") },
+        public: {
+          ...rest,
+          models: Object.fromEntries(
+            Object.entries(models).filter(([name]) => !["Changelog", "BigUser", "BigItem"].includes(name))
+          ),
+          enum: without(enums, "ChangeOperation"),
+        },
       },
     },
   } as unknown as SyncServerContract;
@@ -46,6 +52,27 @@ export const testSyncServer = createSyncServer({
   clientContract: testClientContract,
   rootModel: "User",
   getKeyField: (contract, model) => sqlGetKeyField(contract, model),
+});
+
+export const testBigSyncServer = createSyncServer({
+  contract: testContract,
+  clientContract: {
+    ...testClientContract,
+    domain: {
+      namespaces: {
+        public: {
+          ...testClientContract.domain.namespaces["public"]!,
+          models: Object.fromEntries(
+            Object.entries(testContract.domain.namespaces["public"]!.models).filter(([name]) =>
+              ["BigUser", "BigItem"].includes(name)
+            )
+          ),
+        },
+      },
+    },
+  },
+  rootModel: "BigUser",
+  getKeyField: sqlGetKeyField,
 });
 
 function requiredDatabaseUrl(): string {

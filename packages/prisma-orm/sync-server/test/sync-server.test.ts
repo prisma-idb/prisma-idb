@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createSyncServer } from "../src/core/sync-server";
 import type { SyncServerContract } from "../src/core/ownership-dag";
 import { kanbanClientContract, kanbanContract } from "./helpers";
@@ -34,6 +34,110 @@ describe("createSyncServer", () => {
   });
 
   describe("validatePush", () => {
+    it("rejects malformed records and keys before resolving ownership paths", () => {
+      const contract = kanbanContract();
+      const getKeyField = vi.fn((_contract: SyncServerContract, _model: string) => "id");
+      const syncServer = createSyncServer({
+        contract,
+        clientContract: kanbanClientContract(),
+        rootModel: "User",
+        getKeyField,
+      });
+      const [badRecord, badKey] = syncServer.validatePush(
+        [
+          { id: "e1", model: "Todo", operation: "create", payload: { id: "t1", boardId: 42 } },
+          { id: "e2", model: "Todo", operation: "delete", payload: { id: 42 } },
+        ],
+        { scopeKey: "user-1" }
+      );
+      expect(badRecord?.check).toMatchObject({ kind: "validation-failure", error: "RECORD_VALIDATION_FAILURE" });
+      expect(badKey?.check).toMatchObject({ kind: "validation-failure", error: "KEYPATH_VALIDATION_FAILURE" });
+      // A scoped ownership check would additionally resolve the root's key field.
+      expect(getKeyField.mock.calls.map(([, model]) => model)).toEqual(["Todo", "Todo"]);
+    });
+
+    it.each([
+      ["pg/int8@1", 42n, "42"],
+      ["pg/unboundedint@1", 42n, "42"],
+      ["pg/bytea@1", new Uint8Array([1, 2]), "AQI="],
+      ["pg/timestamptz-date@1", new Date("2026-01-02T03:04:05.000Z"), "2026-01-02T03:04:05.000Z"],
+    ])("keeps root and scoped keys in wire form for %s", (codecId, nativeKey, wireKey) => {
+      const contract = kanbanContract();
+      for (const model of ["User", "Board"]) {
+        contract.domain.namespaces[Object.keys(contract.domain.namespaces)[0]!]!.models[model]!.fields["id"] = {
+          nullable: false,
+          type: { kind: "scalar", codecId: codecId as string },
+        };
+      }
+      const syncServer = createSyncServer({ contract, clientContract: kanbanClientContract(), rootModel: "User" });
+      const [root, scoped, invalid] = syncServer.validatePush(
+        [
+          { id: "root", model: "User", operation: "delete", payload: { id: nativeKey }, wirePayload: { id: wireKey } },
+          {
+            id: "scoped",
+            model: "Board",
+            operation: "delete",
+            payload: { id: nativeKey },
+            wirePayload: { id: wireKey },
+          },
+          { id: "invalid", model: "User", operation: "delete", payload: { id: false }, wirePayload: { id: wireKey } },
+        ],
+        { scopeKey: wireKey as string }
+      );
+      expect(root?.check).toMatchObject({ kind: "root", key: wireKey, authorized: true });
+      expect(scoped?.check).toMatchObject({ kind: "scoped", key: wireKey });
+      expect(invalid?.check).toMatchObject({ kind: "validation-failure", error: "KEYPATH_VALIDATION_FAILURE" });
+    });
+
+    it("validates only client-visible fields while resolving ownership from the full model", () => {
+      const contract = kanbanContract();
+      const clientContract = kanbanClientContract();
+      const clientBoard = Object.values(clientContract.domain.namespaces)[0]!.models["Board"]!;
+      delete clientBoard.fields["ownerId"];
+      delete clientBoard.relations["owner"];
+      clientBoard.fields["label"] = { nullable: true, type: { kind: "scalar", codecId: "idb/string@1" } };
+      const getKeyField = vi.fn((_contract: SyncServerContract, _model: string) => "id");
+      const syncServer = createSyncServer({ contract, clientContract, rootModel: "User", getKeyField });
+      const [valid, missingKey, hiddenField, badVisibleCreate, badVisibleUpdate] = syncServer.validatePush(
+        [
+          { id: "valid", model: "Board", operation: "create", payload: { id: "b1" } },
+          { id: "key", model: "Board", operation: "create", payload: {} },
+          { id: "hidden", model: "Board", operation: "update", payload: { id: "b1", ownerId: "u1" } },
+          { id: "create", model: "Board", operation: "create", payload: { id: "b1", label: 42 } },
+          { id: "update", model: "Board", operation: "update", payload: { id: "b1", label: 42 } },
+        ],
+        { scopeKey: "u1" }
+      );
+      expect(valid?.check).toEqual({
+        kind: "scoped",
+        keyField: "id",
+        key: "b1",
+        rootKeyField: "id",
+        scopeKey: "u1",
+        paths: [["owner"]],
+      });
+      expect(missingKey?.check).toMatchObject({ kind: "validation-failure", error: "KEYPATH_VALIDATION_FAILURE" });
+      for (const result of [hiddenField, badVisibleCreate, badVisibleUpdate]) {
+        expect(result?.check).toMatchObject({ kind: "validation-failure", error: "RECORD_VALIDATION_FAILURE" });
+      }
+      expect(getKeyField.mock.calls.every(([checkedContract]) => checkedContract === contract)).toBe(true);
+    });
+
+    it("checks updates as patches and deletes as key-only events", () => {
+      const results = server().validatePush(
+        [
+          { id: "missing", model: "User", operation: "create", payload: { id: "user-1" } },
+          { id: "update", model: "User", operation: "update", payload: { id: "user-1", name: 42 } },
+          { id: "extra", model: "User", operation: "update", payload: { id: "user-1", extra: true } },
+          { id: "delete", model: "User", operation: "delete", payload: { id: "user-1" } },
+        ],
+        { scopeKey: "user-1" }
+      );
+      for (const result of results.slice(0, 3))
+        expect(result.check).toMatchObject({ kind: "validation-failure", error: "RECORD_VALIDATION_FAILURE" });
+      expect(results[3]?.check).toMatchObject({ kind: "root", authorized: true });
+    });
+
     it("resolves the root model directly, no paths needed", () => {
       const [result] = server().validatePush(
         [{ id: "e1", model: "User", operation: "update", payload: { id: "user-1", name: "Ada" } }],
@@ -76,7 +180,7 @@ describe("createSyncServer", () => {
 
     it("resolves all paths for a model reachable more than one way", () => {
       const [result] = server().validatePush(
-        [{ id: "e1", model: "Comment", operation: "create", payload: { id: "c1", authorId: "user-1" } }],
+        [{ id: "e1", model: "Comment", operation: "create", payload: { id: "c1", todoId: null, authorId: "user-1" } }],
         { scopeKey: "user-1" }
       );
 

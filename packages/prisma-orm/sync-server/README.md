@@ -17,8 +17,22 @@ const syncServer = createSyncServer({
   getKeyField: sqlGetKeyField, // for a SQL contract
 });
 
+// payloads use native application values (Date, bigint, Uint8Array).
 const checks = syncServer.validatePush(events, { scopeKey: signedInUserId });
+for (const { check } of checks) {
+  if (check.kind === "validation-failure") {
+    // Reject with check.error: RECORD_VALIDATION_FAILURE or KEYPATH_VALIDATION_FAILURE.
+    continue;
+  }
+  // Execute the ownership check using your database.
+}
 ```
+
+Records validate against the client projection and reject extra fields and undeclared enum values. Creates require all client-visible non-nullable fields; updates validate supplied fields, and deletes validate only keys. Validation failures occur before ownership paths are resolved. The server builds validators for every client-visible model at construction and throws with the model and codec ID if a validator is unavailable. Server-only models and fields are excluded from this check. Key validation and ownership checks use the full server contract. The server must fill required server-only fields before insertion; omitting them can still fail at the database boundary.
+
+The default SQL lookup validates Date codecs (including legacy `pg/date@1`, `pg/timestamp@1`, `pg/timestamptz@1` and `sql/timestamp@1`), string date/time codecs, primitive scalars, JSON, bytes and text arrays against their application values. `pg/*-temporal@1` values are Temporal objects, and `pg/interval@1` values are `{ months, days, micros }` objects; neither has a default validator. Choose Date/string representations for synced date/time fields. Historical codec validation does not restore codecs removed from the installed SQL runtime: re-emit old contracts before using them with rc.12.
+
+Other families can extend the exported `defaultValidationCodecs` with a `codecLookup` that returns supported application names: `string`, `string[]`, `number`, `boolean`, `bigint`, `Date`, `Uint8Array` or `unknown`. Names such as `Temporal.Instant` are rejected at construction. `unknown` deliberately skips scalar type checking and requires the caller to validate that codec's value before pushing; it is not a Temporal or interval validator.
 
 For a SQL database, [`@prisma-idb/sync-server-sql`](https://www.npmjs.com/package/@prisma-idb/sync-server-sql) runs the checks and writes for you.
 

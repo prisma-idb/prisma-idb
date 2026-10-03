@@ -4,9 +4,10 @@
 // contract gets emitted from. `writeSqlSchemaWithSync` (see
 // ../../prisma.config.ts) appends the synthetic `Changelog` model.
 model User {
-  id     String  @id
-  name   String
-  boards Board[]
+  id        String @id
+  name      String
+  boards    Board[]
+  jsonItems JsonItem[]
 }
 
 model Board {
@@ -21,4 +22,28 @@ model Todo {
   boardId String
   board   Board     @relation(fields: [boardId], references: [id], onDelete: Cascade)
   dueAt   DateTime?
+}
+
+// Wire keys are digit strings; SQL lookups and writes use native bigint values.
+model BigUser {
+  id    BigInt @id
+  name  String
+  items BigItem[]
+}
+
+model BigItem {
+  id      BigInt  @id
+  ownerId BigInt
+  owner   BigUser @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  name    String
+}
+
+// Required JSON distinguishes JSON null from a forbidden SQL NULL.
+model JsonItem {
+  id            String @id
+  ownerId       String
+  owner         User   @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  value         Jsonb
+  jsonValue     Json
+  optionalValue Json?
 }

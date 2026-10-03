@@ -1,7 +1,7 @@
 {
   "name": "@prisma-idb/sync-server-sql",
   "version": "0.4.1",
-  "description": "Prisma 8 IDB — SQL execution adapter for sync-server (ownership checks + push/pull against a Prisma 8 SQL ORM client)",
+  "description": "Prisma 8 IDB \u2014 SQL execution adapter for sync-server (ownership checks + push/pull against a Prisma 8 SQL ORM client)",
   "license": "MIT",
   "files": ["dist"],
   "keywords": ["prisma", "prisma-8", "indexeddb", "offline-first", "idb", "sync", "sql", "postgres", "sqlite"],
@@ -35,7 +35,9 @@
   },
   "dependencies": {
     "@prisma-idb/sync-server": "workspace:*",
-    "@prisma/orm-framework": "8.0.0-rc.12"
+    "@prisma-idb/sync-extension-idb": "workspace:*",
+    "@prisma/orm-framework": "8.0.0-rc.12",
+    "@prisma-idb/target-idb": "workspace:*"
   },
   "devDependencies": {
     "@prisma/cli-engine": "0.6.1",
@@ -47,7 +49,10 @@
     "prisma": "8.0.0-rc.17",
     "tsdown": "^0.22.14",
     "typescript": "^6.0.3",
-    "vitest": "^4.1.11"
+    "vitest": "^4.1.11",
+    "@prisma-idb/client-idb": "workspace:*",
+    "@prisma-idb/family-idb": "workspace:*",
+    "fake-indexeddb": "^6.2.5"
   },
   "publishConfig": {
     "access": "public"

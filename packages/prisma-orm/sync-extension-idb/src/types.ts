@@ -1,3 +1,5 @@
+import type { LogWithRecordBody } from "./schemas";
+
 /**
  * One tracked mutation's outbox write — model, operation, resolved key (when
  * statically knowable), and the exact payload written to the outbox record.
@@ -51,13 +53,7 @@ export interface VersionMetaRecord {
 }
 
 /** Server changelog entry returned by the pull endpoint. */
-export interface LogWithRecord {
-  changelogId: string;
-  model: string;
-  operation: "create" | "update" | "delete";
-  keyPath: unknown;
-  record: Record<string, unknown> | null;
-}
+export type LogWithRecord = LogWithRecordBody;
 
 /**
  * Per-event result from the push endpoint. `retryable` (present only for
@@ -77,5 +73,8 @@ export interface PushResult {
 export interface ApplyPullResult {
   applied: number;
   skipped: number;
+  /** Subset of skipped: invalid decoded records, keys, or wire values. */
+  validationFailed: number;
+  /** Highest applied or corrupt-row id; advancing can pass earlier transaction failures in the batch. */
   lastChangelogId: string | null;
 }

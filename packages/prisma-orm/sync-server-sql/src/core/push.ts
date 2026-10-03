@@ -1,5 +1,7 @@
+import { idbCodecLookup } from "@prisma-idb/target-idb/runtime";
 import { domainModelsAtDefaultNamespace } from "@prisma/orm-framework/contract/types";
-import type { GetKeyField, OwnershipCheck, SyncServerContract } from "@prisma-idb/sync-server";
+import type { GetKeyField, PushCheck, SyncServerContract } from "@prisma-idb/sync-server";
+import { nativeJsonCodecs } from "./wire-key";
 import { ormRootFor } from "./orm-root";
 import { checkAuthorization } from "./authorization";
 import { lockScope } from "./scope-lock";
@@ -27,31 +29,70 @@ export interface SqlPushResult {
   readonly retryable?: boolean;
 }
 
-/**
- * Codecs whose application value is a JS `Date`. Their `encode` only accepts
- * a real `Date`, but a push payload has been through JSON, so the client's
- * `Date`s arrive as ISO strings.
- */
-const JS_DATE_CODEC_IDS: ReadonlySet<string> = new Set(["pg/timestamptz-date@1"]);
+/** Internal payload errors preserve diagnostics for direct callers and stable wire codes. */
+export class PushPayloadValidationError extends Error {
+  constructor(
+    readonly code: "RECORD_VALIDATION_FAILURE" | "KEYPATH_VALIDATION_FAILURE",
+    message: string
+  ) {
+    super(message);
+  }
+}
 
-/**
- * Turns JSON-wire values back into the values `model`'s codecs encode:
- * currently ISO strings on JS-`Date` fields. Anything else passes through.
- */
+/** Revive native sync scalar values before shape validation or ORM encoding. */
 export function reviveWireValues(
+  contract: SyncServerContract,
+  model: string,
+  data: Record<string, unknown>,
+  keyField?: string
+): Record<string, unknown> {
+  const fields = domainModelsAtDefaultNamespace(contract.domain)[model]?.fields;
+  if (!fields) return data;
+  return Object.fromEntries(
+    Object.entries(data).map(([name, value]) => {
+      const field = fields[name];
+      const codecId = field?.type.kind === "scalar" ? nativeJsonCodecs[field.type.codecId] : undefined;
+      const codec = codecId ? idbCodecLookup.get(codecId) : undefined;
+      if (!codec) return [name, value];
+      const revive = (input: unknown): unknown => {
+        if (typeof input !== "string") return input;
+        try {
+          return codec.decodeJson(input);
+        } catch {
+          throw new PushPayloadValidationError(
+            name === keyField ? "KEYPATH_VALIDATION_FAILURE" : "RECORD_VALIDATION_FAILURE",
+            "Unable to decode sync field"
+          );
+        }
+      };
+      if (field?.many && Array.isArray(value)) return [name, value.map(revive)];
+      return [name, revive(value)];
+    })
+  );
+}
+
+// Prisma 8 rc.12 short-circuits bare null parameters to SQL NULL before
+// calling the JSON codec. Its pg/json and pg/jsonb codecs use JSON.stringify,
+// so this write-only value reaches the codec and encodes to the text "null".
+const jsonNull = Object.freeze({ toJSON: () => null });
+
+function ormWriteValues(
   contract: SyncServerContract,
   model: string,
   data: Record<string, unknown>
 ): Record<string, unknown> {
-  const fields = (
-    domainModelsAtDefaultNamespace(contract.domain)[model] as
-      { fields?: Record<string, { type?: { codecId?: string } }> } | undefined
-  )?.fields;
-  if (!fields) return data;
+  const fields = domainModelsAtDefaultNamespace(contract.domain)[model]?.fields;
   return Object.fromEntries(
     Object.entries(data).map(([name, value]) => {
-      const codecId = fields[name]?.type?.codecId;
-      return [name, typeof value === "string" && codecId && JS_DATE_CODEC_IDS.has(codecId) ? new Date(value) : value];
+      const field = fields?.[name];
+      const requiredJson =
+        field &&
+        !field.nullable &&
+        !field.many &&
+        !field.dict &&
+        field.type.kind === "scalar" &&
+        ["pg/json@1", "pg/jsonb@1"].includes(field.type.codecId);
+      return [name, value === null && requiredJson ? jsonNull : value];
     })
   );
 }
@@ -64,19 +105,31 @@ export function toSyncPushPayload(operation: string, payload: unknown, keyField:
     throw new Error(`Unsupported operation "${operation}"`);
   }
   if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
-    throw new Error(`Invalid ${operation} payload: expected an object`);
+    throw new PushPayloadValidationError(
+      "RECORD_VALIDATION_FAILURE",
+      `Invalid ${operation} payload: expected an object`
+    );
   }
   if (operation === "create") return payload as Record<string, unknown>;
   if (operation === "update") {
     const { key, patch } = payload as { key?: unknown; patch?: unknown };
     if (key === undefined) {
-      throw new Error(`Unsupported update: filter does not pin "${keyField}" by equality`);
+      throw new PushPayloadValidationError(
+        "KEYPATH_VALIDATION_FAILURE",
+        `Unsupported update: filter does not pin "${keyField}" by equality`
+      );
     }
     // Without an object patch, applyPushEvent would fall through to its delete branch.
     if (typeof patch !== "object" || patch === null || Array.isArray(patch)) {
-      throw new Error("Invalid update payload: expected an object patch");
+      throw new PushPayloadValidationError(
+        "RECORD_VALIDATION_FAILURE",
+        "Invalid update payload: expected an object patch"
+      );
     }
-    return { [keyField]: key };
+    if (keyField in patch && !Object.is((patch as Record<string, unknown>)[keyField], key)) {
+      throw new PushPayloadValidationError("KEYPATH_VALIDATION_FAILURE", "Updates cannot change the primary key");
+    }
+    return { ...(patch as Record<string, unknown>), [keyField]: key };
   }
   return { [keyField]: (payload as { key: unknown }).key };
 }
@@ -119,9 +172,12 @@ export async function applyPushEvent(
   getKeyField: GetKeyField,
   event: SqlPushEvent,
   model: string,
-  check: OwnershipCheck,
+  check: PushCheck,
   scopeKey: string
 ): Promise<SqlPushResult> {
+  if (check.kind === "validation-failure") {
+    return { id: event.id, success: false, error: check.error, retryable: false };
+  }
   if (check.kind === "unknown-model") {
     return { id: event.id, success: false, error: "Unknown model", retryable: false };
   }
@@ -133,10 +189,11 @@ export async function applyPushEvent(
       if (alreadyApplied) return { id: event.id, success: true };
 
       const keyField = getKeyField(contract, model);
+      const nativeKey = reviveWireValues(contract, model, { [keyField]: check.key }, keyField)[keyField];
       const startRow: Record<string, unknown> | null =
         event.operation === "create"
-          ? (event.payload as Record<string, unknown>)
-          : await ormRootFor(tx, model).first({ [keyField]: check.key });
+          ? reviveWireValues(contract, model, event.payload as Record<string, unknown>)
+          : await ormRootFor(tx, model).first({ [keyField]: nativeKey });
 
       if (!(await checkAuthorization(tx, contract, getKeyField, model, check, startRow))) {
         return { id: event.id, success: false, error: "SCOPE_VIOLATION", retryable: false };
@@ -148,7 +205,9 @@ export async function applyPushEvent(
       // pre-patch startRow check above but must not be allowed to land the
       // record in a scope the caller doesn't own.
       const patch =
-        event.operation === "update" ? (event.payload as { patch: Record<string, unknown> }).patch : undefined;
+        event.operation === "update"
+          ? reviveWireValues(contract, model, (event.payload as { patch: Record<string, unknown> }).patch)
+          : undefined;
       if (patch) {
         const proposedRow = { ...(startRow as Record<string, unknown>), ...patch };
         if (!(await checkAuthorization(tx, contract, getKeyField, model, check, proposedRow))) {
@@ -158,18 +217,14 @@ export async function applyPushEvent(
 
       const root = ormRootFor(tx, model);
       if (event.operation === "create") {
-        await root.select(keyField).create(reviveWireValues(contract, model, event.payload as Record<string, unknown>));
+        await root.select(keyField).create(ormWriteValues(contract, model, startRow!));
       } else if (event.operation === "update" && patch) {
-        // `check.key` (resolved by the caller via `toSyncPushPayload`, same
-        // value) is what identifies the row — not `event.payload`, which
-        // still carries the client's raw outbox record (`{ patch, key }`)
-        // rather than the ORM's `.where()` matcher shape.
         await root
           .select(keyField)
-          .where({ [keyField]: check.key })
-          .update(reviveWireValues(contract, model, patch));
+          .where({ [keyField]: nativeKey })
+          .update(ormWriteValues(contract, model, patch));
       } else if (event.operation === "delete") {
-        await root.where({ [keyField]: (event.payload as { key: unknown }).key }).delete();
+        await root.where({ [keyField]: nativeKey }).delete();
       } else {
         throw new Error(`Unsupported operation "${event.operation}"`);
       }

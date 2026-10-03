@@ -36,7 +36,8 @@
   "dependencies": {
     "@prisma/orm-framework": "8.0.0-rc.12",
     "@prisma/orm-toolchain": "8.0.0-rc.12",
-    "pathe": "^2.0.3"
+    "pathe": "^2.0.3",
+    "arktype": "^2.2.3"
   },
   "devDependencies": {
     "@prisma/cli-engine": "0.6.1",

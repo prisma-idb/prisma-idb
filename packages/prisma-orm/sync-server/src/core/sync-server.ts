@@ -1,4 +1,7 @@
 import { domainModelsAtDefaultNamespace } from "@prisma/orm-framework/contract/types";
+import { assertRecordValidator, validateRecord, validateKeyFields } from "@prisma-idb/target-idb/runtime";
+import type { ValidationCodecLookup } from "@prisma-idb/target-idb/runtime";
+import { defaultValidationCodecs } from "./validation-codecs";
 import { resolveAuthorizationPaths } from "./authorization-paths";
 import { buildOwnershipDag } from "./ownership-dag";
 import type { OwnershipDag, SyncServerContract } from "./ownership-dag";
@@ -8,7 +11,10 @@ export interface SyncPushEvent {
   readonly id: string;
   readonly model: string;
   readonly operation: "create" | "update" | "delete";
+  /** Native application values used for contract validation. */
   readonly payload: Record<string, unknown>;
+  /** Pre-revival payload; supply when native keys differ from their JSON wire form. */
+  readonly wirePayload?: Record<string, unknown>;
 }
 
 /**
@@ -57,10 +63,18 @@ export type OwnershipCheck =
       readonly paths: readonly (readonly string[])[];
     };
 
+export type PushCheck =
+  | OwnershipCheck
+  | {
+      readonly kind: "validation-failure";
+      readonly error: "RECORD_VALIDATION_FAILURE" | "KEYPATH_VALIDATION_FAILURE";
+      readonly issues: readonly string[];
+    };
+
 export interface PushValidationResult {
   readonly eventId: string;
   readonly model: string;
-  readonly check: OwnershipCheck;
+  readonly check: PushCheck;
 }
 
 export interface PullScopeResult {
@@ -126,24 +140,62 @@ function buildOwnershipCheck(
 export function validatePush(
   dag: OwnershipDag,
   contract: SyncServerContract,
+  clientContract: SyncServerContract,
   getKeyField: GetKeyField,
   events: readonly SyncPushEvent[],
-  options: { readonly scopeKey: string }
+  options: { readonly scopeKey: string; readonly codecLookup?: ValidationCodecLookup }
 ): readonly PushValidationResult[] {
   const models = domainModelsAtDefaultNamespace(contract.domain);
+  const clientModels = domainModelsAtDefaultNamespace(clientContract.domain);
 
   return events.map((event) => {
-    if (!dag.clientModels.has(event.model) || !models[event.model]) {
+    if (!dag.clientModels.has(event.model) || !models[event.model] || !clientModels[event.model]) {
       return { eventId: event.id, model: event.model, check: { kind: "unknown-model" } };
     }
     const keyField = getKeyField(contract, event.model);
+    const codecLookup = options.codecLookup ?? defaultValidationCodecs;
+    const keyValue = event.payload?.[keyField];
+    const keyResult = validateKeyFields(contract, event.model, { [keyField]: keyValue }, [keyField], { codecLookup });
+    if (!keyResult.ok) {
+      return {
+        eventId: event.id,
+        model: event.model,
+        check: {
+          kind: "validation-failure",
+          error: "KEYPATH_VALIDATION_FAILURE",
+          issues: keyResult.issues,
+        },
+      };
+    }
+    if (event.operation !== "delete") {
+      // SQL creates may omit nullable fields; patches validate only supplied fields.
+      const optionalFields = Object.entries(clientModels[event.model]!.fields)
+        .filter(([, field]) => field.nullable)
+        .map(([name]) => name);
+      const result = validateRecord(clientContract, event.model, event.payload, {
+        codecLookup,
+        partial: event.operation === "update",
+        optionalFields,
+      });
+      if (!result.ok) {
+        return {
+          eventId: event.id,
+          model: event.model,
+          check: {
+            kind: "validation-failure",
+            error: "RECORD_VALIDATION_FAILURE",
+            issues: result.issues,
+          },
+        };
+      }
+    }
     const check = buildOwnershipCheck(
       dag,
       contract,
       getKeyField,
       event.model,
       keyField,
-      event.payload[keyField],
+      (event.wirePayload ?? event.payload)[keyField],
       options.scopeKey
     );
     return { eventId: event.id, model: event.model, check };
@@ -172,11 +224,13 @@ export function buildPullQueries(
 export interface CreateSyncServerOptions {
   /** The full server-side contract (ADR 012) — includes client-excluded models. Any family. */
   readonly contract: SyncServerContract;
-  /** The client-projected contract (ADR 012) — defines which models are ever synced. Any family. */
+  /** The client-projected contract (ADR 012) — defines the synced models and fields to validate. Any family. */
   readonly clientContract: SyncServerContract;
   readonly rootModel: string;
   /** @default defaultGetKeyField (IDB-shaped storage.keyPath) */
   readonly getKeyField?: GetKeyField;
+  /** Native application types; unsupported validators throw at construction. */
+  readonly codecLookup?: ValidationCodecLookup;
 }
 
 export interface SyncServer {
@@ -200,10 +254,27 @@ export interface SyncServer {
 export function createSyncServer(options: CreateSyncServerOptions): SyncServer {
   const dag = buildOwnershipDag(options.contract, options.clientContract, options.rootModel);
   const getKeyField = options.getKeyField ?? defaultGetKeyField;
+  const codecLookup = options.codecLookup ?? defaultValidationCodecs;
+  for (const model of dag.clientModels) {
+    try {
+      assertRecordValidator(options.clientContract, model, { codecLookup });
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : "Unable to build record validator";
+      throw new Error(
+        `createSyncServer: cannot validate model "${model}": ${reason}. ` +
+          "Provide a codecLookup with supported application types or select a Date/string codec. " +
+          "Temporal and interval objects have no default validator."
+      );
+    }
+  }
 
   return {
     rootModel: dag.rootModel,
-    validatePush: (events, pushOptions) => validatePush(dag, options.contract, getKeyField, events, pushOptions),
+    validatePush: (events, pushOptions) =>
+      validatePush(dag, options.contract, options.clientContract, getKeyField, events, {
+        ...pushOptions,
+        codecLookup,
+      }),
     buildPullQueries: (logs, pullOptions) => buildPullQueries(dag, options.contract, getKeyField, logs, pullOptions),
   };
 }

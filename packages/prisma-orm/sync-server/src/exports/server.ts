@@ -9,8 +9,11 @@ export type {
   OwnershipCheck,
   PullScopeResult,
   PushValidationResult,
+  PushCheck,
   SyncPullLogEntry,
   SyncPushEvent,
   SyncServer,
 } from "../core/sync-server";
 export { buildPullQueries, createSyncServer, defaultGetKeyField, validatePush } from "../core/sync-server";
+
+export { defaultValidationCodecs } from "../core/validation-codecs";

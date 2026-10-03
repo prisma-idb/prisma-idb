@@ -83,6 +83,7 @@ export interface PushCompletedEvent {
 export interface PullCompletedEvent {
   applied: number;
   skipped: number;
+  validationFailed: number;
 }
 
 type SyncEventMap = {
@@ -179,13 +180,13 @@ export function createSyncWorker<TContract extends IdbContract>(options: SyncWor
     const logs = await withTimeout((signal) => pullHandler(lastChangelogId, signal), requestTimeoutMs, "pullHandler");
 
     if (logs.length > 0) {
-      const { applied, skipped, lastChangelogId: newId } = await applyPull(syncClient, logs);
+      const { applied, skipped, validationFailed, lastChangelogId: newId } = await applyPull(syncClient, logs);
       if (newId !== null && (lastChangelogId === null || newId > lastChangelogId)) {
         lastChangelogId = newId;
       }
-      emit("pullcompleted", { applied, skipped });
+      emit("pullcompleted", { applied, skipped, validationFailed });
     } else {
-      emit("pullcompleted", { applied: 0, skipped: 0 });
+      emit("pullcompleted", { applied: 0, skipped: 0, validationFailed: 0 });
     }
 
     if (setCursor && lastChangelogId !== null && lastChangelogId !== persistedCursor) {

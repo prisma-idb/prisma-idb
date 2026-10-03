@@ -32,6 +32,8 @@ The server side uses [`@prisma-idb/sync-server`](https://www.npmjs.com/package/@
 | `@prisma-idb/sync-extension-idb/control` | `idbSyncExtension`: the sync stores and their migrations, passed to `extensions`.                                                                 |
 | `@prisma-idb/sync-extension-idb/schemas` | Zod schemas for the push and pull wire formats. Safe to import on a server.                                                                       |
 
+`applyPull` validates decoded records and keys before opening a write transaction. Both its result and the worker's `pullcompleted` event include `validationFailed`, a subset of `skipped`, for corrupt records, keys or wire values. Valid rows still apply, and corrupt rows advance the pull cursor without changing their per-record version metadata. Extra fields and undeclared enum values are rejected; a newer server shape can require updating the client contract.
+
 ## Documentation
 
 - [Sync tutorial](https://prisma-idb.dev/docs/prisma-8/sync)
