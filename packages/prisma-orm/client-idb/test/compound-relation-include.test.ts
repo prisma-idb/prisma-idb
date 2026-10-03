@@ -45,9 +45,16 @@ class RecordingExecutor implements IdbQueryExecutor, IdbQueryExecutorWithTransac
 }
 
 type Row = Record<string, unknown>;
+type IncludeRefinement = {
+  where(filter: Row): IncludeRefinement;
+  orderBy(spec: Record<string, "asc" | "desc">): IncludeRefinement;
+  skip(n: number): IncludeRefinement;
+  take(n: number): IncludeRefinement;
+  count(): unknown;
+};
 type Accessor = {
   create(d: Row): Promise<unknown>;
-  include(rel: string, refine?: (r: { count(): unknown }) => unknown): { all(): { toArray(): Promise<Row[]> } };
+  include(rel: string, refine?: (r: IncludeRefinement) => unknown): { all(): { toArray(): Promise<Row[]> } };
 };
 
 type StoreSpec = { keyPath: IdbKeyPath; indexes?: Record<string, IdbKeyPath> };
@@ -192,5 +199,26 @@ describe.each(variants)("include() on a compound relation: $name", (variant) => 
       .all()
       .toArray();
     expect(Object.fromEntries(members.map((m) => [m["id"], m["posts"]]))).toEqual({ m1: 1, m2: 2, m3: 1 });
+  });
+
+  it("filters, sorts and paginates compound children per parent", async () => {
+    const members = await orm["members"]!.include("posts", (r) =>
+      r.where({ orgId: "org-B" }).orderBy({ title: "desc" }).skip(1).take(1)
+    )
+      .all()
+      .toArray();
+    expect(Object.fromEntries(members.map((m) => [m["id"], (m["posts"] as Row[]).map((p) => p["id"])]))).toEqual({
+      m1: [],
+      m2: ["p2"],
+      m3: [],
+    });
+    expectLookup("posts", variant.postsLookup);
+  });
+
+  it("counts filtered compound children without applying child pagination", async () => {
+    const members = await orm["members"]!.include("posts", (r) => r.where({ orgId: "org-B" }).skip(1).take(1).count())
+      .all()
+      .toArray();
+    expect(Object.fromEntries(members.map((m) => [m["id"], m["posts"]]))).toEqual({ m1: 0, m2: 2, m3: 0 });
   });
 });
