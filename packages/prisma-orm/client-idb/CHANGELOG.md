@@ -1,5 +1,15 @@
 # @prisma-idb/client-idb
 
+## 0.9.0
+
+### Patch Changes
+
+- Updated dependencies [[`e8146ff`](https://github.com/prisma-idb/prisma-idb/commit/e8146fffb0d5bbc543640ee5e5d25ad05a05e04f)]:
+  - @prisma-idb/target-idb@0.9.0
+  - @prisma-idb/adapter-idb@0.9.0
+  - @prisma-idb/runtime-idb@0.9.0
+  - @prisma-idb/driver-idb@0.9.0
+
 ## 0.8.0
 
 ### Minor Changes
