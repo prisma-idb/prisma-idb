@@ -788,7 +788,7 @@ describe("built-in contentHash plan identity", () => {
     const contentHash = await captureContentHash();
     const base = { kind: "index-get", storeName: "users", indexName: "by_age" };
 
-    // A real range exposes its bounds as prototype getters, so only normalization makes them hashable.
+    // Normalization turns the key-range class instance into a plain object, which canonicalStringify accepts.
     const real = await contentHash({ ...base, range: IDBKeyRange.bound(18, 65, false, true) });
     const plain = await contentHash({ ...base, range: range(18, 65) });
     const other = await contentHash({ ...base, range: IDBKeyRange.bound(18, 66, false, true) });
