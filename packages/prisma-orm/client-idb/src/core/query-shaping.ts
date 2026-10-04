@@ -52,24 +52,6 @@ function flattenAnd(filter: IdbFilterExpr): IdbFilterExpr[] {
   return filter.exprs.flatMap(flattenAnd);
 }
 
-/** Fold the leftover AND children (after peeling an indexed condition) back into a single filter, or `undefined` if none remain. */
-function foldRemainder(rest: IdbFilterExpr[]): IdbFilterExpr | undefined {
-  if (rest.length === 0) return undefined;
-  if (rest.length === 1) return rest[0]!;
-  return andExpr(rest);
-}
-
-/**
- * `IDBKeyRange.only()` throws `DataError` for values that aren't valid
- * IndexedDB keys (`null`/`undefined`, booleans, `NaN`, `BigInt`, plain
- * objects, or arrays containing any of those) — an `eq` condition on such a
- * value can't be served by an index point-range scan and must fall back to
- * a full scan. Delegates to the shared {@link isValidIdbKey} check.
- */
-function isIndexableEqValue(value: unknown): boolean {
-  return isValidIdbKey(value);
-}
-
 /**
  * `true` when `field` is a *single-field* primary key that a lone `eq`
  * condition can directly point-range-query (`store.get`/`openCursor(range)`
@@ -110,7 +92,7 @@ export function extractIndexEqualityHint(
 
   if (filter.kind === "field" && filter.op === "eq") {
     const indexName = fieldToIndexName[filter.field];
-    if ((indexName !== undefined || isPrimaryKeyField(filter.field, keyPath)) && isIndexableEqValue(filter.value)) {
+    if ((indexName !== undefined || isPrimaryKeyField(filter.field, keyPath)) && isValidIdbKey(filter.value)) {
       return { indexName, value: filter.value, remainingFilter: undefined };
     }
     return null;
@@ -122,9 +104,9 @@ export function extractIndexEqualityHint(
       const expr = flat[i]!;
       if (expr.kind === "field" && expr.op === "eq") {
         const indexName = fieldToIndexName[expr.field];
-        if ((indexName !== undefined || isPrimaryKeyField(expr.field, keyPath)) && isIndexableEqValue(expr.value)) {
+        if ((indexName !== undefined || isPrimaryKeyField(expr.field, keyPath)) && isValidIdbKey(expr.value)) {
           const rest = flat.filter((_, j) => j !== i);
-          return { indexName, value: expr.value, remainingFilter: foldRemainder(rest) };
+          return { indexName, value: expr.value, remainingFilter: combineFilterExprs(rest) };
         }
       }
     }
@@ -150,8 +132,7 @@ function tryExtractOrBranches(
   for (const expr of orNode.exprs) {
     if (expr.kind !== "field" || expr.op !== "eq") return null;
     const indexName = fieldToIndexName[expr.field];
-    if ((indexName === undefined && !isPrimaryKeyField(expr.field, keyPath)) || !isIndexableEqValue(expr.value))
-      return null;
+    if ((indexName === undefined && !isPrimaryKeyField(expr.field, keyPath)) || !isValidIdbKey(expr.value)) return null;
     branches.push({ indexName, value: expr.value });
   }
   return { branches, remainingFilter };
@@ -189,7 +170,7 @@ export function extractIndexOrHint(
     const orIdx = orIndices[0]!;
     const orNode = flat[orIdx]! as IdbOrExpr;
     const rest = flat.filter((_, j) => j !== orIdx);
-    return tryExtractOrBranches(orNode, fieldToIndexName, keyPath, foldRemainder(rest));
+    return tryExtractOrBranches(orNode, fieldToIndexName, keyPath, combineFilterExprs(rest));
   }
 
   return null;

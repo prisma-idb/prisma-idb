@@ -170,8 +170,21 @@ export async function loadRelation(
     }
   }
 
-  // ── Merge ──────────────────────────────────────────────────────────────────
+  return attachRelatedRows(relName, entry, rows, relatedRows, relation);
+}
 
+/** Attach related rows by their join tuple, shaping each parent's collection independently. */
+function attachRelatedRows(
+  relName: string,
+  entry: IncludeEntry,
+  rows: Record<string, unknown>[],
+  relatedRows: Record<string, unknown>[],
+  relation: ContractReferenceRelation
+): Record<string, unknown>[] {
+  const {
+    cardinality,
+    on: { localFields, targetFields },
+  } = relation;
   if (cardinality === "1:N") {
     // Group related rows by their target tuple.
     const grouped = new Map<string, Record<string, unknown>[]>();
@@ -187,8 +200,8 @@ export async function loadRelation(
       return token === null ? [] : (grouped.get(token) ?? []);
     };
 
-    if (isScalar) {
-      // Scalar reducer (Phase 6.5: count) — attach the per-parent child count.
+    if (entry.kind === "scalar") {
+      // Counts include all filtered children, without collection pagination.
       return rows.map((row) => ({
         ...row,
         [relName]: groupFor(row).length,

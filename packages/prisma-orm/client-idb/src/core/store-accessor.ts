@@ -55,6 +55,7 @@ import {
   extractIndexOrHint,
   isNativelyCountable,
   toCountPlan,
+  type IndexEqualityHint,
   type IndexOrHint,
 } from "./query-shaping";
 import {
@@ -1064,36 +1065,18 @@ export class IdbStoreAccessorImpl<
     // Attempt to peel an indexed equality condition from the combined filter
     // and use a cursor-scan over the index with a point range. This avoids
     // a full store scan when IDBKeyRange is available (browser / fake-indexeddb).
+    let hint: IndexEqualityHint | null = null;
     if (typeof IDBKeyRange !== "undefined") {
       const fieldToIndexName = fieldToIndexMap ?? buildFieldToIndexMap(this.#contract, this.#storeName);
       const keyPath = getKeyPath(this.#contract, this.#modelName);
-      const hint = extractIndexEqualityHint(combined, fieldToIndexName, keyPath);
-      if (hint !== null) {
-        const { indexName, value, remainingFilter } = hint;
-        const filter =
-          remainingFilter !== undefined
-            ? (row: Record<string, unknown>) => evaluateFilter(remainingFilter, row)
-            : undefined;
-        return {
-          meta,
-          ast,
-          idbPlan: {
-            meta,
-            kind: "cursor-scan" as const,
-            storeName: this.#storeName,
-            ...(indexName !== undefined ? { indexName } : {}),
-            range: IDBKeyRange.only(value as IDBValidKey),
-            ...(filter !== undefined ? { filter } : {}),
-            ...(comparator !== undefined ? { comparator } : {}),
-            ...(this.#state.skip !== undefined ? { skip: this.#state.skip } : {}),
-            ...(this.#state.take !== undefined ? { take: this.#state.take } : {}),
-          },
-        } as IdbQueryPlan<Row>;
-      }
+      hint = extractIndexEqualityHint(combined, fieldToIndexName, keyPath);
     }
 
-    // Fallback: full cursor scan.
-    const filter = combined !== undefined ? (row: Record<string, unknown>) => evaluateFilter(combined, row) : undefined;
+    const remainingFilter = hint !== null ? hint.remainingFilter : combined;
+    const filter =
+      remainingFilter !== undefined
+        ? (row: Record<string, unknown>) => evaluateFilter(remainingFilter, row)
+        : undefined;
     // exactOptionalPropertyTypes: spread conditionally to avoid `undefined`
     // values in optional fields.
     return {
@@ -1103,6 +1086,8 @@ export class IdbStoreAccessorImpl<
         meta,
         kind: "cursor-scan" as const,
         storeName: this.#storeName,
+        ...(hint?.indexName !== undefined ? { indexName: hint.indexName } : {}),
+        ...(hint !== null ? { range: IDBKeyRange.only(hint.value as IDBValidKey) } : {}),
         ...(filter !== undefined ? { filter } : {}),
         ...(comparator !== undefined ? { comparator } : {}),
         ...(this.#state.skip !== undefined ? { skip: this.#state.skip } : {}),

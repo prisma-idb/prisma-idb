@@ -12,7 +12,6 @@
 
 import {
   type IdbFieldFilter,
-  type IdbFilterExpr,
   type IdbNullCheckExpr,
   fieldFilter,
   nullCheckExpr,
@@ -115,7 +114,3 @@ export function createModelAccessor<TContract extends IdbContract, ModelName ext
     }
   ) as IdbModelAccessor<TContract, ModelName>;
 }
-
-// ── Re-export the AST type the callback returns ───────────────────────────────
-
-export type { IdbFilterExpr };

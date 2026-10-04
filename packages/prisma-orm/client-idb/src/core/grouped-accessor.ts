@@ -46,7 +46,7 @@ export interface IdbGroupedAccessor<TContract, ModelName extends string, Fields 
 }
 
 /** Runtime wiring handed to {@link createGroupedAccessor} by the store accessor. */
-export interface GroupedAccessorInit {
+interface GroupedAccessorInit {
   readonly modelName: string;
   /** Group-key fields, in declaration order. */
   readonly by: readonly string[];
@@ -69,6 +69,7 @@ function groupKeyOf(by: readonly string[], row: Record<string, unknown>): string
   return JSON.stringify(by.map((field) => row[field] ?? null));
 }
 
+/** Build a grouped accessor that reduces materialized rows from the source accessor. */
 export function createGroupedAccessor<TContract, ModelName extends string, Fields extends readonly string[]>(
   init: GroupedAccessorInit
 ): IdbGroupedAccessor<TContract, ModelName, Fields> {
