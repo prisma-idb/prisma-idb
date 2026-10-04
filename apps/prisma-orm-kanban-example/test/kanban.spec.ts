@@ -68,6 +68,40 @@ test("creates, edits, completes, persists, and deletes local records", async ({ 
   await expect(page.getByTestId("boards-count")).toHaveText("0");
 });
 
+test("a failed todo move keeps the original board selected", async ({ page, context }) => {
+  await openApp(page);
+  await page.getByTestId("board-name-input").fill("Source");
+  await page.getByTestId("create-board-submit").click();
+  const source = page
+    .getByTestId("board-card")
+    .filter({ has: page.getByRole("textbox", { name: "Board name Source" }) });
+  await expect(source).toBeVisible();
+  await source.getByTestId("todo-title-input").fill("Keep on source");
+  await source.getByTestId("create-todo-submit").click();
+  const todo = source.getByTestId("todo-item");
+  await expect(todo).toBeVisible();
+  await page.getByTestId("board-name-input").fill("Destination");
+  await page.getByTestId("create-board-submit").click();
+  const selector = todo.getByRole("combobox", { name: "Move todo to board" });
+  await expect(selector).toBeEnabled();
+  const sourceId = await selector.inputValue();
+
+  const otherTab = await context.newPage();
+  await otherTab.goto("/");
+  await expect(otherTab.getByTestId("board-name-input")).toBeVisible({ timeout: 15_000 });
+  await context.setOffline(true);
+  // Delete in another tab without a sync pull refreshing this tab's board list.
+  const destination = otherTab
+    .getByTestId("board-card")
+    .filter({ has: otherTab.getByRole("textbox", { name: "Board name Destination" }) });
+  await destination.getByTestId("delete-board").click();
+  await expect(destination).not.toBeVisible();
+
+  await selector.selectOption({ label: "Destination" });
+  await expect(source.getByTestId("todo-item")).toHaveCount(1);
+  await expect(selector).toHaveValue(sourceId);
+});
+
 test("switches theme modes and persists explicit choices", async ({ page }) => {
   await openApp(page);
 

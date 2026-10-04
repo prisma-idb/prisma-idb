@@ -13,6 +13,12 @@
   let title = $state(untrack(() => todo.title));
   let description = $state(untrack(() => todo.description ?? ""));
 
+  async function move(select: HTMLSelectElement) {
+    await kanban.moveTodo(todo.id, select.value);
+    // A failed move leaves the todo on its original board.
+    select.value = todo.boardId;
+  }
+
   async function save() {
     const trimmed = title.trim();
     if (!trimmed) return;
@@ -52,6 +58,20 @@
       />
     </div>
   </div>
+  <label class="text-muted-foreground mt-3 flex items-center gap-2 text-xs">
+    Move to
+    <select
+      class="bg-background text-foreground h-8 min-w-0 flex-1 rounded-md border px-2 text-sm disabled:opacity-50"
+      aria-label="Move todo to board"
+      value={todo.boardId}
+      onchange={(event) => move(event.currentTarget)}
+      disabled={kanban.busy || kanban.boards.length < 2}
+    >
+      {#each kanban.boards as board (board.id)}
+        <option value={board.id}>{board.name}</option>
+      {/each}
+    </select>
+  </label>
   <div class="mt-2 flex justify-end gap-2">
     <Button
       size="sm"
