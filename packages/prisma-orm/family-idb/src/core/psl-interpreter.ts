@@ -88,6 +88,12 @@ function parseRelation(field: FieldSymbol) {
   return { local: parseList(named(args, "fields")) ?? [], target: parseList(named(args, "references")) ?? [], args };
 }
 
+/** Shared identity of the two fields in a named PSL relation. */
+function relationName(field: FieldSymbol): string | undefined {
+  const args = attribute(field, "relation")?.args;
+  return args === undefined ? undefined : parseString(named(args, "name") ?? positional(args));
+}
+
 type KeyResolution = { key: IdbKeyPath; span: Span } | { code: string; message: string; span: Span };
 
 /** A model's key, or the problem with its `@id`/`@@id` declaration. */
@@ -167,15 +173,30 @@ function pslToDsl(table: SymbolTable, sourceId: string) {
   const byName = new Map(all.map((m) => [m.name, m]));
   const keys = new Map(all.map((m) => [m.name, resolveKey(m)]));
 
-  /** The last valid `@relation` in `target` that points at `model`; what a back-relation resolves to. */
-  function foreignKey(target: string, model: string) {
-    let found: { local: string[]; target: string[] } | undefined;
-    for (const f of Object.values(byName.get(target)!.fields)) {
-      if (f.list || f.typeName !== model || !attribute(f, "relation")) continue;
-      const rel = parseRelation(f);
-      if (rel.local.length > 0 && rel.local.length === rel.target.length) found = rel;
+  for (const model of all) {
+    const unnamed = new Map<string, FieldSymbol[]>();
+    for (const field of Object.values(model.fields)) {
+      if (!byName.has(field.typeName) || relationName(field) !== undefined) continue;
+      const fields = unnamed.get(field.typeName) ?? [];
+      fields.push(field);
+      unnamed.set(field.typeName, fields);
     }
-    return found;
+    for (const [target, fields] of unnamed) {
+      if (fields.length < 2) continue;
+      const names = fields.map((field) => `"${field.name}"`).join(", ");
+      const message = `Model "${model.name}" has ambiguous unnamed relations ${names} to "${target}". Give each relation a distinct @relation("Name") and use the same name on its opposite field.`;
+      report("IDB_AMBIGUOUS_RELATION", message, fields[0]!.span, [model.name, target]);
+    }
+  }
+
+  /** The FK-side field with the same relation name; unnamed pairs match only each other. */
+  function foreignKey(target: string, model: string, name: string | undefined) {
+    for (const f of Object.values(byName.get(target)!.fields)) {
+      if (f.list || f.typeName !== model || !attribute(f, "relation") || relationName(f) !== name) continue;
+      const rel = parseRelation(f);
+      if (rel.local.length > 0 && rel.local.length === rel.target.length) return rel;
+    }
+    return undefined;
   }
 
   /** `@default(...)` as a TS-DSL default, or a diagnostic when PSL syntax has no TS-DSL meaning. */
@@ -254,7 +275,7 @@ function pslToDsl(table: SymbolTable, sourceId: string) {
         if (field.list) {
           // A back-relation into a model with a broken key is skipped; that model is already reported.
           if ("key" in keys.get(to)!) {
-            const fk = foreignKey(to, m);
+            const fk = foreignKey(to, m, relationName(field));
             relations[f] = { to, cardinality: "1:N", on: { local: fk?.target ?? [], target: fk?.local ?? [] } };
           }
           continue;
