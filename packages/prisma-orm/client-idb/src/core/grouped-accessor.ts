@@ -62,16 +62,19 @@ interface GroupedAccessorInit {
 }
 
 /**
- * Build a composite group key from type-tagged field tokens. Equal Date and
- * binary values share a group; null and undefined also share a group.
+ * Build a composite group key from type-tagged field tokens. Equal Date, binary,
+ * array and JSON object values share a group; null and undefined also share a group.
  */
 function groupKeyOf(by: readonly string[], row: Record<string, unknown>): string {
-  return JSON.stringify(
-    by.map((field) => {
-      const token = fieldValueToken(row[field] ?? null);
-      return [typeof token, typeof token === "object" ? JSON.stringify(token) : String(token)];
-    })
-  );
+  return JSON.stringify(by.map((field) => groupToken(row[field])));
+}
+
+/** Keep `1n`, `1` and `"1"` apart while preserving structural grouping for JSON objects. */
+function groupToken(value: unknown): readonly [string, unknown] {
+  // Invalid Dates serialize as null, so give them a separate token.
+  if (value instanceof Date && Number.isNaN(value.getTime())) return ["date", "invalid"];
+  const token = fieldValueToken(value ?? null);
+  return [typeof token, typeof token === "object" ? token : String(token)];
 }
 
 /** Build a grouped accessor that reduces materialized rows from the source accessor. */

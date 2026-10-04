@@ -695,6 +695,14 @@ describe("IdbStoreAccessor — aggregate / groupBy (Phase 6.6)", () => {
       ],
     },
     {
+      name: "invalid Dates separately from null and undefined",
+      values: [new Date(NaN), new Date(NaN), null, undefined],
+      expected: [
+        { value: new Date(NaN), count: 2 },
+        { value: null, count: 2 },
+      ],
+    },
+    {
       name: "distinct JSON objects by their structured values",
       values: [{ enabled: true }, { enabled: true }, { enabled: false }],
       expected: [
