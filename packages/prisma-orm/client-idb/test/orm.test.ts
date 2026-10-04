@@ -644,6 +644,61 @@ describe("IdbStoreAccessor — aggregate / groupBy (Phase 6.6)", () => {
     expect(byAuthor["u2"]).toEqual({ authorId: "u2", count: 2, totalViews: 200 });
   });
 
+  it.each([
+    {
+      name: "BigInt values without merging number or string values",
+      values: [1n, 1n, 2n, 1, "1"],
+      expected: [
+        { value: 1n, count: 2 },
+        { value: 2n, count: 1 },
+        { value: 1, count: 1 },
+        { value: "1", count: 1 },
+      ],
+    },
+    {
+      name: "equal Dates separately from their ISO string",
+      values: [new Date("2026-01-01"), new Date("2026-01-01"), "2026-01-01T00:00:00.000Z"],
+      expected: [
+        { value: new Date("2026-01-01"), count: 2 },
+        { value: "2026-01-01T00:00:00.000Z", count: 1 },
+      ],
+    },
+    {
+      name: "distinct JSON objects by their structured values",
+      values: [{ enabled: true }, { enabled: true }, { enabled: false }],
+      expected: [
+        { value: { enabled: true }, count: 2 },
+        { value: { enabled: false }, count: 1 },
+      ],
+    },
+    {
+      name: "null and undefined in one group",
+      values: [null, undefined, "null"],
+      expected: [
+        { value: null, count: 2 },
+        { value: "null", count: 1 },
+      ],
+    },
+  ])("groupBy() groups $name", async ({ values, expected }) => {
+    const name = dbName();
+    const setupDb = await openTestDb(name, [POSTS_STORE]);
+    await seedStore(
+      setupDb,
+      "posts",
+      values.map((value, i) => ({ id: `p${i}`, value }))
+    );
+    setupDb.close();
+    const groupDriver = createIDBRuntimeDriver(name, 1).create();
+    try {
+      const contract = makeTestContract({ posts: "Post" }, { Post: { storeName: "posts", keyPath: "id" } });
+      const client = asRecord(idbOrm({ contract, executor: new TestExecutor(groupDriver) }));
+      const rows = await client["posts"]!.groupBy("value").aggregate((agg) => ({ count: agg.count() }));
+      expect(rows).toEqual(expected);
+    } finally {
+      await groupDriver.close();
+    }
+  });
+
   it("groupBy().aggregate() respects a preceding where()", async () => {
     const rows = await postsClient()
       ["posts"]!.where({ published: true })

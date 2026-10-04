@@ -139,4 +139,4 @@ const perUser = await db.orm.todo.groupBy("userId").aggregate((agg) => ({ total:
 // [{ userId: "user_1", total: 3 }, { userId: "user_2", total: 1 }]
 ```
 
-`groupBy()` returns one row per distinct combination of the grouping fields, with the aggregates you ask for.
+`groupBy()` returns one row per distinct combination of the grouping fields, with the aggregates you ask for. It supports BigInt fields. Equal Date and binary values share a group, but a Date and its ISO string form separate groups. Null and undefined share a group.
