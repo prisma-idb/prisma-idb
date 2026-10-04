@@ -21,6 +21,7 @@ import type {
   IdbRuntimeDriverInstance,
   IdbTransactionScope,
 } from "@prisma-idb/driver-idb/runtime";
+import { IDBKeyRange } from "fake-indexeddb";
 import { describe, expect, it, vi } from "vitest";
 import type { IdbMiddleware } from "../src/idb-middleware";
 import { createIdbRuntime } from "../src/idb-runtime";
@@ -781,6 +782,39 @@ describe("built-in contentHash plan identity", () => {
 
     expect(a).toBe(b);
     expect(a).not.toBe(c);
+  });
+
+  it("hashes a real key range the same as a plain object with the same bounds", async () => {
+    const contentHash = await captureContentHash();
+    const base = { kind: "index-get", storeName: "users", indexName: "by_age" };
+
+    // A real range exposes its bounds as prototype getters, so only normalization makes them hashable.
+    const real = await contentHash({ ...base, range: IDBKeyRange.bound(18, 65, false, true) });
+    const plain = await contentHash({ ...base, range: range(18, 65) });
+    const other = await contentHash({ ...base, range: IDBKeyRange.bound(18, 66, false, true) });
+
+    expect(real).toBe(plain);
+    expect(real).not.toBe(other);
+  });
+
+  it("ignores extra properties on a duck-typed key range", async () => {
+    const contentHash = await captureContentHash();
+    const base = { kind: "index-get", storeName: "users", indexName: "by_age" };
+
+    const withExtra = await contentHash({ ...base, range: { ...range(18, 65), note: "ignored" } });
+
+    expect(withExtra).toBe(await contentHash({ ...base, range: range(18, 65) }));
+  });
+
+  it("hashes key ranges that differ only in open flags differently", async () => {
+    const contentHash = await captureContentHash();
+    const base = { kind: "index-get", storeName: "users", indexName: "by_age" };
+
+    const lowerOpen = await contentHash({ ...base, range: IDBKeyRange.bound(18, 65, true, true) });
+    const lowerClosed = await contentHash({ ...base, range: IDBKeyRange.bound(18, 65, false, true) });
+    const upperClosed = await contentHash({ ...base, range: IDBKeyRange.bound(18, 65, false, false) });
+
+    expect(new Set([lowerOpen, lowerClosed, upperClosed]).size).toBe(3);
   });
 });
 
