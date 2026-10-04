@@ -4,9 +4,12 @@
  * point is that the extended batch plan actually reaches the driver and
  * commits atomically in one IDB transaction.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi, type Mock } from "vitest";
+import { AsyncIterableResult } from "@prisma/orm-framework/components/runtime";
+import type { IdbQueryPlan } from "@prisma-idb/adapter-idb/runtime";
+import type { IdbContract, IdbQueryExecutor } from "@prisma-idb/client-idb/orm";
 import { createSyncIdbClient, getNextBatch } from "../src/exports/client";
-import type { IdbContract } from "@prisma-idb/client-idb/orm";
+import { SyncInterceptorExecutor } from "../src/core/sync-executor";
 import { asAccessors, createTestSyncClient, keyGet, scanAll, testContract, testDbName } from "./helpers";
 
 /** `testContract()` with the `users` store switched to `autoIncrement`. */
@@ -30,6 +33,44 @@ describe("SyncInterceptorExecutor — autoIncrement keys", () => {
     expect(() =>
       createSyncIdbClient({ contract: autoIncrementUsersContract(), dbName: testDbName(), trackedModels: ["Post"] })
     ).not.toThrow();
+  });
+});
+
+describe("SyncInterceptorExecutor — plans that can't sync", () => {
+  /** An executor whose `query()` returns no rows and records that it ran. */
+  function stubExecutor(): IdbQueryExecutor & { query: Mock } {
+    return { query: vi.fn(() => new AsyncIterableResult((async function* () {})())) } as never;
+  }
+
+  /** A hand-built plan: `client-idb` itself never sends these kinds to a tracked model's `query()`. */
+  function handBuiltPlan(ast: NonNullable<IdbQueryPlan["ast"]>): IdbQueryPlan {
+    const meta = { target: "idb", storageHash: "test", lane: "test" };
+    return { meta, idbPlan: { meta, kind: "cursor-scan", storeName: "users" }, ast } as IdbQueryPlan;
+  }
+
+  const unsyncablePlans = [
+    { kind: "update", modelName: "User", patch: { name: "Bob" } },
+    { kind: "updateAll", modelName: "User", patch: { name: "Bob" } },
+    { kind: "deleteAll", modelName: "User" },
+  ] as const;
+
+  it.each(unsyncablePlans)('rejects a "$kind" plan on a tracked model before running it', (ast) => {
+    const inner = stubExecutor();
+    const executor = new SyncInterceptorExecutor(inner, { contract: testContract(), trackedModels: "*" });
+
+    expect(() => executor.query(handBuiltPlan(ast))).toThrow(
+      `a "${ast.kind}" plan on the synced model User can't be synced`
+    );
+    expect(inner.query).not.toHaveBeenCalled();
+  });
+
+  it("passes the same plans through for a model that isn't tracked", () => {
+    const inner = stubExecutor();
+    const executor = new SyncInterceptorExecutor(inner, { contract: testContract(), trackedModels: ["Post"] });
+
+    executor.query(handBuiltPlan({ kind: "deleteAll", modelName: "User" }));
+
+    expect(inner.query).toHaveBeenCalledOnce();
   });
 });
 

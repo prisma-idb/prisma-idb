@@ -76,7 +76,7 @@ Most writes take a different route: they need to read and write several stores i
 | `update`, `updateAll`, `upsert`, `deleteAll`          | Transaction scope, always |
 | Nested writes (relation callbacks)                    | Transaction scope, always |
 
-Sync hooks into both routes. It extends single plans into a batch that also writes the outbox, and it wraps the transaction scope so each write in it records an outbox event.
+Sync hooks into both routes. It extends single plans into a batch that also writes the outbox, and it wraps the transaction scope so each write in it records an outbox event. A hand-built plan for `update`, `updateAll` or `deleteAll` on a synced model has no known key, so it can't sync. Sync rejects it before any local write.
 
 ## How a schema change reaches the browser
 
