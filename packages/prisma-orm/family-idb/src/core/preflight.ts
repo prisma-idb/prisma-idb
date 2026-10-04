@@ -2,12 +2,13 @@ import { readdir, readFile } from "node:fs/promises";
 import { IDBFactory } from "fake-indexeddb";
 import type { MigrationMetadata } from "@prisma/orm-toolchain/migration-tools/metadata";
 import { computeMigrationHash } from "@prisma/orm-toolchain/migration-tools/hash";
+import { computeStorageHash } from "@prisma/orm-framework/contract/hashing";
 import { chainOrderByMetadata, type ChainablePackage } from "./chain-order";
 import { applyOneDdlOp, isIdbDdlOp, type IdbDdlOp } from "@prisma-idb/target-idb/migration";
 import { join } from "pathe";
 import { verifyIdbSchema } from "./schema-verify";
 import type { IdbIndexIR, IdbSchemaIR } from "./schema-ir";
-import { validateContract } from "./validate";
+import { validateContract, type IdbContract } from "./validate";
 
 export interface PreflightOptions {
   readonly migrationsDir: string;
@@ -30,8 +31,9 @@ export interface PreflightOptions {
  * without the workflow tax on every author.
  *
  * After replay, verifies the actual stores and indexes against the head's
- * contract at `migrations/snapshots/<hash>/contract.json`. Extra stores and
- * indexes fail verification; the internal marker store is excluded.
+ * contract at `migrations/snapshots/<hash>/contract.json`. The snapshot must
+ * carry the head's target hash, and that hash must match its content. Extra
+ * stores and indexes fail verification; the internal marker store is excluded.
  *
  * Exit codes: 0 on full chain success; 1 on any failure.
  */
@@ -71,6 +73,7 @@ export async function runPreflight(opts: PreflightOptions): Promise<number> {
   const snapshotPath = join(migrationsDir, "snapshots", head.metadata.to, "contract.json");
   try {
     const contract = validateContract(JSON.parse(await readFile(snapshotPath, "utf-8")));
+    assertSnapshotIsHead(contract, head.metadata.to);
     const schema = await readSchema(factory, dbName);
     const result = verifyIdbSchema(contract, schema, true);
     if (!result.ok) {
@@ -135,6 +138,21 @@ async function loadPackages(appDir: string): Promise<LoadedPackage[]> {
   }
 
   return chainOrderByMetadata(unordered);
+}
+
+/**
+ * Guards against a snapshot copied from another migration: the replayed schema
+ * would match it, and verification would pass against the wrong contract.
+ */
+function assertSnapshotIsHead(contract: IdbContract, headHash: string): void {
+  const { storageHash, ...storage } = contract.storage;
+  if (storageHash !== headHash) {
+    throw new Error(`snapshot storageHash ${storageHash} does not match the head migration target ${headHash}`);
+  }
+  const computedHash = computeStorageHash({ target: contract.target, targetFamily: contract.targetFamily, storage });
+  if (computedHash !== storageHash) {
+    throw new Error(`snapshot storageHash ${storageHash} does not match its content (computed ${computedHash})`);
+  }
 }
 
 function applyPackage(input: {

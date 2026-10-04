@@ -18,8 +18,10 @@ import {
 } from "./_helpers";
 
 const HASH_BASELINE = "sha256:baseline" as const;
-const HASH_ADDPOSTS = "sha256:addposts" as const;
-const HASH_ADDCOMMENTS = "sha256:addcomments" as const;
+// Storage hashes of the snapshots that `writeSnapshot` writes for the store sets below.
+// Preflight recomputes a snapshot's hash from its content, so these must stay in sync with it.
+const HASH_ADDPOSTS = "2aa2aa49d028300e4c6c5d3cc2629b25970314f7fd3617786a1f8cd7acf3f6c4" as const; // users, posts
+const HASH_ADDCOMMENTS = "993a34045a90d0035fa3eefa576e434e70a29f21fb9d53b9360e2d578bdeb64a" as const; // users, posts, comments
 
 async function writeSnapshot(cwd: string, hash: string, storeNames: string[]): Promise<void> {
   const dir = join(cwd, "migrations", "snapshots", hash);
@@ -31,7 +33,11 @@ async function writeSnapshot(cwd: string, hash: string, storeNames: string[]): P
       targetFamily: "idb",
       roots: {},
       domain: { namespaces: { __unbound__: { models: {} } } },
-      storage: { storageHash: hash, stores: Object.fromEntries(storeNames.map((name) => [name, { keyPath: "id" }])) },
+      storage: {
+        storageHash: hash,
+        stores: Object.fromEntries(storeNames.map((name) => [name, { keyPath: "id" }])),
+        namespaces: { __unbound__: { id: "__unbound__", entries: {} } },
+      },
       capabilities: {},
       extensions: {},
       meta: {},

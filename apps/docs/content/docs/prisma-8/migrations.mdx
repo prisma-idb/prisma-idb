@@ -52,7 +52,7 @@ npx prisma-idb migration preflight
 
 It applies every migration, in order, to an empty in-memory IndexedDB ([`fake-indexeddb`](https://github.com/dumbmatter/fakeIndexedDB)). It fails if the chain is broken, a package was edited without regenerating its hash, or an operation can't apply. After replay, it compares the final stores and indexes with `migrations/snapshots/<head.to>/contract.json`. This check always runs. It fails with a readable diff for missing or extra stores and indexes, or different key paths, `autoIncrement`, `unique` or `multiEntry` flags. The internal `_prisma_next_marker` store is excluded.
 
-A missing or invalid head snapshot also fails preflight. Restore the snapshot from source control or regenerate the chain. A valid package hash alone does not prove that hand-edited operations produce the right schema.
+A missing or invalid head snapshot also fails preflight. So does a snapshot whose `storageHash` differs from `head.to`, or from the hash of its own content. Restore the snapshot from source control or regenerate the chain. A valid package hash alone does not prove that hand-edited operations produce the right schema.
 
 `fake-indexeddb` can differ from real browsers in edge cases, so keep testing your app in a browser too.
 

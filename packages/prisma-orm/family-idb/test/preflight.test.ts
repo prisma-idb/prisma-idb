@@ -58,10 +58,18 @@ async function writePackage(opts: {
   await writeFile(join(dir, "ops.json"), JSON.stringify(opts.ops), "utf-8");
 }
 
-async function writeSnapshot(hash: string, stores: Parameters<typeof createRawIdbContract>[0]): Promise<void> {
+/** Writes the head snapshot for `stores` and returns its storage hash, which the head migration must target. */
+async function writeSnapshot(stores: Parameters<typeof createRawIdbContract>[0]): Promise<string> {
+  const contract = createRawIdbContract(stores);
+  const hash = contract.storage.storageHash;
+  await writeSnapshotFile(hash, contract);
+  return hash;
+}
+
+async function writeSnapshotFile(hash: string, contract: unknown): Promise<void> {
   const dir = join(cwd, "migrations", "snapshots", hash);
   await mkdir(dir, { recursive: true });
-  await writeFile(join(dir, "contract.json"), JSON.stringify(createRawIdbContract(stores)), "utf-8");
+  await writeFile(join(dir, "contract.json"), JSON.stringify(contract), "utf-8");
 }
 
 const createMarker = {
@@ -113,6 +121,7 @@ describe("runPreflight", () => {
   });
 
   it("returns 0 when every package applies cleanly", async () => {
+    const head = await writeSnapshot({ users: { keyPath: "id" }, posts: { keyPath: "id" } });
     await writePackage({
       dirName: "0001_baseline",
       from: null,
@@ -122,19 +131,18 @@ describe("runPreflight", () => {
     await writePackage({
       dirName: "0002_addPosts",
       from: "sha256:A",
-      to: "sha256:B",
+      to: head,
       ops: [createPosts],
     });
 
-    await writeSnapshot("sha256:B", { users: { keyPath: "id" }, posts: { keyPath: "id" } });
     const code = await runPreflight({ migrationsDir: join(cwd, "migrations") });
     expect(code).toBe(0);
   });
 
   it("fails with a readable diff when a valid package omits a required store", async () => {
+    const head = await writeSnapshot({ users: { keyPath: "id" }, posts: { keyPath: "id" } });
     await writePackage({ dirName: "0001_baseline", from: null, to: "sha256:A", ops: [createMarker, createUsers] });
-    await writePackage({ dirName: "0002_addPosts", from: "sha256:A", to: "sha256:B", ops: [] });
-    await writeSnapshot("sha256:B", { users: { keyPath: "id" }, posts: { keyPath: "id" } });
+    await writePackage({ dirName: "0002_addPosts", from: "sha256:A", to: head, ops: [] });
     const errors: string[] = [];
 
     const code = await runPreflight({ migrationsDir: join(cwd, "migrations"), err: (line) => errors.push(line) });
@@ -163,18 +171,18 @@ describe("runPreflight", () => {
       message: "multiEntry mismatch: expected false, got true",
     },
   ])("fails on $name after a hash-valid hand edit", async ({ ops, message }) => {
+    const head = await writeSnapshot({
+      users: { keyPath: "id", indexes: { byEmail: { keyPath: "email", unique: true } } },
+    });
     await writePackage({
       dirName: "0001_baseline",
       from: null,
-      to: "sha256:A",
+      to: head,
       ops: [
         createMarker,
         createUsers,
         ...ops.map((def) => ({ ...indexOnMissingStore, storeName: "users", indexName: "byEmail", def })),
       ],
-    });
-    await writeSnapshot("sha256:A", {
-      users: { keyPath: "id", indexes: { byEmail: { keyPath: "email", unique: true } } },
     });
     const errors: string[] = [];
 
@@ -191,8 +199,8 @@ describe("runPreflight", () => {
       message: "autoIncrement mismatch: expected false, got true",
     },
   ])("fails on a hand-edited $name", async ({ store, message }) => {
-    await writePackage({ dirName: "0001_baseline", from: null, to: "sha256:A", ops: [{ ...createUsers, def: store }] });
-    await writeSnapshot("sha256:A", { users: { keyPath: "id" } });
+    const head = await writeSnapshot({ users: { keyPath: "id" } });
+    await writePackage({ dirName: "0001_baseline", from: null, to: head, ops: [{ ...createUsers, def: store }] });
     const errors: string[] = [];
 
     expect(await runPreflight({ migrationsDir: join(cwd, "migrations"), err: (line) => errors.push(line) })).toBe(1);
@@ -200,13 +208,13 @@ describe("runPreflight", () => {
   });
 
   it("rejects extra stores and indexes but excludes the runtime marker", async () => {
+    const head = await writeSnapshot({ users: { keyPath: "id" } });
     await writePackage({
       dirName: "0001_baseline",
       from: null,
-      to: "sha256:A",
+      to: head,
       ops: [createMarker, createUsers, createPosts, { ...indexOnMissingStore, storeName: "users" }],
     });
-    await writeSnapshot("sha256:A", { users: { keyPath: "id" } });
     const errors: string[] = [];
 
     expect(await runPreflight({ migrationsDir: join(cwd, "migrations"), err: (line) => errors.push(line) })).toBe(1);
@@ -216,10 +224,14 @@ describe("runPreflight", () => {
   });
 
   it("passes matching compound keys, autoIncrement and multiEntry indexes", async () => {
+    const head = await writeSnapshot({
+      users: { keyPath: "id", autoIncrement: true, indexes: { byThing: { keyPath: ["email", "id"], unique: true } } },
+      posts: { keyPath: ["userId", "id"], indexes: { byThing: { keyPath: "tags", unique: false, multiEntry: true } } },
+    });
     await writePackage({
       dirName: "0001_baseline",
       from: null,
-      to: "sha256:A",
+      to: head,
       ops: [
         { ...createUsers, def: { keyPath: "id", autoIncrement: true } },
         { ...createPosts, def: { keyPath: ["userId", "id"] } },
@@ -227,12 +239,31 @@ describe("runPreflight", () => {
         { ...indexOnMissingStore, storeName: "posts", def: { keyPath: "tags", unique: false, multiEntry: true } },
       ],
     });
-    await writeSnapshot("sha256:A", {
-      users: { keyPath: "id", autoIncrement: true, indexes: { byThing: { keyPath: ["email", "id"], unique: true } } },
-      posts: { keyPath: ["userId", "id"], indexes: { byThing: { keyPath: "tags", unique: false, multiEntry: true } } },
-    });
 
     expect(await runPreflight({ migrationsDir: join(cwd, "migrations") })).toBe(0);
+  });
+
+  it("fails when the snapshot under the head hash belongs to another migration", async () => {
+    const olderContract = createRawIdbContract({ users: { keyPath: "id" } });
+    const olderSnapshotHash = olderContract.storage.storageHash;
+    const head = "sha256:head";
+    await writePackage({ dirName: "0001_baseline", from: null, to: head, ops: [createMarker, createUsers] });
+    await writeSnapshotFile(head, olderContract);
+    const errors: string[] = [];
+
+    expect(await runPreflight({ migrationsDir: join(cwd, "migrations"), err: (line) => errors.push(line) })).toBe(1);
+    expect(errors.join("")).toContain(`snapshot storageHash ${olderSnapshotHash} does not match the head migration`);
+  });
+
+  it("fails when the snapshot content does not match its storage hash", async () => {
+    const hash = "sha256:head";
+    await writePackage({ dirName: "0001_baseline", from: null, to: hash, ops: [createMarker, createUsers] });
+    const contract = createRawIdbContract({ users: { keyPath: "id" } });
+    await writeSnapshotFile(hash, { ...contract, storage: { ...contract.storage, storageHash: hash } });
+    const errors: string[] = [];
+
+    expect(await runPreflight({ migrationsDir: join(cwd, "migrations"), err: (line) => errors.push(line) })).toBe(1);
+    expect(errors.join("")).toContain("does not match its content");
   });
 
   it("fails with a recovery hint when the head snapshot is missing", async () => {

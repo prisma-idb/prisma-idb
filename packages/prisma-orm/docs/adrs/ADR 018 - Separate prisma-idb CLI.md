@@ -75,7 +75,7 @@ Preflight is a separate command that you run in CI. It is not built into `plan` 
 - Running it automatically would stand in for real tests of the migrations.
 - Building it into the app would ship a test-only package to production.
 
-After replay, preflight reads `migrations/snapshots/<head.to>/contract.json` and compares the final stores and indexes with it using `verifyIdbSchema` in strict mode. This check always runs. Missing stores or indexes, extra stores or indexes, and different key paths or flags fail preflight with a readable diff. The runtime-owned `_prisma_next_marker` store is excluded because it is not part of the app contract. A missing or invalid head snapshot also fails preflight. Restore the snapshot from source control or regenerate the chain to recover.
+After replay, preflight reads `migrations/snapshots/<head.to>/contract.json` and compares the final stores and indexes with it using `verifyIdbSchema` in strict mode. This check always runs. Missing stores or indexes, extra stores or indexes, and different key paths or flags fail preflight with a readable diff. The runtime-owned `_prisma_next_marker` store is excluded because it is not part of the app contract. A missing or invalid head snapshot also fails preflight. So does a snapshot whose `storageHash` differs from `head.to`, or from the hash of its own content. Restore the snapshot from source control or regenerate the chain to recover.
 
 Package hashes prove that a migration has not changed since it was emitted. They do not prove that its operations produce the expected schema. The final comparison catches omitted operations and hand edits even when the package hash has been regenerated.
 
