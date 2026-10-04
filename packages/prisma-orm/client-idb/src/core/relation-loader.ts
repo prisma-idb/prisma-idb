@@ -7,7 +7,7 @@ import type { IdbQueryExecutor } from "./executor";
 import { buildRowComparator, combineFilterExprs } from "./query-shaping";
 import type { IncludeEntry } from "./store-state";
 import { keyPathFields, type IdbKeyPath } from "@prisma-idb/target-idb/pack";
-import { fieldValueToken, getKeyPath, isValidIdbKey } from "./types";
+import { fieldValueToken, getKeyPath, getStoreName, isValidIdbKey } from "./types";
 import type { IdbContract } from "./types";
 
 /**
@@ -70,10 +70,7 @@ export async function loadRelation(
   if (relatedModel === undefined) return rows;
 
   // Resolve the related object store name from the model's storage metadata.
-  const relatedStoreName =
-    typeof relatedModel.storage === "object" && relatedModel.storage !== null && "storeName" in relatedModel.storage
-      ? String((relatedModel.storage as { storeName: unknown })["storeName"])
-      : relatedModelName;
+  const relatedStoreName = getStoreName(contract, relatedModelName);
 
   const isScalar = entry.kind === "scalar";
 

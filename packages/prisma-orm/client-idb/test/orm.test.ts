@@ -7,6 +7,7 @@
  * the full runtime stack.
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { domainModelsAtDefaultNamespace } from "@prisma/orm-framework/contract/types";
 import { AsyncIterableResult } from "@prisma/orm-framework/components/runtime";
 import { defineContract } from "@prisma-idb/family-idb/contract-ts";
 import type { FieldSpec } from "@prisma-idb/family-idb/contract-ts";
@@ -416,6 +417,36 @@ describe("IdbStoreAccessor — include (relations)", () => {
     const posts = (alice as Record<string, unknown>)["posts"];
     expect(Array.isArray(posts)).toBe(true);
     expect((posts as unknown[]).length).toBe(2);
+  });
+
+  it("include() falls back to the related model name when storeName is undefined", async () => {
+    const contract = structuredClone(
+      makeTestContract(
+        { users: "User" },
+        {
+          User: {
+            storeName: "users",
+            keyPath: "id",
+            relations: {
+              posts: {
+                to: "posts",
+                cardinality: "1:N",
+                on: { localFields: ["id"], targetFields: ["authorId"] },
+              },
+            },
+          },
+          posts: { storeName: "posts", keyPath: "id" },
+        }
+      )
+    );
+    const models = domainModelsAtDefaultNamespace(contract.domain);
+    (models["posts"]!.storage as { storeName: string | undefined }).storeName = undefined;
+    const client = asRecord(idbOrm({ contract, executor }));
+    const rows = await client["users"]!.include("posts").all().toArray();
+    expect(rows).toEqual([
+      { ...ALICE, posts: [POST_A, POST_B] },
+      { ...BOB, posts: [POST_C] },
+    ]);
   });
 
   it("include() loads a N:1 relation", async () => {
