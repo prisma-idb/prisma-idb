@@ -13,6 +13,9 @@
   let title = $state(untrack(() => todo.title));
   let description = $state(untrack(() => todo.description ?? ""));
 
+  // Moving reloads the todo from IndexedDB, which would discard the draft.
+  const hasUnsavedEdits = $derived(title.trim() !== todo.title || description.trim() !== (todo.description ?? ""));
+
   async function move(select: HTMLSelectElement) {
     await kanban.moveTodo(todo.id, select.value);
     // A failed move leaves the todo on its original board.
@@ -65,7 +68,8 @@
       aria-label="Move todo to board"
       value={todo.boardId}
       onchange={(event) => move(event.currentTarget)}
-      disabled={kanban.busy || kanban.boards.length < 2}
+      disabled={kanban.busy || kanban.boards.length < 2 || hasUnsavedEdits}
+      title={hasUnsavedEdits ? "Save your changes before moving this todo" : undefined}
     >
       {#each kanban.boards as board (board.id)}
         <option value={board.id}>{board.name}</option>

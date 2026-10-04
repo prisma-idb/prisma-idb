@@ -102,6 +102,33 @@ test("a failed todo move keeps the original board selected", async ({ page, cont
   await expect(selector).toHaveValue(sourceId);
 });
 
+test("moving a todo requires saving its edits first", async ({ page }) => {
+  await openApp(page);
+  await page.getByTestId("board-name-input").fill("Source");
+  await page.getByTestId("create-board-submit").click();
+  const source = page
+    .getByTestId("board-card")
+    .filter({ has: page.getByRole("textbox", { name: "Board name Source" }) });
+  await source.getByTestId("todo-title-input").fill("Draft title");
+  await source.getByTestId("create-todo-submit").click();
+  await page.getByTestId("board-name-input").fill("Destination");
+  await page.getByTestId("create-board-submit").click();
+  const todo = source.getByTestId("todo-item");
+  const selector = todo.getByRole("combobox", { name: "Move todo to board" });
+  await expect(selector).toBeEnabled();
+
+  await todo.getByTestId("todo-title-field").fill("Edited title");
+  await expect(selector).toBeDisabled();
+
+  await todo.getByTestId("save-todo").click();
+  await expect(selector).toBeEnabled();
+  await selector.selectOption({ label: "Destination" });
+  const destination = page
+    .getByTestId("board-card")
+    .filter({ has: page.getByRole("textbox", { name: "Board name Destination" }) });
+  await expect(destination.getByTestId("todo-title-field")).toHaveValue("Edited title");
+});
+
 test("switches theme modes and persists explicit choices", async ({ page }) => {
   await openApp(page);
 

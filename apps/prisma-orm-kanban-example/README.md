@@ -15,7 +15,7 @@ pnpm --filter @prisma-idb/prisma-orm-kanban-example db:init
 pnpm --filter @prisma-idb/prisma-orm-kanban-example dev
 ```
 
-Open the URL printed by Vite and select **Continue as guest**. Create a board, then add a todo. Edit, complete, or delete the todo to exercise tracked writes. Create a second board and use the todo's **Move to** selector to move it there. The move updates IndexedDB immediately and syncs to your other devices when online. If the move fails, the selector returns to the todo's original board. The sync status shows pending changes and connectivity.
+Open the URL printed by Vite and select **Continue as guest**. Create a board, then add a todo. Edit, complete, or delete the todo to exercise tracked writes. Create a second board and use the todo's **Move to** selector to move it there. The move updates IndexedDB immediately and syncs to your other devices when online. Save any title or description edits first: the selector is disabled while a todo has unsaved edits. If the move fails, the selector returns to the todo's original board. The sync status shows pending changes and connectivity.
 
 To use Google sign-in, set `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` in the app's `.env`. Follow the redirect URL instructions in `.env.example`.
 
