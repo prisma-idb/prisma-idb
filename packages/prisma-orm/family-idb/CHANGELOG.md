@@ -1,5 +1,16 @@
 # @prisma-idb/family-idb
 
+## 0.10.0
+
+### Minor Changes
+
+- [#277](https://github.com/prisma-idb/prisma-idb/pull/277) [`f062370`](https://github.com/prisma-idb/prisma-idb/commit/f062370dbc0a87a54f1c80e2b2a6e7b5b1472a51) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Verify the replayed migration schema against the head contract snapshot during preflight. Fail with a readable diff on drift, or a recovery hint when the snapshot is missing, invalid, or does not match the head migration's target hash.
+
+### Patch Changes
+
+- Updated dependencies [[`3dcdef1`](https://github.com/prisma-idb/prisma-idb/commit/3dcdef142b02d5e246542b2cae2c7db04fefa0cb)]:
+  - @prisma-idb/target-idb@0.10.0
+
 ## 0.9.1
 
 ### Patch Changes

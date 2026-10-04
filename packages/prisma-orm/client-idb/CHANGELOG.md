@@ -1,5 +1,23 @@
 # @prisma-idb/client-idb
 
+## 0.10.0
+
+### Minor Changes
+
+- [#277](https://github.com/prisma-idb/prisma-idb/pull/277) [`9a7139a`](https://github.com/prisma-idb/prisma-idb/commit/9a7139a1764b414ebbee44f230fb7e6e7b94ab16) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Fix grouping of BigInt fields and keep Date values separate from strings. Null and undefined still share a group.
+
+  Use the model name for related-store reads when storage metadata omits the store name.
+
+  Remove internal relation-mutation helpers from `/orm` and `autoMigrate` from `/client-auto`. The sync delete helpers now live in `/internal`; use the client factories and relation callbacks in application code.
+
+### Patch Changes
+
+- Updated dependencies [[`a4fd04b`](https://github.com/prisma-idb/prisma-idb/commit/a4fd04b06cae21eee2ad2d2d02dcb98793725839), [`3dcdef1`](https://github.com/prisma-idb/prisma-idb/commit/3dcdef142b02d5e246542b2cae2c7db04fefa0cb), [`08ee7c5`](https://github.com/prisma-idb/prisma-idb/commit/08ee7c5bf75eaeb2f40fac8ee83fd4187d473d3e), [`3dcdef1`](https://github.com/prisma-idb/prisma-idb/commit/3dcdef142b02d5e246542b2cae2c7db04fefa0cb)]:
+  - @prisma-idb/adapter-idb@0.10.0
+  - @prisma-idb/driver-idb@0.10.0
+  - @prisma-idb/runtime-idb@0.10.0
+  - @prisma-idb/target-idb@0.10.0
+
 ## 0.9.1
 
 ### Patch Changes

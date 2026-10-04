@@ -1,5 +1,17 @@
 # @prisma-idb/prisma-orm-kanban-example
 
+## 0.0.20
+
+### Patch Changes
+
+- [#277](https://github.com/prisma-idb/prisma-idb/pull/277) [`fdbf176`](https://github.com/prisma-idb/prisma-idb/commit/fdbf176a5ef8d5b07c2b6207d4648e7f9676581c) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Add a board selector to move todos between boards, including offline moves that sync to other devices after reconnecting.
+
+- Updated dependencies [[`9edee99`](https://github.com/prisma-idb/prisma-idb/commit/9edee9972fe801922f406e4acc93a81454e1a0b1), [`003b273`](https://github.com/prisma-idb/prisma-idb/commit/003b273e820c9c1e035f48b03e1f43ffd1a64934), [`334a6d9`](https://github.com/prisma-idb/prisma-idb/commit/334a6d906cfb5b6a57a9894aa4d9c90952a24269), [`c1f6605`](https://github.com/prisma-idb/prisma-idb/commit/c1f6605f16647d86ee696bf90c77a66b6358d6b4), [`9a7139a`](https://github.com/prisma-idb/prisma-idb/commit/9a7139a1764b414ebbee44f230fb7e6e7b94ab16), [`36e524d`](https://github.com/prisma-idb/prisma-idb/commit/36e524d41c0f4dbdda5a1e280e5c071dfe0a66f6)]:
+  - @prisma-idb/sync-extension-idb@0.7.3
+  - @prisma-idb/sync-server-sql@0.6.0
+  - @prisma-idb/sync-server@0.7.0
+  - @prisma-idb/client-idb@0.10.0
+
 ## 0.0.19
 
 ### Patch Changes

@@ -1,5 +1,23 @@
 # @prisma-idb/sync-extension-idb
 
+## 0.7.3
+
+### Patch Changes
+
+- [#273](https://github.com/prisma-idb/prisma-idb/pull/273) [`9edee99`](https://github.com/prisma-idb/prisma-idb/commit/9edee9972fe801922f406e4acc93a81454e1a0b1) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Clarify tracked-model selection, key requirements and outbox notification timing in the README.
+
+- [#277](https://github.com/prisma-idb/prisma-idb/pull/277) [`003b273`](https://github.com/prisma-idb/prisma-idb/commit/003b273e820c9c1e035f48b03e1f43ffd1a64934) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Throw an error for hand-built `update`, `updateAll` and `deleteAll` plans on a synced model. These plans were saved locally but never synced. The ORM's own methods are unaffected.
+
+- [#277](https://github.com/prisma-idb/prisma-idb/pull/277) [`36e524d`](https://github.com/prisma-idb/prisma-idb/commit/36e524d41c0f4dbdda5a1e280e5c071dfe0a66f6) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Import shared referential-action helpers from the client's internal subpath. Pull deletes keep the same cascade behavior.
+
+- Updated dependencies [[`f062370`](https://github.com/prisma-idb/prisma-idb/commit/f062370dbc0a87a54f1c80e2b2a6e7b5b1472a51), [`a4fd04b`](https://github.com/prisma-idb/prisma-idb/commit/a4fd04b06cae21eee2ad2d2d02dcb98793725839), [`9a7139a`](https://github.com/prisma-idb/prisma-idb/commit/9a7139a1764b414ebbee44f230fb7e6e7b94ab16), [`3dcdef1`](https://github.com/prisma-idb/prisma-idb/commit/3dcdef142b02d5e246542b2cae2c7db04fefa0cb), [`08ee7c5`](https://github.com/prisma-idb/prisma-idb/commit/08ee7c5bf75eaeb2f40fac8ee83fd4187d473d3e), [`3dcdef1`](https://github.com/prisma-idb/prisma-idb/commit/3dcdef142b02d5e246542b2cae2c7db04fefa0cb)]:
+  - @prisma-idb/family-idb@0.10.0
+  - @prisma-idb/adapter-idb@0.10.0
+  - @prisma-idb/client-idb@0.10.0
+  - @prisma-idb/driver-idb@0.10.0
+  - @prisma-idb/runtime-idb@0.10.0
+  - @prisma-idb/target-idb@0.10.0
+
 ## 0.7.2
 
 ### Patch Changes

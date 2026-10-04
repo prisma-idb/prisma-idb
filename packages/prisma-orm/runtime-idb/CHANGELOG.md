@@ -1,5 +1,15 @@
 # @prisma-idb/runtime-idb
 
+## 0.10.0
+
+### Patch Changes
+
+- [#277](https://github.com/prisma-idb/prisma-idb/pull/277) [`08ee7c5`](https://github.com/prisma-idb/prisma-idb/commit/08ee7c5bf75eaeb2f40fac8ee83fd4187d473d3e) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Correct the middleware context comment: the framework creates a new execution id for every query and execute call.
+
+- Updated dependencies [[`a4fd04b`](https://github.com/prisma-idb/prisma-idb/commit/a4fd04b06cae21eee2ad2d2d02dcb98793725839), [`3dcdef1`](https://github.com/prisma-idb/prisma-idb/commit/3dcdef142b02d5e246542b2cae2c7db04fefa0cb)]:
+  - @prisma-idb/adapter-idb@0.10.0
+  - @prisma-idb/driver-idb@0.10.0
+
 ## 0.9.1
 
 ### Patch Changes
