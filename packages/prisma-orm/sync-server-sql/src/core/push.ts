@@ -185,6 +185,10 @@ export async function applyPushEventDecoded(
   scopeKey: string
 ): Promise<SqlPushResult> {
   if (isRejected(check)) return rejectedResult(event.id, check);
+  // The write targets the event's key, so it must be the key `check` authorized.
+  if (!Object.is(event.wireKey, check.key)) {
+    return { id: event.id, success: false, error: "KEYPATH_VALIDATION_FAILURE", retryable: false };
+  }
   const { model } = event;
 
   try {

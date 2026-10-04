@@ -358,7 +358,7 @@ describe("createSqlSyncAdapter", () => {
       db,
       { id: "evt1", operation: "create", payload: { id: "u2", name: "Bo" } },
       "User",
-      check,
+      { ...check, key: "u2" },
       "u1"
     );
     expect(result).toEqual({ id: "evt1", success: true });

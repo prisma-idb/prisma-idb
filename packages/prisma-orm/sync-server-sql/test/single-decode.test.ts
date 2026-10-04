@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createSqlSyncAdapter } from "../src/core/create-adapter";
+import { ormRootFor } from "../src/core/orm-root";
 import { reviveWireValues } from "../src/core/wire-values";
 import { seed, testContract, testDb, testSyncServer } from "./helpers";
 
@@ -10,7 +11,7 @@ vi.mock("../src/core/wire-values", async (importOriginal) => {
 
 const adapter = createSqlSyncAdapter({ contract: testContract, syncServer: testSyncServer });
 
-/** Payload revivals so far: one call per decoded event. Key revival goes through `reviveWireKey` and isn't counted. */
+/** Payload revivals so far: one call per decoded event. A second decode of the same event would raise the count. */
 const revivals = () => vi.mocked(reviveWireValues).mock.calls.length;
 
 beforeEach(() => {
@@ -57,5 +58,25 @@ describe("single decode", () => {
 
     expect(result).toEqual({ id: "e1", success: true });
     expect(revivals()).toBe(1);
+  });
+
+  it("applyPushEvent rejects a check that authorized a different key, writing nothing", async () => {
+    const db = await testDb();
+    await seed(db, { User: [{ id: "u1", name: "Ann" }] });
+    const [validation] = testSyncServer.validatePush(
+      [{ id: "e1", model: "Board", operation: "create", payload: { id: "b1", ownerId: "u1" }, wireKey: "b1" }],
+      { scopeKey: "u1" }
+    );
+
+    const result = await adapter.applyPushEvent(
+      db,
+      { id: "e1", operation: "create", payload: { id: "b2", ownerId: "u1" } },
+      "Board",
+      validation!.check,
+      "u1"
+    );
+
+    expect(result).toEqual({ id: "e1", success: false, error: "KEYPATH_VALIDATION_FAILURE", retryable: false });
+    expect(await ormRootFor(db, "Board").first({ id: "b2" })).toBeNull();
   });
 });
