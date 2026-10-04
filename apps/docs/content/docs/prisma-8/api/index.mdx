@@ -12,6 +12,12 @@ const todos = await db.orm.todo.where({ done: false }).orderBy({ title: "asc" })
 
 Chaining returns a new accessor and never changes the one you started from, so you can reuse a partial query.
 
+## Package entry points
+
+Import `idbOrm`, accessor types, and filter helpers from `@prisma-idb/client-idb/orm`. For nested writes, the client supplies the relation mutator to your callback; see [Write related rows](/docs/prisma-8/api/writing#write-related-rows).
+
+Import `createAutoMigratingIdbClient` or `createManagedAutoIdbClient` from `@prisma-idb/client-idb/client-auto` to apply migrations when opening the database.
+
 ## Chaining methods
 
 | Method                       | Does                                                                  | Details                                                       |

@@ -2,6 +2,7 @@
   import { getContext, untrack } from "svelte";
   import { Button } from "$lib/components/ui/button";
   import { Input } from "$lib/components/ui/input";
+  import * as Select from "$lib/components/ui/select";
   import { Textarea } from "$lib/components/ui/textarea";
   import { CheckIcon, CircleIcon, SaveIcon, Trash2Icon } from "@lucide/svelte";
   import { KANBAN_CTX, type KanbanStore, type Todo } from "$lib/stores/kanban.svelte";
@@ -12,6 +13,19 @@
   // Intentionally initialized once — edit state is local and not synced back from the store
   let title = $state(untrack(() => todo.title));
   let description = $state(untrack(() => todo.description ?? ""));
+
+  // Moving reloads the todo from IndexedDB, which would discard the draft.
+  const hasUnsavedEdits = $derived(title.trim() !== todo.title || description.trim() !== (todo.description ?? ""));
+
+  // Follows the todo's board, but can be overridden while a move is in flight.
+  let boardId = $derived(todo.boardId);
+  const boardName = $derived(kanban.boards.find((board) => board.id === boardId)?.name);
+
+  async function move(destinationId: string) {
+    await kanban.moveTodo(todo.id, destinationId);
+    // A failed move leaves the todo on its original board.
+    boardId = todo.boardId;
+  }
 
   async function save() {
     const trimmed = title.trim();
@@ -51,6 +65,29 @@
         data-testid="todo-description-field"
       />
     </div>
+  </div>
+  <div class="text-muted-foreground mt-3 flex items-center gap-2 text-xs">
+    <span>Move to</span>
+    <Select.Root
+      type="single"
+      bind:value={boardId}
+      onValueChange={move}
+      disabled={kanban.busy || kanban.boards.length < 2 || hasUnsavedEdits}
+    >
+      <Select.Trigger
+        size="sm"
+        class="min-w-0 flex-1"
+        aria-label="Move todo to board"
+        title={hasUnsavedEdits ? "Save your changes before moving this todo" : undefined}
+      >
+        {boardName}
+      </Select.Trigger>
+      <Select.Content>
+        {#each kanban.boards as board (board.id)}
+          <Select.Item value={board.id} label={board.name}>{board.name}</Select.Item>
+        {/each}
+      </Select.Content>
+    </Select.Root>
   </div>
   <div class="mt-2 flex justify-end gap-2">
     <Button

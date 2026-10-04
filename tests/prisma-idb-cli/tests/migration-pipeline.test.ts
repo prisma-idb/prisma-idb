@@ -20,7 +20,7 @@
  * `prisma contract emit` for the corresponding schema states.
  */
 
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
@@ -36,10 +36,11 @@ import {
 // ── Contract fixtures ────────────────────────────────────────────────────────
 // Exact JSON snapshots from apps/prisma-orm-usage: the "no-posts" state
 // (end-contract.json from the baseline migration) and the "with-posts" state
-// (the current contract.json). Using real hashes keeps the chain unambiguous.
+// (the current contract.json). Preflight recomputes each head snapshot's storage hash from its
+// content, so these hashes must match the fixtures below.
 
-const V1_STORAGE_HASH = "sha256:46a587fce453e2298b888ce5307312ac010fafb203b9f0ab188eb4fb6be17bc0";
-const V2_STORAGE_HASH = "sha256:b05717321fba711de059ca6e508f0f2087f2eaca7de74beb8f969ac5f0c606d9";
+const V1_STORAGE_HASH = "0d984fb7d472d505375d020ad80c5b61e4e7ebfa8f285e3da51170ef3560b936";
+const V2_STORAGE_HASH = "122c98a5111c07549f24a259e93c2db8bcdd68bf1ee5310718c618ddd9fe8a0d";
 
 const CONTRACT_V1_NO_POSTS = {
   schemaVersion: "1",
@@ -77,7 +78,7 @@ const CONTRACT_V1_NO_POSTS = {
     },
   },
   storage: {
-    namespaces: { __unbound__: { id: "__unbound__" } },
+    namespaces: { __unbound__: { id: "__unbound__", entries: {} } },
     storageHash: V1_STORAGE_HASH,
     stores: {
       random_store: { keyPath: "id" },
@@ -125,7 +126,7 @@ const CONTRACT_V2_WITH_POSTS = {
     },
   },
   storage: {
-    namespaces: { __unbound__: { id: "__unbound__" } },
+    namespaces: { __unbound__: { id: "__unbound__", entries: {} } },
     storageHash: V2_STORAGE_HASH,
     stores: {
       ...CONTRACT_V1_NO_POSTS.storage.stores,
@@ -217,6 +218,11 @@ describe("migration pipeline e2e", () => {
       to: V2_STORAGE_HASH,
       ops: [createPostsStoreOp, createPostsByAuthorIdIndexOp],
     });
+
+    // A real migration plan also persists the destination contract snapshot.
+    const snapshotDir = join(cwd, "migrations", "snapshots", V2_STORAGE_HASH);
+    await mkdir(snapshotDir, { recursive: true });
+    await writeFile(join(snapshotDir, "contract.json"), JSON.stringify(CONTRACT_V2_WITH_POSTS), "utf-8");
 
     const dirs2 = await getMigrationDirs(cwd);
     expect(dirs2).toHaveLength(2);

@@ -14,7 +14,7 @@ IndexedDB only exists in the browser, so three migration jobs need their own com
 | ------------------------------------- | ------------------------------------------------------------------------------- |
 | `prisma-idb migration plan`           | Plans the next migration from the newest one on disk. Warns if it deletes data. |
 | `prisma-idb migration contract-space` | Bundles the migrations into a module the browser imports.                       |
-| `prisma-idb migration preflight`      | Applies every migration to an in-memory IndexedDB to check that it runs.        |
+| `prisma-idb migration preflight`      | Replays migrations in memory and verifies the schema against the head snapshot. |
 
 All three read `prisma.config.ts`. See [Migrations](https://prisma-idb.dev/docs/prisma-8/migrations).
 

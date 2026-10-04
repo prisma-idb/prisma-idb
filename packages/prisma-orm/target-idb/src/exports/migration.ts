@@ -23,14 +23,9 @@
  * MigrationCLI.run(import.meta.url, M);
  * ```
  *
- * **For migration runners** — import the planner, runner, and driver:
- * ```ts
- * import {
- *   IdbMigrationControlDriverDescriptor,
- *   IdbMigrationPlanner,
- *   IdbMigrationRunner,
- * } from "@prisma-idb/target-idb/migration";
- * ```
+ * The planner generates operations at build time. Apply them in the browser
+ * with `createAutoMigratingIdbClient` from client-idb. The framework's CLI
+ * migration runner returns `IDB-RUNNER-CLI-UNSUPPORTED`.
  */
 
 // ── DDL factory functions ─────────────────────────────────────────────────────
@@ -56,11 +51,6 @@ export type {
 
 export type { IdbSchemaDiffInput } from "../core/schema-diff";
 export { diffIdbSchema } from "../core/schema-diff";
-
-// ── Migration control driver ──────────────────────────────────────────────────
-
-export { IdbMigrationControlDriverDescriptor, extractMigrationDriver } from "../core/migration-driver";
-export type { IdbMigrationControlDriver } from "../core/migration-driver";
 
 // ── Planner & runner ──────────────────────────────────────────────────────────
 

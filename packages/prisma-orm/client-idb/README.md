@@ -26,6 +26,8 @@ const open = await db.orm.todo.where({ done: false }).orderBy({ title: "asc" }).
 | `@prisma-idb/client-idb/client`      | `createIdbClient`, `createManagedIdbClient`: open an already-migrated database.                 |
 | `@prisma-idb/client-idb/orm`         | `idbOrm`, the accessor types, and the `and`, `or` and `not` filter helpers.                     |
 
+The `internal` subpath is for companion packages such as `sync-extension-idb`. Application code uses the entry points above. For nested writes, pass a relation callback to `create()` or `update()`; the client supplies the relation mutator.
+
 ## Documentation
 
 - [Quick Start](https://prisma-idb.dev/docs/prisma-8/getting-started)

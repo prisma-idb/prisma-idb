@@ -103,6 +103,7 @@ Each action runs inside one `withMutationScope` transaction that covers the pare
 
 - `target-idb/src/core/idb-contract-types.ts`: `IdbModelStorage`, `IdbRelationStorage`, `IdbReferentialAction`.
 - `family-idb/src/core/contract-builder.ts` and `psl-interpreter.ts`: where `onDelete`/`onUpdate` are read from the schema.
+- `client-idb/src/exports/internal.ts`: shares delete-store collection and referential actions with `sync-extension-idb`. These helpers are not exported from `/orm`.
 - `client-idb/src/core/mutation-executor.ts`: `validateScalarFks`, `parentExists`, `enforcedAction`, `applyReferentialActionsForRow`, `applyReferentialActionsForRowOnUpdate`, `validateSetDefaultPatch`.
 
 - `client-idb/src/core/mutation-defaults.ts`: literal and generated defaults applied before foreign-key validation.

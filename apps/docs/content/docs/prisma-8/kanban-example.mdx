@@ -16,6 +16,7 @@ The kanban example is a complete SvelteKit app. Each user's boards live in Index
 - **A managed sync client.** `createManagedAutoSyncIdbClient` gives one shared client that migrates, records changes for sync, and can be wiped on sign-out. See [Client](/docs/prisma-8/client#share-one-client-and-reset-it-on-logout).
 - **Server-side authorization.** Push and pull endpoints use `createSyncServer` to check that every record belongs to the signed-in user. See [Server](/docs/prisma-8/sync/server).
 - **Local writes that don't sync.** On first load, the app copies the signed-in user into IndexedDB with `withoutTracking`, since the server already has that row.
+- **Moving todos between boards.** Each todo's **Move to** selector changes its `boardId` through a tracked ORM update. The selector is disabled while the todo has unsaved edits, so save them first. The app reloads the local boards to show the move in creation order. Offline moves sync to other devices when the connection returns.
 - **Sync status in the UI.** A badge shows how many changes are waiting to sync, updated from the `"outboxwrite"` event. The app syncs again when the browser comes back online.
 - **A clean slate per account.** Sign-out calls `resetDb()`, so another account on the same browser starts with an empty database.
 - **Offline use.** A small service worker caches the app shell, so the app opens without a network after the first visit. Changes made offline wait in the outbox and sync when the connection returns.

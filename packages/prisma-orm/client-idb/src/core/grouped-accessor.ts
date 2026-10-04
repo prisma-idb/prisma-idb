@@ -5,6 +5,7 @@ import {
   createAggregateBuilder,
   toAggregateRequests,
 } from "./aggregate-builder";
+import { fieldValueToken } from "./types";
 import type { DefaultModelRow, IdbAggregateBuilder, IdbAggregateResult, IdbAggregateSpec } from "./types";
 
 /**
@@ -61,12 +62,19 @@ interface GroupedAccessorInit {
 }
 
 /**
- * Build the composite group key for a row. Uses a JSON encoding of the ordered
- * key-field values so multi-field groups and primitive value types (string,
- * number, boolean, null) partition correctly.
+ * Build a composite group key from type-tagged field tokens. Equal Date, binary,
+ * array and JSON object values share a group; null and undefined also share a group.
  */
 function groupKeyOf(by: readonly string[], row: Record<string, unknown>): string {
-  return JSON.stringify(by.map((field) => row[field] ?? null));
+  return JSON.stringify(by.map((field) => groupToken(row[field])));
+}
+
+/** Keep `1n`, `1` and `"1"` apart while preserving structural grouping for JSON objects. */
+function groupToken(value: unknown): readonly [string, unknown] {
+  // Invalid Dates serialize as null, so give them a separate token.
+  if (value instanceof Date && Number.isNaN(value.getTime())) return ["date", "invalid"];
+  const token = fieldValueToken(value ?? null);
+  return [typeof token, typeof token === "object" ? token : String(token)];
 }
 
 /** Build a grouped accessor that reduces materialized rows from the source accessor. */

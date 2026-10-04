@@ -96,6 +96,53 @@ test("board rename, todo edit, and toggle-complete sync to another device", asyn
   await expect(todoB.getByTestId("toggle-todo")).toHaveAttribute("aria-label", "Mark todo incomplete");
 });
 
+test("moving a todo to another board syncs to another device", async ({ devices }) => {
+  const [pageA, pageB] = devices;
+  const sourceName = `Move Source ${Date.now()}`;
+  const targetName = `Move Target ${Date.now()}`;
+  await createBoard(pageA, sourceName);
+  await createBoard(pageA, targetName);
+  const sourceA = boardCard(pageA, sourceName);
+  const targetA = boardCard(pageA, targetName);
+  await sourceA.getByTestId("todo-title-input").fill("Todo to move");
+  await sourceA.getByTestId("todo-description-input").fill("Keep this description");
+  await sourceA.getByTestId("create-todo-submit").click();
+  await expect(todoItem(pageA, "Todo to move")).toBeVisible();
+  await todoItem(pageA, "Todo to move").getByTestId("toggle-todo").click();
+  await expect(todoItem(pageA, "Todo to move").getByTestId("toggle-todo")).toHaveAttribute(
+    "aria-label",
+    "Mark todo incomplete"
+  );
+
+  await syncNow(pageA);
+  await syncNow(pageB);
+  await expect(boardCard(pageB, sourceName).getByTestId("todo-item")).toHaveCount(1);
+  await expect(boardCard(pageB, targetName)).toBeVisible();
+
+  await pageA.context().setOffline(true);
+  await todoItem(pageA, "Todo to move").getByRole("button", { name: "Move todo to board" }).click();
+  await pageA.getByRole("option", { name: targetName }).click();
+  await expect(sourceA.getByTestId("todo-item")).toHaveCount(0);
+  await expect(targetA.getByTestId("todo-item")).toHaveCount(1);
+  await expect(targetA.getByTestId("todo-description-field")).toHaveValue("Keep this description");
+  await expect(targetA.getByTestId("toggle-todo")).toHaveAttribute("aria-label", "Mark todo incomplete");
+
+  await pageA.context().setOffline(false);
+  await syncNow(pageA);
+  await syncNow(pageB);
+  await expect(boardCard(pageB, sourceName).getByTestId("todo-item")).toHaveCount(0);
+  const targetB = boardCard(pageB, targetName);
+  await expect(targetB.getByTestId("todo-item")).toHaveCount(1);
+  await expect(targetB.getByTestId("todo-title-field")).toHaveValue("Todo to move");
+  await expect(targetB.getByTestId("todo-description-field")).toHaveValue("Keep this description");
+  await expect(targetB.getByTestId("toggle-todo")).toHaveAttribute("aria-label", "Mark todo incomplete");
+
+  await pageB.reload();
+  await expect(pageB.getByTestId("board-name-input")).toBeVisible({ timeout: 15_000 });
+  await expect(boardCard(pageB, sourceName).getByTestId("todo-item")).toHaveCount(0);
+  await expect(targetB.getByTestId("todo-title-field")).toHaveValue("Todo to move");
+});
+
 /**
  * Deleting a board cascades locally to its todos (client-idb's
  * `onDelete: cascade`), producing THREE outbox delete events — both todos,

@@ -7,6 +7,7 @@
  * the full runtime stack.
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { domainModelsAtDefaultNamespace } from "@prisma/orm-framework/contract/types";
 import { AsyncIterableResult } from "@prisma/orm-framework/components/runtime";
 import { defineContract } from "@prisma-idb/family-idb/contract-ts";
 import type { FieldSpec } from "@prisma-idb/family-idb/contract-ts";
@@ -418,6 +419,36 @@ describe("IdbStoreAccessor — include (relations)", () => {
     expect((posts as unknown[]).length).toBe(2);
   });
 
+  it("include() falls back to the related model name when storeName is undefined", async () => {
+    const contract = structuredClone(
+      makeTestContract(
+        { users: "User" },
+        {
+          User: {
+            storeName: "users",
+            keyPath: "id",
+            relations: {
+              posts: {
+                to: "posts",
+                cardinality: "1:N",
+                on: { localFields: ["id"], targetFields: ["authorId"] },
+              },
+            },
+          },
+          posts: { storeName: "posts", keyPath: "id" },
+        }
+      )
+    );
+    const models = domainModelsAtDefaultNamespace(contract.domain);
+    (models["posts"]!.storage as { storeName: string | undefined }).storeName = undefined;
+    const client = asRecord(idbOrm({ contract, executor }));
+    const rows = await client["users"]!.include("posts").all().toArray();
+    expect(rows).toEqual([
+      { ...ALICE, posts: [POST_A, POST_B] },
+      { ...BOB, posts: [POST_C] },
+    ]);
+  });
+
   it("include() loads a N:1 relation", async () => {
     const contract = makeTestContract(
       { posts: "Post" },
@@ -642,6 +673,69 @@ describe("IdbStoreAccessor — aggregate / groupBy (Phase 6.6)", () => {
     const byAuthor = Object.fromEntries(rows.map((r) => [(r as Record<string, unknown>)["authorId"], r]));
     expect(byAuthor["u1"]).toEqual({ authorId: "u1", count: 3, totalViews: 225 });
     expect(byAuthor["u2"]).toEqual({ authorId: "u2", count: 2, totalViews: 200 });
+  });
+
+  it.each([
+    {
+      name: "BigInt values without merging number or string values",
+      values: [1n, 1n, 2n, 1, "1"],
+      expected: [
+        { value: 1n, count: 2 },
+        { value: 2n, count: 1 },
+        { value: 1, count: 1 },
+        { value: "1", count: 1 },
+      ],
+    },
+    {
+      name: "equal Dates separately from their ISO string",
+      values: [new Date("2026-01-01"), new Date("2026-01-01"), "2026-01-01T00:00:00.000Z"],
+      expected: [
+        { value: new Date("2026-01-01"), count: 2 },
+        { value: "2026-01-01T00:00:00.000Z", count: 1 },
+      ],
+    },
+    {
+      name: "invalid Dates separately from null and undefined",
+      values: [new Date(NaN), new Date(NaN), null, undefined],
+      expected: [
+        { value: new Date(NaN), count: 2 },
+        { value: null, count: 2 },
+      ],
+    },
+    {
+      name: "distinct JSON objects by their structured values",
+      values: [{ enabled: true }, { enabled: true }, { enabled: false }],
+      expected: [
+        { value: { enabled: true }, count: 2 },
+        { value: { enabled: false }, count: 1 },
+      ],
+    },
+    {
+      name: "null and undefined in one group",
+      values: [null, undefined, "null"],
+      expected: [
+        { value: null, count: 2 },
+        { value: "null", count: 1 },
+      ],
+    },
+  ])("groupBy() groups $name", async ({ values, expected }) => {
+    const name = dbName();
+    const setupDb = await openTestDb(name, [POSTS_STORE]);
+    await seedStore(
+      setupDb,
+      "posts",
+      values.map((value, i) => ({ id: `p${i}`, value }))
+    );
+    setupDb.close();
+    const groupDriver = createIDBRuntimeDriver(name, 1).create();
+    try {
+      const contract = makeTestContract({ posts: "Post" }, { Post: { storeName: "posts", keyPath: "id" } });
+      const client = asRecord(idbOrm({ contract, executor: new TestExecutor(groupDriver) }));
+      const rows = await client["posts"]!.groupBy("value").aggregate((agg) => ({ count: agg.count() }));
+      expect(rows).toEqual(expected);
+    } finally {
+      await groupDriver.close();
+    }
   });
 
   it("groupBy().aggregate() respects a preceding where()", async () => {

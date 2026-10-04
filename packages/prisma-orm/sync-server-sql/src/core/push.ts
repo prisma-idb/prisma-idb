@@ -1,9 +1,9 @@
 import { domainModelsAtDefaultNamespace } from "@prisma/orm-framework/contract/types";
-import type { GetKeyField, PushCheck, SyncServerContract } from "@prisma-idb/sync-server";
+import type { GetKeyField, PushCheck, SyncPushEvent, SyncServerContract } from "@prisma-idb/sync-server";
 import { ormRootFor } from "./orm-root";
 import { checkAuthorization } from "./authorization";
 import { appendChangelogRow, isEventApplied } from "./changelog";
-import { reviveWireKey, reviveWireValues, WireValidationError } from "./wire-values";
+import { reviveWireValues, WireValidationError } from "./wire-values";
 
 /**
  * The fields `applyPushEvent` actually reads out of a push request's event —
@@ -85,17 +85,64 @@ export function toSyncPushPayload(operation: string, payload: unknown, keyField:
 }
 
 /**
- * Authorizes, then applies, one outbox event: writes the model row + a
- * stamped `Changelog` row, atomically. Idempotent on the event's id.
+ * Decodes one wire event into the `SyncPushEvent` shape `validatePush` takes:
+ * the wire form, plus its payload revived to native values. Revival happens
+ * only here, so each event is decoded once however it reaches the adapter.
  *
- * Authorization runs *inside* the same transaction as the write, right
- * before it — not before the transaction opens — so the row(s) it reads
- * (the record itself, and every hop the ownership walk crosses) are locked
- * against concurrent reassignment for the rest of the transaction.
- *
- * `db` must expose `.transaction(fn)`, calling `fn` with a scope whose
- * `.orm.public` works the same way `db.orm.public` does — the same
- * per-app-generated shape `ormRootFor` already treats as opaque.
+ * A model the contract can't resolve a key for gets an empty payload:
+ * `validatePush` reports it as an unknown model, so it fails as an ordinary
+ * non-retryable event result.
+ * @throws {WireValidationError | Error} If the event's payload can't be shaped or decoded.
+ */
+export function decodeWireEvent(
+  contract: SyncServerContract,
+  getKeyField: GetKeyField,
+  model: string,
+  event: SqlPushEvent
+): SyncPushEvent {
+  let keyField: string | undefined;
+  try {
+    keyField = getKeyField(contract, model);
+  } catch {
+    keyField = undefined;
+  }
+  const wirePayload = keyField === undefined ? {} : toSyncPushPayload(event.operation, event.payload, keyField);
+  return {
+    id: event.id,
+    model,
+    operation: event.operation,
+    payload: reviveWireValues(contract, model, wirePayload, keyField),
+    wireKey: keyField === undefined ? undefined : wirePayload[keyField],
+  };
+}
+
+/** The non-retryable result for an event that could not be decoded. */
+export function decodeFailureResult(id: string, err: unknown): SqlPushResult {
+  return {
+    id,
+    success: false,
+    error: err instanceof WireValidationError ? err.code : err instanceof Error ? err.message : "Unsupported event",
+    retryable: false,
+  };
+}
+
+/** A check that already failed: there is nothing to authorize, so nothing is written. */
+type RejectedCheck = Extract<PushCheck, { kind: "validation-failure" | "unknown-model" }>;
+
+function isRejected(check: PushCheck): check is RejectedCheck {
+  return check.kind === "validation-failure" || check.kind === "unknown-model";
+}
+
+/** The non-retryable result for an event whose `validatePush` check failed. */
+function rejectedResult(id: string, check: RejectedCheck): SqlPushResult {
+  const error = check.kind === "validation-failure" ? check.error : "Unknown model";
+  return { id, success: false, error, retryable: false };
+}
+
+/**
+ * Decodes, then applies, one wire event. The adapter's public form of
+ * `applyPushEventDecoded`, for callers that hold the wire event and the
+ * `validatePush` check for it.
  */
 export async function applyPushEvent(
   db: unknown,
@@ -106,23 +153,53 @@ export async function applyPushEvent(
   check: PushCheck,
   scopeKey: string
 ): Promise<SqlPushResult> {
-  if (check.kind === "validation-failure") {
-    return { id: event.id, success: false, error: check.error, retryable: false };
+  if (isRejected(check)) return rejectedResult(event.id, check);
+  let decoded: SyncPushEvent;
+  try {
+    decoded = decodeWireEvent(contract, getKeyField, model, event);
+  } catch (err) {
+    return decodeFailureResult(event.id, err);
   }
-  if (check.kind === "unknown-model") {
-    return { id: event.id, success: false, error: "Unknown model", retryable: false };
+  return applyPushEventDecoded(db, contract, getKeyField, decoded, check, scopeKey);
+}
+
+/**
+ * Authorizes, then applies, one decoded outbox event: writes the model row +
+ * a stamped `Changelog` row, atomically. Idempotent on the event's id.
+ *
+ * Authorization runs *inside* the same transaction as the write, right
+ * before it — not before the transaction opens — so the row(s) it reads
+ * (the record itself, and every hop the ownership walk crosses) are locked
+ * against concurrent reassignment for the rest of the transaction.
+ *
+ * `db` must expose `.transaction(fn)`, calling `fn` with a scope whose
+ * `.orm.public` works the same way `db.orm.public` does — the same
+ * per-app-generated shape `ormRootFor` already treats as opaque.
+ */
+export async function applyPushEventDecoded(
+  db: unknown,
+  contract: SyncServerContract,
+  getKeyField: GetKeyField,
+  event: SyncPushEvent,
+  check: PushCheck,
+  scopeKey: string
+): Promise<SqlPushResult> {
+  if (isRejected(check)) return rejectedResult(event.id, check);
+  // The write targets the event's key, so it must be the key `check` authorized.
+  if (!Object.is(event.wireKey, check.key)) {
+    return { id: event.id, success: false, error: "KEYPATH_VALIDATION_FAILURE", retryable: false };
   }
+  const { model } = event;
 
   try {
     return await (db as { transaction<T>(fn: (tx: unknown) => Promise<T>): Promise<T> }).transaction(async (tx) => {
       if (await isEventApplied(tx, event.id)) return { id: event.id, success: true };
 
+      // The decoded payload carries the key; for an update, everything else is the patch.
       const keyField = getKeyField(contract, model);
-      const nativeKey = reviveWireKey(contract, model, keyField, check.key);
+      const { [keyField]: nativeKey, ...patch } = event.payload;
       const startRow: Record<string, unknown> | null =
-        event.operation === "create"
-          ? reviveWireValues(contract, model, event.payload as Record<string, unknown>)
-          : await ormRootFor(tx, model).first({ [keyField]: nativeKey });
+        event.operation === "create" ? event.payload : await ormRootFor(tx, model).first({ [keyField]: nativeKey });
 
       const isAuthorized = (row: Record<string, unknown> | null) =>
         checkAuthorization(tx, contract, getKeyField, model, check, row);
@@ -140,18 +217,17 @@ export async function applyPushEvent(
       // Todo to a Board the caller doesn't own) is authorized by the
       // pre-patch startRow check above but must not be allowed to land the
       // record in a scope the caller doesn't own.
-      const patch =
-        event.operation === "update"
-          ? reviveWireValues(contract, model, (event.payload as { patch: Record<string, unknown> }).patch)
-          : undefined;
-      if (patch && !(await isAuthorized({ ...(startRow as Record<string, unknown>), ...patch }))) {
+      if (
+        event.operation === "update" &&
+        !(await isAuthorized({ ...(startRow as Record<string, unknown>), ...patch }))
+      ) {
         return scopeViolation;
       }
 
       const root = ormRootFor(tx, model);
       if (event.operation === "create") {
-        await root.select(keyField).create(ormWriteValues(contract, model, startRow!));
-      } else if (event.operation === "update" && patch) {
+        await root.select(keyField).create(ormWriteValues(contract, model, event.payload));
+      } else if (event.operation === "update") {
         await root
           .select(keyField)
           .where({ [keyField]: nativeKey })

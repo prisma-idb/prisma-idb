@@ -53,5 +53,3 @@ const idbControlTargetDescription = {
 } satisfies MigratableTargetDescriptor<"idb", "idb">;
 
 export default idbControlTargetDescription;
-export { IdbMigrationControlDriverDescriptor, extractMigrationDriver } from "../core/migration-driver";
-export type { IdbMigrationControlDriver } from "../core/migration-driver";

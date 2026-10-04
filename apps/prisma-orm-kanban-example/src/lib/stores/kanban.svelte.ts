@@ -303,6 +303,22 @@ export class KanbanStore {
     }
   }
 
+  async moveTodo(todoId: string, boardId: string) {
+    const userId = this.activeUser?.id;
+    if (!userId) return;
+    this.busy = true;
+    this.errorMessage = "";
+    try {
+      const db = await getDb();
+      await db.orm.todo.where({ id: todoId }).update({ boardId });
+      await this.loadBoards(userId);
+    } catch (error) {
+      this.showError(error);
+    } finally {
+      this.busy = false;
+    }
+  }
+
   async deleteTodo(todoId: string) {
     this.busy = true;
     this.errorMessage = "";

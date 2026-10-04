@@ -2,17 +2,18 @@
 
 - **Status:** Accepted, meant to be temporary
 - **Date:** 2026-09-26
+- **Updated:** 2026-10-04: preflight verifies the replayed schema by default.
 - **Area:** Migrations, CLI
 
 ## Summary
 
 IndexedDB lives only in the browser, so the `prisma` CLI, which runs in Node, has no database to connect to. Most `prisma` commands still work for an IndexedDB project. Three jobs have no upstream equivalent, so a small companion CLI, `prisma-idb`, provides them:
 
-| Command                               | What it does                                                             |
-| ------------------------------------- | ------------------------------------------------------------------------ |
-| `prisma-idb migration plan`           | Plans the next migration, starting from the newest migration on disk.    |
-| `prisma-idb migration contract-space` | Bundles the migrations into a TypeScript module the browser can import.  |
-| `prisma-idb migration preflight`      | Applies every migration to an in-memory IndexedDB to check that it runs. |
+| Command                               | What it does                                                                    |
+| ------------------------------------- | ------------------------------------------------------------------------------- |
+| `prisma-idb migration plan`           | Plans the next migration, starting from the newest migration on disk.           |
+| `prisma-idb migration contract-space` | Bundles the migrations into a TypeScript module the browser can import.         |
+| `prisma-idb migration preflight`      | Replays migrations in memory and verifies the schema against the head snapshot. |
 
 We would rather have these jobs inside `prisma` itself. This CLI is a stopgap until the framework has a way to support them.
 
@@ -74,7 +75,9 @@ Preflight is a separate command that you run in CI. It is not built into `plan` 
 - Running it automatically would stand in for real tests of the migrations.
 - Building it into the app would ship a test-only package to production.
 
-Preflight checks that the chain applies without errors. It does not check that the result matches the contract.
+After replay, preflight reads `migrations/snapshots/<head.to>/contract.json` and compares the final stores and indexes with it using `verifyIdbSchema` in strict mode. This check always runs. Missing stores or indexes, extra stores or indexes, and different key paths or flags fail preflight with a readable diff. The runtime-owned `_prisma_next_marker` store is excluded because it is not part of the app contract. A missing or invalid head snapshot also fails preflight. So does a snapshot whose `storageHash` differs from `head.to`, or from the hash of its own content. Restore the snapshot from source control or regenerate the chain to recover.
+
+Package hashes prove that a migration has not changed since it was emitted. They do not prove that its operations produce the expected schema. The final comparison catches omitted operations and hand edits even when the package hash has been regenerated.
 
 ## Alternatives considered
 
@@ -99,6 +102,6 @@ Rejected for the reasons listed under `migration preflight` above.
 ## Consequences
 
 - An IndexedDB project uses two CLIs: `prisma` for `contract emit` and the read-only `migration` commands, and `prisma-idb` for the three commands above.
-- The framework still requires a `driver` in `prisma.config.ts`, even though no command can use one. IndexedDB projects pass the stub `@prisma-idb/driver-idb/control`.
+- The framework still requires a `driver` in `prisma.config.ts`, even though no command can use one. IndexedDB projects pass the stub `@prisma-idb/driver-idb/control`. The target does not export a migration control driver because its CLI runner always refuses execution. Browser apply uses `openAndUpgrade` through the client factories.
 - The framework's control interface has no way to say "this can't run here". So for IndexedDB, `introspect`, `readMarker` and `readAllMarkers` return empty results, and `verify` and `sign` return a failure with the explanation in its summary. A proper "unsupported" result in the framework would be cleaner, and would avoid bugs like the `db sign` crash above. We have raised this upstream.
 - `fake-indexeddb` is a dependency of `family-idb` only because of preflight. The browser runtime never uses it.

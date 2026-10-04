@@ -76,7 +76,7 @@ Most writes take a different route: they need to read and write several stores i
 | `update`, `updateAll`, `upsert`, `deleteAll`          | Transaction scope, always |
 | Nested writes (relation callbacks)                    | Transaction scope, always |
 
-Sync hooks into both routes. It extends single plans into a batch that also writes the outbox, and it wraps the transaction scope so each write in it records an outbox event.
+Sync hooks into both routes. It extends single plans into a batch that also writes the outbox, and it wraps the transaction scope so each write in it records an outbox event. A hand-built plan for `update`, `updateAll` or `deleteAll` on a synced model has no known key, so it can't sync. Sync rejects it before any local write.
 
 ## How a schema change reaches the browser
 
@@ -184,11 +184,13 @@ Depends on `adapter-idb` and `driver-idb`.
 
 ### `client-idb`
 
-| Entrypoint      | Contains                                                                                                                                                          |
-| --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `./orm`         | `idbOrm({ contract, executor })`, the accessor types, and the `and`, `or` and `not` filter helpers. Bring your own executor.                                      |
-| `./client`      | `createIdbClient({ contract, dbName })`, which builds the driver, adapter, runtime and ORM. Also `createManagedIdbClient`.                                        |
-| `./client-auto` | `createAutoMigratingIdbClient({ contractSpace, dbName, extensions })`, which migrates first. Also `createManagedAutoIdbClient` and the lower-level `autoMigrate`. |
+| Entrypoint      | Contains                                                                                                                        |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `./orm`         | `idbOrm({ contract, executor })`, the accessor types, and the `and`, `or` and `not` filter helpers. Bring your own executor.    |
+| `./client`      | `createIdbClient({ contract, dbName })`, which builds the driver, adapter, runtime and ORM. Also `createManagedIdbClient`.      |
+| `./client-auto` | `createAutoMigratingIdbClient({ contractSpace, dbName, extensions })`, which migrates first. Also `createManagedAutoIdbClient`. |
+
+The `./internal` subpath shares `collectDeleteStoreNames` and `applyReferentialActionsForRow` with `sync-extension-idb`. Application code uses the three entry points above. Relation-mutation detection and `autoMigrate` remain source-only implementation helpers.
 
 All three are runtime only. `createManagedIdbClient(open, { dbName })` wraps a client factory. The auto-migrating wrapper accepts the contract space directly.
 
@@ -245,7 +247,7 @@ The browser implementation has three main seams. `sync-executor.ts` appends outb
 
 `sync-server` never touches a database or an HTTP framework. Its main export is `createSyncServer({ contract, clientContract, rootModel })`, which returns `validatePush` and `buildPullQueries`. `./schema` and `./postgres` build the server's contract from the shared schema, adding the `Changelog` model.
 
-`sync-server-sql` exports `createSqlSyncAdapter({ contract, syncServer })`. Its `applyPush` and `pull` methods own route orchestration; lower-level methods remain available for custom integrations. `sqlGetKeyField` finds a primary key in a SQL contract.
+`sync-server-sql` exports `createSqlSyncAdapter({ contract, syncServer })`. Its `applyPush` and `pull` methods own route orchestration. It has no free-standing push, pull or authorization functions: the adapter is the only way in. `sqlGetKeyField` finds a primary key in a SQL contract.
 
 | Module in `sync-server-sql/src/core/`                 | Responsibility                                                                                       |
 | ----------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |

@@ -54,6 +54,7 @@
     "@tailwindcss/vite": "^4.3.3",
     "@types/node": "^24.13.3",
     "@types/pg": "^8.21.0",
+    "bits-ui": "^2.18.1",
     "clsx": "^2.1.1",
     "dotenv": "^17.4.2",
     "prisma": "8.0.0-rc.17",
