@@ -725,6 +725,65 @@ describe("constructor middleware context", () => {
   });
 });
 
+// ── built-in contentHash: plan identity ──────────────────────────────────────
+
+describe("built-in contentHash plan identity", () => {
+  type ExecPlan = import("@prisma/orm-framework/components/runtime").ExecutionPlan;
+
+  /** Runs one query and returns the built-in `contentHash` the middleware sees. */
+  async function captureContentHash(): Promise<(plan: Record<string, unknown>) => Promise<string>> {
+    let hash: ((plan: ExecPlan) => Promise<string>) | undefined;
+    const mw: IdbMiddleware = {
+      name: "hash-capture",
+      familyId: "idb",
+      beforeQuery: async (_plan, ctx) => {
+        hash = ctx.contentHash;
+      },
+    };
+    const runtime = createIdbRuntime({
+      adapter: makeMockAdapter(),
+      driver: makeMockDriver(),
+      contract: TEST_CONTRACT,
+      middleware: [mw],
+    });
+    await runtime.query(makeQueryPlan());
+    return (plan) => hash!(plan as unknown as ExecPlan);
+  }
+
+  const range = (lower: unknown, upper: unknown) => ({ lower, upper, lowerOpen: false, upperOpen: true });
+
+  it("ignores function-valued fields such as row filters", async () => {
+    const contentHash = await captureContentHash();
+    const base = { kind: "cursor-scan", storeName: "users" };
+
+    expect(await contentHash({ ...base, filter: () => true })).toBe(await contentHash(base));
+  });
+
+  it("keeps only the storage hash from meta", async () => {
+    const contentHash = await captureContentHash();
+    const base = { kind: "key-get", storeName: "users", key: 1 };
+
+    const a = await contentHash({ ...base, meta: { storageHash: "h1", lane: "idb" } });
+    const b = await contentHash({ ...base, meta: { storageHash: "h1", lane: "other" } });
+    const c = await contentHash({ ...base, meta: { storageHash: "h2", lane: "idb" } });
+
+    expect(a).toBe(b);
+    expect(a).not.toBe(c);
+  });
+
+  it("hashes key ranges by their bounds", async () => {
+    const contentHash = await captureContentHash();
+    const base = { kind: "index-get", storeName: "users", indexName: "by_age" };
+
+    const a = await contentHash({ ...base, range: range(18, 65) });
+    const b = await contentHash({ ...base, range: range(18, 65) });
+    const c = await contentHash({ ...base, range: range(18, 66) });
+
+    expect(a).toBe(b);
+    expect(a).not.toBe(c);
+  });
+});
+
 // ── verifyMarker with varying contracts ──────────────────────────────────────
 
 describe("verifyMarker edge cases", () => {
