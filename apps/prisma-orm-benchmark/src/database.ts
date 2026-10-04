@@ -8,7 +8,7 @@ import type { contract as contractSource } from "./contract.server";
 type Contract = typeof contractSource;
 const contract = contractJson as unknown as Contract;
 
-export const DB_NAME = "prisma-orm-benchmark";
+const DB_NAME = "prisma-orm-benchmark";
 
 export type BenchmarkClient = IdbClient<Contract>;
 
@@ -16,12 +16,12 @@ const pad = (i: number) => String(i).padStart(6, "0");
 
 export const itemId = (i: number) => `item-${pad(i)}`;
 export const authorId = (i: number) => `a-${pad(i)}`;
-export const bookId = (i: number) => `book-${pad(i)}`;
+const bookId = (i: number) => `book-${pad(i)}`;
 
 /** Books per author. `datasetSize / BOOKS_PER_AUTHOR` authors are seeded. */
 export const BOOKS_PER_AUTHOR = 10;
-export const CATEGORY_COUNT = 10;
-export const ORG_COUNT = 5;
+const CATEGORY_COUNT = 10;
+const ORG_COUNT = 5;
 
 /**
  * `n` items: `CATEGORY_COUNT` categories, scores `0..n-1`, two statuses and
