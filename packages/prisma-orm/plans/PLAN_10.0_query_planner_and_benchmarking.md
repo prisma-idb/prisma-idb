@@ -1,5 +1,7 @@
 # Phase 10 — Benchmarking Foundation + IDB Query Planner
 
+> Historical proposal. Source observations, line numbers and phase references below describe the survey at authoring time. They do not establish current behavior or approval to implement it. See the [plans index](README.md) for current source pointers.
+
 Stack layer: branches off `main` after **Phase 9** (IndexedDB Web API
 feature parity — see
 [`PLAN_9.0_idb_web_api_feature_parity.md`](PLAN_9.0_idb_web_api_feature_parity.md))

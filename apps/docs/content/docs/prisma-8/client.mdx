@@ -58,10 +58,12 @@ Using sync? Use `createManagedAutoSyncIdbClient` from `@prisma-idb/sync-extensio
 ```ts
 import { createIdbClient, createManagedIdbClient } from "@prisma-idb/client-idb/client";
 
-const managedDb = createManagedIdbClient(() => createIdbClient({ contract, dbName: "my-app" }), {
+const managedDb = createManagedIdbClient(async () => createIdbClient({ contract, dbName: "my-app" }), {
   dbName: "my-app", // must match the factory's dbName
 });
 ```
+
+`createIdbClient` returns a client synchronously. The `async` factory above adapts it to the promise-returning factory required by `createManagedIdbClient`.
 
 `createManagedIdbClient` only uses its own `dbName` to delete the database in `reset()`. Nothing checks that it matches the factory's. If they differ, `get()` still opens the right database, but `reset()` deletes a different one and your data stays. Prefer `createManagedAutoIdbClient` unless you need a custom factory.
 

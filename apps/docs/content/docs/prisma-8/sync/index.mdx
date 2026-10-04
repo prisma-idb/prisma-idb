@@ -8,11 +8,11 @@ Sync keeps each user's IndexedDB data and your server's database in step. Writes
 
 In this tutorial you add sync to an app that already uses Prisma 8 IDB, with a Postgres server. It uses three packages:
 
-| Package                          | Runs in     | Does                                                                                                |
-| -------------------------------- | ----------- | --------------------------------------------------------------------------------------------------- |
-| `@prisma-idb/sync-extension-idb` | The browser | Records every write in an outbox, in the same transaction, and runs a worker that pushes and pulls. |
-| `@prisma-idb/sync-server`        | Your server | Works out, from your schema's relations, whether a record belongs to the signed-in user.            |
-| `@prisma-idb/sync-server-sql`    | Your server | Runs those checks and the writes against a Prisma 8 SQL client.                                     |
+| Package                          | Runs in     | Does                                                                                                   |
+| -------------------------------- | ----------- | ------------------------------------------------------------------------------------------------------ |
+| `@prisma-idb/sync-extension-idb` | The browser | Records tracked writes in an outbox, in the same transaction, and runs a worker that pushes and pulls. |
+| `@prisma-idb/sync-server`        | Your server | Works out, from your schema's relations, whether a record belongs to the signed-in user.               |
+| `@prisma-idb/sync-server-sql`    | Your server | Runs those checks and the writes against a Prisma 8 SQL client.                                        |
 
 `sync-server` never touches your database or your HTTP framework. You write two endpoints, push and pull, and call it from them.
 
@@ -104,11 +104,13 @@ export const getDb = () => managedDb.get();
 export const resetDb = () => managedDb.reset(); // call on sign-out
 ```
 
-Use the client as before. Each write now also records an event in the outbox, in the same transaction:
+Copy the signed-in user into IndexedDB without tracking it; that row already exists on the server. Use the same id as the authenticated session. Other tracked writes record outbox events in the same transaction:
 
 ```ts
 const db = await getDb();
-await db.orm.board.create({ id: "b1", name: "My Board", userId: "u1" });
+const user = { id: "u1", name: "Alice" }; // replace with your signed-in user
+await db.withoutTracking((orm) => orm.user.upsert({ where: { id: user.id }, create: user, update: user }));
+await db.orm.board.create({ id: "b1", name: "My Board", userId: user.id });
 ```
 
 </Step>
@@ -173,7 +175,7 @@ export const syncServer = createSyncServer({
   getKeyField: sqlGetKeyField,
 });
 
-export const sqlSyncAdapter = createSqlSyncAdapter({ contract: serverContract });
+export const sqlSyncAdapter = createSqlSyncAdapter({ contract: serverContract, syncServer });
 ```
 
 `createSyncServer` throws at startup if a synced model has no relation path to `User`, or the relations form a cycle.
@@ -186,12 +188,13 @@ Add the push endpoint. It checks each event against the signed-in user and appli
 ```ts
 // POST /api/sync/push
 import { pushRequestBodySchema } from "@prisma-idb/sync-extension-idb/schemas";
-import { syncServer, sqlSyncAdapter } from "./sync";
+import { sqlSyncAdapter } from "./sync";
 import { getAuthenticatedUserId } from "./auth"; // your session lookup
 import { db } from "./db"; // your Prisma 8 Postgres client
 
 export async function POST(req: Request) {
   const scopeKey = await getAuthenticatedUserId(req); // never trust an id from the body
+  if (!scopeKey) return Response.json({ error: "Unauthorized" }, { status: 401 });
   let body: unknown;
   try {
     body = await req.json();
@@ -202,30 +205,21 @@ export async function POST(req: Request) {
   if (!parsed.success) {
     return Response.json({ error: "Malformed request body", details: parsed.error.issues }, { status: 400 });
   }
-  const { events } = parsed.data;
-
-  const checks = syncServer.validatePush(
-    events.map((e) => ({
-      id: e.id,
-      model: e.entityType,
-      operation: e.operation,
-      payload: sqlSyncAdapter.toSyncPushPayload(e.operation, e.payload, sqlSyncAdapter.getKeyField(e.entityType)),
-    })),
-    { scopeKey }
-  );
-
-  // One at a time: a later event can depend on an earlier one, such as a
-  // todo created right after its board.
-  const results = [];
-  for (const { eventId, model, check } of checks) {
-    const event = events.find((e) => e.id === eventId)!;
-    results.push(await sqlSyncAdapter.applyPushEvent(db, event, model, check, scopeKey));
+  const outcome = await sqlSyncAdapter.applyPush(db, { events: parsed.data.events, scopeKey });
+  if (!outcome.ok) {
+    switch (outcome.reason) {
+      case "batch-too-large":
+        return Response.json({ error: "Too many events" }, { status: 400 });
+      case "duplicate-event-id":
+        return Response.json({ error: "Duplicate event id" }, { status: 400 });
+    }
+    throw new Error(`Unhandled push outcome: ${outcome satisfies never}`);
   }
-  return Response.json(results);
+  return Response.json(outcome.results);
 }
 ```
 
-`applyPushEvent` checks ownership and writes the record and its `Changelog` row in one transaction, so ownership can't change between the check and the write.
+`applyPush` decodes wire values and validates each event. It applies events in order, checking ownership and writing the record and its `Changelog` row in one transaction. It stops at the first retryable failure so dependent events remain pending until their parent succeeds.
 
 </Step>
 <Step>
@@ -234,43 +228,30 @@ Add the pull endpoint. It reads the user's changelog after the client's last pos
 
 ```ts
 // GET /api/sync/pull?since=<changelogId>
-import { syncServer, sqlSyncAdapter } from "./sync";
+import { sqlSyncAdapter } from "./sync";
 import { getAuthenticatedUserId } from "./auth";
 import { db } from "./db";
 
 export async function GET(req: Request) {
   const scopeKey = await getAuthenticatedUserId(req);
-  const since = new URL(req.url).searchParams.get("since");
-  // The changelog id is a UUID v7 string; pass it back unchanged.
-  const sinceId = since || null;
-  if (sinceId !== null && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(sinceId)) {
-    return Response.json({ error: "since must be a changelog id" }, { status: 400 });
+  if (!scopeKey) return Response.json({ error: "Unauthorized" }, { status: 401 });
+  const outcome = await sqlSyncAdapter.pull(db, {
+    scopeKey,
+    lastChangelogId: new URL(req.url).searchParams.get("since") || null,
+    limit: 50,
+  });
+  if (!outcome.ok) {
+    switch (outcome.reason) {
+      case "invalid-cursor":
+        return Response.json({ error: "since must be a changelog id" }, { status: 400 });
+    }
+    throw new Error(`Unhandled pull reason: ${outcome.reason satisfies never}`);
   }
-
-  // Always limit the page size: a client that was offline for a long time
-  // would otherwise pull its whole history in one response.
-  const ordered = db.orm.public.Changelog.where({ scopeKey })
-    .select("id", "model", "keyPath", "operation")
-    .orderBy((c) => c.id.asc());
-  const rows = await (sinceId !== null ? ordered.cursor({ id: sinceId }) : ordered).take(50).all();
-
-  const checks = syncServer.buildPullQueries(
-    rows.map((r) => ({ changelogId: r.id, model: r.model, key: r.keyPath })),
-    { scopeKey }
-  );
-  const logs = await Promise.all(
-    checks.map(async ({ changelogId, model, check }) => {
-      const row = rows.find((r) => r.id === changelogId)!;
-      const operation = row.operation as "create" | "update" | "delete";
-      const record = await sqlSyncAdapter.resolvePullRecord(db, model, check, row.keyPath, operation);
-      return { changelogId, model, operation, keyPath: row.keyPath, record };
-    })
-  );
-  return Response.json(logs);
+  return Response.json(outcome.logs);
 }
 ```
 
-A `record` of `null` tells the client to delete its copy: the record was deleted, or no longer belongs to this user.
+`pull` returns up to 50 changes after the cursor, in changelog-id order. A `record` of `null` tells the client to delete its copy: the record was deleted, or no longer belongs to this user. If key decoding throws `KEYPATH_VALIDATION_FAILURE`, the response includes a `validationError` marker; the client skips that entry without deleting a local record. A root-model ownership rejection can return `record: null` before decoding. See [Pull validation](/docs/prisma-8/sync/server#pull-validation) for details.
 
 </Step>
 </Steps>
@@ -292,16 +273,11 @@ worker.start();
 
 The worker pushes and then pulls every five seconds, and backs off after failures. Call `worker.stop()` and `resetDb()` on sign-out.
 
-Create a board, then look at the `Changelog` table in Postgres: a row appears within a few seconds.
+## Check the result
 
-## Before production
+Create a board in the browser. Its outbox event reaches the push endpoint, and a `Changelog` row appears in Postgres. Open the app in a second browser session as the same user; the next pull loads that board.
 
-The endpoints above are the minimum. The [kanban example](/docs/prisma-8/kanban-example)'s `src/routes/api/sync/` endpoints also:
-
-- return `401` when there's no session;
-- cap the number of events in one push;
-- reject a push that repeats an event id;
-- report a bad event as a failure for that event, instead of failing the whole batch.
+For a complete session lookup and database setup, see the [kanban example](/docs/prisma-8/kanban-example). The [server reference](/docs/prisma-8/sync/server#sql-adapter) describes batch limits, validation failures and cursor handling.
 
 <Cards>
   <Card

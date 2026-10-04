@@ -190,16 +190,23 @@ Depends on `adapter-idb` and `driver-idb`.
 | `./client`      | `createIdbClient({ contract, dbName })`, which builds the driver, adapter, runtime and ORM. Also `createManagedIdbClient`.                                        |
 | `./client-auto` | `createAutoMigratingIdbClient({ contractSpace, dbName, extensions })`, which migrates first. Also `createManagedAutoIdbClient` and the lower-level `autoMigrate`. |
 
-All three are runtime only. The main files in `src/core/`:
+All three are runtime only. `createManagedIdbClient(open, { dbName })` wraps a client factory. The auto-migrating wrapper accepts the contract space directly.
 
-| File                   | Does                                                                                            |
-| ---------------------- | ----------------------------------------------------------------------------------------------- |
-| `store-accessor.ts`    | The per-model accessor: chaining, reads, writes, `include`, `count`, `aggregate`.               |
-| `query-shaping.ts`     | Turns `where` and `orderBy` into key ranges, filter functions and comparators.                  |
-| `mutation-executor.ts` | Nested writes, foreign-key checks and referential actions, inside one transaction.              |
-| `relation-loader.ts`   | `include()`: loads related rows in batches and joins them in memory.                            |
-| `auto-migrate.ts`      | Walks the contract space's chains and applies pending operations.                               |
-| `managed-client.ts`    | The singleton wrapper with a `reset()` that deletes the database safely, for example on logout. |
+The ORM carries immutable query state through the accessor chain. Reads shape a driver plan, collect rows, load relations, then project selected fields. Mutations derive the stores they need before opening one transaction.
+
+| File                                              | Responsibility                                                                          |
+| ------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| `store-accessor.ts`                               | The per-model interface, query chaining, read materialization and mutation entrypoints. |
+| `store-state.ts`                                  | Immutable accessor state and include descriptors.                                       |
+| `model-accessor.ts` and `filters.ts`              | Typed field operators and filter combinators.                                           |
+| `query-shaping.ts`                                | Index equality hints, filter composition, row comparators and native count plans.       |
+| `aggregate-builder.ts` and `grouped-accessor.ts`  | Aggregate selectors, reductions and grouped results.                                    |
+| `relation-loader.ts`                              | Batched relation reads and per-parent refinements.                                      |
+| `mutation-executor.ts` and `mutation-scope.ts`    | Nested writes, foreign-key checks and referential actions in one transaction.           |
+| `mutation-defaults.ts`                            | Literal and generated create/update defaults, cached for each mutation.                 |
+| `relation-mutator.ts`                             | Descriptors for relation create, connect and disconnect callbacks.                      |
+| `auto-migrate.ts` and `migration-hash.ts`         | Migration-chain validation, operation hashes and combined apply.                        |
+| `managed-client.ts` and `managed-auto-migrate.ts` | Shared client lifetime and reset coordination.                                          |
 
 Depends on `target-idb`, `adapter-idb`, `driver-idb` and `runtime-idb`.
 
@@ -213,6 +220,10 @@ Depends on `target-idb`, `adapter-idb`, `driver-idb` and `runtime-idb`.
 | `./config-types` | `defineConfig` for `prisma.config.ts`, and helpers for TypeScript-authored contracts.         |
 | `./pack`         | The family's identity. Plain data.                                                            |
 | `./cli`          | The `prisma-idb` commands, for embedding. The package also installs the `prisma-idb` binary.  |
+
+The authoring frontends remain separate: `psl-interpreter.ts` reads PSL and `contract-builder.ts` implements `defineContract`. Both use the key-codec, literal-default and dropped-relation helpers in `psl-interpreter.ts`. `validate.ts` validates the resulting contract; `emission.ts` emits its TypeScript types.
+
+`schema-ir.ts` describes the store layout used by introspection and verification. `schema-verify.ts` compares that layout. `chain-order.ts` orders migration packages by metadata for both contract-space generation and preflight. CLI commands in `src/cli/migration/` own paths, config loading and output; the implementation lives in `src/core/`.
 
 `family-idb` is never imported by browser code. The `prisma-idb` binary has three commands, `migration plan`, `migration contract-space` and `migration preflight`, described in [ADR 018](adrs/ADR%20018%20-%20Separate%20prisma-idb%20CLI.md).
 
@@ -228,11 +239,21 @@ Depends on `target-idb`. `fake-indexeddb` is a dependency only for `migration pr
 | `./client`  | `createSyncIdbClient`, `createAutoMigratingSyncIdbClient`, `createManagedAutoSyncIdbClient`, the `SyncWorker`, and `applyPull`. |
 | `./schemas` | Zod schemas for the push and pull wire formats. Safe to import on a server: no IndexedDB code.                                  |
 
+The browser implementation has three main seams. `sync-executor.ts` appends outbox and version metadata writes to tracked mutations. `sync-worker.ts` coordinates push, pull and retry cycles. `apply-pull.ts` validates incoming records and applies them without tracking. `emitter.ts` provides the shared event subscription interface; `raw-store.ts` provides request and transaction helpers.
+
 ### `sync-server` and `sync-server-sql`
 
 `sync-server` never touches a database or an HTTP framework. Its main export is `createSyncServer({ contract, clientContract, rootModel })`, which returns `validatePush` and `buildPullQueries`. `./schema` and `./postgres` build the server's contract from the shared schema, adding the `Changelog` model.
 
-`sync-server-sql` exports `createSqlSyncAdapter`, which runs the ownership checks, push writes and pull reads against a Prisma 8 SQL ORM client, and `sqlGetKeyField`, which finds a primary key in a SQL contract.
+`sync-server-sql` exports `createSqlSyncAdapter({ contract, syncServer })`. Its `applyPush` and `pull` methods own route orchestration; lower-level methods remain available for custom integrations. `sqlGetKeyField` finds a primary key in a SQL contract.
+
+| Module in `sync-server-sql/src/core/`                 | Responsibility                                                                                       |
+| ----------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `apply-push.ts` and `wire-values.ts`                  | Batch validation, wire-value revival and ordered application through the first retryable failure.    |
+| `push.ts` and `authorization.ts`                      | Per-event validation, ownership checks and transactional writes.                                     |
+| `pull.ts` and `resolve-pull-record.ts`                | Paged changelog reads, current ownership checks and record resolution.                               |
+| `changelog.ts`, `changelog-id.ts` and `scope-lock.ts` | Changelog insertion and exclusive cursors. A scope lock keeps commit order consistent with id order. |
+| `create-adapter.ts`                                   | Binds the contract, key resolver and sync server behind the public interface.                        |
 
 ## Dependency graph
 

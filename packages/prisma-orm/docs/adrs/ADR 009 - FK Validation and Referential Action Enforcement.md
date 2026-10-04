@@ -93,7 +93,7 @@ Each action runs inside one `withMutationScope` transaction that covers the pare
 - **`deleteAll()`, `deleteCount()`, `updateAll()` and `updateCount()`** apply the actions row by row, inside the same transaction.
 - **Foreign-key checks cost one read per relation per write**, and only when the write sets a foreign key. For a primary-key reference, that read fetches only the key.
 - **Cascades follow the whole chain.** For `User → Post → Comment`, deleting a user deletes its posts and their comments. Each child is read, its own relations are handled, then it is deleted. The walk is cycle-safe, so self-referencing or mutually cascading models don't loop. `setNull` and `setDefault` stop the walk, because the child survives.
-- **Cascaded deletes are tracked one row at a time.** Because each child is read and deleted individually, sync records one outbox write per cascaded row, not one for the whole batch.
+- **Cascaded deletes are tracked one row at a time.** Each child is read and deleted individually. Sync writes one outbox event per row and emits an `outboxwrite` notification for each tracked driver write call after the transaction commits.
 - **`setDefault` needs a literal default.** `IdbModelStorage.fieldDefaults` only holds literal `@default(...)` values, never generators such as `uuid()` or `now()`. Prisma has the same restriction. If a child's foreign-key field has no default, `setDefault` throws.
 - **`setDefault` checks the default too.** Before writing it, the client checks that a parent with that value exists, matching every field of a compound relation. Without this, `setDefault` could itself create a dangling reference, for example setting `authorId` to `"system"` when no `"system"` user exists. A real database gets this for free, because its foreign-key constraint re-checks the new value.
 - **`upsert()` needs a transaction-capable executor**, like `update()`, `updateAll()` and `deleteAll()`. `create()` and `delete()` only need one when the write actually involves relations or foreign keys.
@@ -104,3 +104,5 @@ Each action runs inside one `withMutationScope` transaction that covers the pare
 - `target-idb/src/core/idb-contract-types.ts`: `IdbModelStorage`, `IdbRelationStorage`, `IdbReferentialAction`.
 - `family-idb/src/core/contract-builder.ts` and `psl-interpreter.ts`: where `onDelete`/`onUpdate` are read from the schema.
 - `client-idb/src/core/mutation-executor.ts`: `validateScalarFks`, `parentExists`, `enforcedAction`, `applyReferentialActionsForRow`, `applyReferentialActionsForRowOnUpdate`, `validateSetDefaultPatch`.
+
+- `client-idb/src/core/mutation-defaults.ts`: literal and generated defaults applied before foreign-key validation.

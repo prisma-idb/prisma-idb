@@ -1,6 +1,6 @@
 # `@prisma-idb/sync-extension-idb`
 
-The browser side of Prisma 8 IDB sync. It records every write in an outbox, in the same IndexedDB transaction as the write, and runs a worker that pushes those changes to your server and pulls the server's changes back. Writes made offline wait until the connection returns.
+The browser side of Prisma 8 IDB sync. It records writes to tracked models in an outbox, in the same IndexedDB transaction as the write, and runs a worker that pushes those changes to your server and pulls the server's changes back. Writes made offline wait until the connection returns.
 
 ```bash
 npm install @prisma-idb/sync-extension-idb
@@ -21,6 +21,10 @@ const worker = db.createSyncWorker({
 });
 worker.start();
 ```
+
+`trackedModels` defaults to `"*"`; pass model names to keep other writes local. Tracked models need keys that are unique across devices, such as `uuid()` or `cuid()`. Auto-incremented keys are rejected for tracked stores.
+
+`db.on("outboxwrite", callback)` fires after commit, once per tracked IndexedDB write call. Bulk calls can report several entries. Nested or cascading ORM writes can produce several notifications. Rolled-back writes produce none.
 
 The server side uses [`@prisma-idb/sync-server`](https://www.npmjs.com/package/@prisma-idb/sync-server).
 

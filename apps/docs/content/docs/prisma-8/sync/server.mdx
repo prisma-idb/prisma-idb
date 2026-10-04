@@ -38,38 +38,30 @@ Synced models need a single-field primary key. Compound keys aren't supported by
 
 ### Writing a `getKeyField` for another family
 
-A resolver takes the contract and a model name and returns the name of the model's primary-key field. This is what `sqlGetKeyField` does for any SQL contract:
+A resolver takes the contract and a model name and returns the name of the model's primary-key field. For SQL contracts, `sqlGetKeyField` uses the following metadata:
 
-```ts
-import { domainModelsAtDefaultNamespace } from "@prisma/orm-framework/contract/types";
-import type { GetKeyField } from "@prisma-idb/sync-server";
+The resolver reads `model.storage.table` and `model.storage.namespaceId`, then finds the table's `primaryKey.columns` in `contract.storage.namespaces`. It rejects missing table metadata and any primary key that does not have exactly one column. Return that column's name.
 
-export const sqlGetKeyField: GetKeyField = (contract, modelName) => {
-  const model = domainModelsAtDefaultNamespace(contract.domain)[modelName]!;
-  const { table, namespaceId } = model.storage as { table: string; namespaceId: string };
-  const columns = contract.storage.namespaces[namespaceId]!.entries.table[table]!.primaryKey.columns;
-  if (columns.length !== 1) throw new Error(`Compound keys aren't supported here (model "${modelName}")`);
-  return columns[0]!;
-};
-```
+Use the exported `GetKeyField` type from `@prisma-idb/sync-server` to type a custom resolver. See the [SQL resolver implementation](https://github.com/prisma-idb/prisma-idb/blob/main/packages/prisma-orm/sync-server-sql/src/core/get-key-field.ts) for the contract shape and checks.
 
 ## `validatePush(events, { scopeKey })`
 
 Takes the pushed events, each `{ id, model, operation, payload }`, and the signed-in user's id. Returns one `{ eventId, model, check }` per event, where `check` is one of:
 
-| `check.kind`      | Meaning                                                                            |
-| ----------------- | ---------------------------------------------------------------------------------- |
-| `"unknown-model"` | The model isn't in the browser contract. A real client can't send this; reject it. |
-| `"root"`          | The record is the root model itself. `check.authorized` is already computed.       |
-| `"scoped"`        | Authorized if any one of `check.paths` leads from the record to `scopeKey`.        |
+| `check.kind`           | Meaning                                                                            |
+| ---------------------- | ---------------------------------------------------------------------------------- |
+| `"validation-failure"` | The payload or key is malformed. `check.error` identifies the validation failure.  |
+| `"unknown-model"`      | The model isn't in the browser contract. A real client can't send this; reject it. |
+| `"root"`               | The record is the root model itself. `check.authorized` is already computed.       |
+| `"scoped"`             | Authorized if any one of `check.paths` leads from the record to `scopeKey`.        |
 
 Run the check inside the same transaction as the write, just before it. Checking before the transaction opens would let another request change the record's owner in between. `sqlSyncAdapter.applyPushEvent` does this for you.
 
-The request body has a different shape from these events: the client sends `entityType` and a raw `payload`. Validate it with `pushRequestBodySchema` from `@prisma-idb/sync-extension-idb/schemas`, then map it as the [tutorial](/docs/prisma-8/sync#4-set-up-the-server) shows. That entry point has no browser-only code, so it's safe to import on the server.
+The request body has a different shape from these events: the client sends `entityType` and a raw `payload`. Validate it with `pushRequestBodySchema` from `@prisma-idb/sync-extension-idb/schemas`, then pass its events to `sqlSyncAdapter.applyPush`, as the [tutorial](/docs/prisma-8/sync#4-set-up-the-server) shows. The schemas entrypoint has no browser-only code, so it is safe to import on the server. `applyPush` decodes wire values and maps them to validation inputs.
 
 ## `buildPullQueries(logs, { scopeKey })`
 
-Takes changelog rows, each `{ changelogId, model, key }`, and returns one `{ changelogId, model, check }` per row, with the same `check` kinds as `validatePush`.
+Takes changelog rows, each `{ changelogId, model, key }`, and returns one `{ changelogId, model, check }` per row, with `"unknown-model"`, `"root"` or `"scoped"` ownership checks. The SQL adapter validates each key when it resolves the record.
 
 ### Why pull checks ownership twice
 
@@ -87,20 +79,46 @@ The second step matters because ownership can change after a push. Say Alice cre
 
 ## SQL adapter
 
-`createSqlSyncAdapter({ contract })` from `@prisma-idb/sync-server-sql` runs the checks and writes against a Prisma 8 SQL ORM client. It works with any model; nothing in it is specific to your schema.
+`createSqlSyncAdapter({ contract, syncServer, getKeyField? })` from `@prisma-idb/sync-server-sql` binds the server contract and ownership graph once at startup. `getKeyField` defaults to `sqlGetKeyField`. The route helpers require `syncServer`; lower-level methods work without it.
 
-| Member                                                    | Does                                                                                                                                   |
-| --------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| `getKeyField(model)`                                      | The model's primary-key field.                                                                                                         |
-| `toSyncPushPayload(operation, payload, keyField)`         | Turns a pushed payload into the shape `validatePush` expects.                                                                          |
-| `applyPushEvent(db, event, model, check, scopeKey)`       | In one transaction: checks ownership, writes the record and writes its `Changelog` row. Does nothing if the event was already applied. |
-| `resolvePullRecord(db, model, check, keyPath, operation)` | Returns the record if the user still owns it, or `null`.                                                                               |
+| Member                                                    | Result                                                                                                                                                                                                               |
+| --------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `applyPush(db, { events, scopeKey, maxBatchSize? })`      | Validates and applies events in order. Returns `{ ok: true, results }` through the first retryable failure. Rejects oversized batches and duplicate event ids before any writes. The default maximum is 1000 events. |
+| `pull(db, { scopeKey, lastChangelogId?, limit? })`        | Reads the next page, checks current ownership and resolves each record. Returns `{ ok: true, logs }`. The default page size is 50. The cursor is exclusive.                                                          |
+| `getKeyField(model)`                                      | The model's primary-key field.                                                                                                                                                                                       |
+| `toSyncPushPayload(operation, payload, keyField)`         | Maps a decoded payload to the shape `validatePush` expects.                                                                                                                                                          |
+| `applyPushEvent(db, event, model, check, scopeKey)`       | Checks ownership, writes the record and inserts its `Changelog` row in one transaction. Repeated event ids do not apply twice.                                                                                       |
+| `resolvePullRecord(db, model, check, keyPath, operation)` | Returns the current record if the user still owns it, or `null`.                                                                                                                                                     |
 
-`db` is your Prisma 8 SQL client. It must have `.transaction(fn)` and `.orm.public.<Model>`.
+`db` is your Prisma 8 SQL client. It must have `.transaction(fn)` and `.orm.public.<Model>`. Resolve `scopeKey` from the authenticated session, never the request body or query string.
 
-When a write fails, `applyPushEvent` logs the real error on the server and returns a generic, retryable failure, so database details such as constraint names never reach the browser.
+### Route outcomes
 
-The package also exports the pieces these use, such as `checkAuthorization` and `sqlGetKeyField`. See its README for the full list.
+Handle each known failure reason explicitly. The reason unions can grow in future releases; an exhaustive TypeScript check helps detect new reasons when upgrading.
+
+| Helper      | Failure reason         | Meaning                                                                                                                                                                                              |
+| ----------- | ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `applyPush` | `"batch-too-large"`    | No writes. Includes `maxBatchSize` and `received`.                                                                                                                                                   |
+| `applyPush` | `"duplicate-event-id"` | No writes. Includes the repeated `eventId`.                                                                                                                                                          |
+| `pull`      | `"invalid-cursor"`     | No pull query. The cursor must be a UUID v7 changelog id. `null` and `undefined` start at the beginning. An empty string is invalid; convert an empty query parameter to `null`, as in the tutorial. |
+
+`pull` throws `RangeError` for a limit that is not a positive, finite integer. Database and ORM errors reject the pull promise.
+
+### Per-event validation and retries
+
+`applyPush` revives dates, bigint and bytes from their JSON representations. `validatePush` validates keys against the server contract and records and patches against `clientContract`. This lets browser events omit fields excluded from the browser contract. Malformed records and patches return `RECORD_VALIDATION_FAILURE`; malformed keys return `KEYPATH_VALIDATION_FAILURE`. These failures are non-retryable and open no write transaction. Updates cannot change the primary key.
+
+Push results include the first retryable failure and omit all later events. The worker keeps omitted events pending without counting a try against them. This ordering lets a Todo wait until its Board succeeds on retry.
+
+When a database write fails, `applyPushEvent` logs the real error on the server and returns a generic, retryable failure. Database details such as constraint names do not reach the browser.
+
+For required Postgres `Json` fields (`pg/json@1` and `pg/jsonb@1`), wire `null` is written as JSON null. Nullable JSON fields retain the ORM's SQL NULL behavior.
+
+### Pull validation
+
+Ordinary pull logs include `record`, with `null` signaling a delete or revoked ownership. When key decoding throws `KEYPATH_VALIDATION_FAILURE`, `pull` returns `validationError: "KEYPATH_VALIDATION_FAILURE"` and omits `record`. `applyPull` skips those entries, counts them as validation failures and advances the cursor without changing local records or version metadata. This marker does not cover every malformed key: a root-model ownership rejection can return `record: null` before decoding, so the client deletes its local copy.
+
+The package also exports the lower-level functions, including `applyPush`, `pull`, `checkAuthorization` and `sqlGetKeyField`. See its README for the full list.
 
 ## The `Changelog` model
 
@@ -169,7 +187,7 @@ For your own schema pipeline, `prepareSqlSchemaWithSync` takes schema text and r
 
 - **Building the server's database client from the browser's contract.** `db.orm.public.*` and the SQL adapter need the SQL contract (`schema.postgres.generated`). With the browser's `contract` type, model names often still resolve, but queries lose their types: no autocomplete, and no error for a misspelled field.
 - **Wrong capitalization in model names.** Names pass straight through to `db.orm.public[model]`, so `changelog` instead of `Changelog` fails with `Model "changelog" not found on db.orm.public.`
-- **An unlimited pull query.** Neither package limits how many rows a pull returns. Always limit your changelog query and page by `id`, or a client that was offline for a long time downloads its whole history at once.
+- **An unlimited custom pull query.** `sqlSyncAdapter.pull` defaults to 50 rows and uses an exclusive changelog cursor. If you use the lower-level methods, limit and page your own changelog query too.
 
 <Cards>
   <Card title="Sync tutorial" href="/docs/prisma-8/sync" />
