@@ -99,6 +99,6 @@ Rejected for the reasons listed under `migration preflight` above.
 ## Consequences
 
 - An IndexedDB project uses two CLIs: `prisma` for `contract emit` and the read-only `migration` commands, and `prisma-idb` for the three commands above.
-- The framework still requires a `driver` in `prisma.config.ts`, even though no command can use one. IndexedDB projects pass the stub `@prisma-idb/driver-idb/control`.
+- The framework still requires a `driver` in `prisma.config.ts`, even though no command can use one. IndexedDB projects pass the stub `@prisma-idb/driver-idb/control`. The target does not export a migration control driver because its CLI runner always refuses execution. Browser apply uses `openAndUpgrade` through the client factories.
 - The framework's control interface has no way to say "this can't run here". So for IndexedDB, `introspect`, `readMarker` and `readAllMarkers` return empty results, and `verify` and `sign` return a failure with the explanation in its summary. A proper "unsupported" result in the framework would be cleaner, and would avoid bugs like the `db sign` crash above. We have raised this upstream.
 - `fake-indexeddb` is a dependency of `family-idb` only because of preflight. The browser runtime never uses it.

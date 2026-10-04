@@ -9,8 +9,6 @@
  * - IdbMigrationRunner.execute(): always returns IDB-RUNNER-CLI-UNSUPPORTED refusal
  * - IdbMigrationRunner.executeAcrossSpaces(): always returns IDB-RUNNER-CLI-UNSUPPORTED refusal
  * - openAndUpgrade: applies DDL to a real IDB via fake-indexeddb
- * - IdbMigrationControlDriverDescriptor: creates driver with correct fields
- * - extractMigrationDriver: throws on missing fields
  * - renderTypeScript: generates valid TS source for generated ops
  *
  * Isolation: fake-indexeddb/auto (vitest.config.ts) provides a global
@@ -30,7 +28,6 @@ import { IdbMigrationPlanner, contractToIdbSchema } from "../src/core/migration-
 import { openAndUpgrade, readMarker } from "../src/core/apply-ddl-op";
 import { IdbMigrationRunner } from "../src/core/migration-runner";
 import type { IdbDdlOp } from "../src/core/migration-factories";
-import { IdbMigrationControlDriverDescriptor, extractMigrationDriver } from "../src/core/migration-driver";
 import type { IdbSchemaDiffInput } from "../src/core/schema-diff";
 import type { MigrationOperationPolicy } from "@prisma/orm-framework/components/control";
 import { keepInternalSpecifiers } from "@prisma/orm-framework/components/emission";
@@ -45,14 +42,6 @@ function dbName(): string {
 const ALLOW_ALL: MigrationOperationPolicy = {
   allowedOperationClasses: ["additive", "widening", "destructive", "data"],
 };
-
-function makeDriver(name: string, version: number) {
-  return IdbMigrationControlDriverDescriptor.create({
-    dbName: name,
-    factory: indexedDB,
-    targetVersion: version,
-  });
-}
 
 // ── diffIdbSchema ─────────────────────────────────────────────────────────────
 
@@ -238,42 +227,6 @@ describe("migration-factories", () => {
     const op = dropIndexOp("users", "email_idx");
     expect(op.operationClass).toBe("destructive");
     expect(op.id).toBe("index.users.email_idx.drop");
-  });
-});
-
-// ── IdbMigrationControlDriverDescriptor ──────────────────────────────────────
-
-describe("IdbMigrationControlDriverDescriptor", () => {
-  it("creates a driver with correct identity and fields", () => {
-    const driver = makeDriver("test-db", 1);
-    expect(driver.familyId).toBe("idb");
-    expect(driver.targetId).toBe("idb");
-    expect(driver.dbName).toBe("test-db");
-    expect(driver.targetVersion).toBe(1);
-  });
-
-  it("close() resolves without error", async () => {
-    const driver = makeDriver("test-db", 1);
-    await expect(driver.close()).resolves.toBeUndefined();
-  });
-});
-
-// ── extractMigrationDriver ────────────────────────────────────────────────────
-
-describe("extractMigrationDriver", () => {
-  it("returns the driver unchanged when it has the required fields", () => {
-    const driver = makeDriver("test-db", 1);
-    expect(extractMigrationDriver(driver)).toBe(driver);
-  });
-
-  it("throws when the driver is missing dbName / factory / targetVersion", () => {
-    const plain = {
-      familyId: "idb" as const,
-      targetId: "idb" as const,
-      query: () => Promise.resolve({ rows: [] }),
-      close: () => Promise.resolve(),
-    };
-    expect(() => extractMigrationDriver(plain)).toThrow();
   });
 });
 
@@ -517,7 +470,7 @@ describe("IdbMigrationRunner", () => {
 
   it("execute() always returns IDB-RUNNER-CLI-UNSUPPORTED refusal", async () => {
     const result = await runner.execute({
-      driver: makeDriver(dbName(), 1),
+      driver: { familyId: "idb", targetId: "idb", close: async () => undefined },
       perSpaceOptions: [],
     });
     expect(result.ok).toBe(false);

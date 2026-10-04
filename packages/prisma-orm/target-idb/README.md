@@ -10,6 +10,8 @@ npm install --save-dev @prisma-idb/target-idb
 
 Part of [Prisma 8 IDB](https://prisma-idb.dev/docs/prisma-8), a typed IndexedDB client for Prisma 8. Start with the [Quick Start](https://prisma-idb.dev/docs/prisma-8/getting-started). For how the packages fit together, see [ARCHITECTURE.md](https://github.com/prisma-idb/prisma-idb/blob/main/packages/prisma-orm/docs/ARCHITECTURE.md).
 
+CLI configuration uses the stub driver from `@prisma-idb/driver-idb/control`. Apply migrations in the browser with `createAutoMigratingIdbClient`; the CLI migration runner returns an unsupported-operation result.
+
 ## License
 
 MIT

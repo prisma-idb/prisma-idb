@@ -6,7 +6,7 @@ icon: GitBranch
 
 A migration changes the database's object stores and indexes to match a new schema. You plan migrations on your machine and commit them. Each user's browser applies the ones it hasn't run yet the next time the app opens the database.
 
-`prisma migrate` and `prisma db update` don't apply IndexedDB migrations, because IndexedDB only exists in the browser. `createAutoMigratingIdbClient` applies them instead.
+`prisma migrate` and `prisma db update` don't apply IndexedDB migrations, because IndexedDB only exists in the browser. `createAutoMigratingIdbClient` applies them instead. Use `@prisma-idb/driver-idb/control` for the driver in `prisma.config.ts`. Migration files import the authoring tools from `@prisma-idb/target-idb/migration`.
 
 ## Change the schema
 
