@@ -268,7 +268,7 @@ async function createGraph(
     if (item.mutation.kind === "disconnect") {
       throw new Error("disconnect() is only supported in update() nested mutations");
     }
-    await applyParentOwnedMutation(scope, contract, modelName, scalarData, item.relation, item.mutation, defaultsCache);
+    await applyParentOwnedMutation(scope, contract, scalarData, item.relation, item.mutation, defaultsCache);
   }
 
   const parentRow = await insertSingleRow(scope, contract, modelName, scalarData, defaultsCache);
@@ -300,7 +300,7 @@ async function updateFirstGraph(
   const scalarData = { ...parsed.scalarData };
 
   for (const item of parentOwned) {
-    await applyParentOwnedMutation(scope, contract, modelName, scalarData, item.relation, item.mutation, defaultsCache);
+    await applyParentOwnedMutation(scope, contract, scalarData, item.relation, item.mutation, defaultsCache);
   }
 
   let parentRow = existingRow;
@@ -388,7 +388,6 @@ function partitionByOwnership(mutations: readonly ParsedRelationMutation[]): {
 async function applyParentOwnedMutation(
   scope: IdbTransactionScope,
   contract: IdbContract,
-  parentModelName: string,
   scalarData: Record<string, unknown>,
   relation: RelationDefinition,
   mutation: IdbRelationMutation<IdbContract, string>,
@@ -409,7 +408,7 @@ async function applyParentOwnedMutation(
     // Recursive nesting is not supported in Phase 6.4 — the nested record must
     // be a plain scalar create, not itself a nested mutation.
     const relatedRow = await insertSingleRow(scope, contract, relation.relatedModelName, row, defaultsCache);
-    copyRelatedValuesToParent(relation, scalarData, relatedRow, parentModelName, contract);
+    copyRelatedValuesToParent(relation, scalarData, relatedRow);
     return;
   }
 
@@ -422,15 +421,13 @@ async function applyParentOwnedMutation(
   if (!relatedRow) {
     throw new Error(`connect() nested mutation for relation "${relation.relationName}" did not find a matching row`);
   }
-  copyRelatedValuesToParent(relation, scalarData, relatedRow, parentModelName, contract);
+  copyRelatedValuesToParent(relation, scalarData, relatedRow);
 }
 
 function copyRelatedValuesToParent(
   relation: RelationDefinition,
   scalarData: Record<string, unknown>,
-  relatedRow: Record<string, unknown>,
-  _parentModelName: string,
-  _contract: IdbContract
+  relatedRow: Record<string, unknown>
 ): void {
   // localFields = parent's FK fields; targetFields = related model's PK/unique fields
   for (let i = 0; i < relation.localFields.length; i++) {
@@ -750,23 +747,7 @@ function enforcedAction(declared: IdbReferentialAction | undefined): EnforcedRef
   return declared === undefined || declared === "noAction" ? "restrict" : declared;
 }
 
-function getOnDeleteForDeleteRelation(
-  contract: IdbContract,
-  modelName: string,
-  def: RelationDefinition
-): EnforcedReferentialAction {
-  return getReferentialActionForRelation(contract, modelName, def, "onDelete");
-}
-
-function getOnUpdateForRelation(
-  contract: IdbContract,
-  modelName: string,
-  def: RelationDefinition
-): EnforcedReferentialAction {
-  return getReferentialActionForRelation(contract, modelName, def, "onUpdate");
-}
-
-function isDeleteEnforcementRelation(contract: IdbContract, modelName: string, def: RelationDefinition): boolean {
+function isChildEnforcementRelation(contract: IdbContract, modelName: string, def: RelationDefinition): boolean {
   if (def.cardinality === "1:N") return true;
   if (def.cardinality === "1:1") {
     // Shared-PK 1:1: the non-owning side is the one whose *own* primary key
@@ -970,8 +951,8 @@ export function collectOnUpdateEnforcementStoreNames(
     if (visitedModels.has(mName)) return;
     visitedModels.add(mName);
     for (const def of getRelationDefinitions(contract, mName)) {
-      if (!isDeleteEnforcementRelation(contract, mName, def)) continue;
-      const action = getOnUpdateForRelation(contract, mName, def);
+      if (!isChildEnforcementRelation(contract, mName, def)) continue;
+      const action = getReferentialActionForRelation(contract, mName, def, "onUpdate");
       stores.add(def.relatedStoreName);
       if (action === "cascade") walkCascadeChain(def.relatedModelName);
     }
@@ -979,9 +960,9 @@ export function collectOnUpdateEnforcementStoreNames(
 
   visitedModels.add(modelName);
   for (const def of getRelationDefinitions(contract, modelName)) {
-    if (!isDeleteEnforcementRelation(contract, modelName, def)) continue;
+    if (!isChildEnforcementRelation(contract, modelName, def)) continue;
     if (!def.localFields.some((f) => f in data)) continue;
-    const action = getOnUpdateForRelation(contract, modelName, def);
+    const action = getReferentialActionForRelation(contract, modelName, def, "onUpdate");
     enforces = true;
     stores.add(def.relatedStoreName);
     if (action === "cascade") walkCascadeChain(def.relatedModelName);
@@ -1007,11 +988,8 @@ export function collectOnUpdateEnforcementStoreNames(
  * `setNull`/`setDefault` are leaf actions: the child's FK field changes but
  * its own key doesn't, so nothing below it needs re-enforcement.
  *
- * Unlike `validateScalarFks`'s compound-FK restriction, a compound (multi-
- * field) relation is safe to cascade here: both `localFields` values come
- * from the same `oldRow`/`patch`, so there's no risk of assembling a value
- * from two unrelated rows the way independently-validated FK-existence
- * checks could.
+ * Compound relations use values from the same `oldRow`/`patch`, so every
+ * child is matched against the full pre-change tuple.
  */
 export async function applyReferentialActionsForRowOnUpdate(
   scope: IdbTransactionScope,
@@ -1028,11 +1006,11 @@ export async function applyReferentialActionsForRowOnUpdate(
 
   const meta = makePlanMeta(contract);
   for (const def of getRelationDefinitions(contract, modelName)) {
-    if (!isDeleteEnforcementRelation(contract, modelName, def)) continue;
+    if (!isChildEnforcementRelation(contract, modelName, def)) continue;
     const changedFields = def.localFields.filter((f) => f in patch && !fieldValuesEqual(patch[f], oldRow[f]));
     if (changedFields.length === 0) continue;
 
-    const action = getOnUpdateForRelation(contract, modelName, def);
+    const action = getReferentialActionForRelation(contract, modelName, def, "onUpdate");
 
     const childFilter = buildChildFilterFromRow(def, oldRow);
 
@@ -1290,8 +1268,8 @@ export async function executeScalarCreateAllWithFkValidation(options: {
  * Combines FK-existence store scope (this model's own N:1 relations) with
  * `onUpdate` enforcement store scope (this model's child relations) for a
  * single write. Returns the union alongside whether `onUpdate` enforcement
- * actually applies (i.e. the `onUpdate` collector found more than just the
- * model's own store) — callers use that flag to choose between the existing
+ * actually applies, including self-relations that touch only this model's
+ * own store. Callers use that flag to choose between the existing
  * fast blind-write path and the read-before-write enforcement path.
  */
 function collectUpdateStoreNames(
@@ -1307,66 +1285,20 @@ function collectUpdateStoreNames(
   };
 }
 
-export async function executeScalarUpdateWithFkValidation(options: {
-  executor: IdbQueryExecutorWithTransaction;
-  contract: IdbContract;
-  modelName: string;
-  filters: readonly IdbFilterExpr[];
-  data: Record<string, unknown>;
-}): Promise<Record<string, unknown> | null> {
-  const { executor, contract, modelName, filters, data } = options;
-  const storeName = getStoreName(contract, modelName);
-  // Apply defaults first, so the checks and the store list see every field
-  // the write sets, including one an `onUpdate` default fills in.
-  const patch = applyUpdateDefaults(
-    contract.execution?.mutations.defaults,
-    storeName,
-    data,
-    createMutationDefaultsCache()
-  );
-  assertEnumValues(contract, modelName, patch);
-  const { storeNames, enforcesOnUpdate } = collectUpdateStoreNames(contract, modelName, patch);
-  const needsRowForFks = fkCheckNeedsExistingRow(contract, modelName, patch);
-  return withMutationScope(executor, storeNames, async (scope) => {
-    if (!needsRowForFks) await validateScalarFks(scope, contract, modelName, patch);
-    const meta = makePlanMeta(contract);
-    const combined =
-      filters.length === 0 ? undefined : filters.length === 1 ? filters[0]! : { kind: "and" as const, exprs: filters };
-    const filter =
-      combined !== undefined ? (row: Record<string, unknown>): boolean => evaluateFilter(combined, row) : undefined;
+interface ScalarUpdateOptions {
+  readonly executor: IdbQueryExecutorWithTransaction;
+  readonly contract: IdbContract;
+  readonly modelName: string;
+  readonly filters: readonly IdbFilterExpr[];
+  readonly data: Record<string, unknown>;
+}
 
-    if (!enforcesOnUpdate && !needsRowForFks) {
-      const rows = await scope.execute({
-        meta,
-        kind: "scan-write",
-        storeName,
-        write: "put-merged",
-        patch,
-        take: 1,
-        ...(filter !== undefined ? { filter } : {}),
-      } as IdbAtomicPlan);
-      return rows[0] ?? null;
-    }
-
-    // Read-before-write: onUpdate enforcement needs the pre-image to know
-    // whether a locally-referenced field's value is actually changing, and a
-    // partly-set compound foreign key needs the row's other key fields.
-    const oldRows = await scope.execute({
-      meta,
-      kind: "cursor-scan",
-      storeName,
-      take: 1,
-      ...(filter !== undefined ? { filter } : {}),
-    } as IdbAtomicPlan);
-    const oldRow = oldRows[0];
-    if (!oldRow) return null;
-    if (needsRowForFks) await validateScalarFks(scope, contract, modelName, patch, oldRow);
-    if (enforcesOnUpdate) await applyReferentialActionsForRowOnUpdate(scope, contract, modelName, oldRow, patch);
-    const keyPath = getKeyPath(contract, modelName);
-    const key = extractKeyFromRow(oldRow, keyPath);
-    const rows = await scope.execute({ meta, kind: "update", storeName, key, patch } as IdbAtomicPlan);
-    return rows[0] ?? null;
-  });
+/** Updates the first matching row with FK validation and referential actions. */
+export async function executeScalarUpdateWithFkValidation(
+  options: ScalarUpdateOptions
+): Promise<Record<string, unknown> | null> {
+  const rows = await executeScalarUpdates(options, 1);
+  return rows[0] ?? null;
 }
 
 /**
@@ -1374,25 +1306,19 @@ export async function executeScalarUpdateWithFkValidation(options: {
  * validation and `onUpdate` enforcement, but applies the patch to every row
  * the filter matches (no `take: 1`) and returns all of them.
  *
- * Always goes through the transaction scope — unlike single-row `update()`,
- * which only needs one when there's a scalar FK field or `onUpdate`
- * enforcement to apply. A bulk scan-write's affected row SET isn't knowable
- * until it actually runs, and observing that result INSIDE the same
- * transaction is exactly what the sync interceptor needs to track the write
- * correctly: its transaction-scope hook (`SyncInterceptingTransactionScope#maybeTrack`'s
- * `scan-write`/`update` cases) writes one outbox event per row it's handed,
- * atomically with the write itself. The plan-level path `update()` falls
- * back to for a non-enforced single row has no equivalent hook — a plan is
- * extended with outbox ops BEFORE it runs, which only works when the
- * affected key is knowable up front.
+ * The transaction scope lets the sync interceptor observe the affected rows
+ * and write one outbox event per row in the same transaction. A bulk write's
+ * affected keys are only known after it runs, so tracking cannot happen by
+ * extending the plan before execution.
  */
-export async function executeBulkUpdateWithFkValidation(options: {
-  executor: IdbQueryExecutorWithTransaction;
-  contract: IdbContract;
-  modelName: string;
-  filters: readonly IdbFilterExpr[];
-  data: Record<string, unknown>;
-}): Promise<Record<string, unknown>[]> {
+export async function executeBulkUpdateWithFkValidation(
+  options: ScalarUpdateOptions
+): Promise<Record<string, unknown>[]> {
+  return executeScalarUpdates(options);
+}
+
+/** Shares validation and atomic writes; only single-row updates limit the scan. */
+async function executeScalarUpdates(options: ScalarUpdateOptions, take?: 1): Promise<Record<string, unknown>[]> {
   const { executor, contract, modelName, filters, data } = options;
   const storeName = getStoreName(contract, modelName);
   // Apply defaults first, so the checks and the store list see every field
@@ -1421,14 +1347,18 @@ export async function executeBulkUpdateWithFkValidation(options: {
         storeName,
         write: "put-merged",
         patch,
+        ...(take !== undefined ? { take } : {}),
         ...(filter !== undefined ? { filter } : {}),
       } as IdbAtomicPlan);
     }
 
+    // Enforcement needs the preimage for changed referenced fields and for
+    // compound foreign keys whose other fields are absent from the patch.
     const oldRows = await scope.execute({
       meta,
       kind: "cursor-scan",
       storeName,
+      ...(take !== undefined ? { take } : {}),
       ...(filter !== undefined ? { filter } : {}),
     } as IdbAtomicPlan);
     const keyPath = getKeyPath(contract, modelName);
@@ -1454,7 +1384,7 @@ export async function executeBulkUpdateWithFkValidation(options: {
  */
 export function hasEnforceableChildRelations(contract: IdbContract, modelName: string): boolean {
   return getRelationDefinitions(contract, modelName).some((def) =>
-    isDeleteEnforcementRelation(contract, modelName, def)
+    isChildEnforcementRelation(contract, modelName, def)
   );
 }
 
@@ -1478,8 +1408,8 @@ export function collectDeleteStoreNames(contract: IdbContract, modelName: string
     visitedModels.add(mName);
     stores.add(getStoreName(contract, mName));
     for (const def of getRelationDefinitions(contract, mName)) {
-      if (!isDeleteEnforcementRelation(contract, mName, def)) continue;
-      const action = getOnDeleteForDeleteRelation(contract, mName, def);
+      if (!isChildEnforcementRelation(contract, mName, def)) continue;
+      const action = getReferentialActionForRelation(contract, mName, def, "onDelete");
       stores.add(def.relatedStoreName);
       if (action === "cascade") walk(def.relatedModelName);
     }
@@ -1521,8 +1451,8 @@ export async function applyReferentialActionsForRow(
 
   const meta = makePlanMeta(contract);
   for (const def of getRelationDefinitions(contract, modelName)) {
-    if (!isDeleteEnforcementRelation(contract, modelName, def)) continue;
-    const action = getOnDeleteForDeleteRelation(contract, modelName, def);
+    if (!isChildEnforcementRelation(contract, modelName, def)) continue;
+    const action = getReferentialActionForRelation(contract, modelName, def, "onDelete");
 
     const childFilter = buildChildFilterFromRow(def, row);
 
