@@ -1,5 +1,17 @@
 # @prisma-idb/sync-server
 
+## 0.7.0
+
+### Minor Changes
+
+- [#277](https://github.com/prisma-idb/prisma-idb/pull/277) [`c1f6605`](https://github.com/prisma-idb/prisma-idb/commit/c1f6605f16647d86ee696bf90c77a66b6358d6b4) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Breaking: `SyncPushEvent` replaces the optional `wirePayload` with a required `wireKey`, the record's primary key in its JSON wire form. The ownership check uses it, and a call to `validatePush` without it is now a type error. Pass `wireKey: payload[keyField]` when your keys are strings.
+
+### Patch Changes
+
+- Updated dependencies [[`f062370`](https://github.com/prisma-idb/prisma-idb/commit/f062370dbc0a87a54f1c80e2b2a6e7b5b1472a51), [`3dcdef1`](https://github.com/prisma-idb/prisma-idb/commit/3dcdef142b02d5e246542b2cae2c7db04fefa0cb)]:
+  - @prisma-idb/family-idb@0.10.0
+  - @prisma-idb/target-idb@0.10.0
+
 ## 0.6.2
 
 ### Patch Changes

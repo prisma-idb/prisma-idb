@@ -1,5 +1,15 @@
 # @prisma-idb/adapter-idb
 
+## 0.10.0
+
+### Patch Changes
+
+- [#277](https://github.com/prisma-idb/prisma-idb/pull/277) [`a4fd04b`](https://github.com/prisma-idb/prisma-idb/commit/a4fd04b06cae21eee2ad2d2d02dcb98793725839) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Document the codec registry constructor parameter as the extension point for non-identity field codecs.
+
+- Updated dependencies [[`3dcdef1`](https://github.com/prisma-idb/prisma-idb/commit/3dcdef142b02d5e246542b2cae2c7db04fefa0cb), [`3dcdef1`](https://github.com/prisma-idb/prisma-idb/commit/3dcdef142b02d5e246542b2cae2c7db04fefa0cb)]:
+  - @prisma-idb/driver-idb@0.10.0
+  - @prisma-idb/target-idb@0.10.0
+
 ## 0.9.1
 
 ### Patch Changes

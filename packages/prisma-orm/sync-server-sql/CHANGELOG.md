@@ -1,5 +1,22 @@
 # @prisma-idb/sync-server-sql
 
+## 0.6.0
+
+### Minor Changes
+
+- [#277](https://github.com/prisma-idb/prisma-idb/pull/277) [`334a6d9`](https://github.com/prisma-idb/prisma-idb/commit/334a6d906cfb5b6a57a9894aa4d9c90952a24269) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Breaking: the root export no longer includes the free functions `applyPush`, `pull`, `applyPushEvent`, `toSyncPushPayload`, `resolvePullRecord`, `checkAuthorization`, `resolveRootKeyViaPath` and `ormRootFor`, or the `OrmRoot` type. Use the methods on `createSqlSyncAdapter` instead. `sqlGetKeyField`, the default limits and the adapter's types stay.
+
+  Each pushed event is now decoded once, whether it arrives through `applyPush` or the adapter's `applyPushEvent`.
+
+  The adapter now passes `wireKey` to `validatePush`, matching the `SyncPushEvent` change in `@prisma-idb/sync-server`.
+
+### Patch Changes
+
+- Updated dependencies [[`9edee99`](https://github.com/prisma-idb/prisma-idb/commit/9edee9972fe801922f406e4acc93a81454e1a0b1), [`003b273`](https://github.com/prisma-idb/prisma-idb/commit/003b273e820c9c1e035f48b03e1f43ffd1a64934), [`c1f6605`](https://github.com/prisma-idb/prisma-idb/commit/c1f6605f16647d86ee696bf90c77a66b6358d6b4), [`36e524d`](https://github.com/prisma-idb/prisma-idb/commit/36e524d41c0f4dbdda5a1e280e5c071dfe0a66f6), [`3dcdef1`](https://github.com/prisma-idb/prisma-idb/commit/3dcdef142b02d5e246542b2cae2c7db04fefa0cb)]:
+  - @prisma-idb/sync-extension-idb@0.7.3
+  - @prisma-idb/sync-server@0.7.0
+  - @prisma-idb/target-idb@0.10.0
+
 ## 0.5.2
 
 ### Patch Changes

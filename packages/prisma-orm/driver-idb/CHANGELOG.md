@@ -1,5 +1,11 @@
 # @prisma-idb/driver-idb
 
+## 0.10.0
+
+### Patch Changes
+
+- [#277](https://github.com/prisma-idb/prisma-idb/pull/277) [`3dcdef1`](https://github.com/prisma-idb/prisma-idb/commit/3dcdef142b02d5e246542b2cae2c7db04fefa0cb) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Guard migration/runtime marker compatibility with a cross-package integration test.
+
 ## 0.9.1
 
 ### Patch Changes

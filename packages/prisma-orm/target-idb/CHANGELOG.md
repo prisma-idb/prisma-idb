@@ -1,5 +1,11 @@
 # @prisma-idb/target-idb
 
+## 0.10.0
+
+### Minor Changes
+
+- [#277](https://github.com/prisma-idb/prisma-idb/pull/277) [`3dcdef1`](https://github.com/prisma-idb/prisma-idb/commit/3dcdef142b02d5e246542b2cae2c7db04fefa0cb) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Remove `IdbMigrationControlDriver`, `IdbMigrationControlDriverDescriptor`, and `extractMigrationDriver` from `/control` and `/migration`. Use the stub driver from `@prisma-idb/driver-idb/control` in CLI configuration; migrations apply in the browser through the client factories.
+
 ## 0.9.1
 
 ### Patch Changes
