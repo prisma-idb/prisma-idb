@@ -4,6 +4,7 @@ import type { ExecutionPlan } from "@prisma/orm-framework/components/runtime";
 
 /**
  * Name of the object store that holds the contract marker.
+ * The client-idb marker compatibility test checks the migration writer and this reader.
  *
  * Created during `upgradeneeded` by the migration runner. `IdbRuntime.verifyMarker()`
  * compares its stored hash with the contract's to detect schema drift.

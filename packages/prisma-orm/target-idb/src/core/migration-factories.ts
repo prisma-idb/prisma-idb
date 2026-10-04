@@ -3,7 +3,10 @@ import type { IdbIndexDefinition, IdbStoreDefinition } from "./idb-contract-type
 
 // ── Marker store ─────────────────────────────────────────────────────────────
 
-/** Name of the internal marker store. Must match {@link MARKER_STORE_NAME} in driver-idb. */
+/**
+ * Name of the internal marker store. Must match `MARKER_STORE_NAME` in driver-idb.
+ * The client-idb marker compatibility test checks the migration writer and runtime reader.
+ */
 export const IDB_MARKER_STORE = "_prisma_next_marker";
 
 /**
