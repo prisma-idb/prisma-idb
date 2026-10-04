@@ -2,6 +2,8 @@
  * CLI regression tests for `prisma-idb migration preflight`.
  */
 
+import { mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   cli,
@@ -19,6 +21,25 @@ const HASH_BASELINE = "sha256:baseline" as const;
 const HASH_ADDPOSTS = "sha256:addposts" as const;
 const HASH_ADDCOMMENTS = "sha256:addcomments" as const;
 
+async function writeSnapshot(cwd: string, hash: string, storeNames: string[]): Promise<void> {
+  const dir = join(cwd, "migrations", "snapshots", hash);
+  await mkdir(dir, { recursive: true });
+  await writeFile(
+    join(dir, "contract.json"),
+    JSON.stringify({
+      target: "idb",
+      targetFamily: "idb",
+      roots: {},
+      domain: { namespaces: { __unbound__: { models: {} } } },
+      storage: { storageHash: hash, stores: Object.fromEntries(storeNames.map((name) => [name, { keyPath: "id" }])) },
+      capabilities: {},
+      extensions: {},
+      meta: {},
+    }),
+    "utf-8"
+  );
+}
+
 describe("prisma-idb migration preflight", () => {
   it("exits 0 with 'Nothing to preflight' when no packages exist", async () => {
     const cwd = await setupTmpProject("preflight-empty");
@@ -31,6 +52,7 @@ describe("prisma-idb migration preflight", () => {
 
   it("exits 0 when every migration applies cleanly against fake-indexeddb", async () => {
     const cwd = await setupTmpProject("preflight-happy");
+    await writeSnapshot(cwd, HASH_ADDPOSTS, ["users", "posts"]);
     await writeContractJson(cwd, HASH_ADDPOSTS);
     await writePackage({
       cwd,
@@ -53,6 +75,24 @@ describe("prisma-idb migration preflight", () => {
     expect(stderr).toContain("0001_baseline … ok");
     expect(stderr).toContain("0002_addPosts … ok");
     expect(stderr).toContain("Preflight passed");
+  });
+
+  it("fails with a readable schema diff even when every package hash is valid", async () => {
+    const cwd = await setupTmpProject("preflight-drift");
+    await writeSnapshot(cwd, HASH_ADDPOSTS, ["users", "posts"]);
+    await writeContractJson(cwd, HASH_ADDPOSTS);
+    await writePackage({
+      cwd,
+      dirName: "0001_baseline",
+      from: null,
+      to: HASH_ADDPOSTS,
+      ops: [createMarkerStoreOp, createUsersStoreOp],
+    });
+
+    const { stderr, exitCode } = await cli(["migration", "preflight"], { cwd });
+    expect(exitCode).toBe(2);
+    expect(stderr).toContain("IDB-CLI.PREFLIGHT_FAILED");
+    expect(stderr).toContain('Object store "posts" defined in contract is missing');
   });
 
   it("exits 1 with a clear error when a DDL op fails (index on non-existent store)", async () => {
@@ -84,6 +124,7 @@ describe("prisma-idb migration preflight", () => {
     // Same regression as codegen: mixed timestamp formats must not break
     // chain order. Preflight chain-walks too.
     const cwd = await setupTmpProject("preflight-chainorder");
+    await writeSnapshot(cwd, HASH_ADDCOMMENTS, ["users", "posts", "comments"]);
     await writeContractJson(cwd, HASH_ADDCOMMENTS);
     await writePackage({
       cwd,

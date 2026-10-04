@@ -22,7 +22,7 @@ npx prisma-idb migration preflight
 1. `contract emit` updates `contract.json` and `contract.d.ts`.
 2. `migration plan` compares the new contract with the one the newest migration ends at, and writes the difference as a new package under `migrations/app/`. `--name` sets the folder name, and is required for every migration after the first.
 3. `migration contract-space` regenerates the module that bundles the migrations into your app.
-4. `migration preflight` checks that the whole chain still applies.
+4. `migration preflight` checks that the whole chain applies and produces the head contract's stores and indexes.
 
 Commit the new package, the new `migrations/snapshots/` entry and the regenerated files. The next time a user opens the app, the client applies the migration before resolving.
 
@@ -50,7 +50,11 @@ Run preflight on every change:
 npx prisma-idb migration preflight
 ```
 
-It applies every migration, in order, to an empty in-memory IndexedDB ([`fake-indexeddb`](https://github.com/dumbmatter/fakeIndexedDB)). It fails if the chain is broken, a package was edited without regenerating its hash, or an operation can't apply. It doesn't check that the result matches the contract, and `fake-indexeddb` can differ from real browsers in edge cases, so keep testing your app in a browser too.
+It applies every migration, in order, to an empty in-memory IndexedDB ([`fake-indexeddb`](https://github.com/dumbmatter/fakeIndexedDB)). It fails if the chain is broken, a package was edited without regenerating its hash, or an operation can't apply. After replay, it compares the final stores and indexes with `migrations/snapshots/<head.to>/contract.json`. This check always runs. It fails with a readable diff for missing or extra stores and indexes, or different key paths, `autoIncrement`, `unique` or `multiEntry` flags. The internal `_prisma_next_marker` store is excluded.
+
+A missing or invalid head snapshot also fails preflight. Restore the snapshot from source control or regenerate the chain. A valid package hash alone does not prove that hand-edited operations produce the right schema.
+
+`fake-indexeddb` can differ from real browsers in edge cases, so keep testing your app in a browser too.
 
 ## Edit a migration by hand
 

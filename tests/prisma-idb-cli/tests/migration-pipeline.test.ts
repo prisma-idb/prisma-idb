@@ -20,7 +20,7 @@
  * `prisma contract emit` for the corresponding schema states.
  */
 
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
@@ -217,6 +217,11 @@ describe("migration pipeline e2e", () => {
       to: V2_STORAGE_HASH,
       ops: [createPostsStoreOp, createPostsByAuthorIdIndexOp],
     });
+
+    // A real migration plan also persists the destination contract snapshot.
+    const snapshotDir = join(cwd, "migrations", "snapshots", V2_STORAGE_HASH);
+    await mkdir(snapshotDir, { recursive: true });
+    await writeFile(join(snapshotDir, "contract.json"), JSON.stringify(CONTRACT_V2_WITH_POSTS), "utf-8");
 
     const dirs2 = await getMigrationDirs(cwd);
     expect(dirs2).toHaveLength(2);

@@ -5,6 +5,9 @@ import { computeMigrationHash } from "@prisma/orm-toolchain/migration-tools/hash
 import { chainOrderByMetadata, type ChainablePackage } from "./chain-order";
 import { applyOneDdlOp, isIdbDdlOp, type IdbDdlOp } from "@prisma-idb/target-idb/migration";
 import { join } from "pathe";
+import { verifyIdbSchema } from "./schema-verify";
+import type { IdbIndexIR, IdbSchemaIR } from "./schema-ir";
+import { validateContract } from "./validate";
 
 export interface PreflightOptions {
   readonly migrationsDir: string;
@@ -26,11 +29,9 @@ export interface PreflightOptions {
  * a test-only package on a production path. Running it in CI gives the gate
  * without the workflow tax on every author.
  *
- * **Scope vs runtime**: this command catches "the chain doesn't apply
- * cleanly" — a structural issue. It does NOT catch "the chain produces
- * the wrong schema" (that's `verifySchema` against the head's contract,
- * resolvable via `migrations/snapshots/<hash>/contract.json` since Phase
- * 8.9 — still deferred to a follow-up).
+ * After replay, verifies the actual stores and indexes against the head's
+ * contract at `migrations/snapshots/<hash>/contract.json`. Extra stores and
+ * indexes fail verification; the internal marker store is excluded.
  *
  * Exit codes: 0 on full chain success; 1 on any failure.
  */
@@ -66,7 +67,29 @@ export async function runPreflight(opts: PreflightOptions): Promise<number> {
     }
   }
 
-  out("\nPreflight passed: every migration in the chain applies cleanly.\n");
+  const head = packages[packages.length - 1]!;
+  const snapshotPath = join(migrationsDir, "snapshots", head.metadata.to, "contract.json");
+  try {
+    const contract = validateContract(JSON.parse(await readFile(snapshotPath, "utf-8")));
+    const schema = await readSchema(factory, dbName);
+    const result = verifyIdbSchema(contract, schema, true);
+    if (!result.ok) {
+      err(`\nSchema drift against head snapshot ${snapshotPath}:\n`);
+      for (const issue of result.schema.issues) {
+        err(`  ${issue.path.join(".")}: ${issue.message}\n`);
+      }
+      err("\nPreflight failed.\n");
+      return 1;
+    }
+  } catch (verifyErr) {
+    err(
+      `\nCannot verify head snapshot ${snapshotPath}: ${verifyErr instanceof Error ? verifyErr.message : String(verifyErr)}\n`
+    );
+    err("Restore the head contract snapshot or regenerate the migration chain.\n\nPreflight failed.\n");
+    return 1;
+  }
+
+  out("\nPreflight passed: every migration applies cleanly and the schema matches the head contract.\n");
   return 0;
 }
 
@@ -143,5 +166,37 @@ function applyPackage(input: {
       resolve();
     };
     req.onerror = () => reject(req.error ?? new Error("preflight open request failed"));
+  });
+}
+
+function readSchema(factory: IDBFactory, dbName: string): Promise<IdbSchemaIR> {
+  return new Promise((resolve, reject) => {
+    const req = factory.open(dbName);
+    req.onerror = () => reject(req.error ?? new Error("preflight schema open request failed"));
+    req.onsuccess = () => {
+      const db = req.result;
+      try {
+        // The marker belongs to the runtime, not the app contract's storage schema.
+        const names = Array.from(db.objectStoreNames).filter((name) => name !== "_prisma_next_marker");
+        const stores: IdbSchemaIR["stores"] = {};
+        if (names.length > 0) {
+          const tx = db.transaction(names, "readonly");
+          for (const name of names) {
+            const store = tx.objectStore(name);
+            const indexes: Record<string, IdbIndexIR> = {};
+            for (const indexName of Array.from(store.indexNames)) {
+              const index = store.index(indexName);
+              indexes[indexName] = { keyPath: index.keyPath, unique: index.unique, multiEntry: index.multiEntry };
+            }
+            stores[name] = { keyPath: store.keyPath ?? [], autoIncrement: store.autoIncrement, indexes };
+          }
+        }
+        resolve({ stores });
+      } catch (err) {
+        reject(err);
+      } finally {
+        db.close();
+      }
+    };
   });
 }
