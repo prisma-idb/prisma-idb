@@ -1,33 +1,39 @@
-# Prisma 8 IDB Kanban
+# Run the Prisma 8 IDB Kanban example
 
-A local-only Svelte kanban board backed by Prisma 8 IDB.
+This Svelte app stores boards and todos in IndexedDB and syncs them with Postgres. You can sign in as a guest or configure Google sign-in. Its PWA shell supports offline reloads after the first visit.
 
-The example demonstrates explicit Prisma 8 migration packages, the browser IndexedDB runtime, and a tiny PWA shell that works offline after the app has loaded once.
+## Set up the app
 
-## What is included
-
-- Local users, boards, and todos stored in IndexedDB
-- Auto-migrating client setup in `src/lib/prisma/db.ts`
-- Chainable ORM usage in `src/lib/stores/kanban.svelte.ts`
-- Barebones PWA metadata and service worker caching
-
-## Development
-
-From the repository root:
+Run these commands from the repository root. You need Docker for the local Postgres database.
 
 ```sh
+pnpm install
+cp apps/prisma-orm-kanban-example/.env.example apps/prisma-orm-kanban-example/.env
+pnpm build --filter=@prisma-idb/prisma-orm-kanban-example
+pnpm --filter @prisma-idb/prisma-orm-kanban-example db:up
+pnpm --filter @prisma-idb/prisma-orm-kanban-example db:init
 pnpm --filter @prisma-idb/prisma-orm-kanban-example dev
 ```
 
-## Validation
+Open the URL printed by Vite and select **Continue as guest**. Create a board, then add a todo. Edit, complete, or delete the todo to exercise tracked writes. The sync status shows pending changes and connectivity.
+
+To use Google sign-in, set `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` in the app's `.env`. Follow the redirect URL instructions in `.env.example`.
+
+## Validate changes
+
+Keep Postgres running while you run the browser tests. They cover local records, login, offline reloads, and cross-device sync.
 
 ```sh
 pnpm --filter @prisma-idb/prisma-orm-kanban-example check
+pnpm --filter @prisma-idb/prisma-orm-kanban-example lint
 pnpm --filter @prisma-idb/prisma-orm-kanban-example build
+pnpm --filter @prisma-idb/prisma-orm-kanban-example test:e2e:install
 pnpm --filter @prisma-idb/prisma-orm-kanban-example test:e2e
 ```
 
-## Prisma 8 workflow
+## Update contracts and migrations
+
+After editing `src/lib/prisma/schema.prisma`, emit the browser contract and prepare its migration:
 
 ```sh
 pnpm --filter @prisma-idb/prisma-orm-kanban-example contract:emit
@@ -36,8 +42,20 @@ pnpm --filter @prisma-idb/prisma-orm-kanban-example migration:contract-space
 pnpm --filter @prisma-idb/prisma-orm-kanban-example migration:preflight
 ```
 
-## Links
+For a Postgres schema change, emit the server contract, create a migration, and apply it:
 
-- Live app: https://next-kanban.prisma-idb.dev/
-- Docs: https://prisma-idb.dev/docs/prisma-8/kanban-example
-- Source: https://github.com/prisma-idb/prisma-idb/tree/main/apps/prisma-orm-kanban-example
+```sh
+pnpm --filter @prisma-idb/prisma-orm-kanban-example contract:emit:postgres
+pnpm --filter @prisma-idb/prisma-orm-kanban-example migration:postgres:new
+pnpm --filter @prisma-idb/prisma-orm-kanban-example db:update
+```
+
+See the [kanban explanation](https://prisma-idb.dev/docs/prisma-8/kanban-example) for the client setup in `src/lib/prisma/db.ts`, ORM calls in `src/lib/stores/kanban.svelte.ts`, and sync transport in `src/lib/prisma/sync.ts`.
+
+## Stop the database
+
+```sh
+pnpm --filter @prisma-idb/prisma-orm-kanban-example db:down
+```
+
+Try the [live app](https://next-kanban.prisma-idb.dev/) or browse the [source](https://github.com/prisma-idb/prisma-idb/tree/main/apps/prisma-orm-kanban-example).

@@ -64,6 +64,25 @@ describe("SyncWorker — state machine", () => {
     expect(worker.status).toBe("idle");
   });
 
+  it("delivers each event to every listener, and stops delivering to an unsubscribed one", async () => {
+    const first: string[] = [];
+    const second: string[] = [];
+    const worker = createSyncWorker({
+      syncClient: makeStubSyncClient(),
+      pushHandler: async () => [],
+      pullHandler: async () => [],
+    });
+    const unsubscribeFirst = worker.on("statuschange", (s) => first.push(s));
+    worker.on("statuschange", (s) => second.push(s));
+
+    await worker.forceSync();
+    unsubscribeFirst();
+    await worker.forceSync();
+
+    expect(first).toEqual(["pushing", "pulling", "idle"]);
+    expect(second).toEqual(["pushing", "pulling", "idle", "pushing", "pulling", "idle"]);
+  });
+
   it("start() is a no-op when already running", async () => {
     let pullCalls = 0;
     const worker = createSyncWorker({

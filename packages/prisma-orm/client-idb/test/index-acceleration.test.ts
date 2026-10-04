@@ -554,6 +554,31 @@ describe("index acceleration — OR multi-scan", () => {
     expect((rows[0] as { id: string }).id).toBe("u1");
   });
 
+  it("preserves residual filters and pagination around a nested indexed OR", async () => {
+    const client = asRecord(idbOrm({ contract: userContract, executor: spy }));
+    const rows = await client["users"]!.where(() =>
+      and(
+        and(
+          or(
+            fieldFilter("email", "eq", "carol@example.com"),
+            fieldFilter("email", "eq", "bob@example.com"),
+            fieldFilter("email", "eq", "alice@example.com")
+          )
+        ),
+        and(fieldFilter("active", "eq", true))
+      )
+    )
+      .orderBy({ name: "asc" })
+      .skip(1)
+      .take(1)
+      .select("name")
+      .all()
+      .toArray();
+    expect(rows).toEqual([{ name: "Carol" }]);
+    expect(spy.captured).toHaveLength(3);
+    expect(spy.captured.every((plan) => (plan.idbPlan as { indexName?: string }).indexName === "byEmail")).toBe(true);
+  });
+
   it("falls back to full scan when any OR branch lacks an index", async () => {
     const client = asRecord(idbOrm({ contract: userContract, executor: spy }));
     // `name` has no index — OR cannot be fully accelerated, must full-scan.

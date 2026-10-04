@@ -212,6 +212,27 @@ describe("idb/bytes@1", () => {
     expect(codec.decodeJson(codec.encodeJson(one) as string)).toEqual(one);
     expect(codec.decodeJson(codec.encodeJson(two) as string)).toEqual(two);
   });
+
+  // RFC 4648 section 10 test vectors: every padding length, in both directions.
+  it.each([
+    ["", ""],
+    ["f", "Zg=="],
+    ["fo", "Zm8="],
+    ["foo", "Zm9v"],
+    ["foob", "Zm9vYg=="],
+    ["fooba", "Zm9vYmE="],
+    ["foobar", "Zm9vYmFy"],
+  ])("encodes %j as %j in standard padded base64", (text, base64) => {
+    const bytes = new TextEncoder().encode(text);
+    expect(codec.encodeJson(bytes)).toBe(base64);
+    expect(codec.decodeJson(base64)).toEqual(bytes);
+  });
+
+  it("round-trips every byte value through the same base64 as Node's Buffer", () => {
+    const all = Uint8Array.from({ length: 256 }, (_, i) => i);
+    expect(codec.encodeJson(all)).toBe(Buffer.from(all).toString("base64"));
+    expect(codec.decodeJson(codec.encodeJson(all) as string)).toEqual(all);
+  });
 });
 
 // ── Codec registry completeness ───────────────────────────────────────────────

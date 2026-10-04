@@ -50,11 +50,10 @@ import { extractKeyFromRow, getKeyPath, getStoreName } from "@prisma-idb/client-
 import type { IdbKeyPath } from "@prisma-idb/client-idb/orm";
 import { domainModelsAtDefaultNamespace } from "@prisma/orm-framework/contract/types";
 import type { OutboxEvent, OutboxWriteEntry } from "../types";
+import { OUTBOX_STORE } from "./outbox-store";
 import { VERSION_META_STORE, versionMetaKey } from "./version-meta";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
-
-const OUTBOX_STORE = "_idb_sync_outbox";
 
 type MutationAst = IdbCreateAst | IdbDeleteAst | IdbUpdateAst | IdbCreateAllAst | IdbDeleteAllAst | IdbUpdateAllAst;
 
@@ -70,8 +69,6 @@ function isMutationAst(ast: IdbQueryAst): ast is MutationAst {
 }
 
 // ── Outbox record builders ────────────────────────────────────────────────────
-
-type OutboxRecord = OutboxEvent;
 
 /**
  * `getNextBatch` sorts outbox events by `createdAt` ascending for FIFO push
@@ -102,7 +99,7 @@ function buildOutboxRecord(
   operation: string,
   payload: unknown,
   versionMetaId: string | null
-): OutboxRecord {
+): OutboxEvent {
   return {
     id: crypto.randomUUID(),
     entityType: modelName,
@@ -150,6 +147,19 @@ function versionMetaPutOp(modelName: string, key: unknown, meta: IdbQueryPlan<un
       lastAppliedChangeId: null,
     },
   };
+}
+
+/**
+ * The ops that record `entries` in the sync stores: one outbox add per entry,
+ * plus a version-meta put when the entry's key is known. Both write paths
+ * (the plan-level batch and the transaction scope) append exactly these.
+ */
+function outboxOpsFor(entries: readonly OutboxWriteEntry[], meta: IdbQueryPlan<unknown>["meta"]): IdbAtomicPlan[] {
+  return entries.flatMap(({ modelName, operation, payload, key }) => {
+    const versionMetaId = key !== undefined ? versionMetaKey(modelName, key) : null;
+    const add = outboxAddOp(modelName, operation, payload, versionMetaId, meta);
+    return key !== undefined ? [add, versionMetaPutOp(modelName, key, meta)] : [add];
+  });
 }
 
 // ── Store name → model name (reverse lookup, for the transaction-scope path) ──
@@ -492,16 +502,8 @@ export class SyncInterceptorExecutor implements IdbQueryExecutorWithTransaction 
     const originalOps = flattenToOps(plan.idbPlan);
     const originalStores = storeNamesOf(plan.idbPlan);
 
-    const extraOps: IdbAtomicPlan[] = [];
-    let touchesVersionMeta = false;
-    for (const { modelName, operation, payload, key } of entries) {
-      const versionMetaId = key !== undefined ? versionMetaKey(modelName, key) : null;
-      extraOps.push(outboxAddOp(modelName, operation, payload, versionMetaId, meta));
-      if (key !== undefined) {
-        extraOps.push(versionMetaPutOp(modelName, key, meta));
-        touchesVersionMeta = true;
-      }
-    }
+    const extraOps = outboxOpsFor(entries, meta);
+    const touchesVersionMeta = entries.some(({ key }) => key !== undefined);
 
     const allStores = [...originalStores, OUTBOX_STORE, ...(touchesVersionMeta ? [VERSION_META_STORE] : [])];
 
@@ -655,13 +657,8 @@ class SyncInterceptingTransactionScope implements IdbTransactionScope {
   /** Writes every entry's outbox-add + VersionMeta-put, buffering it as ONE `commit()`-time `onOutboxWrite` batch — a no-op for an empty array (e.g. a scan-write that matched zero rows). */
   async #writeOutboxAndMeta(entries: readonly OutboxWriteEntry[]): Promise<void> {
     if (entries.length === 0) return;
-    const meta = syncPlanMeta(this.#config.contract);
-    for (const { modelName, operation, payload, key } of entries) {
-      const versionMetaId = key !== undefined ? versionMetaKey(modelName, key) : null;
-      await this.#inner.execute(outboxAddOp(modelName, operation, payload, versionMetaId, meta));
-      if (key !== undefined) {
-        await this.#inner.execute(versionMetaPutOp(modelName, key, meta));
-      }
+    for (const op of outboxOpsFor(entries, syncPlanMeta(this.#config.contract))) {
+      await this.#inner.execute(op);
     }
     this.#pendingBatches.push([...entries]);
   }

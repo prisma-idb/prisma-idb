@@ -18,11 +18,6 @@ import { notOk } from "@prisma/orm-framework/utils/result";
  * at `prisma-idb migration preflight` for chain validation. The browser
  * apply path goes through `openAndUpgrade()` directly via `auto-migrate.ts` in
  * client-idb.
- *
- * v0.12.0 merged the former single-space `execute({plan, …})` and
- * `executeAcrossSpaces({perSpaceOptions})` into one multi-space
- * `execute({driver, perSpaceOptions})`; the `MultiSpaceCapableRunner` interface
- * and `MultiSpace*` types were removed.
  */
 export class IdbMigrationRunner implements MigrationRunner<"idb", "idb"> {
   /**
@@ -55,8 +50,3 @@ export class IdbMigrationRunner implements MigrationRunner<"idb", "idb"> {
     });
   }
 }
-
-// Re-export helpers so target-idb/migration exposes them for downstream
-// consumers (client-idb auto-migrate, family-idb preflight).
-export { applyOneDdlOp, openAndUpgrade, writeMarker, writeMarkers, readMarker } from "./apply-ddl-op";
-export type { IdbMarkerRecord, MarkerWriteInput } from "./apply-ddl-op";

@@ -27,7 +27,8 @@ import {
   dropObjectStoreOp,
 } from "../src/core/migration-factories";
 import { IdbMigrationPlanner, contractToIdbSchema } from "../src/core/migration-planner";
-import { IdbMigrationRunner, openAndUpgrade, readMarker } from "../src/core/migration-runner";
+import { openAndUpgrade, readMarker } from "../src/core/apply-ddl-op";
+import { IdbMigrationRunner } from "../src/core/migration-runner";
 import type { IdbDdlOp } from "../src/core/migration-factories";
 import { IdbMigrationControlDriverDescriptor, extractMigrationDriver } from "../src/core/migration-driver";
 import type { IdbSchemaDiffInput } from "../src/core/schema-diff";
@@ -324,6 +325,23 @@ describe("IdbMigrationPlanner", () => {
     expect(result.kind).toBe("success");
     if (result.kind !== "success") return;
     expect(result.plan.origin).toMatchObject({ storageHash: "old-hash" });
+  });
+
+  it('plan(): uses "unknown" for a storage hash the contract does not carry', () => {
+    const from = { storage: { stores: { users: { keyPath: "id" } } } };
+    const to = { storage: { stores: { users: { keyPath: "id" }, posts: { keyPath: "id" } } } };
+    const result = planner.plan({
+      contract: to,
+      schema: null,
+      policy: ALLOW_ALL,
+      fromContract: from as never,
+      frameworkComponents: [],
+      spaceId: "app",
+    });
+    expect(result.kind).toBe("success");
+    if (result.kind !== "success") return;
+    expect(result.plan.origin).toEqual({ storageHash: "unknown" });
+    expect(result.plan.destination).toEqual({ storageHash: "unknown" });
   });
 
   it("plan(): returns empty ops when schemas are identical", () => {

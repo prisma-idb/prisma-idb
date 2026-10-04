@@ -89,16 +89,7 @@ function executeAtomicPlan(db: IDBDatabase, plan: IdbAtomicPlan): Promise<Row[]>
 
 function executeBatchPlan(db: IDBDatabase, plan: IdbBatchPlan): Promise<Row[]> {
   return new Promise<Row[]>((resolve, reject) => {
-    const mode: IDBTransactionMode = plan.ops.some(
-      (op) =>
-        op.kind === "add" ||
-        op.kind === "put" ||
-        op.kind === "delete" ||
-        op.kind === "update" ||
-        op.kind === "scan-write"
-    )
-      ? "readwrite"
-      : "readonly";
+    const mode: IDBTransactionMode = plan.ops.some((op) => planTxMode(op) === "readwrite") ? "readwrite" : "readonly";
 
     let tx: IDBTransaction;
     try {

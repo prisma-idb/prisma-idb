@@ -17,8 +17,6 @@ const managedDb = createManagedAutoSyncIdbClient<Contract>({
 /** Migrate + open a sync-tracked client in one call — `db.orm.*` mutations atomically write outbox events alongside the model write. */
 export const getDb = (): Promise<DbClient> => managedDb.get();
 
-export const closeDb = (): Promise<void> => managedDb.close();
-
 /**
  * Closes and wipes the local database — used on logout so a different
  * account signing in on the same browser never sees a previous session's

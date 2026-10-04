@@ -15,17 +15,9 @@ export const idbAdapterDescriptorMeta = {
       /** IDB has no RETURNING clause. */
       returning: false,
       /**
-       * Storage-level compound keys/indexes (Phase 9.1/9.2 —
-       * `IdbStoreDefinition`/`IdbIndexDefinition.keyPath` accept an array).
-       * This describes the `idb` adapter itself, not any optional add-on:
-       * `@prisma-idb/sync-server`'s ownership DAG (used by
-       * `sync-extension-idb`) separately does not support compound-keyed
-       * models yet — `getKeyField` throws for anything but a single string
-       * `keyPath` — but that's a `sync-server`-specific limitation enforced
-       * (and documented) there, not a capability of this adapter/target
-       * stack, and targets don't declare capabilities of their own (see
-       * `target-idb/src/core/descriptor-meta.ts`) for a narrower consumer
-       * to override this with.
+       * Storage-level compound keys and indexes: `keyPath` may be an array.
+       * The sync ownership DAG in `@prisma-idb/sync-server` has its own,
+       * narrower limit and enforces it there.
        */
       compoundKeys: true,
     },

@@ -10,7 +10,7 @@ export class IdbRuntimeDriverInstance implements RuntimeDriverInstance<"idb", "i
    * The live IDBDatabase connection. Resolves once `upgradeneeded` (if any)
    * completes and the database is ready for use.
    *
-   * The adapter awaits this inside `runDriver()` before opening transactions.
+   * `execute()` and `transaction()` await this before opening a transaction.
    * The Promise is shared — all concurrent callers get the same database object.
    */
   readonly db: Promise<IDBDatabase>;
@@ -29,7 +29,7 @@ export class IdbRuntimeDriverInstance implements RuntimeDriverInstance<"idb", "i
    * Returns `null` when the marker store does not exist (fresh database
    * that hasn't been initialised yet) or when no marker record is present.
    *
-   * Called by `IdbRuntimeImpl` at init time to verify that the live IDB
+   * Called by `IdbRuntimeImpl.verifyMarker()` to check that the live IDB
    * schema matches the contract.
    */
   async readMarker(): Promise<IdbMarkerRecord | null> {
@@ -48,9 +48,6 @@ export class IdbRuntimeDriverInstance implements RuntimeDriverInstance<"idb", "i
       };
       appReq.onerror = () => reject(appReq.error);
 
-      tx.oncomplete = () => {
-        /* resolve already called */
-      };
       tx.onerror = () => reject(tx.error);
     });
   }
@@ -94,9 +91,9 @@ export class IdbRuntimeDriverInstance implements RuntimeDriverInstance<"idb", "i
 /**
  * Opens an IDB database and resolves once it is ready for use.
  *
- * Wraps the IDB event-based open API in a Promise. The `upgradeneeded`
- * handler is a no-op at this level — migrations are orchestrated by
- * `IdbMigrationRunner` (target-idb) which opens the database at a specific
+ * Wraps the IDB event-based open API in a Promise. There is no `upgradeneeded`
+ * handler: the driver does not own schema. Migrations are applied by
+ * `openAndUpgrade` (target-idb), which opens the database at a specific
  * version and runs DDL inside the version-change transaction.
  *
  * When version is omitted the IDB spec opens the database at its current version
@@ -116,12 +113,6 @@ function openIdbDatabase(dbName: string, version?: number, factory: IDBFactory =
       reject(new Error(`IDB open blocked for "${dbName}": another connection is open with an older version.`));
     };
 
-    // Migration runner hooks here to create / drop object stores during
-    // version-change transactions. At the driver level this is a no-op
-    // because the driver does not own schema — migrations are the
-    // responsibility of `IdbMigrationRunner` in target-idb.
-    req.onupgradeneeded = handleUpgradeNeeded;
-
     req.onsuccess = () => {
       const db = req.result;
       // Multi-tab safety: when another tab opens this database at a higher
@@ -136,15 +127,4 @@ function openIdbDatabase(dbName: string, version?: number, factory: IDBFactory =
       resolve(db);
     };
   });
-}
-
-/**
- * No-op upgrade handler.
- *
- * The driver does not own schema. Object stores and indexes are created
- * by `IdbMigrationRunner` (target-idb) when it opens the database at a
- * bumped version number with a migration plan.
- */
-function handleUpgradeNeeded(_event: IDBVersionChangeEvent): void {
-  // No-op — DDL is handled by IdbMigrationRunner.
 }

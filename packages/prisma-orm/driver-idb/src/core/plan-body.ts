@@ -5,8 +5,8 @@ import type { ExecutionPlan } from "@prisma/orm-framework/components/runtime";
 /**
  * Name of the object store that holds the contract marker.
  *
- * Created during `upgradeneeded` by the migration runner and verified by the
- * runtime before every query execution to detect schema drift.
+ * Created during `upgradeneeded` by the migration runner. `IdbRuntime.verifyMarker()`
+ * compares its stored hash with the contract's to detect schema drift.
  *
  * Upstream equivalent: `_prisma_marker` table in SQLite/Postgres,
  * `_prisma_marker` collection in MongoDB.
@@ -137,7 +137,7 @@ export interface IdbPutPlan extends ExecutionPlan {
  *
  * Used for Prisma `update` where only a subset of fields change. The driver:
  *   1. Reads the current record via `store.get(key)`.
- *   2. Deep-merges `patch` onto the existing record with `{ ...existing, ...patch }`.
+ *   2. Shallow-merges `patch` onto the existing record with `{ ...existing, ...patch }`.
  *   3. Writes the merged record back via `store.put(merged)`.
  *   4. Echoes the merged record as the result row.
  *

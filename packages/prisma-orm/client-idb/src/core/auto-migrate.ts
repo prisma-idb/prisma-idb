@@ -130,44 +130,7 @@ export async function autoMigrate(input: {
 }): Promise<void> {
   const { dbName, factory } = input;
 
-  // Order here only affects the collection loop below, not the final apply
-  // order (see the combined-apply step, which re-sorts to match upstream
-  // ADR 212's extension-first convention).
-  const spaces: Array<{ spaceId: string; contractSpace: ContractSpace<Contract> }> = [
-    { spaceId: APP_SPACE_ID, contractSpace: input.contractSpace },
-    ...(input.extensions ?? []),
-  ];
-
-  // Reject reserved/duplicate extension space IDs before touching the
-  // database. Without this, two extensions sharing a spaceId would combine
-  // their pending DDL and the upgrade would try to create the same stores
-  // twice; an extension using APP_SPACE_ID would have its marker write
-  // silently overwrite (or be overwritten by) the app space's marker.
-  const seenSpaceIds = new Set<string>();
-  for (const extension of input.extensions ?? []) {
-    if (extension.spaceId === APP_SPACE_ID || seenSpaceIds.has(extension.spaceId)) {
-      throw new Error(`Invalid duplicate or reserved extension space ID: "${extension.spaceId}"`);
-    }
-    seenSpaceIds.add(extension.spaceId);
-  }
-
-  // Descriptor self-consistency (upstream ADR 212): a space's pinned headRef
-  // must match the hash actually embedded in its contractJson. Catches an
-  // extension author who edited the contract source without regenerating
-  // migrations/refs/head.json — fails loudly here instead of surfacing as a
-  // confusing chain-walk error deep inside walkChain.
-  for (const space of spaces) {
-    const declaredHash = space.contractSpace.contractJson.storage.storageHash;
-    const headHash = space.contractSpace.headRef.hash;
-    if (declaredHash !== headHash) {
-      throw new Error(
-        `Contract space "${space.spaceId}" is internally inconsistent: ` +
-          `contractJson.storage.storageHash (${declaredHash}) does not match ` +
-          `headRef.hash (${headHash}). The contract source likely changed without ` +
-          "regenerating migrations/refs/head.json for this space — rebuild its migration chain."
-      );
-    }
-  }
+  const spaces = resolveContractSpaces(input.contractSpace, input.extensions ?? []);
 
   // Read current DB version once (all spaces share the same IDB database).
   const { currentVersion: initialVersion } = await openAndReadMarker(dbName, factory, APP_SPACE_ID);
@@ -222,6 +185,52 @@ export async function autoMigrate(input: {
     ops: orderedPending.flatMap((space) => space.ops),
     markers: orderedPending.map((space) => ({ space: space.spaceId, storageHash: space.storageHash })),
   });
+}
+
+/** Validates bundled descriptors before the migration loop opens the database. */
+function resolveContractSpaces(
+  contractSpace: ContractSpace<Contract>,
+  extensions: ReadonlyArray<IdbExtensionSpace>
+): Array<{ spaceId: string; contractSpace: ContractSpace<Contract> }> {
+  // Validate and collect app-first. The combined upgrade applies extensions
+  // first, matching upstream ADR 212.
+  const spaces: Array<{ spaceId: string; contractSpace: ContractSpace<Contract> }> = [
+    { spaceId: APP_SPACE_ID, contractSpace },
+    ...extensions,
+  ];
+
+  // Reject reserved/duplicate extension space IDs before touching the
+  // database. Without this, two extensions sharing a spaceId would combine
+  // their pending DDL and the upgrade would try to create the same stores
+  // twice; an extension using APP_SPACE_ID would have its marker write
+  // silently overwrite (or be overwritten by) the app space's marker.
+  const seenSpaceIds = new Set<string>();
+  for (const extension of extensions) {
+    if (extension.spaceId === APP_SPACE_ID || seenSpaceIds.has(extension.spaceId)) {
+      throw new Error(`Invalid duplicate or reserved extension space ID: "${extension.spaceId}"`);
+    }
+    seenSpaceIds.add(extension.spaceId);
+  }
+
+  // Descriptor self-consistency (upstream ADR 212): a space's pinned headRef
+  // must match the hash actually embedded in its contractJson. Catches an
+  // extension author who edited the contract source without regenerating
+  // migrations/refs/head.json — fails loudly here instead of surfacing as a
+  // confusing chain-walk error deep inside walkChain.
+  for (const space of spaces) {
+    const declaredHash = space.contractSpace.contractJson.storage.storageHash;
+    const headHash = space.contractSpace.headRef.hash;
+    if (declaredHash !== headHash) {
+      throw new Error(
+        `Contract space "${space.spaceId}" is internally inconsistent: ` +
+          `contractJson.storage.storageHash (${declaredHash}) does not match ` +
+          `headRef.hash (${headHash}). The contract source likely changed without ` +
+          "regenerating migrations/refs/head.json for this space — rebuild its migration chain."
+      );
+    }
+  }
+
+  return spaces;
 }
 
 /**

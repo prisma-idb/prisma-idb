@@ -35,14 +35,6 @@
 
 // ── DDL factory functions ─────────────────────────────────────────────────────
 
-import type {
-  CreateIndexOp,
-  CreateObjectStoreOp,
-  DropIndexOp,
-  DropObjectStoreOp,
-  IdbDdlOp,
-} from "../core/migration-factories";
-
 export {
   createObjectStoreOp,
   dropObjectStoreOp,
@@ -52,7 +44,13 @@ export {
   deletedDataWarning,
 } from "../core/migration-factories";
 
-export type { IdbDdlOp, CreateObjectStoreOp, DropObjectStoreOp, CreateIndexOp, DropIndexOp };
+export type {
+  IdbDdlOp,
+  CreateObjectStoreOp,
+  DropObjectStoreOp,
+  CreateIndexOp,
+  DropIndexOp,
+} from "../core/migration-factories";
 
 // ── Schema diffing ────────────────────────────────────────────────────────────
 

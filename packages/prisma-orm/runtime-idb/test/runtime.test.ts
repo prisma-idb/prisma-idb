@@ -21,6 +21,7 @@ import type {
   IdbRuntimeDriverInstance,
   IdbTransactionScope,
 } from "@prisma-idb/driver-idb/runtime";
+import { IDBKeyRange } from "fake-indexeddb";
 import { describe, expect, it, vi } from "vitest";
 import type { IdbMiddleware } from "../src/idb-middleware";
 import { createIdbRuntime } from "../src/idb-runtime";
@@ -722,6 +723,98 @@ describe("constructor middleware context", () => {
 
     expect(hashes).toHaveLength(2);
     expect(hashes[0]).not.toBe(hashes[1]);
+  });
+});
+
+// ── built-in contentHash: plan identity ──────────────────────────────────────
+
+describe("built-in contentHash plan identity", () => {
+  type ExecPlan = import("@prisma/orm-framework/components/runtime").ExecutionPlan;
+
+  /** Runs one query and returns the built-in `contentHash` the middleware sees. */
+  async function captureContentHash(): Promise<(plan: Record<string, unknown>) => Promise<string>> {
+    let hash: ((plan: ExecPlan) => Promise<string>) | undefined;
+    const mw: IdbMiddleware = {
+      name: "hash-capture",
+      familyId: "idb",
+      beforeQuery: async (_plan, ctx) => {
+        hash = ctx.contentHash;
+      },
+    };
+    const runtime = createIdbRuntime({
+      adapter: makeMockAdapter(),
+      driver: makeMockDriver(),
+      contract: TEST_CONTRACT,
+      middleware: [mw],
+    });
+    await runtime.query(makeQueryPlan());
+    return (plan) => hash!(plan as unknown as ExecPlan);
+  }
+
+  const range = (lower: unknown, upper: unknown) => ({ lower, upper, lowerOpen: false, upperOpen: true });
+
+  it("ignores function-valued fields such as row filters", async () => {
+    const contentHash = await captureContentHash();
+    const base = { kind: "cursor-scan", storeName: "users" };
+
+    expect(await contentHash({ ...base, filter: () => true })).toBe(await contentHash(base));
+  });
+
+  it("keeps only the storage hash from meta", async () => {
+    const contentHash = await captureContentHash();
+    const base = { kind: "key-get", storeName: "users", key: 1 };
+
+    const a = await contentHash({ ...base, meta: { storageHash: "h1", lane: "idb" } });
+    const b = await contentHash({ ...base, meta: { storageHash: "h1", lane: "other" } });
+    const c = await contentHash({ ...base, meta: { storageHash: "h2", lane: "idb" } });
+
+    expect(a).toBe(b);
+    expect(a).not.toBe(c);
+  });
+
+  it("hashes key ranges by their bounds", async () => {
+    const contentHash = await captureContentHash();
+    const base = { kind: "index-get", storeName: "users", indexName: "by_age" };
+
+    const a = await contentHash({ ...base, range: range(18, 65) });
+    const b = await contentHash({ ...base, range: range(18, 65) });
+    const c = await contentHash({ ...base, range: range(18, 66) });
+
+    expect(a).toBe(b);
+    expect(a).not.toBe(c);
+  });
+
+  it("hashes a real key range the same as a plain object with the same bounds", async () => {
+    const contentHash = await captureContentHash();
+    const base = { kind: "index-get", storeName: "users", indexName: "by_age" };
+
+    // Normalization turns the key-range class instance into a plain object, which canonicalStringify accepts.
+    const real = await contentHash({ ...base, range: IDBKeyRange.bound(18, 65, false, true) });
+    const plain = await contentHash({ ...base, range: range(18, 65) });
+    const other = await contentHash({ ...base, range: IDBKeyRange.bound(18, 66, false, true) });
+
+    expect(real).toBe(plain);
+    expect(real).not.toBe(other);
+  });
+
+  it("ignores extra properties on a duck-typed key range", async () => {
+    const contentHash = await captureContentHash();
+    const base = { kind: "index-get", storeName: "users", indexName: "by_age" };
+
+    const withExtra = await contentHash({ ...base, range: { ...range(18, 65), note: "ignored" } });
+
+    expect(withExtra).toBe(await contentHash({ ...base, range: range(18, 65) }));
+  });
+
+  it("hashes key ranges that differ only in open flags differently", async () => {
+    const contentHash = await captureContentHash();
+    const base = { kind: "index-get", storeName: "users", indexName: "by_age" };
+
+    const lowerOpen = await contentHash({ ...base, range: IDBKeyRange.bound(18, 65, true, true) });
+    const lowerClosed = await contentHash({ ...base, range: IDBKeyRange.bound(18, 65, false, true) });
+    const upperClosed = await contentHash({ ...base, range: IDBKeyRange.bound(18, 65, false, false) });
+
+    expect(new Set([lowerOpen, lowerClosed, upperClosed]).size).toBe(3);
   });
 });
 

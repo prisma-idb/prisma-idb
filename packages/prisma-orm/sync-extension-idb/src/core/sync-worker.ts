@@ -5,9 +5,11 @@
 import type { IdbContract } from "@prisma-idb/client-idb/orm";
 import type { SyncIdbClient } from "./sync-client";
 import type { OutboxEvent } from "./outbox-store";
-import { getNextBatch, markSynced, markFailed } from "./outbox-store";
+import { getNextBatch, markSynced, markFailed, OUTBOX_STORE } from "./outbox-store";
 import { applyPull } from "./apply-pull";
+import { createEmitter } from "./emitter";
 import { createPullCursor } from "./pull-cursor";
+import { VERSION_META_STORE } from "./version-meta";
 import type { LogWithRecord, PushResult } from "../types";
 
 // ── Public types ──────────────────────────────────────────────────────────────
@@ -130,13 +132,7 @@ export function createSyncWorker<TContract extends IdbContract>(options: SyncWor
   // the same unsynced events twice.
   let inFlightCycle: Promise<void> | null = null;
 
-  const listeners = new Map<keyof SyncEventMap, Set<(payload: unknown) => void>>();
-
-  function emit<K extends keyof SyncEventMap>(event: K, payload: SyncEventMap[K]): void {
-    const set = listeners.get(event);
-    if (!set) return;
-    for (const cb of set) cb(payload);
-  }
+  const { emit, on } = createEmitter<SyncEventMap>();
 
   function setStatus(next: SyncWorkerStatus): void {
     if (status === next) return;
@@ -152,7 +148,7 @@ export function createSyncWorker<TContract extends IdbContract>(options: SyncWor
     let pushSynced = 0;
     let pushFailed = 0;
     const results = await withTimeout((signal) => pushHandler(events, signal), requestTimeoutMs, "pushHandler");
-    await syncClient.withTransaction(["_idb_sync_outbox", "_idb_sync_version_meta"], async (scope) => {
+    await syncClient.withTransaction([OUTBOX_STORE, VERSION_META_STORE], async (scope) => {
       for (const result of results) {
         if (result.success) {
           await markSynced(scope, result.id);
@@ -261,11 +257,6 @@ export function createSyncWorker<TContract extends IdbContract>(options: SyncWor
         }
       }
     },
-    on<K extends keyof SyncEventMap>(event: K, cb: (payload: SyncEventMap[K]) => void): () => void {
-      if (!listeners.has(event)) listeners.set(event, new Set());
-      const set = listeners.get(event)!;
-      set.add(cb as (payload: unknown) => void);
-      return () => set.delete(cb as (payload: unknown) => void);
-    },
+    on,
   };
 }

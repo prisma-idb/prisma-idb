@@ -4,7 +4,7 @@ import type { AggregateFn, IdbAggregateBuilder, IdbAggregateSelector } from "./t
  * Build the aggregate selector factory handed to `.aggregate(agg => …)` and
  * `groupBy(...).aggregate(agg => …)`.
  *
- * Each method returns a frozen {@link IdbAggregateSelector} marker; the actual
+ * Each method returns an {@link IdbAggregateSelector} marker; the actual
  * reduction happens in {@link reduceAggregate} once the matching rows are
  * materialised in memory. Mirrors `createAggregateBuilder` from the vendor
  * `sql-orm-client/aggregate-builder.ts`, minus the field→column mapping (IDB
@@ -24,7 +24,7 @@ export function createAggregateBuilder<TContract, ModelName extends string>(): I
 }
 
 /** Type guard: is `value` an {@link IdbAggregateSelector}? */
-export function isAggregateSelector(value: unknown): value is IdbAggregateSelector<unknown> {
+function isAggregateSelector(value: unknown): value is IdbAggregateSelector<unknown> {
   if (typeof value !== "object" || value === null) return false;
   const candidate = value as { kind?: unknown; fn?: unknown };
   return (
@@ -46,7 +46,7 @@ export function isAggregateSelector(value: unknown): value is IdbAggregateSelect
  *   "aggregate of an empty set is null" and the vendor `coerceAggregateValue`
  *   null handling). String-encoded numbers are coerced via `Number()`.
  */
-export function reduceAggregate(
+function reduceAggregate(
   fn: AggregateFn,
   field: string | undefined,
   rows: readonly Record<string, unknown>[]

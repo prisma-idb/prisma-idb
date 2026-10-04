@@ -6,7 +6,7 @@
   import { Card, CardContent, CardHeader, CardTitle } from "$lib/components/ui/card";
   import { Label } from "$lib/components/ui/label";
   import { Textarea } from "$lib/components/ui/textarea";
-  import { and, not, or } from "@prisma-idb/client-idb/orm";
+  import { runQuery } from "$lib/query-runner";
   import { getDb, resetDb, resolveDbName } from "$lib/prisma/db";
   import QueryPresets from "$lib/components/query-presets.svelte";
 
@@ -38,7 +38,7 @@
   /**
    * Run the textarea contents as a JS expression against the ORM.
    *
-   * `orm`, `and`, `or`, `not` are in scope. Expressions that return a
+   * `orm`, `and`, `or`, `not`, and `transaction` are in scope. Expressions that return a
    * Promise or AsyncIterableResult are awaited and JSON-stringified into
    * the output panel. Errors render as kind="error" so Playwright specs
    * can assert on failures without inspecting the console.
@@ -53,29 +53,9 @@
     resultKind = "idle";
     resultText = "";
     try {
-      const body = `return (async () => {\n  return (${query});\n})();`;
-      const fn = new Function("orm", "and", "or", "not", "transaction", body) as (
-        ormArg: unknown,
-        andFn: unknown,
-        orFn: unknown,
-        notFn: unknown,
-        transactionFn: unknown
-      ) => Promise<unknown>;
-      let raw = await fn(orm, and, or, not, transaction);
-
-      // AsyncIterableResult: drain to an array so the JSON output is
-      // useful. Duck-typed so we don't need a hard dep on the framework.
-      if (raw && typeof (raw as Record<string, unknown>)["toArray"] === "function") {
-        raw = await (raw as { toArray(): Promise<unknown[]> }).toArray();
-      }
+      const output = await runQuery(query, orm, transaction);
       resultKind = "ok";
-      // JSON.stringify(undefined) returns `undefined` (the actual
-      // value), which renders as an empty string and breaks any
-      // downstream JSON.parse. Normalise to JSON `null` so the output
-      // panel always shows valid JSON — `delete()`, void-returning
-      // setups, and IIFE seed scripts that don't return all collapse
-      // to the same harmless `null`.
-      resultText = JSON.stringify(raw === undefined ? null : raw, null, 2);
+      resultText = output;
     } catch (err) {
       resultKind = "error";
       resultText = err instanceof Error ? `${err.name}: ${err.message}` : String(err);

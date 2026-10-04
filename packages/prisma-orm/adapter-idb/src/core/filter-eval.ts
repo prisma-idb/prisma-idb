@@ -14,7 +14,7 @@
  */
 
 import { compareFieldValues, fieldValuesEqual } from "@prisma-idb/target-idb/runtime";
-import type { IdbFilterExpr } from "./idb-filter-expr";
+import type { IdbFilterExpr, IdbFilterOp } from "./idb-filter-expr";
 
 /** Evaluate an AST node against a single row. Returns `true` to keep the row. */
 export function evaluateFilter(expr: IdbFilterExpr, row: Record<string, unknown>): boolean {
@@ -44,7 +44,7 @@ export function evaluateFilter(expr: IdbFilterExpr, row: Record<string, unknown>
   }
 }
 
-function evalFieldOp(field: string, op: string, value: unknown, row: Record<string, unknown>): boolean {
+function evalFieldOp(field: string, op: IdbFilterOp, value: unknown, row: Record<string, unknown>): boolean {
   const cell = row[field];
   switch (op) {
     case "eq":
@@ -73,11 +73,11 @@ function evalFieldOp(field: string, op: string, value: unknown, row: Record<stri
       return !value.some((v) => fieldValuesEqual(cell, v));
     }
     case "contains":
-      return cell !== undefined && cell !== null && String(cell).includes(String(value));
+      return isPresent(cell) && String(cell).includes(String(value));
     case "startsWith":
-      return cell !== undefined && cell !== null && String(cell).startsWith(String(value));
+      return isPresent(cell) && String(cell).startsWith(String(value));
     case "endsWith":
-      return cell !== undefined && cell !== null && String(cell).endsWith(String(value));
+      return isPresent(cell) && String(cell).endsWith(String(value));
     default:
       return false;
   }

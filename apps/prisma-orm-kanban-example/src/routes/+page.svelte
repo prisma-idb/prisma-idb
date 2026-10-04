@@ -13,12 +13,7 @@
   const kanban = new KanbanStore();
   setContext(KANBAN_CTX, kanban);
 
-  // Own effect, not folded into the session-reactive one below: that one
-  // re-runs whenever `$session` changes (e.g. a token refresh), and tearing
-  // the sync worker down on every re-run (instead of only on actual unmount)
-  // would stop it for good — `startSync()` no-ops once `this.syncWorker` is
-  // set, so nothing would ever restart it. This effect reads no reactive
-  // state, so it only ever runs its cleanup once, on unmount.
+  // Dispose only on page unmount, not when the session store changes.
   $effect(() => {
     return () => kanban.dispose();
   });
