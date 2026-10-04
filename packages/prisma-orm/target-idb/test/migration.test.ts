@@ -27,7 +27,8 @@ import {
   dropObjectStoreOp,
 } from "../src/core/migration-factories";
 import { IdbMigrationPlanner, contractToIdbSchema } from "../src/core/migration-planner";
-import { IdbMigrationRunner, openAndUpgrade, readMarker } from "../src/core/migration-runner";
+import { openAndUpgrade, readMarker } from "../src/core/apply-ddl-op";
+import { IdbMigrationRunner } from "../src/core/migration-runner";
 import type { IdbDdlOp } from "../src/core/migration-factories";
 import { IdbMigrationControlDriverDescriptor, extractMigrationDriver } from "../src/core/migration-driver";
 import type { IdbSchemaDiffInput } from "../src/core/schema-diff";

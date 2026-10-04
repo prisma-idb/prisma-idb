@@ -13,20 +13,18 @@ import { IdbMigrationPlanner, contractToIdbSchema } from "../core/migration-plan
 import { IdbMigrationRunner } from "../core/migration-runner";
 
 /**
- * IDB contract serializer — validates on input, passes through on output.
+ * IDB contract serializer — identity in both directions.
  *
  * IDB contracts are TypeScript-first (`defineContract`), so they are
- * already plain objects with no class instances. Serialization is identity;
- * deserialization runs validation.
+ * already plain, JSON-safe objects with no class instances.
  */
 const idbContractSerializer: ContractSerializer<Contract> = {
   deserializeContract<T extends Contract = Contract>(json: unknown): T {
     return json as T;
   },
-  serializeContract(_contract: Contract) {
-    // IDB contracts are plain JSON-safe objects. Serialization is identity.
+  serializeContract(contract: Contract) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return _contract as any;
+    return contract as any;
   },
 };
 

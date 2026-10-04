@@ -20,9 +20,6 @@ import { diffIdbSchema } from "./schema-diff";
  * Extends `MigrationPlanWithAuthoringSurface` by narrowing `operations` to
  * `readonly IdbDdlOp[]`. This is a valid covariant narrowing because
  * `IdbDdlOp extends MigrationPlanOperation`.
- *
- * The runner re-casts `plan.operations` back to `readonly IdbDdlOp[]` via
- * `isIdbDdlOp` validation.
  */
 export interface IdbMigrationPlanWithAuthoring extends MigrationPlanWithAuthoringSurface {
   readonly operations: readonly IdbDdlOp[];
@@ -31,26 +28,29 @@ export interface IdbMigrationPlanWithAuthoring extends MigrationPlanWithAuthorin
 // ── Contract → schema IR extraction ──────────────────────────────────────────
 
 /**
+ * The `storage` section of a raw contract, or `null` when the contract has
+ * none. Contracts arrive as `unknown` / `Contract` at planner call sites, so
+ * the lookup is dynamic.
+ */
+function contractStorage(contract: unknown): Record<string, unknown> | null {
+  if (contract === null || typeof contract !== "object") return null;
+  const storage = (contract as Record<string, unknown>)["storage"];
+  return storage !== null && typeof storage === "object" ? (storage as Record<string, unknown>) : null;
+}
+
+/**
  * Extract an `IdbSchemaDiffInput` from a raw contract object.
  *
  * Returns `null` for a null contract (fresh database — no prior schema).
- * The extraction is dynamic because contracts arrive as `unknown` / `Contract`
- * at planner call sites.
  */
-export function contractToIdbSchema(contract: Contract | null | unknown): IdbSchemaDiffInput | null {
-  if (contract === null || typeof contract !== "object") return null;
-  const storage = (contract as Record<string, unknown>)["storage"];
-  if (storage === null || typeof storage !== "object") return null;
-  const stores = (storage as Record<string, unknown>)["stores"];
+export function contractToIdbSchema(contract: unknown): IdbSchemaDiffInput | null {
+  const stores = contractStorage(contract)?.["stores"];
   if (stores === null || typeof stores !== "object") return null;
   return { stores: stores as Record<string, IdbStoreDefinition> };
 }
 
-function extractStorageHash(contract: Contract | null | unknown): string {
-  if (contract === null || typeof contract !== "object") return "unknown";
-  const storage = (contract as Record<string, unknown>)["storage"];
-  if (storage === null || typeof storage !== "object") return "unknown";
-  const hash = (storage as Record<string, unknown>)["storageHash"];
+function extractStorageHash(contract: unknown): string {
+  const hash = contractStorage(contract)?.["storageHash"];
   return typeof hash === "string" ? hash : "unknown";
 }
 
@@ -136,16 +136,14 @@ function collectFactoryImports(ops: readonly IdbDdlOp[]): string[] {
  * `unique`/`multiEntry` are rendered only when actually present on `def` —
  * never defaulted. The contract canonicaliser strips `unique: false` /
  * `multiEntry: false` from indexes (default-stripping), so an absent key
- * here means "not set", not "false". Defaulting it to `false` and always
- * rendering it (as this used to do for `unique`) is a self-emit round-trip
- * bug: `JSON.stringify` drops an `undefined` value's key but keeps an
- * explicit `false`, so re-emitting `ops.json` from the always-rendered TS
- * produces different bytes — and a different `migrationHash` — than the
- * planner's original output, silently breaking `MigrationCLI.run`'s
+ * here means "not set", not "false". Rendering an explicit `false` would
+ * break the self-emit round trip: `JSON.stringify` drops an `undefined`
+ * value's key but keeps `false`, so re-emitting `ops.json` from the rendered
+ * TS would produce different bytes — and a different `migrationHash` — than
+ * the planner's original output. That would violate `MigrationCLI.run`'s
  * "re-running this file reproduces its own artifacts" contract. Shared by
- * both the standalone `createIndexOp(...)` call and the `indexes` map
- * embedded in a `createObjectStoreOp(...)` def (see below) so both sites
- * stay symmetric.
+ * the standalone `createIndexOp(...)` call and the `indexes` map embedded in
+ * a `createObjectStoreOp(...)` def so both sites stay symmetric.
  */
 function renderIndexDefLiteral(def: IdbIndexDefinition): string {
   const optsParts = [`keyPath: ${JSON.stringify(def.keyPath)}`];
@@ -167,12 +165,10 @@ function renderOpCall(op: IdbDdlOp): string {
       }
       // `diffIdbSchema` passes the full contract store definition (indexes
       // included) into `createObjectStoreOp`'s `def` for a freshly-created
-      // store — `applyOneDdlOp` never reads `def.indexes` (indexes are
-      // actually created via the separate `createIndexOp`s diffIdbSchema
-      // also emits), so this is inert metadata. Previously dropped here
-      // entirely, which is a self-emit round-trip bug for the same reason
-      // as `unique` above: the planner's `ops.json` has it, but re-emitting
-      // from the rendered TS didn't reproduce it, so the hashes diverged.
+      // store. `applyOneDdlOp` never reads `def.indexes` (the separate
+      // `createIndexOp`s do the work), so this is inert metadata. It is
+      // still rendered: the planner's `ops.json` has it, and a re-emit that
+      // dropped it would produce different hashes (see `renderIndexDefLiteral`).
       if (op.def.indexes !== undefined && Object.keys(op.def.indexes).length > 0) {
         const entries = Object.entries(op.def.indexes)
           .map(([indexName, def]) => `${JSON.stringify(indexName)}: ${renderIndexDefLiteral(def)}`)

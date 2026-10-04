@@ -161,45 +161,51 @@ export const codecDescriptors: readonly AnyCodecDescriptor[] = [
       id: "idb/bytes@1",
       encode: async (value: Uint8Array) => value,
       decode: async (value: Uint8Array) => value,
-      encodeJson: (value: Uint8Array) => {
-        const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-        let result = "",
-          i = 0;
-        while (i < value.length) {
-          const a = value[i++] ?? 0,
-            b = value[i++] ?? 0,
-            c = value[i++] ?? 0;
-          result +=
-            chars[a >> 2]! +
-            chars[((a & 3) << 4) | (b >> 4)]! +
-            (i - 1 < value.length || i - 2 < value.length ? chars[((b & 15) << 2) | (c >> 6)]! : "=") +
-            (i - 1 < value.length ? chars[c & 63]! : "=");
-        }
-        return result;
-      },
-      decodeJson: (value: string) => {
-        const b64 = value as string;
-        const lookup = new Uint8Array(128);
-        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/".split("").forEach((c, i) => {
-          lookup[c.charCodeAt(0)!] = i;
-        });
-        const stripped = b64.replace(/=+$/, "");
-        const out = new Uint8Array(Math.floor((stripped.length * 3) / 4));
-        let o = 0;
-        for (let i = 0; i < stripped.length; i += 4) {
-          const a = lookup[stripped.charCodeAt(i)!]! ?? 0;
-          const b = lookup[stripped.charCodeAt(i + 1)!]! ?? 0;
-          const c = lookup[stripped.charCodeAt(i + 2)!]! ?? 0;
-          const d = lookup[stripped.charCodeAt(i + 3)!]! ?? 0;
-          out[o++] = (a << 2) | (b >> 4);
-          if (i + 2 < stripped.length) out[o++] = ((b & 15) << 4) | (c >> 2);
-          if (i + 3 < stripped.length) out[o++] = ((c & 3) << 6) | d;
-        }
-        return out;
-      },
+      encodeJson: bytesToBase64,
+      decodeJson: base64ToBytes,
     }),
   },
 ] as const;
+
+// ── Base64 (idb/bytes@1 JSON form) ────────────────────────────────────────────
+
+const BASE64_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+/** Character code → 6-bit value. Codes outside the alphabet decode as 0. */
+const BASE64_VALUES = new Uint8Array(128);
+for (let i = 0; i < BASE64_ALPHABET.length; i++) BASE64_VALUES[BASE64_ALPHABET.charCodeAt(i)] = i;
+
+/** Standard padded base64 (RFC 4648). */
+function bytesToBase64(bytes: Uint8Array): string {
+  let result = "";
+  for (let i = 0; i < bytes.length; i += 3) {
+    const a = bytes[i]!;
+    const b = bytes[i + 1];
+    const c = bytes[i + 2];
+    result +=
+      BASE64_ALPHABET[a >> 2]! +
+      BASE64_ALPHABET[((a & 3) << 4) | ((b ?? 0) >> 4)]! +
+      (b === undefined ? "=" : BASE64_ALPHABET[((b & 15) << 2) | ((c ?? 0) >> 6)]!) +
+      (c === undefined ? "=" : BASE64_ALPHABET[c & 63]!);
+  }
+  return result;
+}
+
+function base64ToBytes(base64: string): Uint8Array {
+  const stripped = base64.replace(/=+$/, "");
+  const out = new Uint8Array(Math.floor((stripped.length * 3) / 4));
+  let o = 0;
+  for (let i = 0; i < stripped.length; i += 4) {
+    const a = BASE64_VALUES[stripped.charCodeAt(i)] ?? 0;
+    const b = BASE64_VALUES[stripped.charCodeAt(i + 1)] ?? 0;
+    const c = BASE64_VALUES[stripped.charCodeAt(i + 2)] ?? 0;
+    const d = BASE64_VALUES[stripped.charCodeAt(i + 3)] ?? 0;
+    out[o++] = (a << 2) | (b >> 4);
+    if (i + 2 < stripped.length) out[o++] = ((b & 15) << 4) | (c >> 2);
+    if (i + 3 < stripped.length) out[o++] = ((c & 3) << 6) | d;
+  }
+  return out;
+}
 
 // ── Codec lookup ──────────────────────────────────────────────────────────────
 
