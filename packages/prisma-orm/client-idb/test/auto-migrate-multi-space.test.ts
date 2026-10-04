@@ -6,7 +6,7 @@
  * `upgradeneeded` transaction, which also writes every space's marker.
  */
 import "fake-indexeddb/auto";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { defineContract } from "@prisma-idb/family-idb/contract-ts";
 import idbFamilyPack from "@prisma-idb/family-idb/pack";
 import idbTargetPack from "@prisma-idb/target-idb/pack";
@@ -200,6 +200,35 @@ describe("auto-migrate combined multi-space apply", () => {
     await expect(
       createAutoMigratingIdbClient({ contractSpace: appSpace, dbName: name, extensions: [tampered] })
     ).rejects.toThrow(/internally inconsistent/i);
+  });
+
+  it("validates all descriptors before opening the database", async () => {
+    const open = vi.fn(() => {
+      throw new Error("database must not open");
+    });
+    const factory = { open } as unknown as IDBFactory;
+    const ext = syncExtension();
+    const inconsistent = {
+      ...ext,
+      contractSpace: { ...ext.contractSpace, headRef: { hash: "wrong", invariants: [] } },
+    };
+    await expect(
+      createAutoMigratingIdbClient({
+        contractSpace: buildContractSpaceFixture([appV1]),
+        dbName: dbName(),
+        factory,
+        extensions: [inconsistent, inconsistent],
+      })
+    ).rejects.toThrow(/duplicate or reserved/i);
+    await expect(
+      createAutoMigratingIdbClient({
+        contractSpace: buildContractSpaceFixture([appV1]),
+        dbName: dbName(),
+        factory,
+        extensions: [inconsistent],
+      })
+    ).rejects.toThrow(/internally inconsistent/i);
+    expect(open).not.toHaveBeenCalled();
   });
 
   it("rejects an extension using the reserved app space ID", async () => {
