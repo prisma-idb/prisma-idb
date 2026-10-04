@@ -251,7 +251,7 @@ export async function GET(req: Request) {
 }
 ```
 
-`pull` returns up to 50 changes after the cursor, in changelog-id order. A `record` of `null` tells the client to delete its copy: the record was deleted, or no longer belongs to this user. A malformed key instead produces a `validationError` marker; the client skips it without deleting a local record.
+`pull` returns up to 50 changes after the cursor, in changelog-id order. A `record` of `null` tells the client to delete its copy: the record was deleted, or no longer belongs to this user. If key decoding throws `KEYPATH_VALIDATION_FAILURE`, the response includes a `validationError` marker; the client skips that entry without deleting a local record. A root-model ownership rejection can return `record: null` before decoding. See [Pull validation](/docs/prisma-8/sync/server#pull-validation) for details.
 
 </Step>
 </Steps>

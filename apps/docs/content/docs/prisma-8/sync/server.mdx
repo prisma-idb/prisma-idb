@@ -106,7 +106,7 @@ Handle each known failure reason explicitly. The reason unions can grow in futur
 
 ### Per-event validation and retries
 
-`applyPush` revives dates, bigint and bytes from their JSON representations before validating them against the server contract. Malformed records and patches return `RECORD_VALIDATION_FAILURE`; malformed keys return `KEYPATH_VALIDATION_FAILURE`. These failures are non-retryable and open no write transaction. Updates cannot change the primary key.
+`applyPush` revives dates, bigint and bytes from their JSON representations. `validatePush` validates keys against the server contract and records and patches against `clientContract`. This lets browser events omit fields excluded from the browser contract. Malformed records and patches return `RECORD_VALIDATION_FAILURE`; malformed keys return `KEYPATH_VALIDATION_FAILURE`. These failures are non-retryable and open no write transaction. Updates cannot change the primary key.
 
 Push results include the first retryable failure and omit all later events. The worker keeps omitted events pending without counting a try against them. This ordering lets a Todo wait until its Board succeeds on retry.
 
@@ -116,7 +116,7 @@ For required Postgres `Json` fields (`pg/json@1` and `pg/jsonb@1`), wire `null` 
 
 ### Pull validation
 
-Ordinary pull logs include `record`, with `null` signaling a delete or revoked ownership. Malformed changelog keys instead return `validationError: "KEYPATH_VALIDATION_FAILURE"` and omit `record`. `applyPull` skips those entries, counts them as validation failures and advances the cursor without changing local records or version metadata.
+Ordinary pull logs include `record`, with `null` signaling a delete or revoked ownership. When key decoding throws `KEYPATH_VALIDATION_FAILURE`, `pull` returns `validationError: "KEYPATH_VALIDATION_FAILURE"` and omits `record`. `applyPull` skips those entries, counts them as validation failures and advances the cursor without changing local records or version metadata. This marker does not cover every malformed key: a root-model ownership rejection can return `record: null` before decoding, so the client deletes its local copy.
 
 The package also exports the lower-level functions, including `applyPush`, `pull`, `checkAuthorization` and `sqlGetKeyField`. See its README for the full list.
 
