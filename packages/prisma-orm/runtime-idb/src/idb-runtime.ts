@@ -118,34 +118,36 @@ function buildMiddlewareContext(contract: Record<string, unknown>): RuntimeMiddl
     // query()/execute() paths, which is exactly the "runtime" scope. There is
     // no IDB connection pool, so "connection" is not applicable either.
     scope: "runtime",
-    contentHash: async (exec: ExecutionPlan) => {
-      // Reduce the plan to its structural identity for hashing.
-      // Exclude functions (IdbRowFilter, IdbRowComparator) and
-      // collapse IDBKeyRange to its bounds so deterministic
-      // comparisons work.
-      const plan = exec as unknown as Record<string, unknown>;
-      const hashable: Record<string, unknown> = {};
-      for (const [key, value] of Object.entries(plan)) {
-        if (key === "meta") {
-          // meta.storageHash is the primary identity field
-          const meta = value as Record<string, unknown> | undefined;
-          hashable["meta"] = { storageHash: meta?.["storageHash"] };
-        } else if (typeof value === "function") {
-          // Skip in-memory filters/comparators — not hashable
-          continue;
-        } else if ((typeof IDBKeyRange !== "undefined" && value instanceof IDBKeyRange) || isIdbKeyRange(value)) {
-          // Collapse IDBKeyRange to its bounds
-          hashable[key] = keyRangeIdentity(value as IDBKeyRange);
-        } else {
-          hashable[key] = value;
-        }
-      }
-      return hashContent(canonicalStringify(hashable));
-    },
+    contentHash: async (exec: ExecutionPlan) => hashContent(canonicalStringify(hashablePlan(exec))),
   };
 }
 
-/** Check for IDBKeyRange-like objects (e.g. from fake-indexeddb). */
+/**
+ * Reduce a plan to the fields that decide cache-key equality, so two
+ * semantically identical plans hash the same.
+ *
+ * - `meta` keeps only `storageHash`, its identity field.
+ * - Functions (`IdbRowFilter`, `IdbRowComparator`) are dropped; they cannot be hashed.
+ * - Key ranges collapse to their bounds.
+ */
+function hashablePlan(exec: ExecutionPlan): Record<string, unknown> {
+  const hashable: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(exec as unknown as Record<string, unknown>)) {
+    if (key === "meta") {
+      const meta = value as Record<string, unknown> | undefined;
+      hashable["meta"] = { storageHash: meta?.["storageHash"] };
+    } else if (typeof value === "function") {
+      continue;
+    } else if (isIdbKeyRange(value)) {
+      hashable[key] = keyRangeIdentity(value);
+    } else {
+      hashable[key] = value;
+    }
+  }
+  return hashable;
+}
+
+/** Duck-typed so it also matches ranges from fake-indexeddb, where `instanceof IDBKeyRange` fails. */
 function isIdbKeyRange(value: unknown): value is IDBKeyRange {
   return (
     typeof value === "object" &&

@@ -12,11 +12,8 @@ import type { IdbLowererContext, IdbRuntimeAdapterInstance } from "./runtime-ada
  *
  * `lower()` is a structural passthrough: the `idbPlan` carried by
  * `IdbQueryPlan` is already execution-ready because IDB has no query
- * language to compile from. The `codecs` lookup and `ctx.contract` are
- * available for per-field codec encoding when custom codecs (e.g.
- * `idb/date@1`) need to transform field values before they reach the
- * driver. Since all current `idb/*` codecs are identity transforms, the
- * passthrough output is correct for the standard type set.
+ * language to compile from. Every current `idb/*` codec is an identity
+ * transform for stored values, so no field needs encoding.
  */
 export class IdbAdapter implements IdbRuntimeAdapterInstance {
   readonly familyId = "idb" as const;
@@ -29,11 +26,9 @@ export class IdbAdapter implements IdbRuntimeAdapterInstance {
   }
 
   lower(plan: IdbQueryPlan, ctx: IdbLowererContext): Promise<IdbPlanBody> {
-    // Passthrough: idbPlan is execution-ready as-is since IDB has no query
-    // language. When per-field codec encoding is added, walk
-    // plan.idbPlan's record/key fields here, resolve each field's codec via
-    // this.#codecs + ctx.contract's per-store schema, and call
-    // codec.encode(value, ctx) to produce the wire value.
+    // If a codec ever transforms stored values, encode plan.idbPlan's
+    // record and key fields here: resolve each field's codec through
+    // this.#codecs and ctx.contract, then call codec.encode(value, ctx).
     void this.#codecs; // codec registry for per-field encoding
     void ctx.contract; // contract storage schema (field→codec resolution)
     void ctx.signal; // AbortSignal for cooperative cancellation

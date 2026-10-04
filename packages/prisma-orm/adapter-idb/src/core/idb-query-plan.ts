@@ -12,8 +12,7 @@ declare const __idbQueryPlanRow: unique symbol;
  * adds the IDB execution plan as `idbPlan`. Because IDB has no query language
  * of its own, the plan already carries the execution-ready {@link IdbPlanBody}
  * — there is no AST compilation step as in SQL. The adapter's `lower()` step
- * handles codec encoding of field values (e.g. `idb/date@1` → `Date`) and
- * returns the (possibly re-encoded) `IdbPlanBody` to the driver.
+ * passes that body through to the driver unchanged.
  *
  * The optional `ast` field carries a lightweight {@link IdbQueryAst} describing
  * the query intent. It is populated by the ORM lane (`client-idb`) so middleware
