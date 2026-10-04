@@ -247,7 +247,7 @@ The browser implementation has three main seams. `sync-executor.ts` appends outb
 
 `sync-server` never touches a database or an HTTP framework. Its main export is `createSyncServer({ contract, clientContract, rootModel })`, which returns `validatePush` and `buildPullQueries`. `./schema` and `./postgres` build the server's contract from the shared schema, adding the `Changelog` model.
 
-`sync-server-sql` exports `createSqlSyncAdapter({ contract, syncServer })`. Its `applyPush` and `pull` methods own route orchestration; lower-level methods remain available for custom integrations. `sqlGetKeyField` finds a primary key in a SQL contract.
+`sync-server-sql` exports `createSqlSyncAdapter({ contract, syncServer })`. Its `applyPush` and `pull` methods own route orchestration. It has no free-standing push, pull or authorization functions: the adapter is the only way in. `sqlGetKeyField` finds a primary key in a SQL contract.
 
 | Module in `sync-server-sql/src/core/`                 | Responsibility                                                                                       |
 | ----------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |

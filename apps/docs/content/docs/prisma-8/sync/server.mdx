@@ -79,7 +79,7 @@ The second step matters because ownership can change after a push. Say Alice cre
 
 ## SQL adapter
 
-`createSqlSyncAdapter({ contract, syncServer, getKeyField? })` from `@prisma-idb/sync-server-sql` binds the server contract and ownership graph once at startup. `getKeyField` defaults to `sqlGetKeyField`. The route helpers require `syncServer`; lower-level methods work without it.
+`createSqlSyncAdapter({ contract, syncServer, getKeyField? })` from `@prisma-idb/sync-server-sql` binds the server contract and ownership graph once at startup. `getKeyField` defaults to `sqlGetKeyField`. The route helpers require `syncServer`; the other methods work without it. The package also exports `sqlGetKeyField`, `DEFAULT_MAX_PUSH_BATCH_SIZE` (1000) and `DEFAULT_PULL_LIMIT` (50), plus the adapter's option, input and result types.
 
 | Member                                                    | Result                                                                                                                                                                                                               |
 | --------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -117,8 +117,6 @@ For required Postgres `Json` fields (`pg/json@1` and `pg/jsonb@1`), wire `null` 
 ### Pull validation
 
 Ordinary pull logs include `record`, with `null` signaling a delete or revoked ownership. When key decoding throws `KEYPATH_VALIDATION_FAILURE`, `pull` returns `validationError: "KEYPATH_VALIDATION_FAILURE"` and omits `record`. `applyPull` skips those entries, counts them as validation failures and advances the cursor without changing local records or version metadata. This marker does not cover every malformed key: a root-model ownership rejection can return `record: null` before decoding, so the client deletes its local copy.
-
-The package also exports the lower-level functions, including `applyPush`, `pull`, `checkAuthorization` and `sqlGetKeyField`. See its README for the full list.
 
 ## The `Changelog` model
 
