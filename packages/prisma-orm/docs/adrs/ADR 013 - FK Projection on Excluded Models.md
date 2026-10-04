@@ -55,5 +55,5 @@ Removing it would silently change the shape of records the client has already sy
 
 ## Related
 
-- `family-idb/src/core/psl-interpreter.ts` and `contract-builder.ts`: the relation-dropping projection. `warnDroppedRelation` in `psl-interpreter.ts` is the shared warning.
+- `family-idb/src/core/psl-interpreter.ts` and `contract-builder.ts`: the relation-dropping projection. `warnDroppedRelation` in `contract-authoring.ts` is the shared warning.
 - `sync-server/src/core/ownership-dag.ts`: the root-model check.
