@@ -14,6 +14,9 @@ import type { IdbLowererContext, IdbRuntimeAdapterInstance } from "./runtime-ada
  * `IdbQueryPlan` is already execution-ready because IDB has no query
  * language to compile from. Every current `idb/*` codec is an identity
  * transform for stored values, so no field needs encoding.
+ *
+ * The `codecs` constructor parameter matches the framework adapter shape and
+ * is the extension point for field encoding with non-identity codecs.
  */
 export class IdbAdapter implements IdbRuntimeAdapterInstance {
   readonly familyId = "idb" as const;
