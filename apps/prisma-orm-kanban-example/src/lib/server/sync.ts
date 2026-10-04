@@ -5,9 +5,9 @@ import type { Contract as ServerContract } from "../prisma/schema.postgres.gener
 import clientContractJson from "../prisma/contract.json" with { type: "json" };
 import serverContractJson from "../prisma/schema.postgres.generated.json" with { type: "json" };
 
-export const serverContract = serverContractJson as unknown as ServerContract;
+const serverContract = serverContractJson as unknown as ServerContract;
 
-export const syncServer = createSyncServer({
+const syncServer = createSyncServer({
   contract: serverContract, // real Postgres contract (src/lib/server/db.ts) — no IDB-shaped stand-in
   clientContract: clientContractJson as unknown as ClientContract,
   rootModel: "User",

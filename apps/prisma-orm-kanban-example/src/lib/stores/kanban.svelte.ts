@@ -1,18 +1,12 @@
 import { getDb } from "$lib/prisma/db";
+import { pushHandler, pullHandler } from "$lib/prisma/sync";
 import type { Contract } from "$lib/prisma/contract";
 import type { DefaultModelRow, IncludedRow } from "@prisma-idb/client-idb/orm";
 import { getNextBatch } from "@prisma-idb/sync-extension-idb/client";
-import type {
-  LogWithRecord,
-  OutboxEvent,
-  PushResult,
-  SyncWorker,
-  SyncWorkerStatus,
-} from "@prisma-idb/sync-extension-idb/client";
-import { SvelteDate, SvelteURLSearchParams } from "svelte/reactivity";
+import type { SyncWorker, SyncWorkerStatus } from "@prisma-idb/sync-extension-idb/client";
+import { SvelteDate } from "svelte/reactivity";
 
-export type User = DefaultModelRow<Contract, "User">;
-export type Board = DefaultModelRow<Contract, "Board">;
+type User = DefaultModelRow<Contract, "User">;
 export type Todo = DefaultModelRow<Contract, "Todo">;
 export type BoardWithTodos = IncludedRow<Contract, "Board", { todos: true }>;
 
@@ -24,7 +18,7 @@ export type BoardWithTodos = IncludedRow<Contract, "Board", { todos: true }>;
  * applied on every user — matching schema.prisma's User model, which the
  * real server enforces as NOT NULL.
  */
-export interface SessionUser {
+interface SessionUser {
   readonly id: string;
   readonly name: string;
   readonly email: string;
@@ -77,14 +71,7 @@ export class KanbanStore {
       .toArray();
   }
 
-  /**
-   * Ground-truth refresh of `pendingSyncCount` from the outbox — cheap, a
-   * full scan over a small local store. `getNextBatch` already scans every
-   * row before applying `limit` (it's an in-memory filter/sort/slice, not an
-   * indexed query — see its doc comment), so there's no cost saved by
-   * capping this below the true count; capping it would just make the
-   * badge lie once the outbox actually grows past the cap.
-   */
+  /** Count the entire outbox so the pending badge stays accurate beyond the worker's batch size. */
   private async refreshPendingCount(db?: Awaited<ReturnType<typeof getDb>>) {
     const client = db ?? (await getDb());
     const pending = await getNextBatch(client.rawClient, { limit: Number.POSITIVE_INFINITY });
@@ -140,40 +127,12 @@ export class KanbanStore {
     this.startSync();
   }
 
-  /**
-   * ADR 014 push/pull, wired against src/routes/api/sync (Postgres-backed).
-   * `scopeKey` is read from `this.activeUser` at call time — the push/pull
-   * endpoints now derive the authoritative scope from the session cookie
-   * server-side (see push/+server.ts's header); the body-carried `scopeKey`
-   * here is only used client-side to stamp the Changelog pre-filter query.
-   */
+  /** Start the worker and observe connectivity, pending writes, and pulled board changes. */
   private startSync() {
     if (this.syncWorker || this.syncStarting) return;
     this.syncStarting = true;
 
-    const pushHandler = async (events: OutboxEvent[], signal: AbortSignal): Promise<PushResult[]> => {
-      const res = await fetch("/api/sync/push", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ events }),
-        signal,
-      });
-      if (!res.ok) throw new Error(`Push failed: ${res.status}`);
-      return res.json();
-    };
-
-    const pullHandler = async (fromChangelogId: string | null, signal: AbortSignal): Promise<LogWithRecord[]> => {
-      const params = new SvelteURLSearchParams();
-      if (fromChangelogId) params.set("since", fromChangelogId);
-      const res = await fetch(`/api/sync/pull?${params}`, { signal });
-      if (!res.ok) throw new Error(`Pull failed: ${res.status}`);
-      return res.json();
-    };
-
-    // AbortController, not bare `addEventListener` calls: `startSync()` runs
-    // once per loaded workspace, but nothing previously removed these
-    // listeners — a store that outlives its page (unmount without a fresh
-    // reload) leaked them onto `window` forever. `dispose()` aborts this.
+    // One controller owns the connectivity listeners and guards startup after disposal.
     const controller = new AbortController();
     this.connectivityController = controller;
     const { signal } = controller;
@@ -191,12 +150,7 @@ export class KanbanStore {
 
     getDb()
       .then((db) => {
-        // dispose() aborts `signal` and may have run while getDb() was still
-        // in flight — `this.syncWorker` was still null then, so its stop()
-        // call was a no-op. Without this check we'd create and start a new
-        // worker (and register a fresh outboxwrite listener) on a store
-        // that's already been torn down, leaking a live worker nothing will
-        // ever stop.
+        // Disposal can run while getDb() is pending. Do not start a worker after teardown.
         if (signal.aborted) return;
         this.syncWorker = db.createSyncWorker({ pushHandler, pullHandler });
         this.syncWorker.on("statuschange", (status) => {
@@ -206,11 +160,7 @@ export class KanbanStore {
         this.syncWorker.on("pullcompleted", ({ applied }) => {
           if (applied > 0 && this.activeUser) this.loadBoards(this.activeUser.id).catch(this.showError);
         });
-        // Pending count moves in two directions: up when a local write lands
-        // ("outboxwrite" — one subscription, not a refreshPendingCount() call
-        // sprinkled after every db.orm.* mutation site), down when a push
-        // cycle marks events synced. Same `on(event, cb)` shape as
-        // `syncWorker.on(...)` below, not the old bespoke `onOutboxWrite`.
+        // Local writes grow the outbox; successful pushes drain it.
         this.unsubscribeOutboxWrite = db.on("outboxwrite", () => void this.refreshPendingCount(db));
         this.syncWorker.on("pushcompleted", () => void this.refreshPendingCount(db));
         this.syncWorker.start();
@@ -219,8 +169,7 @@ export class KanbanStore {
       })
       .catch((error: unknown) => {
         this.syncStarting = false;
-        // Already disposed — dispose() already aborted `signal`; don't
-        // surface a stale error onto a store nothing is looking at anymore.
+        // Ignore startup failures after the store has been disposed.
         if (signal.aborted) return;
         controller.abort();
         this.showError(error);
@@ -233,16 +182,9 @@ export class KanbanStore {
     this.connectivityController = null;
     this.unsubscribeOutboxWrite?.();
     this.unsubscribeOutboxWrite = null;
-    // A getDb() opened by startSync() may still be in flight — its
-    // continuation checks the (now aborted) signal and bails instead of
-    // starting a worker; reset this so a fresh startSync() call after
-    // dispose() (e.g. a new loadWorkspace()) isn't blocked by a stale flag.
+    // Allow a later loadWorkspace() to start a fresh worker.
     this.syncStarting = false;
     this.syncWorker?.stop();
-    // Null out (not just stop()) so a subsequent startSync() — e.g. a fresh
-    // loadWorkspace() call on a store that was disposed but not discarded —
-    // isn't blocked by startSync()'s own `if (this.syncWorker || ...) return`
-    // guard seeing a stale, already-stopped worker.
     this.syncWorker = null;
   }
 
