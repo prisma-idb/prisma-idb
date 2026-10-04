@@ -11,6 +11,52 @@ function interpret(schema: string) {
 }
 
 describe("same-target PSL relations", () => {
+  it("preserves a single unnamed self-relation pair", () => {
+    const result = interpret(`
+      model Person {
+        id String @id
+        parentId String?
+        parent Person? @relation(fields: [parentId], references: [id])
+        children Person[]
+      }
+    `);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.domain.namespaces[UNBOUND_DOMAIN_NAMESPACE_ID]!.models["Person"]!.relations).toMatchObject({
+      parent: { on: { localFields: ["parentId"], targetFields: ["id"] } },
+      children: { on: { localFields: ["id"], targetFields: ["parentId"] } },
+    });
+  });
+
+  it.each([
+    [
+      "foreign keys",
+      `parent Person? @relation(fields: [parentId], references: [id])
+       mentor Person? @relation(fields: [mentorId], references: [id])
+       children Person[]`,
+    ],
+    [
+      "backrelations",
+      `parent Person? @relation(fields: [parentId], references: [id])
+       children Person[]
+       mentees Person[]`,
+    ],
+  ])("rejects ambiguous unnamed self-relation %s", (_, relations) => {
+    const result = interpret(`
+      model Person {
+        id String @id
+        parentId String?
+        mentorId String?
+        ${relations}
+      }
+    `);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.failure.diagnostics).toEqual(
+      expect.arrayContaining([expect.objectContaining({ code: "IDB_AMBIGUOUS_RELATION" })])
+    );
+  });
+
   it.each(["posts Post[]", "posts Post[]\n        editedPosts Post[]", ""])(
     "rejects ambiguous unnamed foreign keys with backrelations %j",
     (backrelations) => {

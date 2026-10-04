@@ -183,6 +183,8 @@ function pslToDsl(table: SymbolTable, sourceId: string) {
     }
     for (const [target, fields] of unnamed) {
       if (fields.length < 2) continue;
+      // Both sides of one self-relation live in the same model.
+      if (target === model.name && fields.length === 2 && fields[0]!.list !== fields[1]!.list) continue;
       const names = fields.map((field) => `"${field.name}"`).join(", ");
       const message = `Model "${model.name}" has ambiguous unnamed relations ${names} to "${target}". Give each relation a distinct @relation("Name") and use the same name on its opposite field.`;
       report("IDB_AMBIGUOUS_RELATION", message, fields[0]!.span, [model.name, target]);
