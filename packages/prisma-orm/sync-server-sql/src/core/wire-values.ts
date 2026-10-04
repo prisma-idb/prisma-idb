@@ -1,7 +1,8 @@
 /**
  * How sync values cross the JSON wire between the IDB client and the SQL
  * server: the codecs both sides share, `encodeWireKey` for keys going out and
- * `reviveWireValues` for payloads coming in. Push and pull both depend on it.
+ * `reviveWireKey`/`reviveWireValues` for keys and payloads coming in. Push and
+ * pull both depend on it.
  */
 
 import { idbCodecLookup } from "@prisma-idb/target-idb/runtime";
@@ -9,7 +10,7 @@ import { domainModelsAtDefaultNamespace } from "@prisma/orm-framework/contract/t
 import type { SyncServerContract } from "@prisma-idb/sync-server";
 
 // These SQL codecs use the same JSON representation as the IDB client.
-export const nativeJsonCodecs: Record<string, string> = {
+const nativeJsonCodecs: Record<string, string> = {
   "pg/date@1": "idb/date@1",
   "pg/timestamp@1": "idb/date@1",
   "pg/timestamptz@1": "idb/date@1",
@@ -68,4 +69,9 @@ export function reviveWireValues(
       return [name, revive(value)];
     })
   );
+}
+
+/** Revive one wire-form key; the counterpart of `encodeWireKey`. */
+export function reviveWireKey(contract: SyncServerContract, model: string, keyField: string, key: unknown): unknown {
+  return reviveWireValues(contract, model, { [keyField]: key }, keyField)[keyField];
 }

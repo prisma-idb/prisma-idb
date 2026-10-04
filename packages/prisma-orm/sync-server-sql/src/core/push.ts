@@ -3,7 +3,7 @@ import type { GetKeyField, PushCheck, SyncServerContract } from "@prisma-idb/syn
 import { ormRootFor } from "./orm-root";
 import { checkAuthorization } from "./authorization";
 import { appendChangelogRow, isEventApplied } from "./changelog";
-import { reviveWireValues, WireValidationError } from "./wire-values";
+import { reviveWireKey, reviveWireValues, WireValidationError } from "./wire-values";
 
 /**
  * The fields `applyPushEvent` actually reads out of a push request's event —
@@ -118,7 +118,7 @@ export async function applyPushEvent(
       if (await isEventApplied(tx, event.id)) return { id: event.id, success: true };
 
       const keyField = getKeyField(contract, model);
-      const nativeKey = reviveWireValues(contract, model, { [keyField]: check.key }, keyField)[keyField];
+      const nativeKey = reviveWireKey(contract, model, keyField, check.key);
       const startRow: Record<string, unknown> | null =
         event.operation === "create"
           ? reviveWireValues(contract, model, event.payload as Record<string, unknown>)

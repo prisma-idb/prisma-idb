@@ -1,5 +1,5 @@
 import type { GetKeyField, OwnershipCheck, SyncServerContract } from "@prisma-idb/sync-server";
-import { reviveWireValues } from "./wire-values";
+import { reviveWireKey } from "./wire-values";
 import { ormRootFor } from "./orm-root";
 import { checkAuthorization } from "./authorization";
 
@@ -27,7 +27,7 @@ export async function resolvePullRecord(
   if (check.kind === "unknown-model") return null;
 
   const keyField = getKeyField(contract, model);
-  const nativeKey = (key: unknown) => reviveWireValues(contract, model, { [keyField]: key }, keyField)[keyField];
+  const nativeKey = (key: unknown) => reviveWireKey(contract, model, keyField, key);
   const startRow =
     check.kind === "scoped" ? await ormRootFor(db, model).first({ [keyField]: nativeKey(check.key) }) : null;
 
