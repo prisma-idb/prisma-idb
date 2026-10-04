@@ -82,9 +82,8 @@ test("a failed todo move keeps the original board selected", async ({ page, cont
   await expect(todo).toBeVisible();
   await page.getByTestId("board-name-input").fill("Destination");
   await page.getByTestId("create-board-submit").click();
-  const selector = todo.getByRole("combobox", { name: "Move todo to board" });
+  const selector = todo.getByRole("button", { name: "Move todo to board" });
   await expect(selector).toBeEnabled();
-  const sourceId = await selector.inputValue();
 
   const otherTab = await context.newPage();
   await otherTab.goto("/");
@@ -97,9 +96,10 @@ test("a failed todo move keeps the original board selected", async ({ page, cont
   await destination.getByTestId("delete-board").click();
   await expect(destination).not.toBeVisible();
 
-  await selector.selectOption({ label: "Destination" });
+  await selector.click();
+  await page.getByRole("option", { name: "Destination" }).click();
   await expect(source.getByTestId("todo-item")).toHaveCount(1);
-  await expect(selector).toHaveValue(sourceId);
+  await expect(selector).toHaveText("Source");
 });
 
 test("moving a todo requires saving its edits first", async ({ page }) => {
@@ -114,7 +114,7 @@ test("moving a todo requires saving its edits first", async ({ page }) => {
   await page.getByTestId("board-name-input").fill("Destination");
   await page.getByTestId("create-board-submit").click();
   const todo = source.getByTestId("todo-item");
-  const selector = todo.getByRole("combobox", { name: "Move todo to board" });
+  const selector = todo.getByRole("button", { name: "Move todo to board" });
   await expect(selector).toBeEnabled();
 
   await todo.getByTestId("todo-title-field").fill("Edited title");
@@ -122,7 +122,8 @@ test("moving a todo requires saving its edits first", async ({ page }) => {
 
   await todo.getByTestId("save-todo").click();
   await expect(selector).toBeEnabled();
-  await selector.selectOption({ label: "Destination" });
+  await selector.click();
+  await page.getByRole("option", { name: "Destination" }).click();
   const destination = page
     .getByTestId("board-card")
     .filter({ has: page.getByRole("textbox", { name: "Board name Destination" }) });
