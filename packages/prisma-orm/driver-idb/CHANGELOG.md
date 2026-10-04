@@ -1,5 +1,15 @@
 # @prisma-idb/driver-idb
 
+## 0.9.1
+
+### Patch Changes
+
+- [#259](https://github.com/prisma-idb/prisma-idb/pull/259) [`9ae224d`](https://github.com/prisma-idb/prisma-idb/commit/9ae224d3a576a273bbcccb4ba5bc13d922e8c91d) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Tidy the plan executor. No behavior change.
+
+  - Build op failure errors in one place. Error codes and messages are unchanged.
+  - Choose the batch transaction mode with the same check as atomic plans.
+  - Remove a no-op `upgradeneeded` handler and correct TSDoc that described the old behavior.
+
 ## 0.9.0
 
 ## 0.8.0

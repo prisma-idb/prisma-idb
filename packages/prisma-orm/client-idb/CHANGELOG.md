@@ -1,5 +1,19 @@
 # @prisma-idb/client-idb
 
+## 0.9.1
+
+### Patch Changes
+
+- [#259](https://github.com/prisma-idb/prisma-idb/pull/259) [`85ce498`](https://github.com/prisma-idb/prisma-idb/commit/85ce498e3be3261f3aec0d2294a94923bb823c15) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Simplify read-plan construction and relation result shaping. Remove unused internal helpers while preserving query and include behavior.
+
+- [#259](https://github.com/prisma-idb/prisma-idb/pull/259) [`dc718d0`](https://github.com/prisma-idb/prisma-idb/commit/dc718d016a9659e8026950d04f6df1b513741521) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Share scalar update validation and transaction execution, group migration descriptor checks before database access, and remove unused private relation helpers. Preserve existing write behavior and public exports.
+
+- Updated dependencies [[`8775088`](https://github.com/prisma-idb/prisma-idb/commit/877508838881c9f0e77222458628475d7ffd7a57), [`9ae224d`](https://github.com/prisma-idb/prisma-idb/commit/9ae224d3a576a273bbcccb4ba5bc13d922e8c91d), [`8775088`](https://github.com/prisma-idb/prisma-idb/commit/877508838881c9f0e77222458628475d7ffd7a57), [`27fdc4f`](https://github.com/prisma-idb/prisma-idb/commit/27fdc4fd8a206326d7011b8ece8a04e2de7c8375)]:
+  - @prisma-idb/adapter-idb@0.9.1
+  - @prisma-idb/driver-idb@0.9.1
+  - @prisma-idb/runtime-idb@0.9.1
+  - @prisma-idb/target-idb@0.9.1
+
 ## 0.9.0
 
 ### Patch Changes
