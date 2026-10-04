@@ -1,5 +1,18 @@
 # @prisma-idb/adapter-idb
 
+## 0.9.1
+
+### Patch Changes
+
+- [#259](https://github.com/prisma-idb/prisma-idb/pull/259) [`8775088`](https://github.com/prisma-idb/prisma-idb/commit/877508838881c9f0e77222458628475d7ffd7a57) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Tidy the filter evaluator and correct docs. No behavior change.
+
+  - Type the filter evaluator's operator as `IdbFilterOp`.
+  - Describe `lower()` as the passthrough it is. The docs claimed it encodes field values.
+
+- Updated dependencies [[`9ae224d`](https://github.com/prisma-idb/prisma-idb/commit/9ae224d3a576a273bbcccb4ba5bc13d922e8c91d), [`27fdc4f`](https://github.com/prisma-idb/prisma-idb/commit/27fdc4fd8a206326d7011b8ece8a04e2de7c8375)]:
+  - @prisma-idb/driver-idb@0.9.1
+  - @prisma-idb/target-idb@0.9.1
+
 ## 0.9.0
 
 ### Patch Changes

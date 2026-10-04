@@ -1,5 +1,16 @@
 # @prisma-idb/sync-server-sql
 
+## 0.5.2
+
+### Patch Changes
+
+- [#259](https://github.com/prisma-idb/prisma-idb/pull/259) [`84e3ca3`](https://github.com/prisma-idb/prisma-idb/commit/84e3ca3cd8481dad91aa94bfc95b4dcd59d995b8) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Internal cleanup with no behavior change: `applyPush` decodes wire events in a separate step, and push and pull share one `reviveWireKey` helper for wire-form keys.
+
+- Updated dependencies [[`27fdc4f`](https://github.com/prisma-idb/prisma-idb/commit/27fdc4fd8a206326d7011b8ece8a04e2de7c8375), [`df2dc4b`](https://github.com/prisma-idb/prisma-idb/commit/df2dc4b8c41a97fce327d019a6d124781cdea2d4)]:
+  - @prisma-idb/target-idb@0.9.1
+  - @prisma-idb/sync-extension-idb@0.7.2
+  - @prisma-idb/sync-server@0.6.2
+
 ## 0.5.1
 
 ### Patch Changes

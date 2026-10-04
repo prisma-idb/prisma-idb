@@ -1,5 +1,15 @@
 # @prisma-idb/runtime-idb
 
+## 0.9.1
+
+### Patch Changes
+
+- [#259](https://github.com/prisma-idb/prisma-idb/pull/259) [`8775088`](https://github.com/prisma-idb/prisma-idb/commit/877508838881c9f0e77222458628475d7ffd7a57) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Move the built-in `contentHash` plan reduction into its own function. No behavior change.
+
+- Updated dependencies [[`8775088`](https://github.com/prisma-idb/prisma-idb/commit/877508838881c9f0e77222458628475d7ffd7a57), [`9ae224d`](https://github.com/prisma-idb/prisma-idb/commit/9ae224d3a576a273bbcccb4ba5bc13d922e8c91d)]:
+  - @prisma-idb/adapter-idb@0.9.1
+  - @prisma-idb/driver-idb@0.9.1
+
 ## 0.9.0
 
 ### Patch Changes

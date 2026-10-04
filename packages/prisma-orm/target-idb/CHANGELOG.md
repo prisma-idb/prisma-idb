@@ -1,5 +1,16 @@
 # @prisma-idb/target-idb
 
+## 0.9.1
+
+### Patch Changes
+
+- [#259](https://github.com/prisma-idb/prisma-idb/pull/259) [`27fdc4f`](https://github.com/prisma-idb/prisma-idb/commit/27fdc4fd8a206326d7011b8ece8a04e2de7c8375) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Tidy codecs and migration planning. No behavior change.
+
+  - Move the `idb/bytes@1` base64 code into named helpers that build their lookup table once.
+  - Share one contract `storage` lookup between `contractToIdbSchema` and the storage hash extraction.
+  - Remove helper re-exports from the migration runner module that no package entry point used.
+  - Correct comments that described behavior the code no longer has.
+
 ## 0.9.0
 
 ### Minor Changes
