@@ -16,13 +16,16 @@ import type {
   IdbStoreDefinition,
 } from "@prisma-idb/target-idb/pack";
 import { keyPathFields } from "@prisma-idb/target-idb/pack";
-import type { ContractProjection } from "./psl-interpreter";
-import { isValidIdbKeyCodec, literalValueMatchesCodec, warnDroppedRelation } from "./psl-interpreter";
+import type { ContractProjection, PrismaScalarType } from "./contract-authoring";
+import {
+  SCALAR_TO_CODEC_ID,
+  isValidIdbKeyCodec,
+  literalValueMatchesCodec,
+  warnDroppedRelation,
+} from "./contract-authoring";
 import { validateContract } from "./validate";
 
 // ── Field type system ─────────────────────────────────────────────────────────
-
-type PrismaScalarType = "String" | "Int" | "Float" | "Boolean" | "DateTime" | "BigInt" | "Decimal" | "Json" | "Bytes";
 
 type PrismaScalarFieldSpec = PrismaScalarType | `${PrismaScalarType}?`;
 
@@ -37,18 +40,6 @@ export type FieldSpec<EnumName extends string = never> =
 export type EnumDef = readonly string[];
 
 export type EnumDefs = Readonly<Record<string, EnumDef>>;
-
-const SCALAR_TO_CODEC_ID: Record<PrismaScalarType, string> = {
-  String: "idb/string@1",
-  Int: "idb/int32@1",
-  Float: "idb/double@1",
-  Boolean: "idb/bool@1",
-  DateTime: "idb/date@1",
-  BigInt: "idb/bigint@1",
-  Decimal: "idb/decimal@1",
-  Json: "idb/json@1",
-  Bytes: "idb/bytes@1",
-};
 
 // ── Input types ───────────────────────────────────────────────────────────────
 

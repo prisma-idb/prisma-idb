@@ -20,6 +20,15 @@ import type {
 import { notOk, ok } from "@prisma/orm-framework/utils/result";
 import type { Result } from "@prisma/orm-framework/utils/result";
 import { validateContract } from "./validate";
+import type { ContractProjection, PrismaScalarType } from "./contract-authoring";
+import {
+  SCALAR_TO_CODEC_ID,
+  isValidIdbKeyCodec,
+  literalValueMatchesCodec,
+  warnDroppedRelation,
+} from "./contract-authoring";
+
+export type { ContractProjection } from "./contract-authoring";
 
 /** The one `temporal.*` type-constructor path IDB currently understands. */
 const TEMPORAL_UPDATED_AT_PATH = ["temporal", "updatedAt"] as const;
@@ -56,30 +65,6 @@ function parseDefaultLiteralValue(raw: string): { readonly value: string | numbe
   return undefined;
 }
 
-/**
- * `true` if a parsed `@default(<literal>)` value's JS type matches what
- * `codecId` expects (a literal's JS type must match the field's declared
- * type — a string literal on an Int field, or vice versa, is a mismatch).
- * Declared as a function (not a `codecId → JS type` const lookup) since
- * `SCALAR_TO_CODEC_ID` — which every `codecId` here is sourced from — is
- * declared further down this module; a top-level const initializer would hit
- * the temporal dead zone, but a function body only evaluates when called.
- */
-export function literalValueMatchesCodec(value: string | number | boolean, codecId: string): boolean {
-  switch (codecId) {
-    case SCALAR_TO_CODEC_ID["String"]:
-      return typeof value === "string";
-    case SCALAR_TO_CODEC_ID["Int"]:
-    case SCALAR_TO_CODEC_ID["Float"]:
-    case SCALAR_TO_CODEC_ID["Decimal"]:
-      return typeof value === "number";
-    case SCALAR_TO_CODEC_ID["Boolean"]:
-      return typeof value === "boolean";
-    default:
-      return false;
-  }
-}
-
 /** Parses `@default(...)`'s positional argument as a function call: `name(...)` or bare `name()`. */
 function parseDefaultFunctionCall(raw: string): { readonly name: string; readonly arg?: string } | undefined {
   const trimmed = raw.trim();
@@ -114,46 +99,6 @@ function resolveDefaultFunctionGeneratorId(name: string, arg: string | undefined
   }
 }
 
-// ── Scalar type → codec ID mapping ────────────────────────────────────────────
-
-export const SCALAR_TO_CODEC_ID: Record<string, string> = {
-  String: "idb/string@1",
-  Int: "idb/int32@1",
-  Float: "idb/double@1",
-  Boolean: "idb/bool@1",
-  DateTime: "idb/date@1",
-  BigInt: "idb/bigint@1",
-  Decimal: "idb/decimal@1",
-  Json: "idb/json@1",
-  Bytes: "idb/bytes@1",
-};
-
-// ── IDB valid-key codec set ─────────────────────────────────────────────────────
-
-/**
- * Codecs excluded from IndexedDB's "valid key" algorithm
- * (https://w3c.github.io/IndexedDB/#key-construct: number, string, Date,
- * buffer source, or Array — nothing else).
- *
- * - `idb/bool@1` — boolean is not, and has never been, a valid IDB key type.
- * - `idb/bigint@1` — bigint round-trips fine as a stored *value* (structured
- *   clone supports it), but is explicitly absent from the key-type algorithm.
- * - `idb/json@1` — arbitrary shape (object, array, or primitive); can't be
- *   statically guaranteed to be a valid key.
- *
- * Using any of these as a model's `@id`/key throws on every write
- * (`DataError` extracting the primary key). Using one as an index `keyPath`
- * doesn't throw on write — the record is just silently omitted from that
- * index — but throws the first time anyone queries it via `IDBKeyRange`
- * (see ADR 016's Context: `OutboxEvent.synced`, `idb/bool@1`, exactly this).
- */
-const IDB_INVALID_KEY_CODEC_IDS = new Set(["idb/bool@1", "idb/bigint@1", "idb/json@1"]);
-
-/** `true` if `codecId`'s runtime representation is a valid IndexedDB key. */
-export function isValidIdbKeyCodec(codecId: string): boolean {
-  return !IDB_INVALID_KEY_CODEC_IDS.has(codecId);
-}
-
 // PSL PascalCase referential actions → IDB lowercase
 const REFERENTIAL_ACTION_MAP: Record<string, IdbReferentialAction> = {
   Cascade: "cascade",
@@ -162,36 +107,6 @@ const REFERENTIAL_ACTION_MAP: Record<string, IdbReferentialAction> = {
   Restrict: "restrict",
   NoAction: "noAction",
 };
-
-// ── Client contract projection (ADR 012) ───────────────────────────────────────
-
-/**
- * `"full"` interprets the schema as-is (today's behavior, unchanged — this is
- * the server-facing shape). `"client"` additionally strips anything marked
- * `@idb.exclude`/`@@idb.exclude`, producing the projected client contract.
- *
- * A surviving model's relation (any cardinality, required or optional) to an
- * excluded model is dropped (with a warning), keeping the underlying FK
- * scalar field — the model itself is never excluded as a result (ADR 013;
- * see its §"Why we don't cascade on requiredness"). Field-level excludes
- * that entangle with a relation (excluding an FK column, or the relation
- * field itself) remain unsupported and are reported as diagnostics — a
- * different, still out-of-scope case ADR 013 doesn't cover.
- */
-export type ContractProjection = "full" | "client";
-
-/**
- * ADR 013 — shared between this file and `contract-builder.ts` (which
- * already imports {@link ContractProjection} from here) so the message
- * format isn't duplicated. Called whenever a surviving model's relation is
- * dropped because its target is excluded — any cardinality, required or
- * not; the model itself is never excluded as a result, only the relation.
- */
-export function warnDroppedRelation(modelName: string, relationName: string, targetModel: string): void {
-  console.warn(
-    `[prisma-idb] Dropped relation "${modelName}.${relationName}" from the client contract: target model "${targetModel}" is excluded. The relation's scalar fields are kept.`
-  );
-}
 
 // ── Attribute arg helpers ──────────────────────────────────────────────────────
 
@@ -319,7 +234,6 @@ function interpretEnums(
 // ── Per-model interpretation result ───────────────────────────────────────────
 
 interface InterpretedModel {
-  readonly modelName: string;
   readonly storeName: string;
   readonly keyPath: IdbKeyPath;
   readonly indexes: Record<string, IdbIndexDefinition>;
@@ -338,7 +252,7 @@ interface InterpretedModel {
   /** Literal `@default(...)` values, keyed by field name — feeds `IdbModelStorage.fieldDefaults` (`setDefault`). */
   readonly fieldDefaults: Record<string, string | number | boolean>;
   /** FK-side declarations keyed by targetModelName for back-relation resolution. */
-  readonly fksByTarget: ReadonlyMap<string, { fieldName: string; localFields: string[]; targetFields: string[] }>;
+  readonly fksByTarget: ReadonlyMap<string, { localFields: string[]; targetFields: string[] }>;
   /** Execution-plane defaults resolved from `temporal.updatedAt()`, bare `@updatedAt`, and `@default(...)` — feeds `contract.execution.mutations.defaults`. */
   readonly fieldExecutionDefaults: readonly FieldExecutionDefault[];
   /** `true` when `@default(autoincrement())` was declared on this model's `@id` field — feeds `IdbStoreDefinition.autoIncrement`. */
@@ -495,7 +409,7 @@ function interpretModel(
   const relations: InterpretedModel["relations"] = {};
   const relationsStorage: Record<string, { onDelete?: IdbReferentialAction; onUpdate?: IdbReferentialAction }> = {};
   const fieldDefaults: Record<string, string | number | boolean> = {};
-  const fksByTarget = new Map<string, { fieldName: string; localFields: string[]; targetFields: string[] }>();
+  const fksByTarget = new Map<string, { localFields: string[]; targetFields: string[] }>();
   const fieldExecutionDefaults: FieldExecutionDefault[] = [];
   let autoIncrement = false;
 
@@ -627,7 +541,6 @@ function interpretModel(
         };
       }
       fksByTarget.set(field.typeName, {
-        fieldName: field.name,
         localFields,
         targetFields,
       });
@@ -728,7 +641,7 @@ function interpretModel(
       continue;
     }
 
-    const codecId = enumType?.codecId ?? SCALAR_TO_CODEC_ID[field.typeName];
+    const codecId = enumType?.codecId ?? SCALAR_TO_CODEC_ID[field.typeName as PrismaScalarType];
     if (codecId === undefined) {
       diagnostics.push({
         code: "IDB_UNSUPPORTED_FIELD_TYPE",
@@ -989,7 +902,6 @@ function interpretModel(
   }
 
   return {
-    modelName: model.name,
     storeName,
     keyPath,
     indexes,

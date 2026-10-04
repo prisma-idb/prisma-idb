@@ -53,7 +53,6 @@ export async function generateContractSpace(opts: GenerateContractSpaceOptions):
   const outPath = opts.outPath;
 
   const packages = await loadPackages(appDir, err);
-  validateChain(packages);
 
   // Warn when no packages exist — the output module will have an empty
   // migrations list and `hash: ""`, which breaks createAutoMigratingIdbClient
@@ -113,15 +112,6 @@ async function loadPackages(appDir: string, err: (line: string) => void): Promis
   }
 
   return chainOrderByMetadata(unordered);
-}
-
-/**
- * No-op — `chainOrderByMetadata` already enforces all invariants during
- * {@link loadPackages}. Kept as a named hook so callers can compose their
- * own package list and re-validate without calling the full load path.
- */
-function validateChain(_packages: ReadonlyArray<LoadedPackage>): void {
-  // Validation happens inside `chainOrderByMetadata` during load. No-op here.
 }
 
 interface RenderInput {
