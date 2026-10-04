@@ -1,5 +1,7 @@
 # Spike — one shared authoring spec, one lowering
 
+> Historical proposal. Source observations, line numbers and phase references below describe the survey at authoring time. They do not establish current behavior or approval to implement it. See the [plans index](README.md) for current source pointers.
+
 Time-boxed experiment. Goal is an answer, not mergeable code. Branch:
 `spike/shared-authoring-spec`, cut from the tip of `feat/prisma-orm-enums-why6`
 (or from `feat/prisma-orm-rc12` once PR #235 has merged), because the enum work

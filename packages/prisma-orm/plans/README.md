@@ -1,29 +1,12 @@
-# Phase 10 — Benchmarking foundation + IDB query planner
+# Prisma 8 design proposals
 
-[`PLAN_10.0_query_planner_and_benchmarking.md`](PLAN_10.0_query_planner_and_benchmarking.md)
-is a source-grounded survey (not yet implementation) of building a real
-benchmark gate for `client-idb` (mirroring `apps/benchmark`'s CI-gate rigor
-for the old generator) as the prerequisite for replacing
-`query-shaping.ts`'s hand-written index-acceleration heuristics with a real
-query planner — closing `todo.md`'s range-operator, OR-extraction, and
-`mutation-executor.ts` FK-lookup follow-ups. Read its §2 ("What 'measurable'
-means here") before starting any phase past 10.1 — it sets the two-tier
-gate (deterministic plan-shape assertions vs. advisory wall-clock) that
-every later phase's acceptance criteria depend on. **Depends on Phase 9**
-(below) — an earlier draft of this survey treated missing compound-index
-support as a design constraint to work around; the user's call was that
-compound indexes are a native IndexedDB feature our contract IR should just
-expose, scoped out as its own phase first, so the planner is designed
-against the real capability surface instead of a provisional one. Branches
-off `main` after Phase 9 lands, as `feat/query-planner`. Implementation
-lands as a stack of PRs (§4 of that doc); each phase gets its own
-`PLAN_10.x_*.md` once it starts.
+This index lists the retained design proposals in this directory. They are historical surveys and experiments, not a description of the current implementation or approval to start work.
 
-| Phase | Goal                                                                                                                                                                                                                                                              | Depends on    |
-| ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------- |
-| 10.1  | Extract `stats`/`config-validation`/comparison-script logic out of `apps/benchmark` into a shared `benchmark-kit` package, zero behavior change                                                                                                                   | —             |
-| 10.2  | New `apps/prisma-next-benchmark`, schema/ops designed backwards from the planner's target cases (now including a real compound-indexed case); pre-planner baseline captured and committed                                                                         | 10.1, Phase 9 |
-| 10.3  | Node/vitest hard-blocking gate asserting plan-kind + bounded records-examined per query pattern, extending the `store-accessor.ts:882` middleware-introspection seam; must be green on current `main` behavior before 10.4 starts                                 | Phase 9       |
-| 10.4  | The planner: pure filter-AST+index-metadata → `IdbPlanBody` function replacing `extractIndexEqualityHint`/`extractIndexOrHint`; range acceleration, correct per-branch OR, tiered `AND` strategy now backed by real compound indexes, real `index-get` use        | 10.2, 10.3    |
-| 10.5  | Wire planner into `store-accessor.ts` + extract shared index-hint primitive for `mutation-executor.ts`'s FK lookups (building on Phase 9.4's key-only-read primitive); delete `query-shaping.ts`'s old heuristics; confirm non-regression against 10.2's baseline | 10.4          |
-| 10.6  | ADR (next free number at authoring time — expected 018, one after Phase 9.6's ADR; re-check) documenting the logical/physical plan split and the tiered cost model; close `todo.md:12/13/14`                                                                      | 10.5          |
+| Document                                                                             | Purpose                                                                                           | Current implementation pointers                                                                                                                                                                                               |
+| ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [Query planner and benchmarking survey](PLAN_10.0_query_planner_and_benchmarking.md) | Proposes a benchmark gate and a general query planner.                                            | Benchmark infrastructure now lives in `packages/benchmark-kit` and `apps/prisma-orm-benchmark`. Query acceleration still uses equality and OR hints in `packages/prisma-orm/client-idb/src/core/query-shaping.ts`.            |
+| [Shared authoring spike](PLAN_SPIKE_shared_authoring_spec.md)                        | Asks whether PSL and TypeScript authoring can share one intermediate representation and lowering. | `packages/prisma-orm/family-idb/src/core/psl-interpreter.ts` and `packages/prisma-orm/family-idb/src/core/contract-builder.ts` remain separate frontends with shared validation helpers. No `AuthoredSchema` lowering exists. |
+
+Source paths above start at the repository root.
+
+The surveys retain their original phase numbers, source observations and proposed file names. Some links refer to plans removed from this repository. Use [ARCHITECTURE.md](../docs/ARCHITECTURE.md) for the current module layout and the [ADR index](../docs/adrs/INDEX.md) for accepted decisions. Compound-key and native read support is recorded in [ADR 017](../docs/adrs/ADR%20017%20-%20Native%20IndexedDB%20Feature%20Parity.md).

@@ -63,4 +63,5 @@ if (plan.filter && !plan.filter(row)) continue;
 ## Related
 
 - `driver-idb/src/core/plan-body.ts`: `IdbRowFilter` and `IdbRowComparator`.
-- `client-idb/src/core/store-accessor.ts`: where most filter functions are built.
+- `client-idb/src/core/query-shaping.ts`: filter composition and comparators.
+- `client-idb/src/core/store-accessor.ts`: builds driver plans from the accessor state.

@@ -15,7 +15,7 @@ There are two ways to get a transaction that spans several object stores:
 
 An IndexedDB transaction covers a fixed list of object stores, named when it opens: `db.transaction(["users", "posts"], "readwrite")`. You can't add a store to a transaction that is already running.
 
-Some operations must write to several stores atomically. For example, `db.users.create({ posts: (rel) => rel.create([...]) })` must write to `users` and `posts` in one transaction. Applications also need their own multi-store operations. So something has to decide which stores a transaction covers before it opens.
+Some operations must write to several stores atomically. For example, `db.orm.users.create({ posts: (rel) => rel.create([...]) })` must write to `users` and `posts` in one transaction. Applications also need their own multi-store operations. So something has to decide which stores a transaction covers before it opens.
 
 ## Decision
 

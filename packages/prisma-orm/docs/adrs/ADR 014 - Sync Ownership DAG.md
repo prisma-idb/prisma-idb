@@ -161,3 +161,6 @@ This is not implemented. It needs a different pull contract, and large systems w
   - [Zero permissions](https://zero.rocicorp.dev/docs/permissions)
   - [Linear's sync engine, reverse-engineered](https://dev.to/wzhudev/i-reversed-linears-sync-engine-to-see-how-it-works-3cj)
   - [Kleppmann et al., Local-first software](https://martin.kleppmann.com/papers/local-first.pdf) and [Ink & Switch Keyhive](https://www.inkandswitch.com/keyhive/notebook/): in local-first systems, revocation only guarantees that an honest, still-syncing client converges.
+
+- `sync-server-sql/src/core/apply-push.ts` and `pull.ts`: route orchestration through the ownership checks.
+- `sync-server-sql/src/core/authorization.ts`: executes ownership paths against the SQL client.
