@@ -57,3 +57,5 @@ See the [kanban explanation](https://prisma-idb.dev/docs/prisma-8/kanban-example
 ```sh
 pnpm --filter @prisma-idb/prisma-orm-kanban-example db:down
 ```
+
+Try the [live app](https://next-kanban.prisma-idb.dev/) or browse the [source](https://github.com/prisma-idb/prisma-idb/tree/main/apps/prisma-orm-kanban-example).

@@ -185,6 +185,7 @@ export class KanbanStore {
     // Allow a later loadWorkspace() to start a fresh worker.
     this.syncStarting = false;
     this.syncWorker?.stop();
+    // Clear the stopped worker so startSync() can restart this store after a later loadWorkspace().
     this.syncWorker = null;
   }
 
