@@ -16,24 +16,24 @@ All three functions come from `@prisma-idb/sync-extension-idb/client`.
 | `createAutoMigratingSyncIdbClient(options)` | You manage the client's lifetime yourself. Migrates, then returns a sync client.                                                                                      |
 | `createSyncIdbClient({ contract, dbName })` | The database is already migrated.                                                                                                                                     |
 
-The options are the same as `createAutoMigratingIdbClient`'s, plus `trackedModels`: an array of model names to record for sync, or `"*"` for every model, the default. Writes to other models stay local. Include `idbSyncExtension` from `@prisma-idb/sync-extension-idb/control` in `extensions`, so the database gets the sync stores, `_idb_sync_outbox` and `_idb_sync_version_meta`.
+The options are the same as `createAutoMigratingIdbClient`'s, plus `trackedModels`: an array of model names to record for sync, or `"*"` for every model, the default. Writes to other models stay local. Tracked models must use keys that are unique across devices, such as `uuid()` or `cuid()`. Sync rejects tracked stores with `autoincrement()` keys. Include `idbSyncExtension` from `@prisma-idb/sync-extension-idb/control` in `extensions`, so the database gets the sync stores, `_idb_sync_outbox` and `_idb_sync_version_meta`.
 
 ## Client members
 
-| Member                            | Description                                                                                      |
-| --------------------------------- | ------------------------------------------------------------------------------------------------ |
-| `db.orm`                          | The same API as a plain client. Every write is also recorded for sync.                           |
-| `db.withoutTracking(fn)`          | Runs `fn(orm)` with writes that aren't recorded, so they never sync.                             |
-| `db.on("outboxwrite", cb)`        | Calls `cb` after each write commits, with the recorded changes. Returns an unsubscribe function. |
-| `db.createSyncWorker(opts)`       | Creates a [sync worker](#sync-worker) for this client.                                           |
-| `db.rawClient`                    | The underlying plain client. Writes through it aren't recorded.                                  |
-| `db.verifyMarker()`, `db.close()` | Same as on a plain client.                                                                       |
+| Member                            | Description                                                                                           |
+| --------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `db.orm`                          | The same API as a plain client. Writes to tracked models are also recorded for sync.                  |
+| `db.withoutTracking(fn)`          | Runs `fn(orm)` with writes that aren't recorded, so they never sync.                                  |
+| `db.on("outboxwrite", cb)`        | Calls `cb` after a tracked write commits, with the recorded changes. Returns an unsubscribe function. |
+| `db.createSyncWorker(opts)`       | Creates a [sync worker](#sync-worker) for this client.                                                |
+| `db.rawClient`                    | The underlying plain client. Writes through it aren't recorded.                                       |
+| `db.verifyMarker()`, `db.close()` | Same as on a plain client.                                                                            |
 
 ## The outbox
 
-Every write through `db.orm` also writes an event to the outbox store, in the same transaction. The two commit together or not at all, so no change is ever lost or sent without being saved.
+Every tracked write through `db.orm` also writes an event to the outbox store, in the same transaction. The two commit together or not at all, so no change is ever lost or sent without being saved.
 
-`"outboxwrite"` fires once per write call, after it commits: once for a `create()`, and once with every change for a `createAll()`, `updateAll()` or a delete that cascades. It never fires for a write that rolled back.
+`"outboxwrite"` fires after commit, once per tracked IndexedDB write call. A single call can report several entries, such as the rows from a bulk scan-write. Nested writes, foreign-key-aware creates and cascading deletes can use several driver calls, so one ORM method can produce several notifications. A rolled-back transaction produces none.
 
 ```ts
 const unsubscribe = db.on("outboxwrite", (entries) => {
@@ -55,6 +55,8 @@ For each synced record, `_idb_sync_version_meta` records two things:
 - **The last changelog id applied to it.** A pull that isn't newer is skipped, so a repeated or out-of-order pull can't undo a newer change.
 
 The worker maintains this store; you don't write to it.
+
+Pulled records and keys are validated against the client contract before a write transaction opens. Corrupt entries count toward `validationFailed`, which is a subset of `skipped` in both the `applyPull` result and the worker's `pullcompleted` event. Valid entries still apply. Invalid entries advance the cursor without changing local records or version metadata.
 
 ## Sync worker
 
