@@ -19,6 +19,7 @@
     "./orm": "./dist/orm.mjs",
     "./client": "./dist/client.mjs",
     "./client-auto": "./dist/client-auto.mjs",
+    "./internal": "./dist/internal.mjs",
     "./package.json": "./package.json"
   },
   "scripts": {

@@ -73,15 +73,3 @@ export type {
 // Multi-store transaction scope API
 export { withMutationScope } from "../core/mutation-scope";
 export type { IdbQueryExecutorWithTransaction } from "../core/mutation-scope";
-
-// Nested relation write helpers
-export {
-  createRelationMutator,
-  isRelationMutationDescriptor,
-  isRelationMutationCallback,
-} from "../core/relation-mutator";
-export {
-  hasNestedMutationCallbacks,
-  collectDeleteStoreNames,
-  applyReferentialActionsForRow,
-} from "../core/mutation-executor";

@@ -184,11 +184,13 @@ Depends on `adapter-idb` and `driver-idb`.
 
 ### `client-idb`
 
-| Entrypoint      | Contains                                                                                                                                                          |
-| --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `./orm`         | `idbOrm({ contract, executor })`, the accessor types, and the `and`, `or` and `not` filter helpers. Bring your own executor.                                      |
-| `./client`      | `createIdbClient({ contract, dbName })`, which builds the driver, adapter, runtime and ORM. Also `createManagedIdbClient`.                                        |
-| `./client-auto` | `createAutoMigratingIdbClient({ contractSpace, dbName, extensions })`, which migrates first. Also `createManagedAutoIdbClient` and the lower-level `autoMigrate`. |
+| Entrypoint      | Contains                                                                                                                        |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `./orm`         | `idbOrm({ contract, executor })`, the accessor types, and the `and`, `or` and `not` filter helpers. Bring your own executor.    |
+| `./client`      | `createIdbClient({ contract, dbName })`, which builds the driver, adapter, runtime and ORM. Also `createManagedIdbClient`.      |
+| `./client-auto` | `createAutoMigratingIdbClient({ contractSpace, dbName, extensions })`, which migrates first. Also `createManagedAutoIdbClient`. |
+
+The `./internal` subpath shares `collectDeleteStoreNames` and `applyReferentialActionsForRow` with `sync-extension-idb`. Application code uses the three entry points above. Relation-mutation detection and `autoMigrate` remain source-only implementation helpers.
 
 All three are runtime only. `createManagedIdbClient(open, { dbName })` wraps a client factory. The auto-migrating wrapper accepts the contract space directly.
 

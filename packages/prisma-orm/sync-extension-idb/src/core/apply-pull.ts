@@ -39,13 +39,8 @@
  */
 
 import type { IdbContract } from "@prisma-idb/client-idb/orm";
-import {
-  getStoreName,
-  getKeyPath,
-  extractKeyFromRow,
-  collectDeleteStoreNames,
-  applyReferentialActionsForRow,
-} from "@prisma-idb/client-idb/orm";
+import { getStoreName, getKeyPath, extractKeyFromRow } from "@prisma-idb/client-idb/orm";
+import { collectDeleteStoreNames, applyReferentialActionsForRow } from "@prisma-idb/client-idb/internal";
 import { decodeJsonRecord, validateRecord, validateKeyPath, keyEquals } from "@prisma-idb/target-idb/runtime";
 import type { SyncIdbClient } from "./sync-client";
 import { deleteRecord, getRecord, putRecord } from "./raw-store";
