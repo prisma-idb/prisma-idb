@@ -46,7 +46,7 @@ Use the exported `GetKeyField` type from `@prisma-idb/sync-server` to type a cus
 
 ## `validatePush(events, { scopeKey })`
 
-Takes the pushed events, each `{ id, model, operation, payload }`, and the signed-in user's id. Returns one `{ eventId, model, check }` per event, where `check` is one of:
+Takes the pushed events, each `{ id, model, operation, payload, wireKey }`, and the signed-in user's id. Returns one `{ eventId, model, check }` per event, where `check` is one of:
 
 | `check.kind`           | Meaning                                                                            |
 | ---------------------- | ---------------------------------------------------------------------------------- |
@@ -54,6 +54,8 @@ Takes the pushed events, each `{ id, model, operation, payload }`, and the signe
 | `"unknown-model"`      | The model isn't in the browser contract. A real client can't send this; reject it. |
 | `"root"`               | The record is the root model itself. `check.authorized` is already computed.       |
 | `"scoped"`             | Authorized if any one of `check.paths` leads from the record to `scopeKey`.        |
+
+`payload` holds native application values (`Date`, `bigint`, `Uint8Array`), which `validatePush` validates against your contracts. `wireKey` is the record's primary key in the JSON form the client sent, such as an ISO date string or a decimal string for a `bigint`. The ownership check compares and returns that form, because changelog rows store keys in it. `wireKey` is required, so TypeScript rejects an event without it. For a string key, `wireKey` equals `payload[keyField]`.
 
 Run the check inside the same transaction as the write, just before it. Checking before the transaction opens would let another request change the record's owner in between. `sqlSyncAdapter.applyPushEvent` does this for you.
 

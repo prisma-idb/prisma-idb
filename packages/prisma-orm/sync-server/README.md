@@ -17,7 +17,9 @@ const syncServer = createSyncServer({
   getKeyField: sqlGetKeyField, // for a SQL contract
 });
 
-// payloads use native application values (Date, bigint, Uint8Array).
+// Each event is { id, model, operation, payload, wireKey }. `payload` holds native
+// application values (Date, bigint, Uint8Array); `wireKey` is the record's key in
+// its JSON wire form, which the ownership check compares with `scopeKey`.
 const checks = syncServer.validatePush(events, { scopeKey: signedInUserId });
 for (const { check } of checks) {
   if (check.kind === "validation-failure") {

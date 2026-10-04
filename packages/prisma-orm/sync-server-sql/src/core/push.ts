@@ -111,8 +111,8 @@ export function decodeWireEvent(
     id: event.id,
     model,
     operation: event.operation,
-    wirePayload,
     payload: reviveWireValues(contract, model, wirePayload, keyField),
+    wireKey: keyField === undefined ? undefined : wirePayload[keyField],
   };
 }
 

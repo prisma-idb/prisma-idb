@@ -25,7 +25,7 @@ describe("SQL application codec validation", () => {
       for (const operation of ["create", "update"] as const) {
         for (const name of [date, date.toISOString(), new Date(NaN)]) {
           const [result] = syncServer.validatePush(
-            [{ id: "event", model: "User", operation, payload: { id: "u1", name } }],
+            [{ id: "event", model: "User", operation, payload: { id: "u1", name }, wireKey: "u1" }],
             { scopeKey: "u1" }
           );
           expect(result?.check.kind).toBe(name === date ? "root" : "validation-failure");
@@ -103,7 +103,7 @@ describe("validator construction", () => {
     });
     expect(
       syncServer.validatePush(
-        [{ id: "event", model: "User", operation: "create", payload: { id: "u1", name: "Ada" } }],
+        [{ id: "event", model: "User", operation: "create", payload: { id: "u1", name: "Ada" }, wireKey: "u1" }],
         { scopeKey: "u1" }
       )[0]?.check.kind
     ).toBe("root");
@@ -137,7 +137,7 @@ describe("validator construction", () => {
     const syncServer = createSyncServer({ contract, clientContract: kanbanClientContract(), rootModel: "User" });
     expect(
       syncServer.validatePush(
-        [{ id: "event", model: "User", operation: "create", payload: { id: "u1", name: "Ada" } }],
+        [{ id: "event", model: "User", operation: "create", payload: { id: "u1", name: "Ada" }, wireKey: "u1" }],
         { scopeKey: "u1" }
       )[0]?.check
     ).toMatchObject({ kind: "root", authorized: true });

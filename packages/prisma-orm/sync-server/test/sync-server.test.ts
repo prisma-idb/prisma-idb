@@ -45,8 +45,8 @@ describe("createSyncServer", () => {
       });
       const [badRecord, badKey] = syncServer.validatePush(
         [
-          { id: "e1", model: "Todo", operation: "create", payload: { id: "t1", boardId: 42 } },
-          { id: "e2", model: "Todo", operation: "delete", payload: { id: 42 } },
+          { id: "e1", model: "Todo", operation: "create", payload: { id: "t1", boardId: 42 }, wireKey: "t1" },
+          { id: "e2", model: "Todo", operation: "delete", payload: { id: 42 }, wireKey: 42 },
         ],
         { scopeKey: "user-1" }
       );
@@ -72,21 +72,31 @@ describe("createSyncServer", () => {
       const syncServer = createSyncServer({ contract, clientContract: kanbanClientContract(), rootModel: "User" });
       const [root, scoped, invalid] = syncServer.validatePush(
         [
-          { id: "root", model: "User", operation: "delete", payload: { id: nativeKey }, wirePayload: { id: wireKey } },
+          { id: "root", model: "User", operation: "delete", payload: { id: nativeKey }, wireKey },
           {
             id: "scoped",
             model: "Board",
             operation: "delete",
             payload: { id: nativeKey },
-            wirePayload: { id: wireKey },
+            wireKey,
           },
-          { id: "invalid", model: "User", operation: "delete", payload: { id: false }, wirePayload: { id: wireKey } },
+          { id: "invalid", model: "User", operation: "delete", payload: { id: false }, wireKey },
         ],
         { scopeKey: wireKey as string }
       );
       expect(root?.check).toMatchObject({ kind: "root", key: wireKey, authorized: true });
       expect(scoped?.check).toMatchObject({ kind: "scoped", key: wireKey });
       expect(invalid?.check).toMatchObject({ kind: "validation-failure", error: "KEYPATH_VALIDATION_FAILURE" });
+    });
+
+    it("requires the wire key, so an event can't skip the ownership key form", () => {
+      const event = { id: "e1", model: "User", operation: "delete", payload: { id: "user-1" } } as const;
+
+      // @ts-expect-error `wireKey` is required: without it the ownership check has no key to compare.
+      const [result] = server().validatePush([event], { scopeKey: "user-1" });
+
+      // At runtime the missing key is exactly the silent mismatch the type prevents.
+      expect(result?.check).toMatchObject({ kind: "root", authorized: false });
     });
 
     it("validates only client-visible fields while resolving ownership from the full model", () => {
@@ -100,11 +110,11 @@ describe("createSyncServer", () => {
       const syncServer = createSyncServer({ contract, clientContract, rootModel: "User", getKeyField });
       const [valid, missingKey, hiddenField, badVisibleCreate, badVisibleUpdate] = syncServer.validatePush(
         [
-          { id: "valid", model: "Board", operation: "create", payload: { id: "b1" } },
-          { id: "key", model: "Board", operation: "create", payload: {} },
-          { id: "hidden", model: "Board", operation: "update", payload: { id: "b1", ownerId: "u1" } },
-          { id: "create", model: "Board", operation: "create", payload: { id: "b1", label: 42 } },
-          { id: "update", model: "Board", operation: "update", payload: { id: "b1", label: 42 } },
+          { id: "valid", model: "Board", operation: "create", payload: { id: "b1" }, wireKey: "b1" },
+          { id: "key", model: "Board", operation: "create", payload: {}, wireKey: undefined },
+          { id: "hidden", model: "Board", operation: "update", payload: { id: "b1", ownerId: "u1" }, wireKey: "b1" },
+          { id: "create", model: "Board", operation: "create", payload: { id: "b1", label: 42 }, wireKey: "b1" },
+          { id: "update", model: "Board", operation: "update", payload: { id: "b1", label: 42 }, wireKey: "b1" },
         ],
         { scopeKey: "u1" }
       );
@@ -126,10 +136,16 @@ describe("createSyncServer", () => {
     it("checks updates as patches and deletes as key-only events", () => {
       const results = server().validatePush(
         [
-          { id: "missing", model: "User", operation: "create", payload: { id: "user-1" } },
-          { id: "update", model: "User", operation: "update", payload: { id: "user-1", name: 42 } },
-          { id: "extra", model: "User", operation: "update", payload: { id: "user-1", extra: true } },
-          { id: "delete", model: "User", operation: "delete", payload: { id: "user-1" } },
+          { id: "missing", model: "User", operation: "create", payload: { id: "user-1" }, wireKey: "user-1" },
+          { id: "update", model: "User", operation: "update", payload: { id: "user-1", name: 42 }, wireKey: "user-1" },
+          {
+            id: "extra",
+            model: "User",
+            operation: "update",
+            payload: { id: "user-1", extra: true },
+            wireKey: "user-1",
+          },
+          { id: "delete", model: "User", operation: "delete", payload: { id: "user-1" }, wireKey: "user-1" },
         ],
         { scopeKey: "user-1" }
       );
@@ -140,7 +156,7 @@ describe("createSyncServer", () => {
 
     it("resolves the root model directly, no paths needed", () => {
       const [result] = server().validatePush(
-        [{ id: "e1", model: "User", operation: "update", payload: { id: "user-1", name: "Ada" } }],
+        [{ id: "e1", model: "User", operation: "update", payload: { id: "user-1", name: "Ada" }, wireKey: "user-1" }],
         { scopeKey: "user-1" }
       );
 
@@ -155,7 +171,15 @@ describe("createSyncServer", () => {
 
     it("marks a root-model event unauthorized when the key doesn't match scopeKey", () => {
       const [result] = server().validatePush(
-        [{ id: "e1", model: "User", operation: "update", payload: { id: "someone-else", name: "Ada" } }],
+        [
+          {
+            id: "e1",
+            model: "User",
+            operation: "update",
+            payload: { id: "someone-else", name: "Ada" },
+            wireKey: "someone-else",
+          },
+        ],
         { scopeKey: "user-1" }
       );
 
@@ -164,7 +188,15 @@ describe("createSyncServer", () => {
 
     it("resolves a non-root model to every authorization path", () => {
       const [result] = server().validatePush(
-        [{ id: "e1", model: "Todo", operation: "create", payload: { id: "todo-1", boardId: "board-1" } }],
+        [
+          {
+            id: "e1",
+            model: "Todo",
+            operation: "create",
+            payload: { id: "todo-1", boardId: "board-1" },
+            wireKey: "todo-1",
+          },
+        ],
         { scopeKey: "user-1" }
       );
 
@@ -180,7 +212,15 @@ describe("createSyncServer", () => {
 
     it("resolves all paths for a model reachable more than one way", () => {
       const [result] = server().validatePush(
-        [{ id: "e1", model: "Comment", operation: "create", payload: { id: "c1", todoId: null, authorId: "user-1" } }],
+        [
+          {
+            id: "e1",
+            model: "Comment",
+            operation: "create",
+            payload: { id: "c1", todoId: null, authorId: "user-1" },
+            wireKey: "c1",
+          },
+        ],
         { scopeKey: "user-1" }
       );
 
@@ -192,7 +232,7 @@ describe("createSyncServer", () => {
 
     it("rejects an event for a model the client contract never exposes", () => {
       const [result] = server().validatePush(
-        [{ id: "e1", model: "AuditLog", operation: "create", payload: { id: "log-1" } }],
+        [{ id: "e1", model: "AuditLog", operation: "create", payload: { id: "log-1" }, wireKey: "log-1" }],
         { scopeKey: "user-1" }
       );
 
@@ -200,9 +240,12 @@ describe("createSyncServer", () => {
     });
 
     it("rejects an event for a model that doesn't exist at all", () => {
-      const [result] = server().validatePush([{ id: "e1", model: "Ghost", operation: "create", payload: {} }], {
-        scopeKey: "user-1",
-      });
+      const [result] = server().validatePush(
+        [{ id: "e1", model: "Ghost", operation: "create", payload: {}, wireKey: undefined }],
+        {
+          scopeKey: "user-1",
+        }
+      );
 
       expect(result?.check).toEqual({ kind: "unknown-model" });
     });
@@ -210,8 +253,14 @@ describe("createSyncServer", () => {
     it("processes every event independently, preserving order", () => {
       const results = server().validatePush(
         [
-          { id: "e1", model: "User", operation: "update", payload: { id: "user-1" } },
-          { id: "e2", model: "Board", operation: "create", payload: { id: "board-1", ownerId: "user-1" } },
+          { id: "e1", model: "User", operation: "update", payload: { id: "user-1" }, wireKey: "user-1" },
+          {
+            id: "e2",
+            model: "Board",
+            operation: "create",
+            payload: { id: "board-1", ownerId: "user-1" },
+            wireKey: "board-1",
+          },
         ],
         { scopeKey: "user-1" }
       );
@@ -227,9 +276,12 @@ describe("createSyncServer", () => {
       const syncServer = createSyncServer({ contract, clientContract, rootModel: "User" });
 
       expect(() =>
-        syncServer.validatePush([{ id: "e1", model: "User", operation: "update", payload: { id: "user-1" } }], {
-          scopeKey: "user-1",
-        })
+        syncServer.validatePush(
+          [{ id: "e1", model: "User", operation: "update", payload: { id: "user-1" }, wireKey: "user-1" }],
+          {
+            scopeKey: "user-1",
+          }
+        )
       ).toThrow(/storage.keyPath/);
     });
 
@@ -250,7 +302,15 @@ describe("createSyncServer", () => {
       });
 
       const [result] = syncServer.validatePush(
-        [{ id: "e1", model: "Todo", operation: "create", payload: { id: "todo-1", boardId: "board-1" } }],
+        [
+          {
+            id: "e1",
+            model: "Todo",
+            operation: "create",
+            payload: { id: "todo-1", boardId: "board-1" },
+            wireKey: "todo-1",
+          },
+        ],
         { scopeKey: "user-1" }
       );
 

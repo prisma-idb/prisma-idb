@@ -13,8 +13,13 @@ export interface SyncPushEvent {
   readonly operation: "create" | "update" | "delete";
   /** Native application values used for contract validation. */
   readonly payload: Record<string, unknown>;
-  /** Pre-revival payload; supply when native keys differ from their JSON wire form. */
-  readonly wirePayload?: Record<string, unknown>;
+  /**
+   * The record's primary key in its JSON wire form, as the client sent it.
+   * Changelog rows and the ownership check use this form, so
+   * `check.key` returns it unchanged. It equals `payload[keyField]` unless the key's
+   * native type (`bigint`, `Date`, `Uint8Array`) differs from its wire form.
+   */
+  readonly wireKey: unknown;
 }
 
 /**
@@ -175,15 +180,7 @@ export function validatePush(
         return { kind: "validation-failure", error: "RECORD_VALIDATION_FAILURE", issues: result.issues };
       }
     }
-    return buildOwnershipCheck(
-      dag,
-      contract,
-      getKeyField,
-      event.model,
-      keyField,
-      (event.wirePayload ?? event.payload)[keyField],
-      options.scopeKey
-    );
+    return buildOwnershipCheck(dag, contract, getKeyField, event.model, keyField, event.wireKey, options.scopeKey);
   }
 
   return events.map((event) => ({ eventId: event.id, model: event.model, check: checkEvent(event) }));

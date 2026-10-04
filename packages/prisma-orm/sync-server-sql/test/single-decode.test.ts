@@ -43,7 +43,7 @@ describe("single decode", () => {
     await seed(db, { User: [{ id: "u1", name: "Ann" }] });
     const record = { id: "b1", ownerId: "u1" };
     const [validation] = testSyncServer.validatePush(
-      [{ id: "e1", model: "Board", operation: "create", payload: record, wirePayload: record }],
+      [{ id: "e1", model: "Board", operation: "create", payload: record, wireKey: record.id }],
       { scopeKey: "u1" }
     );
 
