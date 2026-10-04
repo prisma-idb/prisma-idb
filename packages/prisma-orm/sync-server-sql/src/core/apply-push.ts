@@ -76,8 +76,37 @@ export async function applyPush(
     seen.add(event.id);
   }
 
-  const resolved = new Map<string, SqlPushResult>();
+  const { pushEvents, resolved } = decodeWireEvents(contract, getKeyField, events);
+
+  const checksById = new Map(
+    syncServer.validatePush(pushEvents, { scopeKey }).map((validation) => [validation.eventId, validation])
+  );
+  const results: SqlPushResult[] = [];
+  for (const event of events) {
+    let result = resolved.get(event.id);
+    if (!result) {
+      const { model, check } = checksById.get(event.id)!;
+      result = await applyPushEvent(db, contract, getKeyField, event, model, check, scopeKey);
+    }
+    results.push(result);
+    if (!result.success && result.retryable) break;
+  }
+
+  return { ok: true, results };
+}
+
+/**
+ * Decodes each wire event into the `SyncPushEvent` shape `validatePush` takes.
+ * An event that cannot be decoded gets its non-retryable failure result in
+ * `resolved` instead, so one bad event never fails the batch.
+ */
+function decodeWireEvents(
+  contract: SyncServerContract,
+  getKeyField: GetKeyField,
+  events: readonly SqlPushWireEvent[]
+): { pushEvents: SyncPushEvent[]; resolved: Map<string, SqlPushResult> } {
   const pushEvents: SyncPushEvent[] = [];
+  const resolved = new Map<string, SqlPushResult>();
   for (const event of events) {
     // A model the contract can't resolve a key for is passed through with an
     // empty payload: `validatePush` reports it as an unknown model, so it
@@ -106,20 +135,5 @@ export async function applyPush(
       });
     }
   }
-
-  const checksById = new Map(
-    syncServer.validatePush(pushEvents, { scopeKey }).map((validation) => [validation.eventId, validation])
-  );
-  const results: SqlPushResult[] = [];
-  for (const event of events) {
-    let result = resolved.get(event.id);
-    if (!result) {
-      const { model, check } = checksById.get(event.id)!;
-      result = await applyPushEvent(db, contract, getKeyField, event, model, check, scopeKey);
-    }
-    results.push(result);
-    if (!result.success && result.retryable) break;
-  }
-
-  return { ok: true, results };
+  return { pushEvents, resolved };
 }
