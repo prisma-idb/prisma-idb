@@ -1,7 +1,6 @@
 import type { GetKeyField, SyncServer, SyncPushEvent, SyncServerContract } from "@prisma-idb/sync-server";
-import { applyPushEvent, toSyncPushPayload } from "./push";
+import { applyPushEventDecoded, decodeFailureResult, decodeWireEvent } from "./push";
 import type { SqlPushResult } from "./push";
-import { reviveWireValues, WireValidationError } from "./wire-values";
 
 /**
  * Generous headroom over the browser client's own batch size (default 20) —
@@ -81,12 +80,13 @@ export async function applyPush(
   const checksById = new Map(
     syncServer.validatePush(pushEvents, { scopeKey }).map((validation) => [validation.eventId, validation])
   );
+  const decodedById = new Map(pushEvents.map((event) => [event.id, event]));
   const results: SqlPushResult[] = [];
   for (const event of events) {
     let result = resolved.get(event.id);
     if (!result) {
-      const { model, check } = checksById.get(event.id)!;
-      result = await applyPushEvent(db, contract, getKeyField, event, model, check, scopeKey);
+      const { check } = checksById.get(event.id)!;
+      result = await applyPushEventDecoded(db, contract, getKeyField, decodedById.get(event.id)!, check, scopeKey);
     }
     results.push(result);
     if (!result.success && result.retryable) break;
@@ -108,31 +108,10 @@ function decodeWireEvents(
   const pushEvents: SyncPushEvent[] = [];
   const resolved = new Map<string, SqlPushResult>();
   for (const event of events) {
-    // A model the contract can't resolve a key for is passed through with an
-    // empty payload: `validatePush` reports it as an unknown model, so it
-    // fails as an ordinary non-retryable event result.
-    let keyField: string | undefined;
     try {
-      keyField = getKeyField(contract, event.entityType);
-    } catch {
-      keyField = undefined;
-    }
-    try {
-      const wirePayload = keyField === undefined ? {} : toSyncPushPayload(event.operation, event.payload, keyField);
-      pushEvents.push({
-        id: event.id,
-        model: event.entityType,
-        operation: event.operation,
-        wirePayload,
-        payload: reviveWireValues(contract, event.entityType, wirePayload, keyField),
-      });
+      pushEvents.push(decodeWireEvent(contract, getKeyField, event.entityType, event));
     } catch (err) {
-      resolved.set(event.id, {
-        id: event.id,
-        success: false,
-        error: err instanceof WireValidationError ? err.code : err instanceof Error ? err.message : "Unsupported event",
-        retryable: false,
-      });
+      resolved.set(event.id, decodeFailureResult(event.id, err));
     }
   }
   return { pushEvents, resolved };
