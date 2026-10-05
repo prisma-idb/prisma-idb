@@ -78,6 +78,52 @@ Most writes take a different route: they need to read and write several stores i
 
 Sync hooks into both routes. It extends single plans into a batch that also writes the outbox, and it wraps the transaction scope so each write in it records an outbox event. A hand-built plan for `update`, `updateAll` or `deleteAll` on a synced model has no known key, so it can't sync. Sync rejects it before any local write.
 
+## Query planning
+
+`client-idb` decides how to read a store before it builds the driver plan. This section explains how, and why the result is always correct. [ADR 020](adrs/ADR%20020%20-%20Query%20Planner.md) records the decision.
+
+### From query to driver plan
+
+Three steps, in `client-idb/src/core/planner/`, turn a query into a driver plan:
+
+1. **Catalog.** `buildCatalog` reads the contract and records, for one store, its primary key, its indexes and the codec of each field. The catalog is built once per contract and holds no IndexedDB handles.
+2. **Plan.** `planQuery` takes the catalog and the query's filter, `orderBy` and `take`. It returns a logical plan: which source to walk (the primary key or one index), the key ranges on it, an optional scan direction, and whether the plan is _exact_. It is a pure function. It opens no database.
+3. **Lowering.** `lowerRows`, `lowerCount`, `lowerExists` and `lowerWrite` turn the logical plan into a driver plan from `driver-idb`, such as `key-get`, `get-all`, `cursor-scan`, `count`, `keys` or `scan-write`. Each also returns a `finish` function that shapes the combined result after the driver has collected it.
+
+The rest of the path is the one in [How a query runs](#how-a-query-runs). Mutations use the same planner for their lookups, inside the transaction scope.
+
+### The safety rule: a superset, then the full filter
+
+The planner narrows where to look. It never decides what matches. The key ranges it chooses may include rows that don't match the filter, but they never leave out a row that does. If it can't show that for a query, it plans a full scan.
+
+Every read therefore reapplies the original filter to each row the driver returns, before pagination and projection. A planner mistake can then cost time, but it can't return a wrong row.
+
+An _exact_ plan is the one case where the ranges alone decide the match, because they consume every condition in the filter. Only exact plans let `count()` and existence checks skip the rows. They use the driver's `count` and `keys` plans, which read entries, not records.
+
+### Accelerated and not accelerated shapes
+
+The planner uses an index or the primary key for these shapes:
+
+- equality and `in` on the primary key or an indexed field, including an OR of equalities on one field,
+- `lt`, `lte`, `gt` and `gte` on an indexed field, alone or combined,
+- `startsWith` on an indexed string field,
+- equality on a leading prefix of a compound index, with an optional range on the next field,
+- a single-field `orderBy` with `take`, which walks the index in that order and stops early.
+
+It scans the whole store and filters in memory for these shapes:
+
+- `not`, and an OR across different fields or operators,
+- filters on relations,
+- `orderBy` on more than one field,
+- fields that no index covers, and `multiEntry` indexes,
+- fields whose index could omit a matching record, such as a `null` in a nullable field.
+
+Scanning is slower on large stores, but it returns the same rows. The plan-shape gate (`client-idb/test/plan-shape-gate.test.ts`) records the shape and cost of each query at two store sizes, so a change to this list shows up in review.
+
+### Row order
+
+Without `orderBy`, the order of rows is unspecified. It follows the access path, and the planner may change the path. `skip`, `take` and `first` can then select different matching rows. Rows that tie on every `orderBy` field have no defined order either. Add a unique field to `orderBy` where the order matters.
+
 ## How a schema change reaches the browser
 
 ### At build time
@@ -196,19 +242,20 @@ All three are runtime only. `createManagedIdbClient(open, { dbName })` wraps a c
 
 The ORM carries immutable query state through the accessor chain. Reads shape a driver plan, collect rows, load relations, then project selected fields. Mutations derive the stores they need before opening one transaction.
 
-| File                                              | Responsibility                                                                          |
-| ------------------------------------------------- | --------------------------------------------------------------------------------------- |
-| `store-accessor.ts`                               | The per-model interface, query chaining, read materialization and mutation entrypoints. |
-| `store-state.ts`                                  | Immutable accessor state and include descriptors.                                       |
-| `model-accessor.ts` and `filters.ts`              | Typed field operators and filter combinators.                                           |
-| `query-shaping.ts`                                | Filter composition and row comparators.                                                 |
-| `aggregate-builder.ts` and `grouped-accessor.ts`  | Aggregate selectors, reductions and grouped results.                                    |
-| `relation-loader.ts`                              | Batched relation reads and per-parent refinements.                                      |
-| `mutation-executor.ts` and `mutation-scope.ts`    | Nested writes, foreign-key checks and referential actions in one transaction.           |
-| `mutation-defaults.ts`                            | Literal and generated create/update defaults, cached for each mutation.                 |
-| `relation-mutator.ts`                             | Descriptors for relation create, connect and disconnect callbacks.                      |
-| `auto-migrate.ts` and `migration-hash.ts`         | Migration-chain validation, operation hashes and combined apply.                        |
-| `managed-client.ts` and `managed-auto-migrate.ts` | Shared client lifetime and reset coordination.                                          |
+| File                                              | Responsibility                                                                                |
+| ------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| `store-accessor.ts`                               | The per-model interface, query chaining, read materialization and mutation entrypoints.       |
+| `store-state.ts`                                  | Immutable accessor state and include descriptors.                                             |
+| `model-accessor.ts` and `filters.ts`              | Typed field operators and filter combinators.                                                 |
+| `query-shaping.ts`                                | Filter composition and row comparators.                                                       |
+| `planner/`                                        | Catalog, access planning and lowering to driver plans. See [Query planning](#query-planning). |
+| `aggregate-builder.ts` and `grouped-accessor.ts`  | Aggregate selectors, reductions and grouped results.                                          |
+| `relation-loader.ts`                              | Batched relation reads and per-parent refinements.                                            |
+| `mutation-executor.ts` and `mutation-scope.ts`    | Nested writes, foreign-key checks and referential actions in one transaction.                 |
+| `mutation-defaults.ts`                            | Literal and generated create/update defaults, cached for each mutation.                       |
+| `relation-mutator.ts`                             | Descriptors for relation create, connect and disconnect callbacks.                            |
+| `auto-migrate.ts` and `migration-hash.ts`         | Migration-chain validation, operation hashes and combined apply.                              |
+| `managed-client.ts` and `managed-auto-migrate.ts` | Shared client lifetime and reset coordination.                                                |
 
 Depends on `target-idb`, `adapter-idb`, `driver-idb` and `runtime-idb`.
 
