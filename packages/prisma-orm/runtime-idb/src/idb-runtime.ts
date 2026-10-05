@@ -127,7 +127,7 @@ function buildMiddlewareContext(contract: Record<string, unknown>): RuntimeMiddl
  *
  * - `meta` keeps only `storageHash`, its identity field.
  * - Functions (`IdbRowFilter`, `IdbRowComparator`) are dropped; they cannot be hashed.
- * - Key ranges collapse to their bounds.
+ * - A key range collapses to its bounds. Only `delete`'s `key` can hold one; range descriptors are plain data and hash as they are.
  */
 function hashablePlan(exec: ExecutionPlan): Record<string, unknown> {
   const hashable: Record<string, unknown> = {};
@@ -245,7 +245,7 @@ class IdbRuntimeImpl extends RuntimeCore<IdbQueryPlan, IdbPlanBody, IdbMiddlewar
    * keys correctly resolves `{ affectedRows: 0 }` and one matching N keys
    * (a range delete) resolves `{ affectedRows: N }`. For a `batch` plan,
    * `affectedRows` is the sum of rows every op in the batch yields,
-   * *including read ops* (`key-get`/`index-get`/`cursor-scan`) if the batch
+   * *including read ops* (`key-get`/`get-all`/`cursor-scan`) if the batch
    * happens to contain any — it's a row count across the whole plan, not a
    * write-only count.
    */

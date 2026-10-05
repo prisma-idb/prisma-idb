@@ -21,7 +21,7 @@ import type {
   IdbCountPlan,
   IdbCursorScanPlan,
   IdbDeletePlan,
-  IdbIndexGetPlan,
+  IdbGetAllPlan,
   IdbKeyGetPlan,
   IdbKeysPlan,
   IdbPutPlan,
@@ -34,6 +34,7 @@ import {
   transactionInactiveError,
   type IdbExecuteErrorCode,
 } from "./error";
+import { toOptionalIdbKeyRange } from "./key-range";
 
 type Row = Record<string, unknown>;
 type OnComplete = (rows: Row[]) => void;
@@ -91,8 +92,8 @@ function dispatchOp(store: IDBObjectStore, plan: IdbAtomicPlan, onComplete: OnCo
   switch (plan.kind) {
     case "key-get":
       return execKeyGet(store, plan, onComplete, onError);
-    case "index-get":
-      return execIndexGet(store, plan, onComplete, onError);
+    case "get-all":
+      return execGetAll(store, plan, onComplete, onError);
     case "cursor-scan":
       return execCursorScan(store, plan, onComplete, onError);
     case "count":
@@ -140,16 +141,20 @@ function execKeyGet(store: IDBObjectStore, plan: IdbKeyGetPlan, onComplete: OnCo
   req.onerror = () => onError(opError("KEY_GET_FAILED", plan, "key-get", req.error));
 }
 
-function execIndexGet(store: IDBObjectStore, plan: IdbIndexGetPlan, onComplete: OnComplete, onError: OnError): void {
-  const req = store.index(plan.indexName).getAll(plan.range);
+function execGetAll(store: IDBObjectStore, plan: IdbGetAllPlan, onComplete: OnComplete, onError: OnError): void {
+  // getAll(undefined, 0) would read everything, so a zero cap is answered without a request.
+  if (plan.count === 0) return onComplete([]);
+
+  const source = plan.indexName !== undefined ? store.index(plan.indexName) : store;
+  const req = source.getAll(toOptionalIdbKeyRange(plan.range), plan.count);
   req.onsuccess = () => onComplete(req.result as Row[]);
-  req.onerror = () =>
-    onError(opError("INDEX_GET_FAILED", plan, "index-get", req.error, `"${plan.storeName}"/"${plan.indexName}"`));
+  req.onerror = () => onError(opError("GET_ALL_FAILED", plan, "get-all", req.error, storeTarget(plan)));
 }
 
 function execCount(store: IDBObjectStore, plan: IdbCountPlan, onComplete: OnComplete, onError: OnError): void {
   const source: IDBObjectStore | IDBIndex = plan.indexName !== undefined ? store.index(plan.indexName) : store;
-  const req = plan.range !== undefined ? source.count(plan.range) : source.count();
+  const range = toOptionalIdbKeyRange(plan.range);
+  const req = range !== undefined ? source.count(range) : source.count();
   req.onsuccess = () => onComplete([{ count: req.result }]);
   req.onerror = () => onError(opError("COUNT_FAILED", plan, "count", req.error, storeTarget(plan)));
 }
@@ -157,11 +162,12 @@ function execCount(store: IDBObjectStore, plan: IdbCountPlan, onComplete: OnComp
 function execKeys(store: IDBObjectStore, plan: IdbKeysPlan, onComplete: OnComplete, onError: OnError): void {
   const source: IDBObjectStore | IDBIndex = plan.indexName !== undefined ? store.index(plan.indexName) : store;
   const fail = (cause: unknown) => onError(opError("KEYS_FAILED", plan, "keys read", cause, storeTarget(plan)));
+  const range = toOptionalIdbKeyRange(plan.range);
 
   // getKey() requires a query (null/absent throws), so a range-less single-key
   // read is expressed as getAllKeys(undefined, 1) instead.
-  if (plan.take === 1 && plan.range !== undefined) {
-    const req = source.getKey(plan.range);
+  if (plan.take === 1 && range !== undefined) {
+    const req = source.getKey(range);
     req.onsuccess = () => onComplete(req.result === undefined ? [] : [{ key: req.result }]);
     req.onerror = () => fail(req.error);
     return;
@@ -172,7 +178,7 @@ function execKeys(store: IDBObjectStore, plan: IdbKeysPlan, onComplete: OnComple
     return;
   }
 
-  const req = source.getAllKeys(plan.range, plan.take);
+  const req = source.getAllKeys(range, plan.take);
   req.onsuccess = () => onComplete((req.result as IDBValidKey[]).map((key) => ({ key })));
   req.onerror = () => fail(req.error);
 }
@@ -189,10 +195,13 @@ function execCursorScan(
   const skip = plan.skip;
   const take = plan.take;
 
+  // Nothing can be returned, so don't open a cursor.
+  if (take === 0) return onComplete([]);
+
   const source: IDBObjectStore | IDBIndex = plan.indexName !== undefined ? store.index(plan.indexName) : store;
 
   // openCursor accepts null to mean "no range restriction".
-  const req = source.openCursor(plan.range ?? null, plan.direction ?? "next");
+  const req = source.openCursor(toOptionalIdbKeyRange(plan.range) ?? null, plan.direction ?? "next");
   const collected: Row[] = [];
   let skippedCount = 0;
 
@@ -316,8 +325,12 @@ function execDelete(store: IDBObjectStore, plan: IdbDeletePlan, onComplete: OnCo
 }
 
 function execScanWrite(store: IDBObjectStore, plan: IdbScanWritePlan, onComplete: OnComplete, onError: OnError): void {
+  // A zero limit writes nothing; without this the first match would be written before the limit check.
+  if (plan.take === 0) return onComplete([]);
+
   // Cursor must be opened on a readwrite transaction (enforced by planTxMode).
-  const req = store.openCursor(null, "next");
+  const source = plan.indexName !== undefined ? store.index(plan.indexName) : store;
+  const req = source.openCursor(toOptionalIdbKeyRange(plan.range) ?? null, "next");
   const collected: Row[] = [];
 
   req.onsuccess = () => {

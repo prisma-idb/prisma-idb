@@ -44,6 +44,32 @@ export interface IdbMarkerRecord {
 }
 
 /**
+ * A key range as plain data. The driver builds the matching `IDBKeyRange` when it runs the plan, so a
+ * plan never holds an `IDBKeyRange`. Each variant maps to the `IDBKeyRange` factory of the same name:
+ *
+ * - `only`: exactly `key`.
+ * - `lower`: keys at or above `key`; above only when `open` is true.
+ * - `upper`: keys at or below `key`; below only when `open` is true.
+ * - `bound`: keys from `lower` to `upper`. Each end is closed unless `lowerOpen` or `upperOpen` is true.
+ *
+ * For a compound index, the keys are arrays.
+ */
+export type IdbKeyRangeDescriptor =
+  | { readonly kind: "only"; readonly key: IDBValidKey }
+  | { readonly kind: "lower"; readonly key: IDBValidKey; readonly open?: boolean }
+  | { readonly kind: "upper"; readonly key: IDBValidKey; readonly open?: boolean }
+  | {
+      readonly kind: "bound";
+      readonly lower: IDBValidKey;
+      readonly upper: IDBValidKey;
+      readonly lowerOpen?: boolean;
+      readonly upperOpen?: boolean;
+    };
+
+/** The order a cursor walks keys in: ascending (`next`) or descending (`prev`). */
+export type IdbScanDirection = "next" | "prev";
+
+/**
  * In-memory predicate applied to each row while iterating a cursor.
  * Returns true if the row should be included in the result set.
  */
@@ -64,13 +90,18 @@ export type IdbRowComparator = (a: Record<string, unknown>, b: Record<string, un
  *
  * When `indexName` is set, the cursor iterates the named secondary index
  * instead of the primary key order.
+ *
+ * Without a `comparator`, rows come back in cursor order (shaped by `indexName`
+ * and `direction`), and the cursor stops as soon as `take` rows are collected.
+ * That is how a caller gets `orderBy` + `take` without reading the whole range.
+ * With a `comparator`, the cursor reads the whole range before sorting.
  */
 export interface IdbCursorScanPlan extends ExecutionPlan {
   readonly kind: "cursor-scan";
   readonly storeName: string;
   readonly indexName?: string; // if set, iterate via this index
-  readonly range?: IDBKeyRange; // restrict the cursor's key range
-  readonly direction?: IDBCursorDirection; // "next" | "nextunique" | "prev" | "prevunique"
+  readonly range?: IdbKeyRangeDescriptor; // restrict the cursor's key range
+  readonly direction?: IdbScanDirection; // defaults to "next"
   readonly filter?: IdbRowFilter; // in-memory WHERE
   readonly comparator?: IdbRowComparator; // in-memory ORDER BY (when index order isn't enough)
   readonly skip?: number; // OFFSET
@@ -89,16 +120,22 @@ export interface IdbKeyGetPlan extends ExecutionPlan {
 }
 
 /**
- * Index-based range lookup.
+ * Bulk read via `getAll`, in key order. Cheaper than a cursor when no row
+ * filter, skip or early stop is needed.
  *
- * Used for `findUnique` on `@@unique` fields and index-accelerated
- * `findMany` on `@@index` fields.
+ * - Without `indexName`, reads the store; with it, reads through that index.
+ * - Without `range`, reads everything.
+ * - `count` caps the number of rows. `count: 0` returns no rows.
+ *
+ * Used for `findUnique` on `@@unique` fields and for index-backed `findMany`
+ * on `@@index` fields.
  */
-export interface IdbIndexGetPlan extends ExecutionPlan {
-  readonly kind: "index-get";
+export interface IdbGetAllPlan extends ExecutionPlan {
+  readonly kind: "get-all";
   readonly storeName: string;
-  readonly indexName: string;
-  readonly range: IDBKeyRange;
+  readonly indexName?: string;
+  readonly range?: IdbKeyRangeDescriptor;
+  readonly count?: number;
 }
 
 /**
@@ -183,10 +220,15 @@ export interface IdbDeletePlan extends ExecutionPlan {
  *
  * With `take`, the cursor stops after the first `take` matches (no
  * `cursor.continue()` call after the limit is reached).
+ *
+ * `indexName` and `range` narrow the rows the cursor visits; `filter` still
+ * applies to each of them.
  */
 export interface IdbScanWritePlan extends ExecutionPlan {
   readonly kind: "scan-write";
   readonly storeName: string;
+  readonly indexName?: string; // if set, walk this index instead of the primary key order
+  readonly range?: IdbKeyRangeDescriptor; // restrict the walk to this key range
   readonly filter?: IdbRowFilter;
   readonly take?: number;
   readonly write: "put-merged" | "delete";
@@ -208,7 +250,7 @@ export interface IdbCountPlan extends ExecutionPlan {
   readonly kind: "count";
   readonly storeName: string;
   readonly indexName?: string; // count via this index instead of the store's primary keys
-  readonly range?: IDBKeyRange; // omit to count every entry
+  readonly range?: IdbKeyRangeDescriptor; // omit to count every entry
 }
 
 /**
@@ -231,7 +273,7 @@ export interface IdbKeysPlan extends ExecutionPlan {
   readonly kind: "keys";
   readonly storeName: string;
   readonly indexName?: string; // resolve through this index; returned keys are still primary keys
-  readonly range?: IDBKeyRange; // omit to cover the whole store/index
+  readonly range?: IdbKeyRangeDescriptor; // omit to cover the whole store/index
   readonly take?: number; // max keys to return (undefined = all)
 }
 
@@ -241,7 +283,7 @@ export interface IdbKeysPlan extends ExecutionPlan {
 export type IdbAtomicPlan =
   | IdbCursorScanPlan
   | IdbKeyGetPlan
-  | IdbIndexGetPlan
+  | IdbGetAllPlan
   | IdbCountPlan
   | IdbKeysPlan
   | IdbAddPlan

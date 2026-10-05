@@ -23,7 +23,7 @@ import type {
   IdbBatchPlan,
   IdbCursorScanPlan,
   IdbDeletePlan,
-  IdbIndexGetPlan,
+  IdbGetAllPlan,
   IdbKeyGetPlan,
   IdbPlanBody,
   IdbPutPlan,
@@ -150,14 +150,14 @@ const _keyGet = {
   key: "abc-123",
 } satisfies IdbKeyGetPlan;
 
-// index-get
-const _indexGet = {
+// get-all
+const _getAll = {
   meta,
-  kind: "index-get",
+  kind: "get-all",
   storeName: "users",
   indexName: "by-email",
-  range: IDBKeyRange.only("user@example.com"),
-} satisfies IdbIndexGetPlan;
+  range: { kind: "only", key: "user@example.com" },
+} satisfies IdbGetAllPlan;
 
 // put
 const _put = {
@@ -184,5 +184,5 @@ const _batch = {
 } satisfies IdbBatchPlan;
 
 // union assignability
-const _plans: IdbPlanBody[] = [_cursorScan, _keyGet, _indexGet, _put, _delete, _batch];
+const _plans: IdbPlanBody[] = [_cursorScan, _keyGet, _getAll, _put, _delete, _batch];
 void _plans; // suppress noUnusedLocals

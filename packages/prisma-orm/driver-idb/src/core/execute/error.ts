@@ -8,7 +8,7 @@
 export type IdbExecuteErrorCode =
   | "STORE_NOT_FOUND" //        IDB store requested by plan does not exist in the database
   | "KEY_GET_FAILED" //         store.get(key) request failed
-  | "INDEX_GET_FAILED" //       store.index(name).getAll(range) request failed
+  | "GET_ALL_FAILED" //         store.getAll(range) / index.getAll(range) request failed
   | "CURSOR_SCAN_FAILED" //     openCursor iteration failed
   | "KEYS_FAILED" //            getKey(range) / getAllKeys(range) request failed
   | "COUNT_FAILED" //           store.count(range) / index.count(range) request failed

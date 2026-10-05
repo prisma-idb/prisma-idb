@@ -772,13 +772,13 @@ describe("built-in contentHash plan identity", () => {
     expect(a).not.toBe(c);
   });
 
-  it("hashes key ranges by their bounds", async () => {
+  it("hashes a delete key range by its bounds", async () => {
     const contentHash = await captureContentHash();
-    const base = { kind: "index-get", storeName: "users", indexName: "by_age" };
+    const base = { kind: "delete", storeName: "users" };
 
-    const a = await contentHash({ ...base, range: range(18, 65) });
-    const b = await contentHash({ ...base, range: range(18, 65) });
-    const c = await contentHash({ ...base, range: range(18, 66) });
+    const a = await contentHash({ ...base, key: range(18, 65) });
+    const b = await contentHash({ ...base, key: range(18, 65) });
+    const c = await contentHash({ ...base, key: range(18, 66) });
 
     expect(a).toBe(b);
     expect(a).not.toBe(c);
@@ -786,12 +786,12 @@ describe("built-in contentHash plan identity", () => {
 
   it("hashes a real key range the same as a plain object with the same bounds", async () => {
     const contentHash = await captureContentHash();
-    const base = { kind: "index-get", storeName: "users", indexName: "by_age" };
+    const base = { kind: "delete", storeName: "users" };
 
     // Normalization turns the key-range class instance into a plain object, which canonicalStringify accepts.
-    const real = await contentHash({ ...base, range: IDBKeyRange.bound(18, 65, false, true) });
-    const plain = await contentHash({ ...base, range: range(18, 65) });
-    const other = await contentHash({ ...base, range: IDBKeyRange.bound(18, 66, false, true) });
+    const real = await contentHash({ ...base, key: IDBKeyRange.bound(18, 65, false, true) });
+    const plain = await contentHash({ ...base, key: range(18, 65) });
+    const other = await contentHash({ ...base, key: IDBKeyRange.bound(18, 66, false, true) });
 
     expect(real).toBe(plain);
     expect(real).not.toBe(other);
@@ -799,22 +799,36 @@ describe("built-in contentHash plan identity", () => {
 
   it("ignores extra properties on a duck-typed key range", async () => {
     const contentHash = await captureContentHash();
-    const base = { kind: "index-get", storeName: "users", indexName: "by_age" };
+    const base = { kind: "delete", storeName: "users" };
 
-    const withExtra = await contentHash({ ...base, range: { ...range(18, 65), note: "ignored" } });
+    const withExtra = await contentHash({ ...base, key: { ...range(18, 65), note: "ignored" } });
 
-    expect(withExtra).toBe(await contentHash({ ...base, range: range(18, 65) }));
+    expect(withExtra).toBe(await contentHash({ ...base, key: range(18, 65) }));
   });
 
-  it("hashes key ranges that differ only in open flags differently", async () => {
+  it("hashes delete key ranges that differ only in open flags differently", async () => {
     const contentHash = await captureContentHash();
-    const base = { kind: "index-get", storeName: "users", indexName: "by_age" };
+    const base = { kind: "delete", storeName: "users" };
 
-    const lowerOpen = await contentHash({ ...base, range: IDBKeyRange.bound(18, 65, true, true) });
-    const lowerClosed = await contentHash({ ...base, range: IDBKeyRange.bound(18, 65, false, true) });
-    const upperClosed = await contentHash({ ...base, range: IDBKeyRange.bound(18, 65, false, false) });
+    const lowerOpen = await contentHash({ ...base, key: IDBKeyRange.bound(18, 65, true, true) });
+    const lowerClosed = await contentHash({ ...base, key: IDBKeyRange.bound(18, 65, false, true) });
+    const upperClosed = await contentHash({ ...base, key: IDBKeyRange.bound(18, 65, false, false) });
 
     expect(new Set([lowerOpen, lowerClosed, upperClosed]).size).toBe(3);
+  });
+
+  it("hashes range descriptors by value, including open flags", async () => {
+    const contentHash = await captureContentHash();
+    const base = { kind: "get-all", storeName: "users", indexName: "by_age" };
+    const bound = (lowerOpen: boolean) => ({ kind: "bound", lower: 18, upper: 65, lowerOpen });
+
+    const a = await contentHash({ ...base, range: bound(false) });
+    const b = await contentHash({ ...base, range: bound(false) });
+    const open = await contentHash({ ...base, range: bound(true) });
+    const other = await contentHash({ ...base, range: { kind: "only", key: 18 } });
+
+    expect(a).toBe(b);
+    expect(new Set([a, open, other]).size).toBe(3);
   });
 });
 

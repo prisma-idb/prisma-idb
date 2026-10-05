@@ -140,7 +140,7 @@ describe("execute keys", () => {
       meta: META,
       kind: "keys",
       storeName: "users",
-      range: IDBKeyRange.only("u1"),
+      range: { kind: "only", key: "u1" },
       take: 1,
     });
     await scope.execute({ meta: META, kind: "put", storeName: "users", record: { id: "u1" } });
@@ -148,7 +148,7 @@ describe("execute keys", () => {
       meta: META,
       kind: "keys",
       storeName: "users",
-      range: IDBKeyRange.only("u1"),
+      range: { kind: "only", key: "u1" },
       take: 1,
     });
     await scope.execute({ meta: META, kind: "put", storeName: "users", record: { id: "u2" } });

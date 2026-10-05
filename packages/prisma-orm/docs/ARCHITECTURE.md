@@ -163,7 +163,7 @@ Depends on `target-idb` and `driver-idb` (for the driver's plan types).
 | `./control` | Control | A stub driver. The framework requires a `driver` in `prisma.config.ts`, but no CLI command can reach a browser database. |
 | `./runtime` | Runtime | `createIDBRuntimeDriver`, the plan types (`IdbPlanBody`, `IdbAtomicPlan`), `IdbTransactionScope`, and `IdbExecuteError`. |
 
-A plan is plain data plus functions. The kinds are `cursor-scan`, `key-get`, `index-get`, `add`, `put`, `update`, `delete`, `scan-write`, `count`, `keys`, and `batch`, which runs several plans in one transaction. The driver has no dependencies inside this repo. It doesn't know about models, relations or contracts.
+A plan is plain data plus functions. The kinds are `cursor-scan`, `key-get`, `get-all`, `add`, `put`, `update`, `delete`, `scan-write`, `count`, `keys`, and `batch`, which runs several plans in one transaction. The driver has no dependencies inside this repo. It doesn't know about models, relations or contracts.
 
 Adding a plan kind touches five places ([ADR 017](adrs/ADR%20017%20-%20Native%20IndexedDB%20Feature%20Parity.md)): `plan-body.ts`, `execute/ops.ts`, a new error code, the exhaustive switch in `sync-extension-idb`'s `sync-executor.ts`, and the driver's runtime type exports.
 

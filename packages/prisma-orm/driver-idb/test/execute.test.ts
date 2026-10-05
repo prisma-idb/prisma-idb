@@ -17,7 +17,7 @@
  *
  * Coverage:
  *   key-get     — hit, miss
- *   index-get   — match, empty
+ *   get-all     — store and index reads, ranges, count (see plan-vocabulary.test.ts)
  *   keys        — getKey/getAllKeys, index, ranges, take, empty, batch, unknown store/index
  *   count       — store/index, ranges, empty, batch, unknown store/index
  *   cursor-scan — full, filter, skip, take, skip+take, comparator, direction
@@ -37,7 +37,7 @@ import type {
   IdbCountPlan,
   IdbCursorScanPlan,
   IdbDeletePlan,
-  IdbIndexGetPlan,
+  IdbGetAllPlan,
   IdbKeyGetPlan,
   IdbKeysPlan,
   IdbPutPlan,
@@ -143,9 +143,9 @@ describe("key-get", () => {
   });
 });
 
-// ── index-get ─────────────────────────────────────────────────────────────────
+// ── get-all ───────────────────────────────────────────────────────────────────
 
-describe("index-get", () => {
+describe("get-all", () => {
   let db: IDBDatabase;
 
   beforeEach(async () => {
@@ -155,12 +155,12 @@ describe("index-get", () => {
   afterEach(() => db.close());
 
   it("returns matching rows via index range", async () => {
-    const plan: IdbIndexGetPlan = {
+    const plan: IdbGetAllPlan = {
       meta: META,
-      kind: "index-get",
+      kind: "get-all",
       storeName: "users",
       indexName: "by-email",
-      range: IDBKeyRange.only("bob@example.com"),
+      range: { kind: "only", key: "bob@example.com" },
     };
     const rows = await executeIdbPlan(db, plan);
     expect(rows).toHaveLength(1);
@@ -168,12 +168,12 @@ describe("index-get", () => {
   });
 
   it("returns empty array when no records match", async () => {
-    const plan: IdbIndexGetPlan = {
+    const plan: IdbGetAllPlan = {
       meta: META,
-      kind: "index-get",
+      kind: "get-all",
       storeName: "users",
       indexName: "by-email",
-      range: IDBKeyRange.only("nobody@example.com"),
+      range: { kind: "only", key: "nobody@example.com" },
     };
     const rows = await executeIdbPlan(db, plan);
     expect(rows).toHaveLength(0);
@@ -207,14 +207,14 @@ describe("keys", () => {
   });
 
   it("take:1 + range uses getKey: one { key } row for a hit, [] for a miss", async () => {
-    const hit = await executeIdbPlan(db, keys({ storeName: "users", range: IDBKeyRange.only("u2"), take: 1 }));
+    const hit = await executeIdbPlan(db, keys({ storeName: "users", range: { kind: "only", key: "u2" }, take: 1 }));
     expect(hit).toEqual([{ key: "u2" }]);
-    const miss = await executeIdbPlan(db, keys({ storeName: "users", range: IDBKeyRange.only("nope"), take: 1 }));
+    const miss = await executeIdbPlan(db, keys({ storeName: "users", range: { kind: "only", key: "nope" }, take: 1 }));
     expect(miss).toEqual([]);
   });
 
   it("returns keys only — never the row value", async () => {
-    const [row] = await executeIdbPlan(db, keys({ storeName: "users", range: IDBKeyRange.only("u1"), take: 1 }));
+    const [row] = await executeIdbPlan(db, keys({ storeName: "users", range: { kind: "only", key: "u1" }, take: 1 }));
     expect(Object.keys(row!)).toEqual(["key"]);
   });
 
@@ -235,18 +235,18 @@ describe("keys", () => {
 
   it("honours take > 1 and range bounds", async () => {
     expect(await executeIdbPlan(db, keys({ storeName: "users", take: 2 }))).toEqual([{ key: "u1" }, { key: "u2" }]);
-    const bounded = await executeIdbPlan(db, keys({ storeName: "users", range: IDBKeyRange.lowerBound("u2") }));
+    const bounded = await executeIdbPlan(db, keys({ storeName: "users", range: { kind: "lower", key: "u2" } }));
     expect(bounded).toEqual([{ key: "u2" }, { key: "u3" }]);
   });
 
   it("through an index, returns PRIMARY keys (not index keys)", async () => {
-    const plan = keys({ storeName: "posts", indexName: "by-author", range: IDBKeyRange.only("u1") });
+    const plan = keys({ storeName: "posts", indexName: "by-author", range: { kind: "only", key: "u1" } });
     expect(await executeIdbPlan(db, plan)).toEqual([{ key: "p1" }, { key: "p2" }]);
     expect(await executeIdbPlan(db, { ...plan, take: 1 })).toEqual([{ key: "p1" }]);
     expect(
       await executeIdbPlan(
         db,
-        keys({ storeName: "posts", indexName: "by-author", range: IDBKeyRange.only("u9"), take: 1 })
+        keys({ storeName: "posts", indexName: "by-author", range: { kind: "only", key: "u9" }, take: 1 })
       )
     ).toEqual([]);
   });
@@ -264,7 +264,7 @@ describe("keys", () => {
     ]);
     const hit = await executeIdbPlan(
       compoundDb,
-      keys({ storeName: "m", range: IDBKeyRange.only(["o1", "u2"]), take: 1 })
+      keys({ storeName: "m", range: { kind: "only", key: ["o1", "u2"] }, take: 1 })
     );
     expect(hit).toEqual([{ key: ["o1", "u2"] }]);
     expect(await executeIdbPlan(compoundDb, keys({ storeName: "m" }))).toHaveLength(2);
@@ -272,7 +272,7 @@ describe("keys", () => {
   });
 
   it("agrees with count() and cursor-scan over the same range", async () => {
-    const range = IDBKeyRange.bound("u1", "u3", false, true);
+    const range = { kind: "bound", lower: "u1", upper: "u3", upperOpen: true } as const;
     const ks = await executeIdbPlan(db, keys({ storeName: "users", range }));
     const scanned = await executeIdbPlan(db, { meta: META, kind: "cursor-scan", storeName: "users", range });
     const [{ count }] = (await executeIdbPlan(db, { meta: META, kind: "count", storeName: "users", range })) as [
@@ -288,9 +288,9 @@ describe("keys", () => {
       kind: "batch",
       storeNames: ["users"],
       ops: [
-        keys({ storeName: "users", range: IDBKeyRange.only("u9"), take: 1 }),
+        keys({ storeName: "users", range: { kind: "only", key: "u9" }, take: 1 }),
         { meta: META, kind: "put", storeName: "users", record: { id: "u9", name: "Zed", email: "z@e.com", score: 1 } },
-        keys({ storeName: "users", range: IDBKeyRange.only("u9"), take: 1 }),
+        keys({ storeName: "users", range: { kind: "only", key: "u9" }, take: 1 }),
       ],
     };
     const rows = await executeIdbPlan(db, plan);
@@ -304,7 +304,7 @@ describe("keys", () => {
     });
   });
 
-  it("rejects an unknown index (same synchronous NotFoundError behavior as index-get)", async () => {
+  it("rejects an unknown index (same synchronous NotFoundError behavior as get-all)", async () => {
     await expect(executeIdbPlan(db, keys({ storeName: "users", indexName: "nope" }))).rejects.toBeDefined();
   });
 });
@@ -337,21 +337,24 @@ describe("count", () => {
   });
 
   it("counts a primary-key range (only)", async () => {
-    expect(await executeIdbPlan(db, count({ storeName: "users", range: IDBKeyRange.only("u2") }))).toEqual([
+    expect(await executeIdbPlan(db, count({ storeName: "users", range: { kind: "only", key: "u2" } }))).toEqual([
       { count: 1 },
     ]);
-    expect(await executeIdbPlan(db, count({ storeName: "users", range: IDBKeyRange.only("nope") }))).toEqual([
+    expect(await executeIdbPlan(db, count({ storeName: "users", range: { kind: "only", key: "nope" } }))).toEqual([
       { count: 0 },
     ]);
   });
 
   it("counts a primary-key range (bound)", async () => {
-    const rows = await executeIdbPlan(db, count({ storeName: "users", range: IDBKeyRange.bound("u1", "u2") }));
+    const rows = await executeIdbPlan(
+      db,
+      count({ storeName: "users", range: { kind: "bound", lower: "u1", upper: "u2" } })
+    );
     expect(rows).toEqual([{ count: 2 }]);
   });
 
   it("counts index entries in a range via indexName (non-unique index sees duplicates)", async () => {
-    const plan = count({ storeName: "posts", indexName: "by-author", range: IDBKeyRange.only("u1") });
+    const plan = count({ storeName: "posts", indexName: "by-author", range: { kind: "only", key: "u1" } });
     expect(await executeIdbPlan(db, plan)).toEqual([{ count: 2 }]);
   });
 
@@ -366,7 +369,7 @@ describe("count", () => {
   });
 
   it("agrees with a cursor-scan over the same range", async () => {
-    const range = IDBKeyRange.bound("u1", "u3", false, true);
+    const range = { kind: "bound", lower: "u1", upper: "u3", upperOpen: true } as const;
     const [{ count: n }] = (await executeIdbPlan(db, count({ storeName: "users", range }))) as [{ count: number }];
     const scanned = await executeIdbPlan(db, { meta: META, kind: "cursor-scan", storeName: "users", range });
     expect(n).toBe(scanned.length);
@@ -394,7 +397,7 @@ describe("count", () => {
     });
   });
 
-  it("rejects an unknown index (same synchronous NotFoundError behavior as index-get)", async () => {
+  it("rejects an unknown index (same synchronous NotFoundError behavior as get-all)", async () => {
     await expect(executeIdbPlan(db, count({ storeName: "users", indexName: "no-such-index" }))).rejects.toBeDefined();
   });
 });
@@ -519,7 +522,7 @@ describe("cursor-scan", () => {
       kind: "cursor-scan",
       storeName: "users",
       indexName: "by-email",
-      range: IDBKeyRange.bound("a", "c"), // emails starting with a or b
+      range: { kind: "bound", lower: "a", upper: "c" }, // emails starting with a or b
     };
     const rows = await executeIdbPlan(db, plan);
     // alice@ and bob@ match; carol@ does not (c > c is false, but "carol" >= "c")
