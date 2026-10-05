@@ -1,13 +1,15 @@
 import type { ContractReferenceRelation } from "@prisma/orm-framework/contract/types";
 import { domainModelsAtDefaultNamespace } from "@prisma/orm-framework/contract/types";
 import type { IdbQueryPlan } from "@prisma-idb/adapter-idb/runtime";
-import { evaluateFilter } from "@prisma-idb/adapter-idb/runtime";
-import type { IdbRowFilter } from "@prisma-idb/driver-idb/runtime";
+import { andExpr, fieldFilter } from "@prisma-idb/adapter-idb/runtime";
 import type { IdbQueryExecutor } from "./executor";
 import { buildRowComparator, combineFilterExprs } from "./query-shaping";
 import type { IncludeEntry } from "./store-state";
 import { fieldValueToken, getStoreName } from "./types";
 import type { IdbContract } from "./types";
+import { buildCatalog } from "./planner/catalog";
+import { planQuery } from "./planner/plan";
+import { lowerRows } from "./planner/lower";
 
 /**
  * Batch-load a single named relation for all rows in `rows` and attach the
@@ -99,22 +101,26 @@ export async function loadRelation(
   const storageHash = contract.storage.storageHash;
   const planMeta = { target: "idb", storageHash, lane: "idb-orm", annotations: { groupingKey } } as const;
 
-  // One scan for every parent: keep rows whose target tuple belongs to some
-  // parent and that pass the refined `where`.
-  const filter: IdbRowFilter = (row: Record<string, unknown>): boolean => {
+  // Each field's IN is a superset of the local tuples. Keep the tuple check
+  // to reject crossed compound keys, and shape collections per parent below.
+  const joinWhere = andExpr(
+    targetFields.map((field, i) =>
+      fieldFilter(
+        field,
+        "in",
+        [...localTuples.values()].map((tuple) => tuple[i])
+      )
+    )
+  );
+  const where = refinedWhere === undefined ? joinWhere : andExpr([joinWhere, refinedWhere]);
+  const request = { ...(refinedWhere === undefined ? {} : { where: refinedWhere }) };
+  const catalog = buildCatalog(contract, relatedStoreName);
+  const lowered = lowerRows(catalog, planQuery(catalog, { where }), planMeta, request, (row) => {
     const token = tupleToken(row, targetFields);
-    return (
-      token !== null && localTuples.has(token) && (refinedWhere === undefined || evaluateFilter(refinedWhere, row))
-    );
-  };
-  const plan: IdbQueryPlan<Record<string, unknown>> = {
-    meta: planMeta,
-    idbPlan: { meta: planMeta, kind: "cursor-scan", storeName: relatedStoreName, filter },
-  };
-  const relatedRows: Record<string, unknown>[] = [];
-  for await (const row of executor.query(plan)) {
-    relatedRows.push(row);
-  }
+    return token !== null && localTuples.has(token);
+  });
+  const plan: IdbQueryPlan<Record<string, unknown>> = { meta: planMeta, idbPlan: lowered.idbPlan };
+  const relatedRows = lowered.finish(await executor.query(plan).toArray());
 
   return attachRelatedRows(relName, entry, rows, relatedRows, relation);
 }

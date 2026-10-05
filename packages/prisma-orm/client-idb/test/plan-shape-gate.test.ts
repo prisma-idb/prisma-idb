@@ -238,6 +238,16 @@ const SCENARIOS: readonly Scenario[] = [
     name: "findMany: orderBy indexed field, take 10",
     run: (o) => o["items"].orderBy({ score: "asc" }).take(10).all().toArray(),
   },
+  {
+    name: "findMany: indexed in with orderBy and take 2",
+    run: (o) =>
+      o["items"]
+        .where(() => fieldFilter("category", "in", ["c1", "c2"]))
+        .orderBy({ category: "desc" })
+        .take(2)
+        .all()
+        .toArray(),
+  },
   { name: "findFirst: eq on indexed field", run: (o) => o["items"].where({ category: "c3" }).first() },
   { name: "count: no filter", run: (o) => o["items"].count() },
   { name: "count: eq on indexed field", run: (o) => o["items"].where({ category: "c3" }).count() },
@@ -288,46 +298,58 @@ interface Measurement {
 }
 
 /**
- * Today's behavior: without a planner, every lookup except `findUnique` scans
- * the whole store. `values`/`keys` list one entry per size in {@link SIZES}.
+ * Planned row reads. Count/exists and mutation improvements land in later slices.
+ * `values`/`keys` list one entry per size in {@link SIZES}.
  */
 const EXPECTED: Record<string, Measurement> = {
   "findMany: no filter": { values: [100, 1000], keys: [0, 0], requests: ["openCursor items"] },
-  "findMany: eq on primary key": { values: [100, 1000], keys: [0, 0], requests: ["openCursor items"] },
+  "findMany: eq on primary key": { values: [1, 1], keys: [0, 0], requests: ["get items range"] },
   "findUnique: primary key": { values: [1, 1], keys: [0, 0], requests: ["get items range"] },
-  "findMany: eq on indexed field": { values: [100, 1000], keys: [0, 0], requests: ["openCursor items"] },
+  "findMany: eq on indexed field": { values: [10, 100], keys: [0, 0], requests: ["getAll items.byCategory range"] },
   "findMany: eq on non-indexed field": { values: [100, 1000], keys: [0, 0], requests: ["openCursor items"] },
-  "findMany: indexed eq AND non-indexed eq": { values: [100, 1000], keys: [0, 0], requests: ["openCursor items"] },
-  "findMany: lt on indexed field": { values: [100, 1000], keys: [0, 0], requests: ["openCursor items"] },
-  "findMany: gte AND lt on indexed field": { values: [100, 1000], keys: [0, 0], requests: ["openCursor items"] },
-  "findMany: in() on indexed field": { values: [100, 1000], keys: [0, 0], requests: ["openCursor items"] },
-  "findMany: OR of indexed eqs": { values: [100, 1000], keys: [0, 0], requests: ["openCursor items"] },
+  "findMany: indexed eq AND non-indexed eq": {
+    values: [10, 100],
+    keys: [0, 0],
+    requests: ["getAll items.byCategory range"],
+  },
+  "findMany: lt on indexed field": { values: [20, 20], keys: [0, 0], requests: ["getAll items.byScore range"] },
+  "findMany: gte AND lt on indexed field": { values: [20, 20], keys: [0, 0], requests: ["getAll items.byScore range"] },
+  "findMany: in() on indexed field": {
+    values: [20, 200],
+    keys: [0, 0],
+    requests: ["getAll items.byCategory range x2"],
+  },
+  "findMany: OR of indexed eqs": { values: [20, 200], keys: [0, 0], requests: ["getAll items.byCategory range x2"] },
   "findMany: OR with an AND branch": { values: [100, 1000], keys: [0, 0], requests: ["openCursor items"] },
   "findMany: OR mixing indexed and non-indexed": { values: [100, 1000], keys: [0, 0], requests: ["openCursor items"] },
-  "findMany: compound index exact match": { values: [100, 1000], keys: [0, 0], requests: ["openCursor items"] },
-  "findMany: compound index prefix": { values: [100, 1000], keys: [0, 0], requests: ["openCursor items"] },
-  "findMany: orderBy indexed field, take 10": { values: [100, 1000], keys: [0, 0], requests: ["openCursor items"] },
-  "findFirst: eq on indexed field": { values: [4, 4], keys: [0, 0], requests: ["openCursor items"] },
-  "count: no filter": { values: [100, 1000], keys: [0, 0], requests: ["openCursor items"] },
-  "count: eq on indexed field": { values: [100, 1000], keys: [0, 0], requests: ["openCursor items"] },
-  "count: lt on indexed field": { values: [100, 1000], keys: [0, 0], requests: ["openCursor items"] },
-  "aggregate: count and sum, eq on indexed field": {
-    values: [100, 1000],
+  "findMany: compound index exact match": { values: [1, 1], keys: [0, 0], requests: ["getAll items.byOrgRank range"] },
+  "findMany: compound index prefix": { values: [20, 200], keys: [0, 0], requests: ["getAll items.byOrgRank range"] },
+  "findMany: orderBy indexed field, take 10": {
+    values: [10, 10],
     keys: [0, 0],
-    requests: ["openCursor items"],
+    requests: ["openCursor items.byScore"],
+  },
+  "findMany: indexed in with orderBy and take 2": {
+    values: [4, 4],
+    keys: [0, 0],
+    requests: ["openCursor items.byCategory range x2"],
+  },
+  "findFirst: eq on indexed field": { values: [1, 1], keys: [0, 0], requests: ["openCursor items.byCategory range"] },
+  "count: no filter": { values: [100, 1000], keys: [0, 0], requests: ["openCursor items"] },
+  "count: eq on indexed field": { values: [10, 100], keys: [0, 0], requests: ["getAll items.byCategory range"] },
+  "count: lt on indexed field": { values: [20, 20], keys: [0, 0], requests: ["getAll items.byScore range"] },
+  "aggregate: count and sum, eq on indexed field": {
+    values: [10, 100],
+    keys: [0, 0],
+    requests: ["getAll items.byCategory range"],
   },
   "include 1:N via indexed foreign key": {
-    values: [110, 1100],
+    values: [11, 11],
     keys: [0, 0],
-    requests: ["openCursor authors", "openCursor books"],
+    requests: ["get authors range", "getAll books.byAuthor range"],
   },
-  "include N:1 via primary key": {
-    values: [110, 1100],
-    keys: [0, 0],
-    requests: ["openCursor authors", "openCursor books"],
-  },
-  // Each parent lookup is a scan that stops at the first match; the seeded
-  // parents sit near the start of their stores, so the count doesn't grow with n.
+  "include N:1 via primary key": { values: [2, 2], keys: [0, 0], requests: ["get authors range", "get books range"] },
+  // Each parent lookup stops at the first match near the start of its store.
   "create: foreign key validation": {
     values: [3, 3],
     keys: [0, 0],
@@ -344,8 +366,7 @@ const EXPECTED: Record<string, Measurement> = {
     requests: ["get publishers range", "openCursor books", "openCursor publishers range"],
   },
   "updateAll: eq on indexed field": { values: [100, 1000], keys: [0, 0], requests: ["openCursor items"] },
-  // Each match is deleted through its own keyed cursor, so every matched row
-  // is read twice.
+  // Every matching row is read again by its own keyed delete cursor.
   "deleteAll: eq on indexed field": {
     values: [110, 1100],
     keys: [0, 0],

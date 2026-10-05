@@ -45,7 +45,7 @@ import {
   isIncludeScalar,
   mergeAccessorState,
 } from "./store-state";
-import { buildRowComparator, combineFilterExprs } from "./query-shaping";
+import { combineFilterExprs } from "./query-shaping";
 import {
   assertValidAggregateSpec,
   computeAggregateSpec,
@@ -76,6 +76,9 @@ import {
   validateScalarFks,
 } from "./mutation-executor";
 import { withMutationScope } from "./mutation-scope";
+import { buildCatalog } from "./planner/catalog";
+import { planQuery } from "./planner/plan";
+import { lowerRows, type LoweredRows, type RowsRequest } from "./planner/lower";
 
 /** Callback form of `.where(fn)` — receives the typed model accessor proxy. */
 export type WhereCallback<TContract, ModelName extends string> = (
@@ -482,14 +485,14 @@ export class IdbStoreAccessorImpl<
     const projectRows = this.#projectRows.bind(this);
     return new AsyncIterableResult(
       (async function* (): AsyncGenerator<SelectedRow<TContract, ModelName, TIncludes, TSelected>, void, unknown> {
-        const scanPlan = buildScanPlan<Record<string, unknown>>(groupingKey);
+        const scan = buildScanPlan(groupingKey);
         const rows: Record<string, unknown>[] = [];
-        for await (const row of executorQuery(scanPlan)) {
+        for await (const row of executorQuery(scan.plan)) {
           rows.push(row);
         }
 
         // Batch-load any included relations (uses full rows — FK fields intact).
-        const withIncludes = await applyIncludes(rows, groupingKey);
+        const withIncludes = await applyIncludes(scan.finish(rows), groupingKey);
 
         // Apply any `.select()` projection, then yield.
         for (const row of projectRows(withIncludes)) {
@@ -585,15 +588,14 @@ export class IdbStoreAccessorImpl<
     const groupingKey = this.#newGroupingKey();
     const meta = this.#planMeta(groupingKey);
     const ast: IdbFindUniqueAst = { kind: "findUnique", modelName: this.#modelName, key };
-    const plan: IdbQueryPlan<Record<string, unknown>> = {
-      meta,
-      ast,
-      idbPlan: { meta, kind: "key-get", storeName: this.#storeName, key: key as IDBValidKey },
-    };
-    for await (const row of this.#executor.query(plan)) {
-      return row as DefaultModelRow<TContract, ModelName>;
-    }
-    return null;
+    const keyPath = getKeyPath(this.#contract, this.#modelName);
+    const fields = typeof keyPath === "string" ? [keyPath] : keyPath;
+    const values = typeof keyPath === "string" ? [key] : (key as readonly unknown[]);
+    const where = combineFilterExprs(fields.map((field, i) => ({ kind: "field", field, op: "eq", value: values[i] })));
+    const request: RowsRequest = { ...(where === undefined ? {} : { where }), take: 1 };
+    const lowered = this.#lowerRows(meta, request);
+    const rows = await this.#executor.query<Record<string, unknown>>({ meta, ast, idbPlan: lowered.idbPlan }).toArray();
+    return (lowered.finish(rows)[0] as DefaultModelRow<TContract, ModelName> | undefined) ?? null;
   }
 
   async delete(key: KeyType<TContract, ModelName>): Promise<void> {
@@ -872,7 +874,7 @@ export class IdbStoreAccessorImpl<
   // ── Private helpers ───────────────────────────────────────────────────────
 
   async #countTerminal(): Promise<number> {
-    const scanPlan = this.#buildScanPlan<Record<string, unknown>>(this.#newGroupingKey());
+    const scan = this.#buildScanPlan(this.#newGroupingKey());
     // Middleware sees a `count` AST, not the scan that answers it.
     const combined = this.#combinedFilterExpr();
     const ast: IdbCountAst = {
@@ -880,11 +882,8 @@ export class IdbStoreAccessorImpl<
       modelName: this.#modelName,
       ...(combined !== undefined ? { where: combined } : {}),
     };
-    let n = 0;
-    for await (const _ of this.#executor.query({ ...scanPlan, ast })) {
-      n++;
-    }
-    return n;
+    const rows = await this.#executor.query<Record<string, unknown>>({ ...scan.plan, ast }).toArray();
+    return scan.finish(rows).length;
   }
 
   /**
@@ -935,54 +934,30 @@ export class IdbStoreAccessorImpl<
    */
   async #materialize(groupingKey: string, ast: IdbQueryAst): Promise<Record<string, unknown>[]> {
     const combined = this.#combinedFilterExpr();
-    const filter = combined !== undefined ? (row: Record<string, unknown>) => evaluateFilter(combined, row) : undefined;
     const meta = this.#planMeta(groupingKey);
-    const plan: IdbQueryPlan<Record<string, unknown>> = {
-      meta,
-      ast,
-      idbPlan: {
-        meta,
-        kind: "cursor-scan",
-        storeName: this.#storeName,
-        ...(filter !== undefined ? { filter } : {}),
-      },
-    };
-    const rows: Record<string, unknown>[] = [];
-    for await (const row of this.#executor.query(plan)) {
-      rows.push(row);
-    }
-    return rows;
+    const lowered = this.#lowerRows(meta, { ...(combined === undefined ? {} : { where: combined }) });
+    const rows = await this.#executor.query<Record<string, unknown>>({ meta, ast, idbPlan: lowered.idbPlan }).toArray();
+    return lowered.finish(rows);
   }
 
-  #buildScanPlan<Row>(groupingKey: string): IdbQueryPlan<Row> {
+  #lowerRows(meta: PlanMeta, request: RowsRequest): LoweredRows {
+    const catalog = buildCatalog(this.#contract, this.#storeName);
+    return lowerRows(catalog, planQuery(catalog, request), meta, request);
+  }
+
+  #buildScanPlan(groupingKey: string): { plan: IdbQueryPlan<Record<string, unknown>>; finish: LoweredRows["finish"] } {
     const combined = this.#combinedFilterExpr();
-    const comparator = buildRowComparator(this.#state.orderBy);
     const meta = this.#planMeta(groupingKey);
     const ast: IdbFindManyAst = {
       kind: "findMany",
       modelName: this.#modelName,
       ...(combined !== undefined ? { where: combined } : {}),
-      ...(this.#state.orderBy !== undefined ? { orderBy: this.#state.orderBy as Record<string, "asc" | "desc"> } : {}),
+      ...(this.#state.orderBy !== undefined ? { orderBy: this.#state.orderBy } : {}),
       ...(this.#state.skip !== undefined ? { skip: this.#state.skip } : {}),
       ...(this.#state.take !== undefined ? { take: this.#state.take } : {}),
     };
-
-    const filter = combined !== undefined ? (row: Record<string, unknown>) => evaluateFilter(combined, row) : undefined;
-    // exactOptionalPropertyTypes: spread conditionally to avoid `undefined`
-    // values in optional fields.
-    return {
-      meta,
-      ast,
-      idbPlan: {
-        meta,
-        kind: "cursor-scan" as const,
-        storeName: this.#storeName,
-        ...(filter !== undefined ? { filter } : {}),
-        ...(comparator !== undefined ? { comparator } : {}),
-        ...(this.#state.skip !== undefined ? { skip: this.#state.skip } : {}),
-        ...(this.#state.take !== undefined ? { take: this.#state.take } : {}),
-      },
-    } as IdbQueryPlan<Row>;
+    const lowered = this.#lowerRows(meta, ast);
+    return { plan: { meta, ast, idbPlan: lowered.idbPlan }, finish: lowered.finish };
   }
 
   /**

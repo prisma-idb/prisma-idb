@@ -24,7 +24,9 @@ export function combineFilterExprs(filters: ReadonlyArray<IdbFilterExpr>): IdbFi
  * IndexedDB index uses, so equal `Date`s tie and fall through to the next
  * field, and `null`s sort last (first when descending).
  */
-export function buildRowComparator(orderBy: Record<string, "asc" | "desc"> | undefined): IdbRowComparator | undefined {
+export function buildRowComparator(
+  orderBy: Readonly<Record<string, "asc" | "desc">> | undefined
+): IdbRowComparator | undefined {
   if (orderBy === undefined) return undefined;
   return (a: Record<string, unknown>, b: Record<string, unknown>): number => {
     for (const [field, dir] of Object.entries(orderBy)) {
