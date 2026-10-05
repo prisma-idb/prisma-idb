@@ -41,6 +41,40 @@ describe("planQuery", () => {
       exact: true,
     });
   });
+  it("plans large membership lists without quadratic key comparisons", () => {
+    const values = Array.from({ length: 6000 }, (_, i) => String((i * 7919) % 6000));
+    const original = [...values];
+    const cmp = indexedDB.cmp.bind(indexedDB);
+    let comparisons = 0;
+    vi.stubGlobal("indexedDB", {
+      cmp(a: IDBValidKey, b: IDBValidKey) {
+        comparisons++;
+        return cmp(a, b);
+      },
+    });
+    try {
+      expect(descriptor(f("a", "in", values))).toEqual({ access: "full", exact: false });
+      expect(values).toEqual(original);
+      // Allow ample sorting overhead while catching an all-pairs deduplication pass.
+      expect(comparisons).toBeLessThan(values.length * Math.ceil(Math.log2(values.length)) * 4);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+  it("deduplicates large membership lists before applying the range cap", () => {
+    const values = Array.from({ length: 6000 }, (_, i) => ["c", "a", "b"][i % 3]!);
+    expect(descriptor(f("a", "in", values))).toEqual({
+      access: "index",
+      index: "by-a",
+      keyPath: "a",
+      ranges: [
+        { kind: "only", key: "a" },
+        { kind: "only", key: "b" },
+        { kind: "only", key: "c" },
+      ],
+      exact: true,
+    });
+  });
   it("normalizes same-field equality and membership OR", () => {
     expect(descriptor(orExpr([f("a", "eq", "b"), f("a", "in", ["a", "b"])]))).toEqual(
       descriptor(f("a", "in", ["a", "b"]))

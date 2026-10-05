@@ -59,6 +59,17 @@ interface Normalized {
   empty: boolean;
 }
 
+// Rank selective points before broader ranges; ordering-only scans visit every key.
+const COST = {
+  UNIQUE_POINT: 0,
+  PRIMARY_POINT: 1,
+  INDEX_POINT: 2,
+  PREFIX_POINT: 3,
+  TWO_SIDED_RANGE: 4,
+  ONE_SIDED_RANGE: 5,
+  ORDER_ONLY_SCAN: 6,
+} as const;
+
 // These encoders also accept non-keys, so index coverage needs a rejecting predicate.
 const KEY_PARTIAL_CODECS = new Set(["idb/double@1", "idb/date@1"]);
 
@@ -123,7 +134,7 @@ export function planQuery(catalog: QueryCatalog, request: PlanRequest): LogicalP
         selected = {
           source: ordering,
           ranges: [undefined],
-          cost: 6,
+          cost: COST.ORDER_ONLY_SCAN,
           consumed: 0,
           declaration: sources.indexOf(ordering),
         };
@@ -237,9 +248,8 @@ function addAtom(constraint: Constraint, atom: IdbFieldFilter, field: CatalogFie
 }
 
 function uniqueKeys(values: IDBValidKey[]): IDBValidKey[] {
-  return values
-    .filter((value, i) => !values.slice(0, i).some((previous) => keyEquals(previous, value)))
-    .sort(compareFieldValues);
+  const sorted = [...values].sort(compareFieldValues);
+  return sorted.filter((value, i) => i === 0 || compareFieldValues(sorted[i - 1], value) !== 0);
 }
 function intersectBound(constraint: Constraint, side: "lower" | "upper", bound: Bound): void {
   const previous = constraint[side];
@@ -299,7 +309,12 @@ function filteringCandidate(
     return {
       source,
       ranges: prefixes.map((prefix) => ({ kind: "only", key: compound ? prefix : prefix[0]! })),
-      cost: source.indexName !== undefined && source.unique ? 0 : source.indexName === undefined ? 1 : 2,
+      cost:
+        source.indexName !== undefined && source.unique
+          ? COST.UNIQUE_POINT
+          : source.indexName === undefined
+            ? COST.PRIMARY_POINT
+            : COST.INDEX_POINT,
       consumed,
       declaration,
     };
@@ -318,7 +333,11 @@ function filteringCandidate(
     )
   )
     return undefined;
-  const cost = hasRange ? (constraint.lower && constraint.upper && !constraint.startsWith ? 4 : 5) : 3;
+  const cost = hasRange
+    ? constraint.lower && constraint.upper && !constraint.startsWith
+      ? COST.TWO_SIDED_RANGE
+      : COST.ONE_SIDED_RANGE
+    : COST.PREFIX_POINT;
   return { source, ranges, cost, consumed, declaration };
 }
 
