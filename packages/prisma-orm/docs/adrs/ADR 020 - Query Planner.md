@@ -30,7 +30,7 @@ The cost of a scan grows with the store, and a store can hold thousands of rows 
 
 - **Catalog.** `buildCatalog` reads the contract once per store and records the primary key, the indexes and the codec of each field. It keeps no IndexedDB handles, and it is cached for the life of the contract.
 - **Plan.** `planQuery(catalog, request)` is a pure function. It takes the filter, the `orderBy` and the `take`, and returns a `LogicalPlan`: an access path (`full`, `empty`, or key `ranges` on one source), an optional scan direction, and an `exact` flag. It never opens a database or reads data.
-- **Lowering.** `lowerRows`, `lowerCount`, `lowerExists` and `lowerWrite` turn a logical plan into a driver plan, such as `key-get`, `get-all`, `cursor-scan`, `count`, `keys` or `scan-write`. They also return a synchronous `finish` step that shapes the combined result.
+- **Lowering.** `lowerRows`, `lowerCount`, `lowerExists` and `lowerWrite` turn a logical plan into a driver plan, such as `key-get`, `get-all`, `cursor-scan`, `count`, `keys` or `scan-write`. The row, count and existence functions also return a synchronous `finish` step that shapes the combined result. `lowerWrite` returns either a cursor-scan plan, or a row read that must finish before any keyed write begins; only that row read has a `finish` step.
 
 The split keeps the decision testable without IndexedDB. The plan-shape gate (`test/plan-shape-gate.test.ts`) runs real queries and records what IndexedDB was asked to do, so a change to planning shows up as a change to a table.
 
@@ -45,14 +45,14 @@ An access path only narrows where the ORM looks. It is never trusted to decide a
 
 ### 3. Shapes the planner accelerates
 
-| Query shape                                                              | Access path                                    |
-| ------------------------------------------------------------------------ | ---------------------------------------------- |
-| Equality or `in` on the primary key or an indexed field                  | One point range per value                      |
-| `lt`, `lte`, `gt`, `gte` and their combinations on an indexed field      | One key range                                  |
-| `startsWith` on a string index                                           | One key range from the prefix to its successor |
-| Equality on a leading prefix of a compound index, with an optional range | Compound key range                             |
-| OR of equalities or `in` on one field                                    | The same as `in`                               |
-| Single-field `orderBy` with `take`                                       | Index cursor in that order, with an early stop |
+| Query shape                                                              | Access path                                                         |
+| ------------------------------------------------------------------------ | ------------------------------------------------------------------- |
+| Equality or `in` on the primary key or an indexed field                  | One point range per value                                           |
+| `lt`, `lte`, `gt`, `gte` and their combinations on an indexed field      | One key range                                                       |
+| `startsWith` on a string index                                           | One key range from the prefix to its successor                      |
+| Equality on a leading prefix of a compound index, with an optional range | Compound key range                                                  |
+| OR of equalities or `in` on one field                                    | The same as `in`                                                    |
+| Single-field `orderBy` with `take`                                       | Index cursor in that order, with an early stop (see the note below) |
 
 Shapes that aren't accelerated scan the store and filter in memory:
 
@@ -60,9 +60,11 @@ Shapes that aren't accelerated scan the store and filter in memory:
 - Filters on relations.
 - `orderBy` with more than one field.
 - Filters on a field with no index, or on a `multiEntry` index.
-- More than 1,024 combined lookup values on a compound index.
+- A source whose lookup values multiply to more than 1,024 prefixes. The planner rejects that source, not the whole query. Another usable source can still serve it; the query scans the store only when none can.
 
-When several sources can serve a query, the planner picks the most selective one: a unique-index point, then a primary-key point, an index point, a compound prefix, a two-sided range and a one-sided range. Ties go to fewer ranges, then to the primary key, then to declaration order.
+A single-field `orderBy` with `take` walks an index in order only when that index is also the source that serves the filter, or when the filter needs no source and an index covers the `orderBy` field with complete keys. If the filter picks a source on a different field, the query reads that source's range and sorts the rows in memory.
+
+When several sources can serve a query, the planner picks the highest-ranked candidate. The ranking is a fixed heuristic, not a measured selectivity: a unique-index point, then a primary-key point, an index point, a compound prefix, a two-sided range and a one-sided range. Ties go to fewer ranges, then to the primary key, then to declaration order.
 
 ### 4. Exact plans use native count and key reads
 
@@ -79,7 +81,7 @@ A plan is `exact` when the key ranges consume every condition in the filter. The
 - **A patch that changes the walked key.** The ORM reads and collects every match first, then writes each row by primary key. Otherwise a moved row could re-enter the cursor or a later range.
 - **Several ranges with a limit.** The limit applies to the combined matches, so the ORM collects first as well.
 
-All reads and writes of one operation stay in the same transaction, and no step awaits between requests ([ADR 005](ADR%20005%20-%20Event-Driven%20Execution%20No%20Async%20Await.md)).
+All reads and writes of one operation stay in the same transaction. No step waits on anything that yields to another macrotask between requests, such as a timer or a network call. Awaiting an IndexedDB request is fine, because its continuation runs as a microtask before the transaction can auto-commit ([ADR 005](ADR%20005%20-%20Event-Driven%20Execution%20No%20Async%20Await.md)).
 
 ### 6. Row order is unspecified without `orderBy`
 

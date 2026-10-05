@@ -88,7 +88,7 @@ Three steps, in `client-idb/src/core/planner/`, turn a query into a driver plan:
 
 1. **Catalog.** `buildCatalog` reads the contract and records, for one store, its primary key, its indexes and the codec of each field. The catalog is built once per contract and holds no IndexedDB handles.
 2. **Plan.** `planQuery` takes the catalog and the query's filter, `orderBy` and `take`. It returns a logical plan: which source to walk (the primary key or one index), the key ranges on it, an optional scan direction, and whether the plan is _exact_. It is a pure function. It opens no database.
-3. **Lowering.** `lowerRows`, `lowerCount`, `lowerExists` and `lowerWrite` turn the logical plan into a driver plan from `driver-idb`, such as `key-get`, `get-all`, `cursor-scan`, `count`, `keys` or `scan-write`. Each also returns a `finish` function that shapes the combined result after the driver has collected it.
+3. **Lowering.** `lowerRows`, `lowerCount`, `lowerExists` and `lowerWrite` turn the logical plan into a driver plan from `driver-idb`, such as `key-get`, `get-all`, `cursor-scan`, `count`, `keys` or `scan-write`. The row, count and existence functions also return a `finish` function that shapes the combined result after the driver has collected it. `lowerWrite` returns either a cursor-scan plan or a row read that the executor finishes before it writes by key; only the row read has a `finish` function.
 
 The rest of the path is the one in [How a query runs](#how-a-query-runs). Mutations use the same planner for their lookups, inside the transaction scope.
 
@@ -96,9 +96,9 @@ The rest of the path is the one in [How a query runs](#how-a-query-runs). Mutati
 
 The planner narrows where to look. It never decides what matches. The key ranges it chooses may include rows that don't match the filter, but they never leave out a row that does. If it can't show that for a query, it plans a full scan.
 
-Every read therefore reapplies the original filter to each row the driver returns, before pagination and projection. A planner mistake can then cost time, but it can't return a wrong row.
+Every row read therefore reapplies the original filter to each row the driver returns, before pagination and projection. Refiltering removes extra rows. It can't bring back a row that the ranges left out. So correctness rests on two rules: the ranges must be a superset of the matches, and the `exact` flag must be true only when the ranges consume the whole filter.
 
-An _exact_ plan is the one case where the ranges alone decide the match, because they consume every condition in the filter. Only exact plans let `count()` and existence checks skip the rows. They use the driver's `count` and `keys` plans, which read entries, not records.
+An _exact_ plan is the one case where the ranges alone decide the match, because they consume every condition in the filter. Only exact plans let `count()` and existence checks skip the rows, and those paths don't refilter. A wrong `exact` flag can therefore change a count or an existence result. They use the driver's `count` and `keys` plans, which read entries, not records.
 
 ### Accelerated and not accelerated shapes
 
@@ -108,7 +108,7 @@ The planner uses an index or the primary key for these shapes:
 - `lt`, `lte`, `gt` and `gte` on an indexed field, alone or combined,
 - `startsWith` on an indexed string field,
 - equality on a leading prefix of a compound index, with an optional range on the next field,
-- a single-field `orderBy` with `take`, which walks the index in that order and stops early.
+- a single-field `orderBy` with `take`, which walks the index in that order and stops early. This applies when the index that serves the filter is on the `orderBy` field, or when the filter needs no index and an index with complete keys covers that field. If the filter uses an index on another field, the planner reads that range and sorts in memory.
 
 It scans the whole store and filters in memory for these shapes:
 
@@ -116,6 +116,7 @@ It scans the whole store and filters in memory for these shapes:
 - filters on relations,
 - `orderBy` on more than one field,
 - fields that no index covers, and `multiEntry` indexes,
+- queries whose lookup values multiply to more than 1,024 prefixes on every candidate source (the planner rejects one source at a time, so another source can still serve the query),
 - fields whose index could omit a matching record, such as a `null` in a nullable field.
 
 Scanning is slower on large stores, but it returns the same rows. The plan-shape gate (`client-idb/test/plan-shape-gate.test.ts`) records the shape and cost of each query at two store sizes, so a change to this list shows up in review.
