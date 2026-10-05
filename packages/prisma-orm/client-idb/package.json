@@ -42,6 +42,7 @@
     "@prisma/cli-engine": "0.6.1",
     "@prisma/orm-toolchain": "8.0.0-rc.12",
     "fake-indexeddb": "^6.2.5",
+    "fast-check": "^4.10.2",
     "tsdown": "^0.22.14",
     "typescript": "^6.0.3",
     "vitest": "^4.1.11"
