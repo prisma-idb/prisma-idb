@@ -168,7 +168,7 @@ export interface IdbStoreAccessor<
   /**
    * Include a reference relation in the returned rows.
    *
-   * The relation is loaded via a single batch cursor scan after the main
+   * The relation is loaded via a single batch lookup after the main
    * query — O(1) round trips to IDB per included relation regardless of
    * the number of parent rows. The return type gains the relation field
    * automatically.
@@ -338,8 +338,8 @@ export interface IdbStoreAccessor<
    * With no filter, counts all rows in the store.
    *
    * **Note — `skip`/`take` are respected**: unlike Prisma's SQL `count()`,
-   * which ignores pagination, this implementation reuses the same cursor-scan
-   * plan as `all()`. That means `where(...).take(5).count()` returns at most 5,
+   * which ignores pagination, this implementation reuses the same planned row
+   * read as `all()`. That means `where(...).take(5).count()` returns at most 5,
    * not the total number of matching rows. Use `where(...).count()` without
    * `take`/`skip` when you need an unbounded total.
    */
@@ -930,7 +930,7 @@ export class IdbStoreAccessorImpl<
   /**
    * Materialise all rows matching the accumulated filters with no pagination —
    * used by `aggregate()` / `groupBy()`. The supplied `ast` is attached to the
-   * scan plan so middleware can observe the aggregate intent.
+   * row plan so middleware can observe the aggregate intent.
    */
   async #materialize(groupingKey: string, ast: IdbQueryAst): Promise<Record<string, unknown>[]> {
     const combined = this.#combinedFilterExpr();
@@ -963,9 +963,8 @@ export class IdbStoreAccessorImpl<
   /**
    * Combine all accumulated filter expressions with AND.
    *
-   * Returns `undefined` when no filter has been installed so the driver can
-   * skip building a row filter closure (a small perf and readability win on
-   * `.all()` paths). Delegates to the shared {@link combineFilterExprs}.
+   * Returns `undefined` when no filter has been installed so the planner sees
+   * an unfiltered request. Delegates to the shared {@link combineFilterExprs}.
    */
   #combinedFilterExpr(): IdbFilterExpr | undefined {
     return combineFilterExprs(this.#state.filters);

@@ -16,8 +16,8 @@ import { lowerRows } from "./planner/lower";
  * result to each row under the `relName` key.
  *
  * The join matches every field of the relation, so compound foreign keys join
- * on the whole tuple. It runs one scan of the related store for all parents,
- * then groups the rows in memory, which avoids N+1 queries.
+ * on the whole tuple. It plans one batch lookup for all parents, then groups
+ * the rows in memory, which avoids N+1 queries.
  *
  * The `entry` carries any `include()` refinement:
  *
