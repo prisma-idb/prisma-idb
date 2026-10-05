@@ -10,6 +10,7 @@ import {
   type IdbFilterExpr,
   type IdbFilterOp,
 } from "@prisma-idb/adapter-idb/runtime";
+import { compareFieldValues } from "@prisma-idb/target-idb/runtime";
 import { planQuery } from "../../src/core/planner/plan";
 import { catalog, field, planContains, source } from "./fixtures";
 
@@ -27,6 +28,10 @@ const codecs = [
 const string = fc.oneof(fc.string({ maxLength: 5 }), fc.constantFrom("", "\uffff", "a\uffff", "\u0000"));
 const integer = fc.integer({ min: -20, max: 20 });
 const scalar = fc.oneof(
+  fc.array(fc.oneof(string, integer), { maxLength: 3 }),
+  fc.constant(NaN),
+  fc.constant(new Date(NaN)),
+  fc.constant(undefined),
   string,
   integer,
   integer.map((n) => new Date(n)),
@@ -47,10 +52,13 @@ function valueFor(codec: string): fc.Arbitrary<unknown> {
       return fc.oneof(
         integer,
         integer.map((n) => n / 2),
-        fc.constantFrom(-Infinity, Infinity)
+        fc.constantFrom(-Infinity, Infinity, NaN)
       );
     case "idb/date@1":
-      return integer.map((n) => new Date(n));
+      return fc.oneof(
+        integer.map((n) => new Date(n)),
+        fc.constant(new Date(NaN))
+      );
     case "idb/bytes@1":
       return fc.array(fc.integer({ min: 0, max: 255 }), { maxLength: 3 }).map((values) => new Uint8Array(values));
     case "idb/bool@1":
@@ -125,7 +133,7 @@ const inputs = fc
       })
   );
 
-it("planned ranges contain every schema-conforming row matched by evaluateFilter", () => {
+it("planned ranges contain every codec-supported row matched by evaluateFilter", () => {
   vi.stubGlobal("indexedDB", undefined);
   try {
     fc.assert(
@@ -153,6 +161,14 @@ it("planned ranges contain every schema-conforming row matched by evaluateFilter
           ...(config.take === undefined ? {} : { take: config.take }),
         };
         const plan = planQuery(c, request);
+        if (plan.access.kind === "ranges") {
+          for (const range of plan.access.ranges) {
+            if (range?.kind !== "bound") continue;
+            const comparison = compareFieldValues(range.lower, range.upper);
+            expect(comparison).toBeLessThanOrEqual(0);
+            if (comparison === 0) expect(Boolean(range.lowerOpen || range.upperOpen)).toBe(false);
+          }
+        }
         if (evaluateFilter(where, row)) expect(planContains(plan, row)).toBe(true);
         if (plan.exact) expect(planContains(plan, row)).toBe(evaluateFilter(where, row));
       }),

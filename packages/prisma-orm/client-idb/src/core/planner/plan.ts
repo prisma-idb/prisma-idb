@@ -12,7 +12,10 @@ export interface PlanRequest {
   readonly hasRelationFilter?: boolean;
 }
 
-/** Plain driver-compatible ranges on one source; an absent range means all keys. */
+/**
+ * Disjoint driver-compatible ranges on one source, sorted by ascending key.
+ * An absent range means all keys. Reverse the range sequence for `prev` traversal.
+ */
 export type QueryAccess =
   | { readonly kind: "full" }
   | { readonly kind: "empty" }
@@ -40,6 +43,7 @@ interface Constraint {
   upper?: Bound;
   consumed: number;
   startsWith?: boolean;
+  rejectsNonKeys?: boolean;
 }
 interface Candidate {
   source: CatalogSource;
@@ -54,6 +58,9 @@ interface Normalized {
   excluded: boolean;
   empty: boolean;
 }
+
+// These encoders also accept non-keys, so index coverage needs a rejecting predicate.
+const KEY_PARTIAL_CODECS = new Set(["idb/double@1", "idb/date@1"]);
 
 const KEY_CODECS = new Set([
   "idb/string@1",
@@ -80,7 +87,13 @@ export function planQuery(catalog: QueryCatalog, request: PlanRequest): LogicalP
     }
     addAtom(constraint, atom, catalog.fields[atom.field]);
   }
-  for (const constraint of constraints.values()) {
+  for (const [name, constraint] of constraints) {
+    // Inclusive comparisons can match NaN and invalid dates, which indexes omit.
+    if (keyPartial(catalog.fields[name]) && !constraint.rejectsNonKeys) {
+      delete constraint.lower;
+      delete constraint.upper;
+      constraint.consumed = 0;
+    }
     if (contradictory(constraint)) return { access: { kind: "empty" }, exact: true };
   }
 
@@ -118,7 +131,10 @@ export function planQuery(catalog: QueryCatalog, request: PlanRequest): LogicalP
       }
     }
   }
-  if (!selected) return full(normalized.atoms.length + normalized.residual === 0);
+  if (!selected) {
+    const partialOrder = orders.length === 1 && request.take !== undefined && keyPartial(catalog.fields[orders[0]![0]]);
+    return full(normalized.atoms.length + normalized.residual === 0 && !partialOrder);
+  }
   return {
     access: { kind: "ranges", source: selected.source, ranges: selected.ranges },
     exact: selected.consumed === normalized.atoms.length && normalized.residual === 0,
@@ -180,8 +196,11 @@ function normalize(where: IdbFilterExpr | undefined): Normalized {
 function keyTyped(field: CatalogField | undefined): boolean {
   return field !== undefined && !field.collection && KEY_CODECS.has(field.codecId ?? "");
 }
-function completeKeyField(field: CatalogField | undefined): boolean {
-  return keyTyped(field) && field?.nullable === false;
+function keyPartial(field: CatalogField | undefined): boolean {
+  return KEY_PARTIAL_CODECS.has(field?.codecId ?? "");
+}
+function completeKeyField(field: CatalogField | undefined, constraint?: Constraint): boolean {
+  return keyTyped(field) && field?.nullable === false && (!keyPartial(field) || constraint?.rejectsNonKeys === true);
 }
 function singleFieldSource(source: CatalogSource, field: string): boolean {
   return source.fields.length === 1 && source.fields[0] === field;
@@ -196,6 +215,7 @@ function addAtom(constraint: Constraint, atom: IdbFieldFilter, field: CatalogFie
       constraint.points === undefined
         ? points
         : constraint.points.filter((point) => points.some((value) => keyEquals(point, value)));
+    constraint.rejectsNonKeys = true;
     constraint.consumed++;
     return;
   }
@@ -209,7 +229,9 @@ function addAtom(constraint: Constraint, atom: IdbFieldFilter, field: CatalogFie
     constraint.consumed++;
   } else if (["gt", "gte", "lt", "lte"].includes(atom.op) && isValidIdbKey(atom.value)) {
     const side = atom.op === "gt" || atom.op === "gte" ? "lower" : "upper";
-    intersectBound(constraint, side, { value: atom.value, open: atom.op === "gt" || atom.op === "lt" });
+    const strict = atom.op === "gt" || atom.op === "lt";
+    intersectBound(constraint, side, { value: atom.value, open: strict });
+    if (strict) constraint.rejectsNonKeys = true;
     constraint.consumed++;
   }
 }
@@ -252,6 +274,8 @@ function filteringCandidate(
   declaration: number
 ): Candidate | undefined {
   if (source.multiEntry || source.fields.length === 0) return undefined;
+  if (source.fields.some((name) => keyPartial(catalog.fields[name]) && !constraints.get(name)?.rejectsNonKeys))
+    return undefined;
   let prefixes: IDBValidKey[][] = [[]];
   let consumed = 0;
   let position = 0;
@@ -268,7 +292,8 @@ function filteringCandidate(
   const hasRange = constraint !== undefined && (constraint.lower !== undefined || constraint.upper !== undefined);
   if (position === 0 && !hasRange) return undefined;
   const used = position + Number(hasRange);
-  if (!source.fields.slice(used).every((field) => completeKeyField(catalog.fields[field]))) return undefined;
+  if (!source.fields.slice(used).every((field) => completeKeyField(catalog.fields[field], constraints.get(field))))
+    return undefined;
   const compound = typeof source.keyPath !== "string";
   if (position === source.fields.length) {
     return {
@@ -283,6 +308,16 @@ function filteringCandidate(
   const ranges = prefixes.map((prefix) =>
     compound ? compoundRange(prefix, constraint, source.fields.length - used) : scalarRange(constraint!)
   );
+  // A literal outside the stored scalar type can sort above the compound sentinel.
+  if (
+    ranges.some(
+      (range) =>
+        range.kind === "bound" &&
+        (compareFieldValues(range.lower, range.upper) > 0 ||
+          (keyEquals(range.lower, range.upper) && (range.lowerOpen || range.upperOpen)))
+    )
+  )
+    return undefined;
   const cost = hasRange ? (constraint.lower && constraint.upper && !constraint.startsWith ? 4 : 5) : 3;
   return { source, ranges, cost, consumed, declaration };
 }

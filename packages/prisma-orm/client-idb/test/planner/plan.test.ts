@@ -283,3 +283,8 @@ describe("planQuery", () => {
     expect(planQuery(c, { where: f("a", "eq", "x"), orderBy: { a: "desc" }, take: 1 }).direction).toBe("prev");
   });
 });
+
+it("does not emit reversed compound bounds for key literals outside the stored scalar type", () => {
+  const plan = planQuery(catalog([source(["a", "b"], "ab")]), { where: f("a", "gt", ["array-key"]) });
+  expect(explain(plan)).toBe('{"access":"full","exact":false}');
+});

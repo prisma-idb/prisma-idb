@@ -17,5 +17,4 @@ it("produces the same descriptor for equivalent membership orders", () => {
   const first = planQuery(c, { where: fieldFilter("a", "in", ["z", "a", "z"]) });
   const second = planQuery(c, { where: fieldFilter("a", "in", ["a", "z"]) });
   expect(explain(first)).toBe(explain(second));
-  expect(explain(first)).toBe(explain(first));
 });
