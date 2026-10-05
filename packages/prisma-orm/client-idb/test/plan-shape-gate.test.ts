@@ -252,6 +252,14 @@ const SCENARIOS: readonly Scenario[] = [
   { name: "count: no filter", run: (o) => o["items"].count() },
   { name: "count: eq on indexed field", run: (o) => o["items"].where({ category: "c3" }).count() },
   {
+    name: "count: indexed eq AND non-indexed eq",
+    run: (o) => o["items"].where({ category: "c3", status: "closed" }).count(),
+  },
+  {
+    name: "count: in() on indexed field",
+    run: (o) => o["items"].where(() => fieldFilter("category", "in", ["c1", "c2"])).count(),
+  },
+  {
     name: "count: lt on indexed field",
     run: (o) => o["items"].where(() => fieldFilter("score", "lt", 20)).count(),
   },
@@ -298,7 +306,8 @@ interface Measurement {
 }
 
 /**
- * Planned row reads. Count/exists and mutation improvements land in later slices.
+ * Planned row reads, native counts and key-only existence checks. Mutation
+ * improvements land in later slices.
  * `values`/`keys` list one entry per size in {@link SIZES}.
  */
 const EXPECTED: Record<string, Measurement> = {
@@ -335,9 +344,16 @@ const EXPECTED: Record<string, Measurement> = {
     requests: ["openCursor items.byCategory range x2"],
   },
   "findFirst: eq on indexed field": { values: [1, 1], keys: [0, 0], requests: ["openCursor items.byCategory range"] },
-  "count: no filter": { values: [100, 1000], keys: [0, 0], requests: ["openCursor items"] },
-  "count: eq on indexed field": { values: [10, 100], keys: [0, 0], requests: ["getAll items.byCategory range"] },
-  "count: lt on indexed field": { values: [20, 20], keys: [0, 0], requests: ["getAll items.byScore range"] },
+  "count: no filter": { values: [0, 0], keys: [0, 0], requests: ["count items"] },
+  "count: eq on indexed field": { values: [0, 0], keys: [0, 0], requests: ["count items.byCategory range"] },
+  // The non-indexed field needs the rows, but only those in the index range.
+  "count: indexed eq AND non-indexed eq": {
+    values: [10, 100],
+    keys: [0, 0],
+    requests: ["getAll items.byCategory range"],
+  },
+  "count: in() on indexed field": { values: [0, 0], keys: [0, 0], requests: ["count items.byCategory range x2"] },
+  "count: lt on indexed field": { values: [0, 0], keys: [0, 0], requests: ["count items.byScore range"] },
   "aggregate: count and sum, eq on indexed field": {
     values: [10, 100],
     keys: [0, 0],
@@ -349,11 +365,11 @@ const EXPECTED: Record<string, Measurement> = {
     requests: ["get authors range", "getAll books.byAuthor range"],
   },
   "include N:1 via primary key": { values: [2, 2], keys: [0, 0], requests: ["get authors range", "get books range"] },
-  // Each parent lookup stops at the first match near the start of its store.
+  // Each parent lookup reads one primary key and no row.
   "create: foreign key validation": {
-    values: [3, 3],
-    keys: [0, 0],
-    requests: ["openCursor authors", "openCursor publishers"],
+    values: [0, 0],
+    keys: [2, 2],
+    requests: ["getKey authors range", "getKey publishers range"],
   },
   "delete: cascade to children via indexed foreign key": {
     values: [112, 1012],
@@ -361,9 +377,9 @@ const EXPECTED: Record<string, Measurement> = {
     requests: ["get authors range", "openCursor authors range", "openCursor books", "openCursor books range x10"],
   },
   "delete: restrict check, no children": {
-    values: [102, 1002],
+    values: [2, 2],
     keys: [0, 0],
-    requests: ["get publishers range", "openCursor books", "openCursor publishers range"],
+    requests: ["get publishers range", "getKey books.byPublisher range", "openCursor publishers range"],
   },
   "updateAll: eq on indexed field": { values: [100, 1000], keys: [0, 0], requests: ["openCursor items"] },
   // Every matching row is read again by its own keyed delete cursor.

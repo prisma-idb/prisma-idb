@@ -27,8 +27,8 @@
 import type { PlanMeta } from "@prisma/orm-framework/contract/types";
 import type { ContractReferenceRelation } from "@prisma/orm-framework/contract/types";
 import { domainModelsAtDefaultNamespace } from "@prisma/orm-framework/contract/types";
-import type { IdbAtomicPlan, IdbCursorScanPlan } from "@prisma-idb/driver-idb/runtime";
-import { evaluateFilter, shorthandToFilterExpr } from "@prisma-idb/adapter-idb/runtime";
+import type { IdbAtomicPlan, IdbCursorScanPlan, IdbRowFilter } from "@prisma-idb/driver-idb/runtime";
+import { andExpr, evaluateFilter, fieldFilter, shorthandToFilterExpr } from "@prisma-idb/adapter-idb/runtime";
 import type { IdbFilterExpr } from "@prisma-idb/adapter-idb/runtime";
 import type { IdbReferentialAction } from "@prisma-idb/target-idb/pack";
 import type { IdbQueryExecutor } from "./executor";
@@ -39,6 +39,9 @@ import {
   createMutationDefaultsCache,
   type MutationDefaultsCache,
 } from "./mutation-defaults";
+import { buildCatalog } from "./planner/catalog";
+import { lowerExists } from "./planner/lower";
+import { planQuery } from "./planner/plan";
 import { withMutationScope, type IdbQueryExecutorWithTransaction } from "./mutation-scope";
 import { createRelationMutator, isRelationMutationCallback, isRelationMutationDescriptor } from "./relation-mutator";
 import {
@@ -763,22 +766,43 @@ function isChildEnforcementRelation(contract: IdbContract, modelName: string, de
 
 /**
  * `true` if any child row matches the relation against `parentRow`'s values —
- * the existence check behind `restrict`.
+ * the existence check behind `restrict`. A null value references no child.
  */
 async function childExists(
   scope: IdbTransactionScope,
+  contract: IdbContract,
   meta: PlanMeta,
   def: RelationDefinition,
   parentRow: Record<string, unknown>
 ): Promise<boolean> {
-  const found = await scope.execute({
-    meta,
-    kind: "cursor-scan",
-    storeName: def.relatedStoreName,
-    filter: buildChildFilterFromRow(def, parentRow),
-    take: 1,
-  } as IdbAtomicPlan);
-  return found.length > 0;
+  const values = def.localFields.map((field) => parentRow[field]);
+  if (values.some((value) => value === null || value === undefined)) return false;
+  return rowExists(scope, contract, meta, def.relatedStoreName, def.targetFields, values);
+}
+
+/**
+ * Does `storeName` have a row whose `fields` equal `values`, pairwise?
+ * Compares values the way IndexedDB compares keys. `additionalFilter` narrows
+ * the match in memory; it makes the check read rows instead of keys.
+ */
+async function rowExists(
+  scope: IdbTransactionScope,
+  contract: IdbContract,
+  meta: PlanMeta,
+  storeName: string,
+  fields: readonly string[],
+  values: readonly unknown[],
+  additionalFilter?: IdbRowFilter
+): Promise<boolean> {
+  const where = andExpr(fields.map((field, i) => fieldFilter(field, "eq", values[i])));
+  const catalog = buildCatalog(contract, storeName);
+  const lowered = lowerExists(catalog, planQuery(catalog, { where }), meta, { where }, additionalFilter);
+  // The scope runs atomic plans only. Each `await` here resolves in a
+  // microtask, so the transaction stays open between the requests.
+  const plans = lowered.idbPlan.kind === "batch" ? lowered.idbPlan.ops : [lowered.idbPlan];
+  const rows: Record<string, unknown>[] = [];
+  for (const plan of plans) rows.push(...(await scope.execute(plan)));
+  return lowered.finish(rows);
 }
 
 /**
@@ -972,7 +996,7 @@ export async function applyReferentialActionsForRowOnUpdate(
     const childFilter = buildChildFilterFromRow(def, oldRow);
 
     if (action === "restrict") {
-      if (await childExists(scope, meta, def, oldRow)) {
+      if (await childExists(scope, contract, meta, def, oldRow)) {
         throw new Error(
           `Cannot update ${modelName} '${keyToken(extractKeyFromRow(oldRow, keyPath))}': changing field(s) ${changedFields.join(", ")} ` +
             `would orphan child records on relation '${def.relationName}'. ` +
@@ -1120,7 +1144,6 @@ function fkCheckNeedsExistingRow(contract: IdbContract, modelName: string, data:
 /**
  * Does `parentModel` have a row whose `fields` equal `values`, pairwise?
  *
- * Scans the parent store, comparing values the way IndexedDB compares keys.
  * `excludeKey` leaves out one parent row, for checks that run while that row
  * is being deleted or changed.
  */
@@ -1135,11 +1158,11 @@ async function parentExists(
 ): Promise<boolean> {
   const storeName = getStoreName(contract, parentModel);
   const keyPath = getKeyPath(contract, parentModel);
-  const filter = (row: Record<string, unknown>): boolean =>
-    fields.every((f, i) => fieldValuesEqual(row[f], values[i])) &&
-    (excludeKey === undefined || !keyEquals(extractKeyFromRow(row, keyPath), excludeKey));
-  const found = await scope.execute({ meta, kind: "cursor-scan", storeName, filter, take: 1 } as IdbAtomicPlan);
-  return found.length > 0;
+  const notExcluded =
+    excludeKey === undefined
+      ? undefined
+      : (row: Record<string, unknown>): boolean => !keyEquals(extractKeyFromRow(row, keyPath), excludeKey);
+  return rowExists(scope, contract, meta, storeName, fields, values, notExcluded);
 }
 
 /** `id='u1'`, or `orgId='a', id='u1'` for a compound key. */
@@ -1389,7 +1412,7 @@ export async function applyReferentialActionsForRow(
     const childFilter = buildChildFilterFromRow(def, row);
 
     if (action === "restrict") {
-      if (await childExists(scope, meta, def, row)) {
+      if (await childExists(scope, contract, meta, def, row)) {
         throw new Error(
           `Cannot delete ${modelName} '${keyToken(extractKeyFromRow(row, keyPath))}': child records exist on relation '${def.relationName}'. ` +
             "Delete those children first, or declare onDelete: Cascade, SetNull or SetDefault on the relation."

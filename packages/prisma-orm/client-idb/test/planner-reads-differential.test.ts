@@ -16,6 +16,9 @@ import idbFamilyPack from "@prisma-idb/family-idb/pack";
 import idbTargetPack from "@prisma-idb/target-idb/pack";
 import { compareFieldValues } from "@prisma-idb/target-idb/runtime";
 import { idbOrm, type IdbQueryExecutor, type IdbStoreAccessor, type IdbContract } from "../src/exports/orm";
+import { buildCatalog } from "../src/core/planner/catalog";
+import { lowerExists } from "../src/core/planner/lower";
+import { planQuery } from "../src/core/planner/plan";
 
 const contract = defineContract({
   family: idbFamilyPack,
@@ -180,6 +183,31 @@ async function compare(
     expected.sort(byId);
   }
   expect(actual, "planned read matches full scan").toEqual(expected);
+  expect(await applyQuery(accessor(driver, testContract), query).count(), "count matches full scan").toBe(
+    expected.length
+  );
+  await compareExists(db, driver, query.where, testContract);
+}
+
+/** Existence lowering, with and without an in-memory filter, against a full scan. */
+async function compareExists(
+  db: IDBDatabase,
+  driver: IdbRuntimeDriverInstance,
+  where: IdbFilterExpr | undefined,
+  testContract: IdbContract = contract
+) {
+  const catalog = buildCatalog(testContract, "items");
+  const request = where === undefined ? {} : { where };
+  const meta = { target: "idb", storageHash: "test", lane: "idb-orm" } as const;
+  const matching = await oracle(db, request);
+  const isOdd = (row: Row) => (row["rank"] as number) % 2 !== 0;
+  for (const additionalFilter of [undefined, isOdd]) {
+    const lowered = lowerExists(catalog, planQuery(catalog, request), meta, request, additionalFilter);
+    const rows: Row[] = [];
+    for await (const row of driver.execute(lowered.idbPlan)) rows.push(row);
+    const expected = matching.some((row) => additionalFilter === undefined || additionalFilter(row));
+    expect(lowered.finish(rows), "existence matches full scan").toBe(expected);
+  }
 }
 
 /** Check pagination without assuming primary-key order for unordered rows or ties. */
