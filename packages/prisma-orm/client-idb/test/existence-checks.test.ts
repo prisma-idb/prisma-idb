@@ -1,13 +1,11 @@
 /**
- * Key-only existence reads (`IdbKeysPlan`) for FK checks.
+ * Existence checks inside mutations: FK validation, `setDefault` validation
+ * and `restrict`.
  *
- * A lookup is key-only when its fields are exactly the parent's primary key
- * fields, in any order. Any other lookup stays a value-materializing
- * `cursor-scan`.
- *
- * Every test is behavioral first (same outcome/message as before the change);
- * a recording executor then pins which physical plan each lookup issued so
- * neither the fast path nor the fallbacks can regress silently.
+ * Covers lookups on a primary key, on a non-key field, on one member of a
+ * compound key, and on values that aren't valid IndexedDB keys (NaN, a Date
+ * equal by value but not by reference). Which physical plan runs is pinned by
+ * `plan-shape-gate.test.ts`, not here.
  */
 import "fake-indexeddb/auto";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -16,16 +14,14 @@ import { defineContract } from "@prisma-idb/family-idb/contract-ts";
 import idbFamilyPack from "@prisma-idb/family-idb/pack";
 import idbTargetPack from "@prisma-idb/target-idb/pack";
 import { createIDBRuntimeDriver } from "@prisma-idb/driver-idb/runtime";
-import type { IdbAtomicPlan, IdbRuntimeDriverInstance, IdbTransactionScope } from "@prisma-idb/driver-idb/runtime";
+import type { IdbRuntimeDriverInstance, IdbTransactionScope } from "@prisma-idb/driver-idb/runtime";
 import type { IdbQueryPlan } from "@prisma-idb/adapter-idb/runtime";
 import { idbOrm } from "../src/exports/orm";
 import type { IdbQueryExecutor, IdbQueryExecutorWithTransaction } from "../src/exports/orm";
 
-// ── Recording executor ────────────────────────────────────────────────────────
+// ── Executor ──────────────────────────────────────────────────────────────────
 
-/** Records every plan issued through a transaction scope (where FK lookups run). */
-class RecordingExecutor implements IdbQueryExecutor, IdbQueryExecutorWithTransaction {
-  scopePlans: IdbAtomicPlan[] = [];
+class TestExecutor implements IdbQueryExecutor, IdbQueryExecutorWithTransaction {
   readonly #driver: IdbRuntimeDriverInstance;
   constructor(driver: IdbRuntimeDriverInstance) {
     this.#driver = driver;
@@ -38,30 +34,15 @@ class RecordingExecutor implements IdbQueryExecutor, IdbQueryExecutorWithTransac
       })()
     );
   }
-  async transaction(storeNames: string[], mode?: IDBTransactionMode): Promise<IdbTransactionScope> {
-    const scope = await this.#driver.transaction(storeNames, mode);
-    return {
-      execute: (plan) => {
-        this.scopePlans.push(plan);
-        return scope.execute(plan);
-      },
-      commit: () => scope.commit(),
-      rollback: () => scope.rollback(),
-    };
-  }
-  /** Plans of `kind` against `storeName` recorded since the last reset. */
-  on(storeName: string, kind: IdbAtomicPlan["kind"]): IdbAtomicPlan[] {
-    return this.scopePlans.filter((p) => p.storeName === storeName && p.kind === kind);
-  }
-  reset(): void {
-    this.scopePlans = [];
+  transaction(storeNames: string[], mode?: IDBTransactionMode): Promise<IdbTransactionScope> {
+    return this.#driver.transaction(storeNames, mode);
   }
 }
 
 // ── DB helpers ────────────────────────────────────────────────────────────────
 
 let dbCounter = 0;
-const nextDbName = () => `key-only-reads-test-${++dbCounter}`;
+const nextDbName = () => `existence-checks-test-${++dbCounter}`;
 
 function openTestDbWithStores(name: string, stores: Record<string, string | string[]>): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -82,11 +63,11 @@ function getAllRows(db: IDBDatabase, storeName: string): Promise<Record<string, 
   });
 }
 
-/** Opens a fresh DB with `stores`, and returns an ORM + recorder + the raw db. */
+/** Opens a fresh DB with `stores`, and returns an ORM + the raw db. */
 async function setup(contract: ReturnType<typeof defineContract>, stores: Record<string, string | string[]>) {
   const name = nextDbName();
   const db = await openTestDbWithStores(name, stores);
-  const executor = new RecordingExecutor(createIDBRuntimeDriver(name).create());
+  const executor = new TestExecutor(createIDBRuntimeDriver(name).create());
   const orm = idbOrm({ contract, executor }) as unknown as Record<
     string,
     {
@@ -95,7 +76,7 @@ async function setup(contract: ReturnType<typeof defineContract>, stores: Record
       where(f: unknown): { update(p: unknown): Promise<unknown> };
     }
   >;
-  return { db, executor, orm };
+  return { db, orm };
 }
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
@@ -121,28 +102,19 @@ const userPostContract = defineContract({
 
 // ── validateScalarFks: FK → primary key ───────────────────────────────────────
 
-describe("FK validation — target is the parent's primary key (key-only)", () => {
+describe("FK validation — target is the parent's primary key", () => {
   let db: IDBDatabase;
-  let executor: RecordingExecutor;
   let orm: Awaited<ReturnType<typeof setup>>["orm"];
 
   beforeEach(async () => {
-    ({ db, executor, orm } = await setup(userPostContract, { users: "id", posts: "id" }));
+    ({ db, orm } = await setup(userPostContract, { users: "id", posts: "id" }));
     await orm["users"]!.create({ id: "u1", name: "Alice" });
-    executor.reset();
   });
   afterEach(() => db.close());
 
-  it("accepts an FK to an existing parent, via a `keys` plan on the parent store", async () => {
+  it("accepts an FK to an existing parent", async () => {
     await orm["posts"]!.create({ id: "p1", title: "Hello", authorId: "u1" });
     expect(await getAllRows(db, "posts")).toHaveLength(1);
-    expect(executor.on("users", "keys")).toHaveLength(1);
-    expect(executor.on("users", "cursor-scan")).toHaveLength(0);
-    const plan = executor.on("users", "keys")[0] as { range?: IDBKeyRange; take?: number; indexName?: string };
-    expect(plan.take).toBe(1);
-    expect(plan.indexName).toBeUndefined();
-    expect(plan.range!.lower).toBe("u1");
-    expect(plan.range!.upper).toBe("u1");
   });
 
   it("rejects a missing parent with the unchanged FK-violation message", async () => {
@@ -150,20 +122,16 @@ describe("FK validation — target is the parent's primary key (key-only)", () =
       /FK violation on relation 'author': no User with id='ghost'/
     );
     expect(await getAllRows(db, "posts")).toHaveLength(0);
-    expect(executor.on("users", "keys")).toHaveLength(1);
   });
 
-  it("validates FKs on update via the same path", async () => {
+  it("rejects a missing parent on update", async () => {
     await orm["posts"]!.create({ id: "p1", title: "Hello", authorId: "u1" });
-    executor.reset();
     await expect(orm["posts"]!.where({ id: "p1" }).update({ authorId: "ghost" })).rejects.toThrow(/FK violation/);
-    expect(executor.on("users", "keys")).toHaveLength(1);
   });
 
-  it("skips validation entirely (no plan at all) when the FK value is null", async () => {
+  it("accepts a null FK", async () => {
     await orm["posts"]!.create({ id: "p1", title: "Hello", authorId: null });
-    expect(executor.on("users", "keys")).toHaveLength(0);
-    expect(executor.on("users", "cursor-scan")).toHaveLength(0);
+    expect(await getAllRows(db, "posts")).toHaveLength(1);
   });
 });
 
@@ -194,13 +162,11 @@ describe("FK validation — Date-keyed parent", () => {
   });
 
   let db: IDBDatabase;
-  let executor: RecordingExecutor;
   let orm: Awaited<ReturnType<typeof setup>>["orm"];
 
   beforeEach(async () => {
-    ({ db, executor, orm } = await setup(dateContract, { periods: "startsAt", entries: "id" }));
+    ({ db, orm } = await setup(dateContract, { periods: "startsAt", entries: "id" }));
     await orm["periods"]!.create({ startsAt: new Date("2026-01-01T00:00:00Z"), label: "Jan" });
-    executor.reset();
   });
   afterEach(() => db.close());
 
@@ -217,9 +183,9 @@ describe("FK validation — Date-keyed parent", () => {
   });
 });
 
-// ── Fallbacks: the lookup must stay a cursor-scan ─────────────────────────────
+// ── Lookups that aren't a primary-key match ───────────────────────────────────
 
-describe("FK validation — falls back to cursor-scan when a key range can't express the lookup", () => {
+describe("FK validation — target isn't exactly the parent's primary key", () => {
   it("target field is NOT the parent's primary key", async () => {
     const contract = defineContract({
       family: idbFamilyPack,
@@ -239,13 +205,10 @@ describe("FK validation — falls back to cursor-scan when a key range can't exp
         },
       },
     });
-    const { db, executor, orm } = await setup(contract, { users: "id", posts: "id" });
+    const { db, orm } = await setup(contract, { users: "id", posts: "id" });
     await orm["users"]!.create({ id: "u1", email: "a@e.com" });
-    executor.reset();
     await orm["posts"]!.create({ id: "p1", authorEmail: "a@e.com" });
     await expect(orm["posts"]!.create({ id: "p2", authorEmail: "nobody@e.com" })).rejects.toThrow(/FK violation/);
-    expect(executor.on("users", "keys")).toHaveLength(0);
-    expect(executor.on("users", "cursor-scan")).toHaveLength(2);
     db.close();
   });
 
@@ -268,13 +231,10 @@ describe("FK validation — falls back to cursor-scan when a key range can't exp
         },
       },
     });
-    const { db, executor, orm } = await setup(contract, { orgs: ["orgId", "region"], members: "id" });
+    const { db, orm } = await setup(contract, { orgs: ["orgId", "region"], members: "id" });
     await orm["orgs"]!.create({ orgId: "o1", region: "eu" });
-    executor.reset();
     await orm["members"]!.create({ id: "m1", orgId: "o1" });
     await expect(orm["members"]!.create({ id: "m2", orgId: "nope" })).rejects.toThrow(/FK violation/);
-    expect(executor.on("orgs", "keys")).toHaveLength(0);
-    expect(executor.on("orgs", "cursor-scan")).toHaveLength(2);
     db.close();
   });
 
@@ -297,20 +257,17 @@ describe("FK validation — falls back to cursor-scan when a key range can't exp
         },
       },
     });
-    const { db, executor, orm } = await setup(contract, { teams: "id", members: "id" });
+    const { db, orm } = await setup(contract, { teams: "id", members: "id" });
     await orm["teams"]!.create({ id: 1 });
-    executor.reset();
     await expect(orm["members"]!.create({ id: "m1", teamId: Number.NaN })).rejects.toThrow(/FK violation/);
-    expect(executor.on("teams", "keys")).toHaveLength(0);
     await orm["members"]!.create({ id: "m2", teamId: 1 });
-    expect(executor.on("teams", "keys")).toHaveLength(1);
     db.close();
   });
 });
 
 // ── setDefault: parent-side validation ────────────────────────────────────────
 
-describe("setDefault validation — default references the parent's primary key (key-only)", () => {
+describe("setDefault validation — default references the parent's primary key", () => {
   const contract = defineContract({
     family: idbFamilyPack,
     target: idbTargetPack,
@@ -338,11 +295,10 @@ describe("setDefault validation — default references the parent's primary key 
   });
 
   let db: IDBDatabase;
-  let executor: RecordingExecutor;
   let orm: Awaited<ReturnType<typeof setup>>["orm"];
 
   beforeEach(async () => {
-    ({ db, executor, orm } = await setup(contract, { users: "id", posts: "id" }));
+    ({ db, orm } = await setup(contract, { users: "id", posts: "id" }));
   });
   afterEach(() => db.close());
 
@@ -350,10 +306,8 @@ describe("setDefault validation — default references the parent's primary key 
     await orm["users"]!.create({ id: "system", name: "System" });
     await orm["users"]!.create({ id: "u1", name: "Alice" });
     await orm["posts"]!.create({ id: "p1", title: "x", authorId: "u1" });
-    executor.reset();
     await orm["users"]!.delete("u1");
     expect((await getAllRows(db, "posts"))[0]!["authorId"]).toBe("system");
-    expect(executor.on("users", "keys")).toHaveLength(1);
   });
 
   it("throws when the default points at no row", async () => {
@@ -395,47 +349,39 @@ describe("restrict — shared-primary-key 1:1 (child's own PK is the FK)", () =>
   });
 
   let db: IDBDatabase;
-  let executor: RecordingExecutor;
   let orm: Awaited<ReturnType<typeof setup>>["orm"];
 
   beforeEach(async () => {
-    ({ db, executor, orm } = await setup(contract, { users: "id", profiles: "userId" }));
+    ({ db, orm } = await setup(contract, { users: "id", profiles: "userId" }));
     await orm["users"]!.create({ id: "u1", name: "Alice" });
     await orm["users"]!.create({ id: "u2", name: "Bob" });
     await orm["profiles"]!.create({ userId: "u1", bio: "hi" });
-    executor.reset();
   });
   afterEach(() => db.close());
 
-  it("blocks deleting a parent whose profile exists, via a key-only lookup on the child store", async () => {
+  it("blocks deleting a parent whose profile exists", async () => {
     await expect(orm["users"]!.delete("u1")).rejects.toThrow(/Cannot delete User.*child records/);
     expect(await getAllRows(db, "users")).toHaveLength(2);
-    expect(executor.on("profiles", "keys")).toHaveLength(1);
-    expect(executor.on("profiles", "cursor-scan")).toHaveLength(0);
   });
 
   it("allows deleting a parent with no profile", async () => {
     await orm["users"]!.delete("u2");
     expect(await getAllRows(db, "users")).toHaveLength(1);
-    expect(executor.on("profiles", "keys")).toHaveLength(1);
   });
 });
 
-// ── Row-consuming and non-PK sites must NOT go key-only ───────────────────────
+// ── restrict and cascade on a 1:N ─────────────────────────────────────────────
 
-describe("sites that consume row values or aren't PK-targeted stay on cursor-scan", () => {
+describe("restrict and cascade on a 1:N", () => {
   it("restrict on a 1:N (child FK is not the child's PK)", async () => {
-    const { db, executor, orm } = await setup(userPostContract, { users: "id", posts: "id" });
+    const { db, orm } = await setup(userPostContract, { users: "id", posts: "id" });
     await orm["users"]!.create({ id: "u1", name: "Alice" });
     await orm["posts"]!.create({ id: "p1", title: "x", authorId: "u1" });
-    executor.reset();
     await expect(orm["users"]!.delete("u1")).rejects.toThrow(/Cannot delete User/);
-    expect(executor.on("posts", "keys")).toHaveLength(0);
-    expect(executor.on("posts", "cursor-scan")).toHaveLength(1);
     db.close();
   });
 
-  it("cascade delete reads child ROWS (needed to recurse), so it never uses keys", async () => {
+  it("cascade delete removes the children", async () => {
     const contract = defineContract({
       family: idbFamilyPack,
       target: idbTargetPack,
@@ -451,13 +397,11 @@ describe("sites that consume row values or aren't PK-targeted stay on cursor-sca
         Post: { store: "posts", key: "id", fields: { id: "String", authorId: "String" } },
       },
     });
-    const { db, executor, orm } = await setup(contract, { users: "id", posts: "id" });
+    const { db, orm } = await setup(contract, { users: "id", posts: "id" });
     await orm["users"]!.create({ id: "u1" });
     await orm["posts"]!.create({ id: "p1", authorId: "u1" });
-    executor.reset();
     await orm["users"]!.delete("u1");
     expect(await getAllRows(db, "posts")).toHaveLength(0);
-    expect(executor.scopePlans.some((p) => p.kind === "keys")).toBe(false);
     db.close();
   });
 });

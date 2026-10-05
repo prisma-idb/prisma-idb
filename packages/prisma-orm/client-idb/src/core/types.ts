@@ -640,24 +640,6 @@ export function extractKeyFromRow(row: Record<string, unknown>, keyPath: IdbKeyP
 }
 
 /**
- * Build a field → indexName lookup for every single-field, non-multi-entry
- * index on `storeName`. Top-level scans use this map to find indexed equality
- * conditions in combined filter expressions. Compound and multi-entry indexes
- * cannot serve these single-field point lookups.
- */
-export function buildFieldToIndexMap(contract: IdbContract, storeName: string): Record<string, string> {
-  const storeDef = contract.storage.stores[storeName];
-  const result: Record<string, string> = {};
-  if (storeDef?.indexes === undefined) return result;
-  for (const [indexName, indexDef] of Object.entries(storeDef.indexes)) {
-    if (typeof indexDef.keyPath === "string" && indexDef.multiEntry !== true) {
-      result[indexDef.keyPath] = indexName;
-    }
-  }
-  return result;
-}
-
-/**
  * Resolve a model's named relation to a {@link ContractReferenceRelation} at
  * runtime, or `undefined` when the relation is absent or an embedded relation
  * (no `on` join block). Used by `include()` to find the related model name and

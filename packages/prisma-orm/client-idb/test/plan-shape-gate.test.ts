@@ -13,7 +13,8 @@
  *
  * `EXPECTED` pins today's behavior. A change to query planning must update
  * this table, and the diff of the table is the evidence of what changed.
- * Set `PLAN_GATE_RECORD=1` to print the measured table instead of asserting.
+ * Set `PLAN_GATE_RECORD=1` to print the measured table instead of asserting,
+ * and pass `--silent=false` so vitest shows it.
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { AsyncIterableResult } from "@prisma/orm-framework/components/runtime";
@@ -287,81 +288,64 @@ interface Measurement {
 }
 
 /**
- * Today's behavior. `values`/`keys` list one entry per size in {@link SIZES}.
+ * Today's behavior: without a planner, every lookup except `findUnique` scans
+ * the whole store. `values`/`keys` list one entry per size in {@link SIZES}.
  */
 const EXPECTED: Record<string, Measurement> = {
   "findMany: no filter": { values: [100, 1000], keys: [0, 0], requests: ["openCursor items"] },
-  "findMany: eq on primary key": { values: [1, 1], keys: [0, 0], requests: ["openCursor items range"] },
+  "findMany: eq on primary key": { values: [100, 1000], keys: [0, 0], requests: ["openCursor items"] },
   "findUnique: primary key": { values: [1, 1], keys: [0, 0], requests: ["get items range"] },
-  "findMany: eq on indexed field": { values: [10, 100], keys: [0, 0], requests: ["openCursor items.byCategory range"] },
+  "findMany: eq on indexed field": { values: [100, 1000], keys: [0, 0], requests: ["openCursor items"] },
   "findMany: eq on non-indexed field": { values: [100, 1000], keys: [0, 0], requests: ["openCursor items"] },
-  "findMany: indexed eq AND non-indexed eq": {
-    values: [10, 100],
-    keys: [0, 0],
-    requests: ["openCursor items.byCategory range"],
-  },
-  // Full scan, although an index could serve it.
+  "findMany: indexed eq AND non-indexed eq": { values: [100, 1000], keys: [0, 0], requests: ["openCursor items"] },
   "findMany: lt on indexed field": { values: [100, 1000], keys: [0, 0], requests: ["openCursor items"] },
-  // Full scan, although an index could serve it.
   "findMany: gte AND lt on indexed field": { values: [100, 1000], keys: [0, 0], requests: ["openCursor items"] },
-  // Full scan, although an index could serve it.
   "findMany: in() on indexed field": { values: [100, 1000], keys: [0, 0], requests: ["openCursor items"] },
-  "findMany: OR of indexed eqs": {
-    values: [20, 200],
-    keys: [0, 0],
-    requests: ["openCursor items.byCategory range x2"],
-  },
-  // Full scan, although an index could serve it.
+  "findMany: OR of indexed eqs": { values: [100, 1000], keys: [0, 0], requests: ["openCursor items"] },
   "findMany: OR with an AND branch": { values: [100, 1000], keys: [0, 0], requests: ["openCursor items"] },
   "findMany: OR mixing indexed and non-indexed": { values: [100, 1000], keys: [0, 0], requests: ["openCursor items"] },
-  // Full scan, although an index could serve it.
   "findMany: compound index exact match": { values: [100, 1000], keys: [0, 0], requests: ["openCursor items"] },
-  // Full scan, although an index could serve it.
   "findMany: compound index prefix": { values: [100, 1000], keys: [0, 0], requests: ["openCursor items"] },
-  // Full scan, although an index could serve it.
   "findMany: orderBy indexed field, take 10": { values: [100, 1000], keys: [0, 0], requests: ["openCursor items"] },
-  "findFirst: eq on indexed field": { values: [1, 1], keys: [0, 0], requests: ["openCursor items.byCategory range"] },
-  "count: no filter": { values: [0, 0], keys: [0, 0], requests: ["count items"] },
-  "count: eq on indexed field": { values: [0, 0], keys: [0, 0], requests: ["count items.byCategory range"] },
-  // Full scan, although an index could serve it.
+  "findFirst: eq on indexed field": { values: [4, 4], keys: [0, 0], requests: ["openCursor items"] },
+  "count: no filter": { values: [100, 1000], keys: [0, 0], requests: ["openCursor items"] },
+  "count: eq on indexed field": { values: [100, 1000], keys: [0, 0], requests: ["openCursor items"] },
   "count: lt on indexed field": { values: [100, 1000], keys: [0, 0], requests: ["openCursor items"] },
-  // Full scan, although an index could serve it.
   "aggregate: count and sum, eq on indexed field": {
     values: [100, 1000],
     keys: [0, 0],
     requests: ["openCursor items"],
   },
   "include 1:N via indexed foreign key": {
-    values: [11, 11],
+    values: [110, 1100],
     keys: [0, 0],
-    requests: ["openCursor authors range", "openCursor books.byAuthor range"],
+    requests: ["openCursor authors", "openCursor books"],
   },
   "include N:1 via primary key": {
-    values: [2, 2],
+    values: [110, 1100],
     keys: [0, 0],
-    requests: ["openCursor authors range", "openCursor books range"],
+    requests: ["openCursor authors", "openCursor books"],
   },
+  // Each parent lookup is a scan that stops at the first match; the seeded
+  // parents sit near the start of their stores, so the count doesn't grow with n.
   "create: foreign key validation": {
-    values: [0, 0],
-    keys: [2, 2],
-    requests: ["getKey authors range", "getKey publishers range"],
+    values: [3, 3],
+    keys: [0, 0],
+    requests: ["openCursor authors", "openCursor publishers"],
   },
-  // The child lookup is a full scan of `books`, although `byAuthor` could serve it.
   "delete: cascade to children via indexed foreign key": {
     values: [112, 1012],
     keys: [0, 0],
     requests: ["get authors range", "openCursor authors range", "openCursor books", "openCursor books range x10"],
   },
-  // The child lookup is a full scan of `books`, although `byPublisher` could serve it.
   "delete: restrict check, no children": {
     values: [102, 1002],
     keys: [0, 0],
     requests: ["get publishers range", "openCursor books", "openCursor publishers range"],
   },
-  // Full scan, although an index could serve it.
   "updateAll: eq on indexed field": { values: [100, 1000], keys: [0, 0], requests: ["openCursor items"] },
-  // Full scan, although an index could serve it. Each match is then deleted
-  // through its own keyed cursor, so every matched row is read twice.
+  // Each match is deleted through its own keyed cursor, so every matched row
+  // is read twice.
   "deleteAll: eq on indexed field": {
     values: [110, 1100],
     keys: [0, 0],

@@ -201,7 +201,7 @@ The ORM carries immutable query state through the accessor chain. Reads shape a 
 | `store-accessor.ts`                               | The per-model interface, query chaining, read materialization and mutation entrypoints. |
 | `store-state.ts`                                  | Immutable accessor state and include descriptors.                                       |
 | `model-accessor.ts` and `filters.ts`              | Typed field operators and filter combinators.                                           |
-| `query-shaping.ts`                                | Index equality hints, filter composition, row comparators and native count plans.       |
+| `query-shaping.ts`                                | Filter composition and row comparators.                                                 |
 | `aggregate-builder.ts` and `grouped-accessor.ts`  | Aggregate selectors, reductions and grouped results.                                    |
 | `relation-loader.ts`                              | Batched relation reads and per-parent refinements.                                      |
 | `mutation-executor.ts` and `mutation-scope.ts`    | Nested writes, foreign-key checks and referential actions in one transaction.           |
