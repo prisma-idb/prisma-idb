@@ -291,6 +291,26 @@ const SCENARIOS: readonly Scenario[] = [
     run: (o) => o["items"].where({ category: "c3" }).updateAll({ status: "archived" }).toArray(),
   },
   {
+    name: "updateAll: range on indexed field",
+    run: (o) =>
+      o["items"]
+        .where(() => fieldFilter("score", "lt", 20))
+        .updateAll({ status: "archived" })
+        .toArray(),
+  },
+  {
+    name: "updateAll: changes walked index field",
+    run: (o) => o["items"].where({ category: "c3" }).updateAll({ category: "c4" }).toArray(),
+  },
+  {
+    name: "update: eq on indexed field",
+    run: (o) => o["items"].where({ category: "c3" }).update({ status: "archived" }),
+  },
+  {
+    name: "upsert: indexed existing-row lookup",
+    run: (o) => o["items"].upsert({ where: { category: "c3" }, create: { id: "new" }, update: { status: "archived" } }),
+  },
+  {
     name: "deleteAll: eq on indexed field",
     run: (o) => o["items"].where({ category: "c3" }).deleteAll().toArray(),
   },
@@ -306,8 +326,7 @@ interface Measurement {
 }
 
 /**
- * Planned row reads, native counts and key-only existence checks. Mutation
- * improvements land in later slices.
+ * Planned reads, counts, existence checks and mutation lookups.
  * `values`/`keys` list one entry per size in {@link SIZES}.
  */
 const EXPECTED: Record<string, Measurement> = {
@@ -372,21 +391,41 @@ const EXPECTED: Record<string, Measurement> = {
     requests: ["getKey authors range", "getKey publishers range"],
   },
   "delete: cascade to children via indexed foreign key": {
-    values: [112, 1012],
+    values: [22, 22],
     keys: [0, 0],
-    requests: ["get authors range", "openCursor authors range", "openCursor books", "openCursor books range x10"],
+    requests: [
+      "get authors range",
+      "getAll books.byAuthor range",
+      "openCursor authors range",
+      "openCursor books range x10",
+    ],
   },
   "delete: restrict check, no children": {
     values: [2, 2],
     keys: [0, 0],
     requests: ["get publishers range", "getKey books.byPublisher range", "openCursor publishers range"],
   },
-  "updateAll: eq on indexed field": { values: [100, 1000], keys: [0, 0], requests: ["openCursor items"] },
-  // Every matching row is read again by its own keyed delete cursor.
-  "deleteAll: eq on indexed field": {
-    values: [110, 1100],
+  "updateAll: eq on indexed field": {
+    values: [10, 100],
     keys: [0, 0],
-    requests: ["openCursor items", "openCursor items range x100"],
+    requests: ["openCursor items.byCategory range"],
+  },
+  "deleteAll: eq on indexed field": {
+    values: [10, 100],
+    keys: [0, 0],
+    requests: ["openCursor items.byCategory range"],
+  },
+  "updateAll: range on indexed field": { values: [20, 20], keys: [0, 0], requests: ["openCursor items.byScore range"] },
+  "updateAll: changes walked index field": {
+    values: [20, 200],
+    keys: [0, 0],
+    requests: ["get items range x100", "getAll items.byCategory range"],
+  },
+  "update: eq on indexed field": { values: [1, 1], keys: [0, 0], requests: ["openCursor items.byCategory range"] },
+  "upsert: indexed existing-row lookup": {
+    values: [2, 2],
+    keys: [0, 0],
+    requests: ["get items range", "openCursor items.byCategory range"],
   },
 };
 

@@ -189,6 +189,56 @@ export function lowerExists(
   };
 }
 
+/** Write inputs. `take` limits matches across all planned ranges. */
+export interface WriteRequest extends PlanRequest {
+  readonly write: "put-merged" | "delete";
+  readonly patch?: Record<string, unknown>;
+}
+
+/** A cursor write, or a read that must finish before any keyed writes begin. */
+export type LoweredWrite =
+  { readonly kind: "scan"; readonly idbPlan: IdbPlanBody } | { readonly kind: "collect"; readonly rows: LoweredRows };
+
+/**
+ * Lower writes through the same access paths as reads. If the patch touches
+ * the walked key, collect every range first so moved rows cannot enter a
+ * later range or change the cursor's position. Multiple ranges with a limit
+ * also collect first, because the limit applies to their combined matches.
+ */
+export function lowerWrite(
+  catalog: QueryCatalog,
+  logical: LogicalPlan,
+  meta: PlanMeta,
+  request: WriteRequest,
+  additionalFilter?: IdbRowFilter
+): LoweredWrite {
+  const { access } = logical;
+  const walkedFields = access.kind === "ranges" ? access.source.fields : catalog.primaryKey.fields;
+  const movesKey = request.write === "put-merged" && walkedFields.some((field) => field in (request.patch ?? {}));
+  const limitedRanges = access.kind === "ranges" && access.ranges.length > 1 && request.take !== undefined;
+  if (movesKey || limitedRanges) {
+    return { kind: "collect", rows: lowerRows(catalog, logical, meta, request, additionalFilter) };
+  }
+  const filter: IdbRowFilter = (row) =>
+    (request.where === undefined || evaluateFilter(request.where, row)) &&
+    (additionalFilter === undefined || additionalFilter(row));
+  return {
+    kind: "scan",
+    idbPlan: combine(
+      catalog,
+      meta,
+      accessOps(catalog, meta, logical, (target) => ({
+        ...target,
+        kind: "scan-write",
+        write: request.write,
+        filter,
+        ...(request.patch === undefined ? {} : { patch: request.patch }),
+        ...(request.take === undefined ? {} : { take: request.take }),
+      }))
+    ),
+  };
+}
+
 interface AccessTarget {
   readonly meta: PlanMeta;
   readonly storeName: string;

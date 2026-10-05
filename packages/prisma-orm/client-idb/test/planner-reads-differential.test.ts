@@ -76,6 +76,9 @@ const compoundContract = defineContract({
 
 class TestExecutor implements IdbQueryExecutor {
   constructor(readonly driver: IdbRuntimeDriverInstance) {}
+  transaction(storeNames: string[], mode?: IDBTransactionMode) {
+    return this.driver.transaction(storeNames, mode);
+  }
   query<Row>(plan: IdbQueryPlan<Row>): AsyncIterableResult<Row> {
     const iterable = this.driver.execute(plan.idbPlan);
     return new AsyncIterableResult(
@@ -500,5 +503,164 @@ it("aggregate and groupBy reapply residual filters and ignore collection paginat
       { category: "a", count: 1, sum: 2 },
       { category: "b", count: 1, sum: 5 },
     ]);
+  });
+});
+
+/** Independent write oracle: a full cursor scan, full filter, then keyed writes. */
+function oracleWrite(db: IDBDatabase, where: IdbFilterExpr | undefined, patch?: Row, take?: number): Promise<Row[]> {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction("items", "readwrite");
+    const store = tx.objectStore("items");
+    const request = store.openCursor();
+    const matched: Row[] = [];
+    const results: Row[] = [];
+    request.onsuccess = () => {
+      const cursor = request.result;
+      if (cursor) {
+        const row = cursor.value as Row;
+        if ((where === undefined || evaluateFilter(where, row)) && (take === undefined || matched.length < take))
+          matched.push(row);
+        cursor.continue();
+        return;
+      }
+      for (const row of matched) {
+        const result = patch === undefined ? row : { ...row, ...patch };
+        if (patch === undefined) store.delete(row["id"] as string);
+        else store.put(result);
+        results.push(result);
+      }
+    };
+    tx.oncomplete = () => resolve(results);
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+type WriteOperation = "updateAll" | "updateCount" | "deleteAll" | "deleteCount" | "update";
+
+async function compareWrite(
+  db: IDBDatabase,
+  driver: IdbRuntimeDriverInstance,
+  rows: Row[],
+  where: IdbFilterExpr | undefined,
+  operation: WriteOperation,
+  patch: Row,
+  testContract: IdbContract = contract
+) {
+  await seed(db, rows);
+  const base = applyQuery(accessor(driver, testContract), where === undefined ? {} : { where });
+  const actual =
+    operation === "updateAll"
+      ? await base.updateAll(patch as never).toArray()
+      : operation === "updateCount"
+        ? await base.updateCount(patch as never)
+        : operation === "deleteAll"
+          ? await base.deleteAll().toArray()
+          : operation === "deleteCount"
+            ? await base.deleteCount()
+            : await base.update(patch as never);
+  const actualStore = await oracle(db, {});
+  await seed(db, rows);
+  const expected = await oracleWrite(
+    db,
+    where,
+    operation.startsWith("delete") ? undefined : patch,
+    operation === "update" ? 1 : undefined
+  );
+  const byId = (a: Row, b: Row) => compareFieldValues(a["id"], b["id"]);
+  if (operation.endsWith("Count")) expect(actual).toBe(expected.length);
+  else if (operation === "update") expect(actual).toEqual(expected[0] ?? null);
+  else expect((actual as Row[]).sort(byId)).toEqual(expected.sort(byId));
+  expect(actualStore, `${operation}: store contents match full scan`).toEqual(await oracle(db, {}));
+}
+
+it("matches full-scan write results, counts and contents for planned ranges and fallbacks", async () => {
+  await withDatabase(async (db, driver) => {
+    await fc.assert(
+      fc.asyncProperty(data, text, number, async (rows, category, rank) => {
+        const filters = [
+          undefined,
+          f("id", "eq", rows[0]!.id),
+          f("id", "in", [rows[0]!.id, rows.at(-1)!.id, rows[0]!.id]),
+          f("serial", "eq", 1),
+          f("category", "eq", category),
+          f("category", "in", [category, "b", category]),
+          orExpr([f("category", "eq", category), f("category", "eq", "b")]),
+          andExpr([f("category", "eq", category), f("flag", "eq", true)]),
+          andExpr([f("rank", "gte", rank), f("rank", "lte", rank + 3)]),
+          f("rank", "gt", rank),
+          f("label", "startsWith", category),
+          andExpr([f("category", "eq", category), f("rank", "in", [rank, rank + 1])]),
+          orExpr([f("category", "eq", category), f("rank", "eq", rank)]),
+          notExpr(f("category", "eq", category)),
+          f("optional", "eq", null),
+          f("flag", "eq", true),
+          f("big", "gte", BigInt(rank)),
+          f("date", "gte", new Date(rank)),
+          f("bytes", "eq", new Uint8Array([rank + 10])),
+          f("category", "in", []),
+          andExpr([f("rank", "gt", rank), f("rank", "lt", rank)]),
+        ];
+        for (const where of filters) {
+          for (const operation of ["updateAll", "updateCount", "deleteAll", "deleteCount"] as const)
+            await compareWrite(db, driver, rows, where, operation, { rank: rank + 1, category: "b", label: "moved" });
+        }
+        // Single-row lookup is unique so its selected row is deterministic.
+        await compareWrite(db, driver, rows, f("serial", "eq", 1), "update", { rank });
+      }),
+      { numRuns: 12, seed: 101 }
+    );
+  });
+});
+
+it("updates each row once when keys move into a later range or out of the walked index", async () => {
+  await withDatabase(async (db, driver) => {
+    const rows = [
+      { id: "i1", serial: 1, category: "a", rank: 1, label: "x" },
+      { id: "i2", serial: 2, category: "b", rank: 2, label: "y" },
+      { id: "i3", serial: 3, category: "b", rank: 3, label: "z" },
+      { id: "i4", serial: 4, category: "c", rank: 4, label: "w" },
+    ];
+    for (const patch of [{ category: "b" }, { category: "0" }, { category: null }])
+      await compareWrite(db, driver, rows, f("category", "in", ["a", "b"]), "updateAll", patch);
+    // The trailing compound-index field is walked even though it is not filtered.
+    await compareWrite(
+      db,
+      driver,
+      rows,
+      f("category", "eq", "b"),
+      "updateAll",
+      { label: "zz", rank: 9 },
+      compoundContract
+    );
+    // A single-row write limits matches globally, rather than once per range.
+    await seed(db, rows);
+    const updated = await accessor(driver)
+      .where(() => f("category", "in", ["a", "b"]))
+      .update({ label: "one" } as never);
+    expect(updated).not.toBeNull();
+    expect((await oracle(db, {})).filter((row) => row["label"] === "one")).toHaveLength(1);
+  });
+});
+
+it("upsert's unique-index lookup matches full scan on both branches", async () => {
+  await withDatabase(async (db, driver) => {
+    const rows = [{ id: "i1", serial: 1, category: "a", rank: 1, label: "old" }];
+    for (const serial of [1, 99]) {
+      await seed(db, rows);
+      const create = { id: "new", serial: 99, category: "b", rank: 9, label: "new" };
+      const patch = { category: "b", label: "updated" };
+      const actual = await accessor(driver).upsert({
+        where: { serial } as never,
+        create: create as never,
+        update: patch as never,
+      });
+      const actualStore = await oracle(db, {});
+      await seed(db, rows);
+      const matched = await oracleWrite(db, f("serial", "eq", serial), patch, 1);
+      const expected = matched[0] ?? create;
+      if (matched.length === 0) await seed(db, [...rows, create]);
+      expect(actual).toEqual(expected);
+      expect(actualStore).toEqual(await oracle(db, {}));
+    }
   });
 });

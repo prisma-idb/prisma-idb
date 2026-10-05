@@ -11,7 +11,7 @@
  *   defaults, so this always runs client-side, unlike SQL's storage-plane
  *   `ColumnDefault`.
  * - `insertSingleRow` → `scope.execute({ kind: "add", ... })`.
- * - `findRowByCriterion` / `findFirstByFilters` → `scope.execute({ kind: "cursor-scan", ... })`.
+ * - Mutation lookups use the query planner and reapply the full filter.
  *   IDB allows reads inside a readwrite transaction; the transaction scope accepts
  *   all `IdbAtomicPlan` types including `cursor-scan`.
  * - Child-owned `connect` → `scope.execute({ kind: "scan-write", write: "put-merged", ... })`.
@@ -27,8 +27,8 @@
 import type { PlanMeta } from "@prisma/orm-framework/contract/types";
 import type { ContractReferenceRelation } from "@prisma/orm-framework/contract/types";
 import { domainModelsAtDefaultNamespace } from "@prisma/orm-framework/contract/types";
-import type { IdbAtomicPlan, IdbCursorScanPlan, IdbRowFilter } from "@prisma-idb/driver-idb/runtime";
-import { andExpr, evaluateFilter, fieldFilter, shorthandToFilterExpr } from "@prisma-idb/adapter-idb/runtime";
+import type { IdbAtomicPlan, IdbPlanBody, IdbRowFilter } from "@prisma-idb/driver-idb/runtime";
+import { andExpr, fieldFilter, shorthandToFilterExpr } from "@prisma-idb/adapter-idb/runtime";
 import type { IdbFilterExpr } from "@prisma-idb/adapter-idb/runtime";
 import type { IdbReferentialAction } from "@prisma-idb/target-idb/pack";
 import type { IdbQueryExecutor } from "./executor";
@@ -40,7 +40,7 @@ import {
   type MutationDefaultsCache,
 } from "./mutation-defaults";
 import { buildCatalog } from "./planner/catalog";
-import { lowerExists } from "./planner/lower";
+import { lowerExists, lowerRows, lowerWrite, type WriteRequest } from "./planner/lower";
 import { planQuery } from "./planner/plan";
 import { withMutationScope, type IdbQueryExecutorWithTransaction } from "./mutation-scope";
 import { createRelationMutator, isRelationMutationCallback, isRelationMutationDescriptor } from "./relation-mutator";
@@ -477,19 +477,15 @@ async function applyChildOwnedMutation(
         setValues,
         defaultsCache
       );
-      const filter = buildCriterionFilter(criterion as Record<string, unknown>);
-      const meta = makePlanMeta(contract);
+      const where = shorthandToFilterExpr(criterion as Record<string, unknown>);
       // scan-write + put-merged: set the FK fields on every child row matching
       // the criterion. No `take` cap — the vendor's relational connect
       // (`executeUpdateCount`) connects all matching rows; for the normal
       // unique-key criterion that is exactly one row anyway. (PLAN Issue #24.)
-      await scope.execute({
-        meta,
-        kind: "scan-write",
-        storeName: relation.relatedStoreName,
+      await writeMutationRows(scope, contract, relation.relatedModelName, {
         write: "put-merged",
         patch,
-        filter,
+        ...(where === undefined ? {} : { where }),
       });
     }
     return;
@@ -500,7 +496,6 @@ async function applyChildOwnedMutation(
   for (const childField of parentValues.keys()) {
     setValues[childField] = null;
   }
-  const meta = makePlanMeta(contract);
 
   if (!mutation.criteria || mutation.criteria.length === 0) {
     // Disconnect all children of this parent.
@@ -510,14 +505,11 @@ async function applyChildOwnedMutation(
       setValues,
       defaultsCache
     );
-    const parentJoinFilter = buildParentJoinFilter(parentValues);
-    await scope.execute({
-      meta,
-      kind: "scan-write",
-      storeName: relation.relatedStoreName,
+    const parentJoinWhere = buildParentJoinWhere(parentValues);
+    await writeMutationRows(scope, contract, relation.relatedModelName, {
       write: "put-merged",
       patch,
-      filter: parentJoinFilter,
+      where: parentJoinWhere,
     });
     return;
   }
@@ -530,16 +522,13 @@ async function applyChildOwnedMutation(
       setValues,
       defaultsCache
     );
-    const criterionFilter = buildCriterionFilter(criterion as Record<string, unknown>);
-    const parentJoinFilter = buildParentJoinFilter(parentValues);
-    const combinedFilter = (row: Record<string, unknown>): boolean => parentJoinFilter(row) && criterionFilter(row);
-    await scope.execute({
-      meta,
-      kind: "scan-write",
-      storeName: relation.relatedStoreName,
+    const criterionWhere = shorthandToFilterExpr(criterion as Record<string, unknown>);
+    const parentJoinWhere = buildParentJoinWhere(parentValues);
+    const where = criterionWhere === undefined ? parentJoinWhere : andExpr([parentJoinWhere, criterionWhere]);
+    await writeMutationRows(scope, contract, relation.relatedModelName, {
       write: "put-merged",
       patch,
-      filter: combinedFilter,
+      where,
     });
   }
 }
@@ -615,8 +604,7 @@ async function findRowByCriterion(
   if (!expr) {
     throw new Error(`Nested connect for model "${modelName}" requires a non-empty criterion`);
   }
-  const filter = (row: Record<string, unknown>): boolean => evaluateFilter(expr, row);
-  return scanOneRow(scope, contract, modelName, filter);
+  return (await readMutationRows(scope, contract, modelName, expr, 1))[0] ?? null;
 }
 
 async function findFirstByFilters(
@@ -626,36 +614,60 @@ async function findFirstByFilters(
   filters: readonly IdbFilterExpr[]
 ): Promise<Record<string, unknown> | null> {
   if (filters.length === 0) return null;
-  const combined = filters.length === 1 ? filters[0]! : { kind: "and" as const, exprs: filters };
-  const filter = (row: Record<string, unknown>): boolean => evaluateFilter(combined, row);
-  return scanOneRow(scope, contract, modelName, filter);
+  return (await readMutationRows(scope, contract, modelName, andExpr(filters), 1))[0] ?? null;
 }
 
-async function scanOneRow(
+/** Execute lowered atomic operations without leaving the transaction's microtask chain. */
+async function executeMutationPlan(scope: IdbTransactionScope, plan: IdbPlanBody): Promise<Record<string, unknown>[]> {
+  const plans = plan.kind === "batch" ? plan.ops : [plan];
+  const rows: Record<string, unknown>[] = [];
+  for (const op of plans) rows.push(...(await scope.execute(op)));
+  return rows;
+}
+
+/** Read mutation preimages through the planner, then reapply the original filter. */
+export async function readMutationRows(
   scope: IdbTransactionScope,
   contract: IdbContract,
   modelName: string,
-  filter: (row: Record<string, unknown>) => boolean
-): Promise<Record<string, unknown> | null> {
-  const storeName = getStoreName(contract, modelName);
+  where: IdbFilterExpr | undefined,
+  take?: number
+): Promise<Record<string, unknown>[]> {
+  const catalog = buildCatalog(contract, getStoreName(contract, modelName));
+  const request = { ...(where === undefined ? {} : { where }), ...(take === undefined ? {} : { take }) };
+  const lowered = lowerRows(catalog, planQuery(catalog, request), makePlanMeta(contract), request);
+  return lowered.finish(await executeMutationPlan(scope, lowered.idbPlan));
+}
+
+async function writeMutationRows(
+  scope: IdbTransactionScope,
+  contract: IdbContract,
+  modelName: string,
+  request: WriteRequest
+): Promise<Record<string, unknown>[]> {
+  const catalog = buildCatalog(contract, getStoreName(contract, modelName));
   const meta = makePlanMeta(contract);
-  const plan: IdbCursorScanPlan = { meta, kind: "cursor-scan", storeName, filter, take: 1 };
-  const rows = await scope.execute(plan as IdbAtomicPlan);
-  return rows[0] ?? null;
+  const lowered = lowerWrite(catalog, planQuery(catalog, request), meta, request);
+  if (lowered.kind === "scan") return executeMutationPlan(scope, lowered.idbPlan);
+
+  // Materialize all ranges before writing: moving a key could otherwise make
+  // an already-written row enter a range we have not visited yet.
+  const oldRows = lowered.rows.finish(await executeMutationPlan(scope, lowered.rows.idbPlan));
+  const results: Record<string, unknown>[] = [];
+  for (const row of oldRows) {
+    const key = extractKeyFromRow(row, catalog.primaryKey.keyPath);
+    const rows = await scope.execute({
+      meta,
+      storeName: catalog.storeName,
+      ...(request.write === "delete" ? { kind: "delete", key } : { kind: "update", key, patch: request.patch ?? {} }),
+    });
+    results.push(...rows);
+  }
+  return results;
 }
 
-// ── Filter helpers ────────────────────────────────────────────────────────────
-
-function buildCriterionFilter(criterion: Record<string, unknown>): (row: Record<string, unknown>) => boolean {
-  const expr = shorthandToFilterExpr(criterion);
-  if (!expr) return () => true;
-  return (row) => evaluateFilter(expr, row);
-}
-
-function buildParentJoinFilter(parentValues: Map<string, unknown>): (row: Record<string, unknown>) => boolean {
-  const pairs = [...parentValues.entries()];
-  return (row: Record<string, unknown>): boolean =>
-    pairs.every(([childField, parentValue]) => fieldValuesEqual(row[childField], parentValue));
+function buildParentJoinWhere(parentValues: Map<string, unknown>): IdbFilterExpr {
+  return andExpr([...parentValues].map(([field, value]) => fieldFilter(field, "eq", value)));
 }
 
 // ── Referential action helpers ────────────────────────────────────────────────
@@ -799,10 +811,7 @@ async function rowExists(
   const lowered = lowerExists(catalog, planQuery(catalog, { where }), meta, { where }, additionalFilter);
   // The scope runs atomic plans only. Each `await` here resolves in a
   // microtask, so the transaction stays open between the requests.
-  const plans = lowered.idbPlan.kind === "batch" ? lowered.idbPlan.ops : [lowered.idbPlan];
-  const rows: Record<string, unknown>[] = [];
-  for (const plan of plans) rows.push(...(await scope.execute(plan)));
-  return lowered.finish(rows);
+  return lowered.finish(await executeMutationPlan(scope, lowered.idbPlan));
 }
 
 /**
@@ -810,13 +819,8 @@ async function rowExists(
  * row's values. Shared by `onDelete` cascade (`applyReferentialActionsForRow`)
  * and `onUpdate` cascade (`applyReferentialActionsForRowOnUpdate`).
  */
-function buildChildFilterFromRow(
-  def: RelationDefinition,
-  row: Record<string, unknown>
-): (child: Record<string, unknown>) => boolean {
-  const pairs = def.localFields.map((lf, i) => ({ childField: def.targetFields[i]!, parentValue: row[lf] }));
-  return (child: Record<string, unknown>): boolean =>
-    pairs.every(({ childField, parentValue }) => fieldValuesEqual(child[childField], parentValue));
+function buildChildWhereFromRow(def: RelationDefinition, row: Record<string, unknown>): IdbFilterExpr {
+  return andExpr(def.targetFields.map((field, i) => fieldFilter(field, "eq", row[def.localFields[i]!])));
 }
 
 /** Reads a field's literal `@default(...)` value from `IdbModelStorage.fieldDefaults`, if declared. */
@@ -993,7 +997,7 @@ export async function applyReferentialActionsForRowOnUpdate(
 
     const action = getReferentialActionForRelation(contract, modelName, def, "onUpdate");
 
-    const childFilter = buildChildFilterFromRow(def, oldRow);
+    const childWhere = buildChildWhereFromRow(def, oldRow);
 
     if (action === "restrict") {
       if (await childExists(scope, contract, meta, def, oldRow)) {
@@ -1013,51 +1017,37 @@ export async function applyReferentialActionsForRowOnUpdate(
         const tf = def.targetFields[i]!;
         if (changedFields.includes(lf)) childPatch[tf] = patch[lf];
       }
-      const children = await scope.execute({
-        meta,
-        kind: "cursor-scan",
-        storeName: def.relatedStoreName,
-        filter: childFilter,
-      } as IdbAtomicPlan);
+      const children = await readMutationRows(scope, contract, def.relatedModelName, childWhere);
       for (const child of children) {
         await applyReferentialActionsForRowOnUpdate(scope, contract, def.relatedModelName, child, childPatch, visited);
       }
-      await scope.execute({
-        meta,
-        kind: "scan-write",
-        storeName: def.relatedStoreName,
+      await writeMutationRows(scope, contract, def.relatedModelName, {
         write: "put-merged",
         patch: childPatch,
-        filter: childFilter,
-      } as IdbAtomicPlan);
+        where: childWhere,
+      });
       continue;
     }
 
     if (action === "setNull") {
       const childPatch: Record<string, unknown> = {};
       for (const targetField of def.targetFields) childPatch[targetField] = null;
-      await scope.execute({
-        meta,
-        kind: "scan-write",
-        storeName: def.relatedStoreName,
+      await writeMutationRows(scope, contract, def.relatedModelName, {
         write: "put-merged",
         patch: childPatch,
-        filter: childFilter,
-      } as IdbAtomicPlan);
+        where: childWhere,
+      });
       continue;
     }
 
     if (action === "setDefault") {
       const childPatch = buildSetDefaultPatch(contract, def);
       await validateSetDefaultPatch(scope, contract, modelName, def, childPatch, extractKeyFromRow(oldRow, keyPath));
-      await scope.execute({
-        meta,
-        kind: "scan-write",
-        storeName: def.relatedStoreName,
+      await writeMutationRows(scope, contract, def.relatedModelName, {
         write: "put-merged",
         patch: childPatch,
-        filter: childFilter,
-      } as IdbAtomicPlan);
+        where: childWhere,
+      });
       continue;
     }
   }
@@ -1290,32 +1280,19 @@ async function executeScalarUpdates(options: ScalarUpdateOptions, take?: 1): Pro
   return withMutationScope(executor, storeNames, async (scope) => {
     if (!needsRowForFks) await validateScalarFks(scope, contract, modelName, patch);
     const meta = makePlanMeta(contract);
-    const combined =
-      filters.length === 0 ? undefined : filters.length === 1 ? filters[0]! : { kind: "and" as const, exprs: filters };
-    const filter =
-      combined !== undefined ? (row: Record<string, unknown>): boolean => evaluateFilter(combined, row) : undefined;
-
+    const where = filters.length === 0 ? undefined : andExpr(filters);
     if (!enforcesOnUpdate && !needsRowForFks) {
-      return scope.execute({
-        meta,
-        kind: "scan-write",
-        storeName,
+      return writeMutationRows(scope, contract, modelName, {
         write: "put-merged",
         patch,
-        ...(take !== undefined ? { take } : {}),
-        ...(filter !== undefined ? { filter } : {}),
-      } as IdbAtomicPlan);
+        ...(take === undefined ? {} : { take }),
+        ...(where === undefined ? {} : { where }),
+      });
     }
 
     // Enforcement needs the preimage for changed referenced fields and for
     // compound foreign keys whose other fields are absent from the patch.
-    const oldRows = await scope.execute({
-      meta,
-      kind: "cursor-scan",
-      storeName,
-      ...(take !== undefined ? { take } : {}),
-      ...(filter !== undefined ? { filter } : {}),
-    } as IdbAtomicPlan);
+    const oldRows = await readMutationRows(scope, contract, modelName, where, take);
     const keyPath = getKeyPath(contract, modelName);
     const results: Record<string, unknown>[] = [];
     for (const oldRow of oldRows) {
@@ -1409,7 +1386,7 @@ export async function applyReferentialActionsForRow(
     if (!isChildEnforcementRelation(contract, modelName, def)) continue;
     const action = getReferentialActionForRelation(contract, modelName, def, "onDelete");
 
-    const childFilter = buildChildFilterFromRow(def, row);
+    const childWhere = buildChildWhereFromRow(def, row);
 
     if (action === "restrict") {
       if (await childExists(scope, contract, meta, def, row)) {
@@ -1423,12 +1400,7 @@ export async function applyReferentialActionsForRow(
 
     if (action === "cascade") {
       const childKeyPath = getKeyPath(contract, def.relatedModelName);
-      const children = await scope.execute({
-        meta,
-        kind: "cursor-scan",
-        storeName: def.relatedStoreName,
-        filter: childFilter,
-      } as IdbAtomicPlan);
+      const children = await readMutationRows(scope, contract, def.relatedModelName, childWhere);
       for (const child of children) {
         await applyReferentialActionsForRow(scope, contract, def.relatedModelName, child, visited);
         await scope.execute({
@@ -1444,28 +1416,22 @@ export async function applyReferentialActionsForRow(
     if (action === "setNull") {
       const patch: Record<string, unknown> = {};
       for (const targetField of def.targetFields) patch[targetField] = null;
-      await scope.execute({
-        meta,
-        kind: "scan-write",
-        storeName: def.relatedStoreName,
+      await writeMutationRows(scope, contract, def.relatedModelName, {
         write: "put-merged",
         patch,
-        filter: childFilter,
-      } as IdbAtomicPlan);
+        where: childWhere,
+      });
       continue;
     }
 
     if (action === "setDefault") {
       const patch = buildSetDefaultPatch(contract, def);
       await validateSetDefaultPatch(scope, contract, modelName, def, patch, extractKeyFromRow(row, keyPath));
-      await scope.execute({
-        meta,
-        kind: "scan-write",
-        storeName: def.relatedStoreName,
+      await writeMutationRows(scope, contract, def.relatedModelName, {
         write: "put-merged",
         patch,
-        filter: childFilter,
-      } as IdbAtomicPlan);
+        where: childWhere,
+      });
       continue;
     }
   }
@@ -1482,7 +1448,11 @@ export async function executeDeleteWithReferentialActions(options: {
   await withMutationScope(executor, storeNames, async (scope) => {
     const storeName = getStoreName(contract, modelName);
     const meta = makePlanMeta(contract);
-    const rows = await scope.execute({ meta, kind: "key-get", storeName, key } as IdbAtomicPlan);
+    const keyPath = getKeyPath(contract, modelName);
+    const fields = keyPathFields(keyPath);
+    const values = typeof keyPath === "string" ? [key] : (key as IDBValidKey[]);
+    const where = andExpr(fields.map((field, i) => fieldFilter(field, "eq", values[i])));
+    const rows = await readMutationRows(scope, contract, modelName, where, 1);
     const row = rows[0];
     if (!row) return [];
     await applyReferentialActionsForRow(scope, contract, modelName, row);
@@ -1495,20 +1465,21 @@ export async function executeDeleteAllWithReferentialActions(options: {
   executor: IdbQueryExecutorWithTransaction;
   contract: IdbContract;
   modelName: string;
-  filter?: (row: Record<string, unknown>) => boolean;
+  where?: IdbFilterExpr;
 }): Promise<Record<string, unknown>[]> {
-  const { executor, contract, modelName, filter } = options;
+  const { executor, contract, modelName, where } = options;
   const storeNames = collectDeleteStoreNames(contract, modelName);
   return withMutationScope(executor, storeNames, async (scope) => {
     const storeName = getStoreName(contract, modelName);
     const meta = makePlanMeta(contract);
     const keyPath = getKeyPath(contract, modelName);
-    const rows = await scope.execute({
-      meta,
-      kind: "cursor-scan",
-      storeName,
-      ...(filter !== undefined ? { filter } : {}),
-    } as IdbAtomicPlan);
+    if (!hasEnforceableChildRelations(contract, modelName)) {
+      return writeMutationRows(scope, contract, modelName, {
+        write: "delete",
+        ...(where === undefined ? {} : { where }),
+      });
+    }
+    const rows = await readMutationRows(scope, contract, modelName, where);
     for (const row of rows) {
       await applyReferentialActionsForRow(scope, contract, modelName, row);
       const key = extractKeyFromRow(row, keyPath);

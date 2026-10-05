@@ -11,7 +11,7 @@ import type {
   IdbFindUniqueAst,
   IdbQueryAst,
 } from "@prisma-idb/adapter-idb/runtime";
-import { evaluateFilter, shorthandToFilterExpr } from "@prisma-idb/adapter-idb/runtime";
+import { shorthandToFilterExpr } from "@prisma-idb/adapter-idb/runtime";
 import {
   type CreateInput,
   type DefaultModelRow,
@@ -73,6 +73,7 @@ import {
   hasNestedMutationCallbacks,
   hasScalarFkFields,
   requireTransactionExecutor,
+  readMutationRows,
   validateScalarFks,
 } from "./mutation-executor";
 import { withMutationScope } from "./mutation-scope";
@@ -707,8 +708,6 @@ export class IdbStoreAccessorImpl<
   }): Promise<DefaultModelRow<TContract, ModelName>> {
     const keyPath = getKeyPath(this.#contract, this.#modelName);
     const whereExpr = shorthandToFilterExpr(args.where as Record<string, unknown>);
-    const matches = (row: Record<string, unknown>): boolean =>
-      whereExpr === undefined || evaluateFilter(whereExpr, row);
     const meta = this.#planMeta(this.#newGroupingKey());
     const createRecord = args.create as Record<string, unknown>;
     const patchRecord = args.update as Record<string, unknown>;
@@ -759,7 +758,7 @@ export class IdbStoreAccessorImpl<
       ]),
     ];
     return withMutationScope(exec, storeNames, async (scope) => {
-      const found = await scope.execute({ meta, kind: "cursor-scan", storeName, filter: matches, take: 1 });
+      const found = await readMutationRows(scope, this.#contract, this.#modelName, whereExpr, 1);
       const existing = found[0];
       if (existing === undefined) {
         await validateScalarFks(scope, this.#contract, this.#modelName, createWithDefaults);
@@ -839,7 +838,6 @@ export class IdbStoreAccessorImpl<
    */
   deleteAll(): AsyncIterableResult<DefaultModelRow<TContract, ModelName>> {
     const combined = this.#combinedFilterExpr();
-    const filter = combined !== undefined ? (row: Record<string, unknown>) => evaluateFilter(combined, row) : undefined;
     const contract = this.#contract;
     const modelName = this.#modelName;
     const executor = requireTransactionExecutor(this.#executor);
@@ -849,7 +847,7 @@ export class IdbStoreAccessorImpl<
           executor,
           contract,
           modelName,
-          ...(filter !== undefined ? { filter } : {}),
+          ...(combined === undefined ? {} : { where: combined }),
         });
         for (const row of rows) yield row as DefaultModelRow<TContract, ModelName>;
       })()
