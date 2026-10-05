@@ -162,6 +162,9 @@ const POST_A = { id: "p1", title: "Hello", authorId: "u1" };
 const POST_B = { id: "p2", title: "World", authorId: "u1" };
 const POST_C = { id: "p3", title: "Other", authorId: "u2" };
 
+const sortById = <T extends { id: string }>(rows: T[]) => [...rows].sort((a, b) => a.id.localeCompare(b.id));
+type UserWithPosts = { id: string; posts: { id: string }[] };
+
 describe("idbOrm factory", () => {
   it("returns a client with keys from contract.roots", () => {
     const contract = makeTestContract({ users: "User" }, { User: { storeName: "users", keyPath: "id" } });
@@ -442,8 +445,12 @@ describe("IdbStoreAccessor — include (relations)", () => {
     const models = domainModelsAtDefaultNamespace(contract.domain);
     (models["posts"]!.storage as { storeName: string | undefined }).storeName = undefined;
     const client = asRecord(idbOrm({ contract, executor }));
-    const rows = await client["users"]!.include("posts").all().toArray();
-    expect(rows).toEqual([
+    const rows = (await client["users"]!.include("posts").all().toArray()) as unknown as UserWithPosts[];
+    // Result order is unspecified without `orderBy`, for users and for nested posts.
+    const normalized = rows
+      .map((user) => ({ ...user, posts: sortById(user.posts) }))
+      .sort((a, b) => a.id.localeCompare(b.id));
+    expect(normalized).toEqual([
       { ...ALICE, posts: [POST_A, POST_B] },
       { ...BOB, posts: [POST_C] },
     ]);
