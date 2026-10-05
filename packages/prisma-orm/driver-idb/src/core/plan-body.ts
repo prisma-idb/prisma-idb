@@ -45,7 +45,8 @@ export interface IdbMarkerRecord {
 
 /**
  * A key range as plain data. The driver builds the matching `IDBKeyRange` when it runs the plan, so a
- * plan never holds an `IDBKeyRange`. Each variant maps to the `IDBKeyRange` factory of the same name:
+ * plan's `range` fields never hold an `IDBKeyRange`. (`IdbDeletePlan.key` is the one exception: it still
+ * takes an `IDBKeyRange`.) Each variant maps to the `IDBKeyRange` factory of the same name:
  *
  * - `only`: exactly `key`.
  * - `lower`: keys at or above `key`; above only when `open` is true.

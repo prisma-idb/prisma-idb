@@ -34,6 +34,7 @@ import {
   transactionInactiveError,
   type IdbExecuteErrorCode,
 } from "./error";
+import { keyIdentity } from "./key-identity";
 import { toOptionalIdbKeyRange } from "./key-range";
 
 type Row = Record<string, unknown>;
@@ -332,6 +333,9 @@ function execScanWrite(store: IDBObjectStore, plan: IdbScanWritePlan, onComplete
   const source = plan.indexName !== undefined ? store.index(plan.indexName) : store;
   const req = source.openCursor(toOptionalIdbKeyRange(plan.range) ?? null, "next");
   const collected: Row[] = [];
+  // An index cursor revisits a record whose indexed field the patch moved forward (or that has several
+  // multiEntry entries). Track written primary keys so each record is written and counted once.
+  const writtenKeys = plan.indexName !== undefined && plan.write === "put-merged" ? new Set<string>() : undefined;
 
   req.onsuccess = () => {
     const cursor = req.result as IDBCursorWithValue | null;
@@ -346,6 +350,11 @@ function execScanWrite(store: IDBObjectStore, plan: IdbScanWritePlan, onComplete
 
     // Skip rows that don't match the filter.
     if (plan.filter !== undefined && !plan.filter(row)) {
+      cursor.continue();
+      return;
+    }
+
+    if (writtenKeys !== undefined && writtenKeys.has(keyIdentity(cursor.primaryKey))) {
       cursor.continue();
       return;
     }
@@ -367,6 +376,7 @@ function execScanWrite(store: IDBObjectStore, plan: IdbScanWritePlan, onComplete
       const merged: Row = { ...row, ...plan.patch };
       const updReq = cursor.update(merged);
       updReq.onsuccess = () => {
+        writtenKeys?.add(keyIdentity(cursor.primaryKey));
         collected.push(merged);
         if (plan.take !== undefined && collected.length >= plan.take) {
           onComplete(collected);

@@ -3,8 +3,8 @@ import type { IdbKeyRangeDescriptor } from "../plan-body";
 /**
  * Builds the `IDBKeyRange` a plan's range descriptor stands for.
  *
- * Plans carry descriptors, not `IDBKeyRange` objects, so a plan stays plain data that callers can build,
- * hash and log without touching IndexedDB. Each descriptor maps to the `IDBKeyRange` factory of the same
+ * The `range` fields of a plan carry descriptors, not `IDBKeyRange` objects, so that part of a plan stays
+ * plain data that callers can build, hash and log without touching IndexedDB. Each descriptor maps to the `IDBKeyRange` factory of the same
  * name, so the factory's own validation applies: an invalid key, or `bound` with `lower` above `upper`,
  * throws `DataError`.
  */

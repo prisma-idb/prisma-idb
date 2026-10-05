@@ -328,6 +328,24 @@ describe("scan-write", () => {
     expect(await storeIds()).toEqual(["a", "b", "c", "d"]);
   });
 
+  describe("when the patch moves rows forward in the index", () => {
+    // n 45 sorts after the entries of f, e, c, d and b (10 to 40) but before a (50), so the cursor
+    // reaches each of those rows a second time at its new entry.
+    const patch = { n: 45 };
+    const expectedIds = ["f", "e", "c", "d", "b", "a"];
+
+    it("writes each row once", async () => {
+      const rows = await executeIdbPlan(db, scanWrite({ write: "put-merged", patch, indexName: "by-n" }));
+      expect(ids(rows)).toEqual(expectedIds);
+      expect((await executeIdbPlan(db, getAll({}))).map((r) => r["n"])).toEqual([45, 45, 45, 45, 45, 45]);
+    });
+
+    it("counts each row once towards take", async () => {
+      const rows = await executeIdbPlan(db, scanWrite({ write: "put-merged", patch, indexName: "by-n", take: 6 }));
+      expect(ids(rows)).toEqual(expectedIds);
+    });
+  });
+
   it("applies take inside the range", async () => {
     const range: IdbKeyRangeDescriptor = { kind: "lower", key: 30 };
     const rows = await executeIdbPlan(
