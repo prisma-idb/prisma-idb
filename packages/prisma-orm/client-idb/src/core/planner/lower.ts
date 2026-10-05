@@ -16,7 +16,13 @@ export interface LoweredRows {
   finish(rows: Record<string, unknown>[]): Record<string, unknown>[];
 }
 
-/** Lower row access without creating IDBKeyRange objects or awaiting work. */
+/**
+ * Lower row access without creating IDBKeyRange objects or awaiting work.
+ * Run `finish` after the executor has materialized all returned rows.
+ * Without `orderBy`, row order and pagination selection are unspecified.
+ * Rows tied on every ordering field may appear in any order, including at
+ * pagination boundaries. Add a unique ordering field for deterministic pages.
+ */
 export function lowerRows(
   catalog: QueryCatalog,
   logical: LogicalPlan,
@@ -95,7 +101,8 @@ export function lowerRows(
   return {
     idbPlan,
     finish(rows) {
-      // Reapply the original predicate even for exact plans and key lookups.
+      // Keep the full-filter safety boundary for every access path. Cursor
+      // paths also filter before pagination, so their returned rows pass twice.
       let result = rows.filter(filter);
       if (!shapedByDriver) {
         if (comparator !== undefined) result.sort(comparator);

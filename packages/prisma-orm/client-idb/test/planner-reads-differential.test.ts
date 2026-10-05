@@ -182,6 +182,26 @@ async function compare(
   expect(actual, "planned read matches full scan").toEqual(expected);
 }
 
+/** Check pagination without assuming primary-key order for unordered rows or ties. */
+async function compareWithTies(db: IDBDatabase, driver: IdbRuntimeDriverInstance, query: Query) {
+  const actual = (await applyQuery(accessor(driver), query).all().toArray()) as Row[];
+  const matching = await oracle(db, query.where === undefined ? {} : { where: query.where });
+  const expected = await oracle(db, query);
+  expect(actual).toHaveLength(expected.length);
+  expect(new Set(actual.map((row) => row["id"])).size).toBe(actual.length);
+  for (const row of actual) expect(matching).toContainEqual(row);
+  if (query.orderBy) {
+    // A different tie selection is valid, but the page's ordered values must
+    // match the full scan. This catches reversed order and incorrect offsets.
+    const fields = Object.keys(query.orderBy);
+    const values = (rows: Row[]) => rows.map((row) => fields.map((field) => row[field]));
+    expect(values(actual)).toEqual(values(expected));
+  } else if (query.skip === undefined && query.take === undefined) {
+    const byId = (a: Row, b: Row) => compareFieldValues(a["id"], b["id"]);
+    expect(actual.sort(byId)).toEqual(matching.sort(byId));
+  }
+}
+
 const number = fc.integer({ min: -10, max: 10 });
 const text = fc.constantFrom("", "a", "ab", "b", "\uffff", "a\uffff");
 const data = fc
@@ -322,6 +342,77 @@ it("matches full scan for generated boolean combinations of filters", async () =
       }),
       { seed: 99005, numRuns: 150 }
     );
+  });
+});
+
+it("keeps matching rows and ordered values when pagination crosses ties", async () => {
+  const tiedData = fc
+    .array(
+      fc.record({
+        category: fc.constantFrom("a", "b"),
+        rank: fc.integer({ min: 1, max: 2 }),
+        label: fc.constantFrom("x", "y"),
+        flag: fc.boolean(),
+      }),
+      { minLength: 6, maxLength: 30 }
+    )
+    .map((rows) => rows.map((row, i) => ({ ...row, id: `i${String(i).padStart(3, "0")}`, serial: i })));
+  await withDatabase(async (db, driver) => {
+    const check = async (rows: Row[], skip: number, take: number) => {
+      await seed(db, rows);
+      const queries: Query[] = [
+        {},
+        { where: f("rank", "gte", 1) },
+        { where: f("rank", "in", [2, 1, 2]) },
+        { where: f("category", "in", ["b", "a", "b"]) },
+        { where: andExpr([f("category", "in", ["b", "a"]), f("flag", "eq", true)]) },
+      ];
+      for (const query of queries) {
+        const matching = await oracle(db, query);
+        await compareWithTies(db, driver, query);
+        await compareWithTies(db, driver, { ...query, skip, take });
+        for (const direction of ["asc", "desc"] as const) {
+          await compareWithTies(db, driver, { ...query, orderBy: { rank: direction }, skip, take });
+          await compareWithTies(db, driver, { ...query, orderBy: { rank: direction } });
+          // Adding the unique id makes tie selection and pagination exact.
+          await compare(db, driver, { ...query, orderBy: { rank: direction, id: "asc" }, skip, take });
+          const first = await applyQuery(accessor(driver), { ...query, orderBy: { rank: direction } }).first();
+          const expected = await oracle(db, { ...query, orderBy: { rank: direction }, take: 1 });
+          if (expected.length === 0) expect(first).toBeNull();
+          else {
+            expect(matching).toContainEqual(first);
+            expect((first as Row)["rank"]).toBe(expected[0]!["rank"]);
+          }
+        }
+        const first = await applyQuery(accessor(driver), query).first();
+        if (matching.length === 0) expect(first).toBeNull();
+        else expect(matching).toContainEqual(first);
+      }
+    };
+    // Pin the reviewer's boundary cases before exploring generated tied data.
+    await check(
+      [
+        { id: "i1", serial: 1, category: "a", rank: 1, flag: true },
+        { id: "i2", serial: 2, category: "b", rank: 1, flag: false },
+        { id: "i3", serial: 3, category: "a", rank: 2, flag: true },
+        { id: "i4", serial: 4, category: "b", rank: 2, flag: false },
+        { id: "i5", serial: 5, category: "a", rank: 1, flag: false },
+        { id: "i6", serial: 6, category: "b", rank: 1, flag: true },
+      ],
+      0,
+      3
+    );
+    await fc.assert(
+      fc.asyncProperty(tiedData, fc.integer({ min: 0, max: 35 }), fc.integer({ min: 0, max: 8 }), check),
+      { seed: 99007, numRuns: 50 }
+    );
+  });
+});
+
+it("returns null from findUnique when the key is not a valid IndexedDB key", async () => {
+  await withDatabase(async (db, driver) => {
+    await seed(db, [{ id: "a", serial: 1, category: "a", rank: 1 }]);
+    expect(await accessor(driver).findUnique(NaN as never)).toBeNull();
   });
 });
 
