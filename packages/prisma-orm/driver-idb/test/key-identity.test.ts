@@ -19,6 +19,12 @@ describe("keyIdentity", () => {
     expect(keyIdentity(new Uint8Array([1, 2]))).not.toBe(keyIdentity(new Uint8Array([2, 1])));
   });
 
+  it("identifies a binary key whose Symbol.toStringTag is overridden", () => {
+    const buffer = new Uint8Array([1, 2]).buffer;
+    Object.defineProperty(buffer, Symbol.toStringTag, { value: "Custom" });
+    expect(keyIdentity(buffer)).toBe(keyIdentity(new Uint8Array([1, 2])));
+  });
+
   describe("keys from another realm", () => {
     const foreign = (source: string) => runInNewContext(source) as IDBValidKey;
 

@@ -12,9 +12,20 @@ export function keyIdentity(key: IDBValidKey): string {
   if (typeof key === "string") return `s:${JSON.stringify(key)}`;
   if (Array.isArray(key)) return `[${key.map(keyIdentity).join(",")}]`;
   if (ArrayBuffer.isView(key)) return binaryIdentity(new Uint8Array(key.buffer, key.byteOffset, key.byteLength));
-  if (Object.prototype.toString.call(key) === "[object ArrayBuffer]")
-    return binaryIdentity(new Uint8Array(key as ArrayBuffer));
+  if (isArrayBuffer(key)) return binaryIdentity(new Uint8Array(key));
   return `d:${Date.prototype.getTime.call(key)}`;
+}
+
+/** The `byteLength` getter throws unless its receiver has an `[[ArrayBufferData]]` slot, in any realm. */
+const arrayBufferByteLength = Object.getOwnPropertyDescriptor(ArrayBuffer.prototype, "byteLength")!.get!;
+
+function isArrayBuffer(value: unknown): value is ArrayBuffer {
+  try {
+    arrayBufferByteLength.call(value);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function binaryIdentity(bytes: Uint8Array): string {
