@@ -3,9 +3,9 @@
  * and `restrict`.
  *
  * Covers lookups on a primary key, on a non-key field, on one member of a
- * compound key, and on values that aren't valid IndexedDB keys (NaN, a Date
- * equal by value but not by reference). Which physical plan runs is pinned by
- * `plan-shape-gate.test.ts`, not here.
+ * compound key, on values that aren't valid IndexedDB keys (NaN), and on a Date
+ * that equals the stored one by value but not by reference. Which physical plan
+ * runs is pinned by `plan-shape-gate.test.ts`, not here.
  */
 import "fake-indexeddb/auto";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";

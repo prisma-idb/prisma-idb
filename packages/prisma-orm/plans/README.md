@@ -8,6 +8,6 @@ This index lists the retained design proposals in this directory. They are histo
 
 Source paths above start at the repository root.
 
-The query planner design is no longer kept here. It lives with the pull requests that introduce the planner, a stack that starts by removing the old query acceleration from `packages/prisma-orm/client-idb/src/core/query-shaping.ts` and its callers.
+The query planner design is no longer kept here. It lives in the description of [pull request #281](https://github.com/prisma-idb/prisma-idb/pull/281), the first of the stack that introduces the planner. That pull request removes the old query acceleration from `packages/prisma-orm/client-idb/src/core/query-shaping.ts` and its callers.
 
 The surveys retain their original phase numbers, source observations and proposed file names. Some links refer to plans removed from this repository. Use [ARCHITECTURE.md](../docs/ARCHITECTURE.md) for the current module layout and the [ADR index](../docs/adrs/INDEX.md) for accepted decisions. Compound-key and native read support is recorded in [ADR 017](../docs/adrs/ADR%20017%20-%20Native%20IndexedDB%20Feature%20Parity.md).

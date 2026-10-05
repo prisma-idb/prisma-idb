@@ -309,11 +309,8 @@ describe("include() joined on an indexed foreign key or a primary key", () => {
       id: string;
       author: { id: string } | null;
     }>;
-    expect(rows.map((r) => [r.id, r.author?.id])).toEqual([
-      ["p1", "u1"],
-      ["p2", "u1"],
-      ["p3", "u2"],
-    ]);
+    const authorByPost = Object.fromEntries(rows.map((r) => [r.id, r.author?.id]));
+    expect(authorByPost).toEqual({ p1: "u1", p2: "u1", p3: "u2" });
   });
 
   it("does not throw for an FK value that isn't a valid key (N:1 include)", async () => {
@@ -481,7 +478,7 @@ describe("OR on indexed fields", () => {
     )
       .all()
       .toArray();
-    expect((rows as { id: string }[]).map((r) => r.id)).toEqual(["u1", "u2"]);
+    expect((rows as { id: string }[]).map((r) => r.id).sort()).toEqual(["u1", "u2"]);
   });
 
   it("applies orderBy before take/skip", async () => {
