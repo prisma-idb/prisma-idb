@@ -64,6 +64,45 @@ function storeTarget(plan: { storeName: string; indexName?: string }): string {
   return `store "${plan.storeName}"${index}`;
 }
 
+/** Route synchronous event-handler failures through the same channel as request errors. */
+function guardCallback(
+  plan: IdbAtomicPlan,
+  code: IdbExecuteErrorCode,
+  what: string,
+  onError: OnError,
+  run: () => void
+): () => void {
+  return () => {
+    try {
+      run();
+    } catch (cause) {
+      onError(cause instanceof IdbExecuteError ? cause : opError(code, plan, what, cause));
+    }
+  };
+}
+
+/** Updates preserve identity. A key move needs referential and sync delete/create semantics. */
+function assertUnchangedPrimaryKey(store: IDBObjectStore, plan: IdbAtomicPlan, key: IDBValidKey, row: Row): void {
+  const keyPath = store.keyPath;
+  if (keyPath == null) return;
+  const extract = (path: string): unknown =>
+    path === ""
+      ? row
+      : path
+          .split(".")
+          .reduce<unknown>(
+            (value, field) => (value !== null && typeof value === "object" ? (value as Row)[field] : undefined),
+            row
+          );
+  const nextKey = (typeof keyPath === "string" ? extract(keyPath) : keyPath.map(extract)) as IDBValidKey;
+  if (indexedDB.cmp(key, nextKey) !== 0) {
+    throw new IdbExecuteError(
+      { code: "PRIMARY_KEY_CHANGE_UNSUPPORTED", planKind: plan.kind, storeName: plan.storeName },
+      `Changing the primary key of a row in store "${plan.storeName}" is not supported. Update non-key fields instead.`
+    );
+  }
+}
+
 // ── Public API ───────────────────────────────────────────────────────────────
 
 /**
@@ -83,9 +122,9 @@ export function executeOpInTx(
     dispatchOp(store, plan, onComplete, onError);
   } catch (err) {
     // Requests are issued synchronously, so a dead transaction surfaces here as a
-    // thrown DOMException. Anything else (DataError, unknown index, ...) is unchanged.
+    // thrown DOMException. Route every failure to onError so the caller can abort.
     if (isTransactionInactiveError(err)) return onError(transactionInactiveError(plan.kind, plan.storeName, err));
-    throw err;
+    onError(err);
   }
 }
 
@@ -206,7 +245,7 @@ function execCursorScan(
   const collected: Row[] = [];
   let skippedCount = 0;
 
-  req.onsuccess = () => {
+  req.onsuccess = guardCallback(plan, "CURSOR_SCAN_FAILED", "cursor-scan callback", onError, () => {
     const cursor = req.result as IDBCursorWithValue | null;
 
     if (cursor === null) {
@@ -248,7 +287,7 @@ function execCursorScan(
     }
 
     cursor.continue();
-  };
+  });
 
   req.onerror = () => onError(opError("CURSOR_SCAN_FAILED", plan, "cursor-scan", req.error));
 }
@@ -289,15 +328,16 @@ function execPut(store: IDBObjectStore, plan: IdbPutPlan, onComplete: OnComplete
 function execUpdate(store: IDBObjectStore, plan: IdbUpdatePlan, onComplete: OnComplete, onError: OnError): void {
   // Step 1: read the current record.
   const getReq = store.get(plan.key);
-  getReq.onsuccess = () => {
+  getReq.onsuccess = guardCallback(plan, "PUT_FAILED", "update (put phase)", onError, () => {
     const existing = (getReq.result as Row | undefined) ?? {};
     // Step 2: shallow-merge patch onto existing record.
     const merged: Row = { ...existing, ...plan.patch };
     // Step 3: write the merged record back.
-    const putReq = store.put(merged);
+    assertUnchangedPrimaryKey(store, plan, plan.key, merged);
+    const putReq = store.keyPath === null ? store.put(merged, plan.key) : store.put(merged);
     putReq.onsuccess = () => onComplete([merged]);
     putReq.onerror = () => onError(opError("PUT_FAILED", plan, "update (put phase)", putReq.error));
-  };
+  });
   getReq.onerror = () => onError(opError("KEY_GET_FAILED", plan, "update (get phase)", getReq.error));
 }
 
@@ -311,7 +351,7 @@ function execDelete(store: IDBObjectStore, plan: IdbDeletePlan, onComplete: OnCo
   const req = store.openCursor(plan.key);
   const collected: Row[] = [];
 
-  req.onsuccess = () => {
+  req.onsuccess = guardCallback(plan, "DELETE_FAILED", "delete callback", onError, () => {
     const cursor = req.result as IDBCursorWithValue | null;
     if (cursor === null) {
       onComplete(collected);
@@ -319,9 +359,9 @@ function execDelete(store: IDBObjectStore, plan: IdbDeletePlan, onComplete: OnCo
     }
     collected.push(cursor.value as Row);
     const delReq = cursor.delete();
-    delReq.onsuccess = () => cursor.continue();
+    delReq.onsuccess = guardCallback(plan, "DELETE_FAILED", "delete callback", onError, () => cursor.continue());
     delReq.onerror = () => onError(opError("DELETE_FAILED", plan, "delete", delReq.error));
-  };
+  });
   req.onerror = () => onError(opError("DELETE_FAILED", plan, "delete", req.error));
 }
 
@@ -337,7 +377,7 @@ function execScanWrite(store: IDBObjectStore, plan: IdbScanWritePlan, onComplete
   // multiEntry entries). Track written primary keys so each record is written and counted once.
   const writtenKeys = plan.indexName !== undefined && plan.write === "put-merged" ? new Set<string>() : undefined;
 
-  req.onsuccess = () => {
+  req.onsuccess = guardCallback(plan, "PUT_FAILED", "scan-write callback", onError, () => {
     const cursor = req.result as IDBCursorWithValue | null;
 
     if (cursor === null) {
@@ -363,19 +403,20 @@ function execScanWrite(store: IDBObjectStore, plan: IdbScanWritePlan, onComplete
       // Capture the row value before deleting (so deleteAll can return it).
       collected.push(row);
       const delReq = cursor.delete();
-      delReq.onsuccess = () => {
+      delReq.onsuccess = guardCallback(plan, "PUT_FAILED", "scan-write callback", onError, () => {
         if (plan.take !== undefined && collected.length >= plan.take) {
           onComplete(collected);
           return; // intentionally no cursor.continue() — transaction auto-commits
         }
         cursor.continue();
-      };
+      });
       delReq.onerror = () => onError(opError("DELETE_FAILED", plan, "scan-write (delete)", delReq.error));
     } else {
       // put-merged: shallow-merge patch onto existing row, write back in-place.
       const merged: Row = { ...row, ...plan.patch };
+      assertUnchangedPrimaryKey(store, plan, cursor.primaryKey, merged);
       const updReq = cursor.update(merged);
-      updReq.onsuccess = () => {
+      updReq.onsuccess = guardCallback(plan, "PUT_FAILED", "scan-write callback", onError, () => {
         writtenKeys?.add(keyIdentity(cursor.primaryKey));
         collected.push(merged);
         if (plan.take !== undefined && collected.length >= plan.take) {
@@ -383,10 +424,10 @@ function execScanWrite(store: IDBObjectStore, plan: IdbScanWritePlan, onComplete
           return; // intentionally no cursor.continue()
         }
         cursor.continue();
-      };
+      });
       updReq.onerror = () => onError(opError("PUT_FAILED", plan, "scan-write (put-merged)", updReq.error));
     }
-  };
+  });
 
   req.onerror = () => onError(opError("CURSOR_SCAN_FAILED", plan, "scan-write cursor", req.error));
 }

@@ -567,3 +567,29 @@ describe("SyncInterceptorExecutor.transaction() — relational mutations", () =>
     expect(upsertUpdate!.versionMetaId).toBe('User::"u1"');
   });
 });
+
+describe("SyncInterceptorExecutor — rejected primary-key changes", () => {
+  it.each(["update", "updateAll"] as const)(
+    "%s preserves rows, outbox and version metadata",
+    async (operation) => {
+      const { client } = await createTestSyncClient();
+      try {
+        const users = asAccessors(client.orm)["users"]!;
+        await users.create({ id: "u1", name: "Alice" });
+        const outbox = await scanAll(client, "_idb_sync_outbox");
+        const versions = await scanAll(client, "_idb_sync_version_meta");
+        const result =
+          operation === "update"
+            ? users.where({ id: "u1" }).update({ id: "u2" })
+            : users.updateAll({ id: "u2" }).toArray();
+        await expect(result).rejects.toMatchObject({ code: "PRIMARY_KEY_CHANGE_UNSUPPORTED" });
+        expect(await scanAll(client, "users")).toEqual([{ id: "u1", name: "Alice" }]);
+        expect(await scanAll(client, "_idb_sync_outbox")).toEqual(outbox);
+        expect(await scanAll(client, "_idb_sync_version_meta")).toEqual(versions);
+      } finally {
+        await client.close();
+      }
+    },
+    1000
+  );
+});

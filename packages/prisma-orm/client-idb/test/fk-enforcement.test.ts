@@ -1580,23 +1580,51 @@ describe("onUpdate — cascade on a self-referential model", () => {
   });
   afterEach(() => db.close());
 
-  // Regression test: `collectOnUpdateEnforcementStoreNames`'s related store
-  // for a self-referential relation is the model's own store — already the
-  // seed of its result set — so `storeNames.length` alone can't distinguish
-  // "no enforcement applies" from "enforcement applies, but only within this
-  // one store". `update()` must still take the read-before-write enforcement
-  // path here, not the fast blind-write path (which would skip the cascade
-  // below entirely).
-  it("propagates a changed referenced field onto self-referential children", async () => {
+  // The child FK is changed by onUpdate before the parent's write runs.
+  // Rejecting the parent key change must roll that child write back too.
+  it("rolls back a self-referential cascade when the primary key change is rejected", async () => {
     const orm = idbOrm({ contract: selfReferentialCascadeContract, executor });
     await orm["employees"]!.create({ id: "root", managerId: null, name: "Root" } as never);
     await orm["employees"]!.create({ id: "a", managerId: "root", name: "A" } as never);
 
-    await orm["employees"]!.where({ id: "root" } as never).update({ id: "root2" } as never);
-
-    const employees = await getAllRows(db, "employees");
-    const a = employees.find((e) => e["id"] === "a");
-    expect(a?.["managerId"]).toBe("root2");
+    await expect(
+      orm["employees"]!.where({ id: "root" } as never).update({ id: "root2" } as never)
+    ).rejects.toMatchObject({ code: "PRIMARY_KEY_CHANGE_UNSUPPORTED" });
+    expect(await getAllRows(db, "employees")).toEqual([
+      { id: "a", managerId: "root", name: "A" },
+      { id: "root", managerId: null, name: "Root" },
+    ]);
+  });
+  // Preserve the self-store enforcement regression using a mutable non-key reference.
+  it("still cascades a changed non-key reference within the same store", async () => {
+    const contract = defineContract({
+      family: idbFamilyPack,
+      target: idbTargetPack,
+      models: {
+        Employee: {
+          store: "employees",
+          key: "id",
+          fields: { id: "String", slug: "String", managerSlug: "String?" },
+          indexes: { bySlug: { keyPath: "slug", unique: true } },
+          relations: {
+            reports: {
+              to: "Employee",
+              cardinality: "1:N",
+              on: { local: ["slug"], target: ["managerSlug"] },
+              onUpdate: "cascade",
+            },
+          },
+        },
+      },
+    });
+    const orm = idbOrm({ contract, executor });
+    await orm["employees"]!.create({ id: "root", slug: "old", managerSlug: null } as never);
+    await orm["employees"]!.create({ id: "a", slug: "child", managerSlug: "old" } as never);
+    await orm["employees"]!.where({ id: "root" } as never).update({ slug: "new" } as never);
+    expect(await getAllRows(db, "employees")).toEqual([
+      { id: "a", slug: "child", managerSlug: "new" },
+      { id: "root", slug: "new", managerSlug: null },
+    ]);
   });
 });
 

@@ -59,6 +59,7 @@ export interface IdbTransactionScope {
 class IdbTransactionScopeImpl implements IdbTransactionScope {
   readonly #tx: IDBTransaction;
   readonly #onComplete: Promise<void>;
+  readonly #pending = new Set<(err: unknown) => void>();
 
   constructor(tx: IDBTransaction) {
     this.#tx = tx;
@@ -71,10 +72,14 @@ class IdbTransactionScopeImpl implements IdbTransactionScope {
             `IDB transaction scope failed: ${String(tx.error)}`
           )
         );
-      tx.onabort = () =>
-        reject(
-          new IdbExecuteError({ code: "TRANSACTION_ABORTED", planKind: "batch" }, "IDB transaction scope aborted")
+      tx.onabort = () => {
+        const error = new IdbExecuteError(
+          { code: "TRANSACTION_ABORTED", planKind: "batch", cause: tx.error },
+          "IDB transaction scope aborted"
         );
+        for (const fail of this.#pending) fail(error);
+        reject(error);
+      };
     });
     // Suppress "unhandled rejection" when the scope is rolled back without
     // commit() being awaited (e.g. withMutationScope catches an error and
@@ -101,15 +106,20 @@ class IdbTransactionScopeImpl implements IdbTransactionScope {
         return;
       }
 
-      const rows: Row[] = [];
+      const fail = (error: unknown) => {
+        this.#pending.delete(fail);
+        reject(error);
+        this.rollback();
+      };
+      this.#pending.add(fail);
       executeOpInTx(
         store,
         plan,
         (opRows) => {
-          for (const row of opRows) rows.push(row);
-          resolve(rows);
+          this.#pending.delete(fail);
+          resolve(opRows);
         },
-        reject
+        fail
       );
     });
   }
