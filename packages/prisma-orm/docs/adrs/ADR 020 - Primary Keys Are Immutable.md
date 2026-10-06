@@ -20,7 +20,7 @@ IndexedDB itself does not support moving a record. `IDBCursor.update()` throws a
 
 - **Reject key changes at runtime.** The driver compares the old and new key of each row it updates. If they differ, it throws `IdbExecuteError` with the code `PRIMARY_KEY_CHANGE_UNSUPPORTED` and aborts the transaction. Writes made earlier in the same call roll back, including referential actions and sync outbox and version entries. The message says that primary keys are immutable and tells the caller to delete the row and create a new one. See `driver-idb/src/core/execute/ops.ts`.
 - **Allow a patch that repeats the key.** A patch may include the existing key, including a compound, date or binary key. Nothing changes, so nothing is rejected. An update that matches no rows writes nothing and does not throw.
-- **Reject key changes at compile time.** The update input types for `update`, `updateAll`, `updateCount` and `upsert.update` exclude primary-key fields. Code that passes `id`, even the existing value, no longer compiles. Create inputs are unchanged. A dotted key path excludes its whole containing field, because a patch shallow-merges into the row.
+- **Reject key changes at compile time.** The update input types for `update`, `updateAll`, `updateCount` and `upsert.update` exclude primary-key fields for models the contract resolves. A model name the contract cannot resolve keeps an untyped patch, so only the runtime check applies. Code that passes `id`, even the existing value, no longer compiles. Create inputs are unchanged. A dotted key path excludes its whole containing field, because a patch shallow-merges into the row.
 - **Do not add key moves.** No option or flag turns key changes on.
 
 ## Why
