@@ -1,5 +1,7 @@
 # @prisma-idb/target-idb
 
+## 0.11.0
+
 ## 0.10.0
 
 ### Minor Changes
