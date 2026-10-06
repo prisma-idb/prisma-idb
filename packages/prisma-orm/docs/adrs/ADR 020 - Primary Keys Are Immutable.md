@@ -74,7 +74,7 @@ Until then, the immutable rule stays.
 ## Related
 
 - [ADR 005](ADR%20005%20-%20Event-Driven%20Execution%20No%20Async%20Await.md): why failures inside cursor callbacks must reach the caller's error handler.
-- [ADR 006](ADR%20006%20-%20Collect%20then%20Yield%20Full%20Row%20Materialization.md): why rows are collected before they are written.
+- [ADR 006](ADR%20006%20-%20Collect%20then%20Yield%20Full%20Row%20Materialization.md): why the driver reads every row inside the transaction before it returns any.
 - [ADR 009](ADR%20009%20-%20FK%20Validation%20and%20Referential%20Action%20Enforcement.md): referential actions.
 - [ADR 014](ADR%20014%20-%20Sync%20Ownership%20DAG.md): how sync authorizes records.
 - `driver-idb/src/core/execute/ops.ts`: the runtime check and error message.
