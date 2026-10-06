@@ -98,7 +98,7 @@ function assertUnchangedPrimaryKey(store: IDBObjectStore, plan: IdbAtomicPlan, k
   if (indexedDB.cmp(key, nextKey) !== 0) {
     throw new IdbExecuteError(
       { code: "PRIMARY_KEY_CHANGE_UNSUPPORTED", planKind: plan.kind, storeName: plan.storeName },
-      `Changing the primary key of a row in store "${plan.storeName}" is not supported. Update non-key fields instead.`
+      `Cannot change the primary key of a row in store "${plan.storeName}". Primary keys are immutable. Delete the row and create a new one instead.`
     );
   }
 }
