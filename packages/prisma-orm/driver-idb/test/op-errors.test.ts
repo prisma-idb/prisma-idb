@@ -85,11 +85,18 @@ const cases: ReadonlyArray<{
     message: 'IDB key-get failed on store "users": Error: boom',
   },
   {
-    name: "index-get",
-    plan: { meta: META, kind: "index-get", storeName: "users", indexName: "by_name", range: IDBKeyRange.only("a") },
+    name: "get-all on the store",
+    plan: { meta: META, kind: "get-all", storeName: "users" },
     fail: failFirst,
-    code: "INDEX_GET_FAILED",
-    message: 'IDB index-get failed on "users"/"by_name": Error: boom',
+    code: "GET_ALL_FAILED",
+    message: 'IDB get-all failed on store "users": Error: boom',
+  },
+  {
+    name: "get-all on an index",
+    plan: { meta: META, kind: "get-all", storeName: "users", indexName: "by_name", range: { kind: "only", key: "a" } },
+    fail: failFirst,
+    code: "GET_ALL_FAILED",
+    message: 'IDB get-all failed on store "users" (index "by_name"): Error: boom',
   },
   {
     name: "count on the store",
@@ -114,7 +121,14 @@ const cases: ReadonlyArray<{
   },
   {
     name: "keys (getKey on an index)",
-    plan: { meta: META, kind: "keys", storeName: "users", indexName: "by_name", range: IDBKeyRange.only("a"), take: 1 },
+    plan: {
+      meta: META,
+      kind: "keys",
+      storeName: "users",
+      indexName: "by_name",
+      range: { kind: "only", key: "a" },
+      take: 1,
+    },
     fail: failFirst,
     code: "KEYS_FAILED",
     message: 'IDB keys read failed on store "users" (index "by_name"): Error: boom',

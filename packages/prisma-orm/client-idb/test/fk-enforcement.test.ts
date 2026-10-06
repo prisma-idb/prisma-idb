@@ -477,8 +477,8 @@ const compoundFkContract = defineContract({
 });
 
 // Users are keyed by a compound primary key declared as [orgId, id]; the
-// relation lists the same fields in the other order, so the key-only lookup
-// has to reorder the values into key order.
+// relation lists the same fields in the other order, so the parent check has
+// to match the values by field, not by position.
 const compoundPkParentContract = defineContract({
   family: idbFamilyPack,
   target: idbTargetPack,
@@ -548,7 +548,7 @@ describe("scalar FK validation — compound (multi-field)", () => {
     expect((await getAllRows(db, "posts")).map((p) => p["authorId"]).sort()).toEqual(["u1", "u2"]);
   });
 
-  it("uses a key-only lookup for a compound primary key declared in a different order", async () => {
+  it("checks the parent of a compound primary key declared in a different order", async () => {
     const name = nextDbName();
     const keyedDb = await openTestDbWithStores(name, { users: ["orgId", "id"], posts: "id" });
     const keyedExecutor = new TestExecutorWithTransaction(createIDBRuntimeDriver(name).create());

@@ -30,12 +30,10 @@ import {
   type RelatedModelOf,
   type SelectedRow,
   type WhereFilter,
-  buildFieldToIndexMap,
   extractKeyFromRow,
   getKeyPath,
   getRelation,
   getStoreName,
-  keyToken,
 } from "./types";
 import { createModelAccessor, type IdbModelAccessor } from "./model-accessor";
 import {
@@ -47,17 +45,7 @@ import {
   isIncludeScalar,
   mergeAccessorState,
 } from "./store-state";
-import {
-  buildRowComparator,
-  combineFilterExprs,
-  clampCount,
-  extractIndexEqualityHint,
-  extractIndexOrHint,
-  isNativelyCountable,
-  toCountPlan,
-  type IndexEqualityHint,
-  type IndexOrHint,
-} from "./query-shaping";
+import { combineFilterExprs } from "./query-shaping";
 import {
   assertValidAggregateSpec,
   computeAggregateSpec,
@@ -88,6 +76,9 @@ import {
   validateScalarFks,
 } from "./mutation-executor";
 import { withMutationScope } from "./mutation-scope";
+import { buildCatalog } from "./planner/catalog";
+import { planQuery } from "./planner/plan";
+import { lowerRows, type LoweredRows, type RowsRequest } from "./planner/lower";
 
 /** Callback form of `.where(fn)` — receives the typed model accessor proxy. */
 export type WhereCallback<TContract, ModelName extends string> = (
@@ -177,7 +168,7 @@ export interface IdbStoreAccessor<
   /**
    * Include a reference relation in the returned rows.
    *
-   * The relation is loaded via a single batch cursor scan after the main
+   * The relation is loaded via a single batch lookup after the main
    * query — O(1) round trips to IDB per included relation regardless of
    * the number of parent rows. The return type gains the relation field
    * automatically.
@@ -347,8 +338,8 @@ export interface IdbStoreAccessor<
    * With no filter, counts all rows in the store.
    *
    * **Note — `skip`/`take` are respected**: unlike Prisma's SQL `count()`,
-   * which ignores pagination, this implementation reuses the same cursor-scan
-   * plan as `all()`. That means `where(...).take(5).count()` returns at most 5,
+   * which ignores pagination, this implementation reuses the same planned row
+   * read as `all()`. That means `where(...).take(5).count()` returns at most 5,
    * not the total number of matching rows. Use `where(...).count()` without
    * `take`/`skip` when you need an unbounded total.
    */
@@ -489,41 +480,19 @@ export class IdbStoreAccessorImpl<
     // must be accessed on `this`, so we bind the methods to keep them callable
     // without aliasing `this` (no-this-alias).
     const buildScanPlan = this.#buildScanPlan.bind(this);
-    const executeOrRows = this.#executeOrRows.bind(this);
     const executorQuery = this.#executor.query.bind(this.#executor);
     const applyIncludes = this.#applyIncludes.bind(this);
     const projectRows = this.#projectRows.bind(this);
-    const combined = this.#combinedFilterExpr();
-    const fieldToIndexMap =
-      typeof IDBKeyRange !== "undefined" ? buildFieldToIndexMap(this.#contract, this.#storeName) : undefined;
-    const keyPath = getKeyPath(this.#contract, this.#modelName);
-    const comparator = buildRowComparator(this.#state.orderBy);
-    const skip = this.#state.skip;
-    const take = this.#state.take;
     return new AsyncIterableResult(
       (async function* (): AsyncGenerator<SelectedRow<TContract, ModelName, TIncludes, TSelected>, void, unknown> {
-        let rows: Record<string, unknown>[];
-
-        // OR multi-scan path: union N index point-range scans, deduplicate,
-        // re-apply orderBy (the union has no overall ordering), then apply
-        // skip/take in-memory (pagination must happen after the union).
-        const orHint = fieldToIndexMap !== undefined ? extractIndexOrHint(combined, fieldToIndexMap, keyPath) : null;
-        if (orHint !== null) {
-          rows = await executeOrRows(orHint, groupingKey, combined);
-          if (comparator !== undefined) rows.sort(comparator);
-          if (skip !== undefined) rows = rows.slice(skip);
-          if (take !== undefined) rows = rows.slice(0, take);
-        } else {
-          // AND single-index path (or full scan — decided inside buildScanPlan).
-          const scanPlan = buildScanPlan<Record<string, unknown>>(groupingKey, fieldToIndexMap);
-          rows = [];
-          for await (const row of executorQuery(scanPlan)) {
-            rows.push(row);
-          }
+        const scan = buildScanPlan(groupingKey);
+        const rows: Record<string, unknown>[] = [];
+        for await (const row of executorQuery(scan.plan)) {
+          rows.push(row);
         }
 
         // Batch-load any included relations (uses full rows — FK fields intact).
-        const withIncludes = await applyIncludes(rows, groupingKey);
+        const withIncludes = await applyIncludes(scan.finish(rows), groupingKey);
 
         // Apply any `.select()` projection, then yield.
         for (const row of projectRows(withIncludes)) {
@@ -549,23 +518,8 @@ export class IdbStoreAccessorImpl<
       aggregates: toAggregateRequests(spec),
       ...(combined !== undefined ? { where: combined } : {}),
     };
-    const groupingKey = this.#newGroupingKey();
-
-    // When `count` is the ONLY selector no row value is ever read, so the
-    // total can come from a native count. A mixed spec (count alongside
-    // sum/avg/min/max) needs the rows regardless, so it materializes. Like
-    // the materialized path, aggregate() ignores skip/take.
-    if (Object.values(spec).every((selector) => selector.fn === "count")) {
-      const scanPlan = this.#buildScanPlan<Record<string, unknown>>(groupingKey);
-      const total = await this.#executeNativeCount(scanPlan, ast);
-      if (total !== null) {
-        const result: Record<string, number | null> = {};
-        for (const alias of Object.keys(spec)) result[alias] = total;
-        return result as IdbAggregateResult<Spec>;
-      }
-    }
-
-    const rows = await this.#materialize(groupingKey, ast);
+    // Like SQL's aggregate, skip/take don't apply.
+    const rows = await this.#materialize(this.#newGroupingKey(), ast);
     return computeAggregateSpec(spec, rows) as IdbAggregateResult<Spec>;
   }
 
@@ -634,15 +588,14 @@ export class IdbStoreAccessorImpl<
     const groupingKey = this.#newGroupingKey();
     const meta = this.#planMeta(groupingKey);
     const ast: IdbFindUniqueAst = { kind: "findUnique", modelName: this.#modelName, key };
-    const plan: IdbQueryPlan<Record<string, unknown>> = {
-      meta,
-      ast,
-      idbPlan: { meta, kind: "key-get", storeName: this.#storeName, key: key as IDBValidKey },
-    };
-    for await (const row of this.#executor.query(plan)) {
-      return row as DefaultModelRow<TContract, ModelName>;
-    }
-    return null;
+    const keyPath = getKeyPath(this.#contract, this.#modelName);
+    const fields = typeof keyPath === "string" ? [keyPath] : keyPath;
+    const values = typeof keyPath === "string" ? [key] : (key as readonly unknown[]);
+    const where = combineFilterExprs(fields.map((field, i) => ({ kind: "field", field, op: "eq", value: values[i] })));
+    const request: RowsRequest = { ...(where === undefined ? {} : { where }), take: 1 };
+    const lowered = this.#lowerRows(meta, request);
+    const rows = await this.#executor.query<Record<string, unknown>>({ meta, ast, idbPlan: lowered.idbPlan }).toArray();
+    return (lowered.finish(rows)[0] as DefaultModelRow<TContract, ModelName> | undefined) ?? null;
   }
 
   async delete(key: KeyType<TContract, ModelName>): Promise<void> {
@@ -921,47 +874,16 @@ export class IdbStoreAccessorImpl<
   // ── Private helpers ───────────────────────────────────────────────────────
 
   async #countTerminal(): Promise<number> {
-    const groupingKey = this.#newGroupingKey();
+    const scan = this.#buildScanPlan(this.#newGroupingKey());
+    // Middleware sees a `count` AST, not the scan that answers it.
     const combined = this.#combinedFilterExpr();
-    const fieldToIndexMap =
-      typeof IDBKeyRange !== "undefined" ? buildFieldToIndexMap(this.#contract, this.#storeName) : undefined;
-
-    // OR multi-scan path: count the deduped+filtered union, applying
-    // skip/take pagination so count() is consistent with the non-OR path.
-    // Never native: a per-branch count() double-counts a row that matches two
-    // branches, and deduplication needs the actual primary keys.
-    if (fieldToIndexMap !== undefined) {
-      const keyPath = getKeyPath(this.#contract, this.#modelName);
-      const orHint = extractIndexOrHint(combined, fieldToIndexMap, keyPath);
-      if (orHint !== null) {
-        const rows = await this.#executeOrRows(orHint, groupingKey, combined);
-        return clampCount(rows.length, this.#state.skip, this.#state.take);
-      }
-    }
-
-    const scanPlan = this.#buildScanPlan<Record<string, unknown>>(groupingKey, fieldToIndexMap);
-    // Middleware sees a `count` AST regardless of which physical plan runs.
-    const scanAst = scanPlan.ast;
     const ast: IdbCountAst = {
       kind: "count",
       modelName: this.#modelName,
-      ...(scanAst?.kind === "findMany" && scanAst.where !== undefined ? { where: scanAst.where } : {}),
+      ...(combined !== undefined ? { where: combined } : {}),
     };
-
-    // Native path: when the whole `where` is captured by a key range (or
-    // there is none), ask IndexedDB to count directly — no row is
-    // deserialized. skip/take are applied to the native (unpaginated) total.
-    const nativeTotal = await this.#executeNativeCount(scanPlan, ast);
-    if (nativeTotal !== null) return clampCount(nativeTotal, this.#state.skip, this.#state.take);
-
-    // Fallback: a residual in-memory filter needs each row's value, so the
-    // rows must be materialized and counted.
-    const plan: IdbQueryPlan<Record<string, unknown>> = { ...scanPlan, ast };
-    let n = 0;
-    for await (const _ of this.#executor.query(plan)) {
-      n++;
-    }
-    return n;
+    const rows = await this.#executor.query<Record<string, unknown>>({ ...scan.plan, ast }).toArray();
+    return scan.finish(rows).length;
   }
 
   /**
@@ -1006,162 +928,43 @@ export class IdbStoreAccessorImpl<
   }
 
   /**
-   * Runs `scanPlan` as a native `count` plan when its cardinality is fully
-   * determined by a key range (no in-memory filter) — returning the
-   * *unpaginated* total — or `null` when it can't (the caller then falls back
-   * to materializing). `ast` is attached so middleware sees the caller's
-   * intent (`count` / `aggregate`) regardless of the physical plan.
-   */
-  async #executeNativeCount(scanPlan: IdbQueryPlan<Record<string, unknown>>, ast: IdbQueryAst): Promise<number | null> {
-    const body = scanPlan.idbPlan;
-    if (body.kind !== "cursor-scan" || !isNativelyCountable(body)) return null;
-    const nativePlan: IdbQueryPlan<Record<string, unknown>> = { ...scanPlan, ast, idbPlan: toCountPlan(body) };
-    let total = 0;
-    for await (const row of this.#executor.query(nativePlan)) {
-      total = (row as unknown as { count: number }).count;
-    }
-    return total;
-  }
-
-  /**
    * Materialise all rows matching the accumulated filters with no pagination —
    * used by `aggregate()` / `groupBy()`. The supplied `ast` is attached to the
-   * scan plan so middleware can observe the aggregate intent.
+   * row plan so middleware can observe the aggregate intent.
    */
   async #materialize(groupingKey: string, ast: IdbQueryAst): Promise<Record<string, unknown>[]> {
     const combined = this.#combinedFilterExpr();
-    const filter = combined !== undefined ? (row: Record<string, unknown>) => evaluateFilter(combined, row) : undefined;
     const meta = this.#planMeta(groupingKey);
-    const plan: IdbQueryPlan<Record<string, unknown>> = {
-      meta,
-      ast,
-      idbPlan: {
-        meta,
-        kind: "cursor-scan",
-        storeName: this.#storeName,
-        ...(filter !== undefined ? { filter } : {}),
-      },
-    };
-    const rows: Record<string, unknown>[] = [];
-    for await (const row of this.#executor.query(plan)) {
-      rows.push(row);
-    }
-    return rows;
+    const lowered = this.#lowerRows(meta, { ...(combined === undefined ? {} : { where: combined }) });
+    const rows = await this.#executor.query<Record<string, unknown>>({ meta, ast, idbPlan: lowered.idbPlan }).toArray();
+    return lowered.finish(rows);
   }
 
-  #buildScanPlan<Row>(groupingKey: string, fieldToIndexMap?: Record<string, string>): IdbQueryPlan<Row> {
+  #lowerRows(meta: PlanMeta, request: RowsRequest): LoweredRows {
+    const catalog = buildCatalog(this.#contract, this.#storeName);
+    return lowerRows(catalog, planQuery(catalog, request), meta, request);
+  }
+
+  #buildScanPlan(groupingKey: string): { plan: IdbQueryPlan<Record<string, unknown>>; finish: LoweredRows["finish"] } {
     const combined = this.#combinedFilterExpr();
-    const comparator = buildRowComparator(this.#state.orderBy);
     const meta = this.#planMeta(groupingKey);
     const ast: IdbFindManyAst = {
       kind: "findMany",
       modelName: this.#modelName,
       ...(combined !== undefined ? { where: combined } : {}),
-      ...(this.#state.orderBy !== undefined ? { orderBy: this.#state.orderBy as Record<string, "asc" | "desc"> } : {}),
+      ...(this.#state.orderBy !== undefined ? { orderBy: this.#state.orderBy } : {}),
       ...(this.#state.skip !== undefined ? { skip: this.#state.skip } : {}),
       ...(this.#state.take !== undefined ? { take: this.#state.take } : {}),
     };
-
-    // Attempt to peel an indexed equality condition from the combined filter
-    // and use a cursor-scan over the index with a point range. This avoids
-    // a full store scan when IDBKeyRange is available (browser / fake-indexeddb).
-    let hint: IndexEqualityHint | null = null;
-    if (typeof IDBKeyRange !== "undefined") {
-      const fieldToIndexName = fieldToIndexMap ?? buildFieldToIndexMap(this.#contract, this.#storeName);
-      const keyPath = getKeyPath(this.#contract, this.#modelName);
-      hint = extractIndexEqualityHint(combined, fieldToIndexName, keyPath);
-    }
-
-    const remainingFilter = hint !== null ? hint.remainingFilter : combined;
-    const filter =
-      remainingFilter !== undefined
-        ? (row: Record<string, unknown>) => evaluateFilter(remainingFilter, row)
-        : undefined;
-    // exactOptionalPropertyTypes: spread conditionally to avoid `undefined`
-    // values in optional fields.
-    return {
-      meta,
-      ast,
-      idbPlan: {
-        meta,
-        kind: "cursor-scan" as const,
-        storeName: this.#storeName,
-        ...(hint?.indexName !== undefined ? { indexName: hint.indexName } : {}),
-        ...(hint !== null ? { range: IDBKeyRange.only(hint.value as IDBValidKey) } : {}),
-        ...(filter !== undefined ? { filter } : {}),
-        ...(comparator !== undefined ? { comparator } : {}),
-        ...(this.#state.skip !== undefined ? { skip: this.#state.skip } : {}),
-        ...(this.#state.take !== undefined ? { take: this.#state.take } : {}),
-      },
-    } as IdbQueryPlan<Row>;
-  }
-
-  /**
-   * Execute one cursor-scan per OR branch, union the results, deduplicate by
-   * primary key, and apply `hint.remainingFilter` in-memory. Skip/take are
-   * NOT applied here — the caller slices the array after union so pagination
-   * is correct across branches.
-   */
-  async #executeOrRows(
-    hint: IndexOrHint,
-    groupingKey: string,
-    combined: IdbFilterExpr | undefined
-  ): Promise<Record<string, unknown>[]> {
-    const meta = this.#planMeta(groupingKey);
-    const storeName = this.#storeName;
-    const keyPath = getKeyPath(this.#contract, this.#modelName);
-    const seen = new Set<unknown>();
-    const rows: Record<string, unknown>[] = [];
-    const ast: IdbFindManyAst = {
-      kind: "findMany",
-      modelName: this.#modelName,
-      ...(combined !== undefined ? { where: combined } : {}),
-    };
-
-    // Branches are independent index scans — run them concurrently, then
-    // merge/dedupe sequentially (first-branch-wins) so results stay
-    // deterministic regardless of completion order.
-    const branchResults = await Promise.all(
-      hint.branches.map(async (branch) => {
-        const plan: IdbQueryPlan<Record<string, unknown>> = {
-          meta,
-          ast,
-          idbPlan: {
-            meta,
-            kind: "cursor-scan" as const,
-            storeName,
-            ...(branch.indexName !== undefined ? { indexName: branch.indexName } : {}),
-            range: IDBKeyRange.only(branch.value as IDBValidKey),
-          },
-        };
-        const branchRows: Record<string, unknown>[] = [];
-        for await (const row of this.#executor.query(plan)) {
-          branchRows.push(row);
-        }
-        return branchRows;
-      })
-    );
-    for (const branchRows of branchResults) {
-      for (const row of branchRows) {
-        const pk = keyToken(extractKeyFromRow(row, keyPath));
-        if (!seen.has(pk)) {
-          seen.add(pk);
-          rows.push(row);
-        }
-      }
-    }
-
-    if (hint.remainingFilter === undefined) return rows;
-    const { remainingFilter } = hint;
-    return rows.filter((row) => evaluateFilter(remainingFilter, row));
+    const lowered = this.#lowerRows(meta, ast);
+    return { plan: { meta, ast, idbPlan: lowered.idbPlan }, finish: lowered.finish };
   }
 
   /**
    * Combine all accumulated filter expressions with AND.
    *
-   * Returns `undefined` when no filter has been installed so the driver can
-   * skip building a row filter closure (a small perf and readability win on
-   * `.all()` paths). Delegates to the shared {@link combineFilterExprs}.
+   * Returns `undefined` when no filter has been installed so the planner sees
+   * an unfiltered request. Delegates to the shared {@link combineFilterExprs}.
    */
   #combinedFilterExpr(): IdbFilterExpr | undefined {
     return combineFilterExprs(this.#state.filters);

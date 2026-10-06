@@ -1,24 +1,23 @@
 import type { ContractReferenceRelation } from "@prisma/orm-framework/contract/types";
 import { domainModelsAtDefaultNamespace } from "@prisma/orm-framework/contract/types";
 import type { IdbQueryPlan } from "@prisma-idb/adapter-idb/runtime";
-import { evaluateFilter } from "@prisma-idb/adapter-idb/runtime";
-import type { IdbRowFilter } from "@prisma-idb/driver-idb/runtime";
+import { andExpr, fieldFilter } from "@prisma-idb/adapter-idb/runtime";
 import type { IdbQueryExecutor } from "./executor";
 import { buildRowComparator, combineFilterExprs } from "./query-shaping";
 import type { IncludeEntry } from "./store-state";
-import { keyPathFields, type IdbKeyPath } from "@prisma-idb/target-idb/pack";
-import { fieldValueToken, getKeyPath, getStoreName, isValidIdbKey } from "./types";
+import { fieldValueToken, getStoreName } from "./types";
 import type { IdbContract } from "./types";
+import { buildCatalog } from "./planner/catalog";
+import { planQuery } from "./planner/plan";
+import { lowerRows } from "./planner/lower";
 
 /**
  * Batch-load a single named relation for all rows in `rows` and attach the
  * result to each row under the `relName` key.
  *
  * The join matches every field of the relation, so compound foreign keys join
- * on the whole tuple. It uses one key-range scan per distinct tuple when an
- * index or the related primary key covers the target fields, and otherwise
- * one full scan with an in-memory filter. Rows are then grouped in memory,
- * which avoids N+1 queries.
+ * on the whole tuple. It plans one batch lookup for all parents, then groups
+ * the rows in memory, which avoids N+1 queries.
  *
  * The `entry` carries any `include()` refinement:
  *
@@ -102,70 +101,26 @@ export async function loadRelation(
   const storageHash = contract.storage.storageHash;
   const planMeta = { target: "idb", storageHash, lane: "idb-orm", annotations: { groupingKey } } as const;
 
-  // When an index or the related store's own primary key covers exactly the
-  // target fields, run one IDBKeyRange.only() point-range scan per distinct
-  // tuple. Each scan visits only matching records, so only the refined
-  // `where` is applied as a row filter. Otherwise, scan the whole store.
-  const rangeSource = findRangeSource(contract, relatedStoreName, relatedModelName, targetFields);
-
-  let relatedRows: Record<string, unknown>[];
-  if (rangeSource !== undefined) {
-    const refinedFilter: IdbRowFilter | undefined =
-      refinedWhere !== undefined ? (row: Record<string, unknown>) => evaluateFilter(refinedWhere, row) : undefined;
-
-    // IDBKeyRange.only() throws DataError for invalid keys (boolean, NaN,
-    // plain objects, etc.). Such values cannot be stored as IndexedDB keys,
-    // so no related rows can match — skip them before building plans.
-    const ranges: IDBKeyRange[] = [];
-    for (const values of localTuples.values()) {
-      const ordered = keyPathFields(rangeSource.keyPath).map((f) => values[targetFields.indexOf(f)]);
-      if (!ordered.every((v) => isValidIdbKey(v))) continue;
-      ranges.push(
-        IDBKeyRange.only(
-          typeof rangeSource.keyPath === "string" ? (ordered[0] as IDBValidKey) : (ordered as IDBValidKey[])
-        )
-      );
-    }
-
-    // One scan per distinct tuple — independent, so run concurrently.
-    const rangeResults = await Promise.all(
-      ranges.map(async (range) => {
-        const plan: IdbQueryPlan<Record<string, unknown>> = {
-          meta: planMeta,
-          idbPlan: {
-            meta: planMeta,
-            kind: "cursor-scan",
-            storeName: relatedStoreName,
-            ...(rangeSource.indexName !== undefined ? { indexName: rangeSource.indexName } : {}),
-            range,
-            ...(refinedFilter !== undefined ? { filter: refinedFilter } : {}),
-          },
-        };
-        const rows: Record<string, unknown>[] = [];
-        for await (const row of executor.query(plan)) {
-          rows.push(row);
-        }
-        return rows;
-      })
-    );
-    relatedRows = rangeResults.flat();
-  } else {
-    relatedRows = [];
-    // Full store scan with an in-memory FK membership + refined-where filter.
-    const filter: IdbRowFilter = (row: Record<string, unknown>): boolean => {
-      const token = tupleToken(row, targetFields);
-      return (
-        token !== null && localTuples.has(token) && (refinedWhere === undefined || evaluateFilter(refinedWhere, row))
-      );
-    };
-    const plan: IdbQueryPlan<Record<string, unknown>> = {
-      meta: planMeta,
-      idbPlan: { meta: planMeta, kind: "cursor-scan", storeName: relatedStoreName, filter },
-    };
-    for await (const row of executor.query(plan)) {
-      relatedRows.push(row);
-    }
-  }
+  // Each field's IN is a superset of the local tuples. Keep the tuple check
+  // to reject crossed compound keys, and shape collections per parent below.
+  const joinWhere = andExpr(
+    targetFields.map((field, i) =>
+      fieldFilter(
+        field,
+        "in",
+        [...localTuples.values()].map((tuple) => tuple[i])
+      )
+    )
+  );
+  const where = refinedWhere === undefined ? joinWhere : andExpr([joinWhere, refinedWhere]);
+  const request = { ...(refinedWhere === undefined ? {} : { where: refinedWhere }) };
+  const catalog = buildCatalog(contract, relatedStoreName);
+  const lowered = lowerRows(catalog, planQuery(catalog, { where }), planMeta, request, (row) => {
+    const token = tupleToken(row, targetFields);
+    return token !== null && localTuples.has(token);
+  });
+  const plan: IdbQueryPlan<Record<string, unknown>> = { meta: planMeta, idbPlan: lowered.idbPlan };
+  const relatedRows = lowered.finish(await executor.query(plan).toArray());
 
   return attachRelatedRows(relName, entry, rows, relatedRows, relation);
 }
@@ -245,28 +200,4 @@ function tupleToken(row: Record<string, unknown>, fields: readonly string[]): st
     parts.push([typeof token, String(token)]);
   }
   return JSON.stringify(parts);
-}
-
-/**
- * Finds an index, or else the store's primary key, whose key path has exactly
- * `fields` (in any order), so a lookup on those fields can use a key range.
- * Returns `undefined` when there is none, or when `IDBKeyRange` isn't available.
- */
-function findRangeSource(
-  contract: IdbContract,
-  storeName: string,
-  modelName: string,
-  fields: readonly string[]
-): { readonly indexName?: string; readonly keyPath: IdbKeyPath } | undefined {
-  if (typeof IDBKeyRange === "undefined") return undefined;
-  const coversFields = (keyPath: IdbKeyPath): boolean => {
-    const keyFields = keyPathFields(keyPath);
-    return keyFields.length === fields.length && keyFields.every((f) => fields.includes(f));
-  };
-  const indexes = contract.storage.stores[storeName]?.indexes ?? {};
-  for (const [indexName, indexDef] of Object.entries(indexes)) {
-    if (indexDef.multiEntry !== true && coversFields(indexDef.keyPath)) return { indexName, keyPath: indexDef.keyPath };
-  }
-  const primaryKey = getKeyPath(contract, modelName);
-  return coversFields(primaryKey) ? { keyPath: primaryKey } : undefined;
 }

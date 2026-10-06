@@ -9,7 +9,7 @@
  *      guaranteeing write durability before rows are delivered.
  *
  * Transaction modes:
- *   - Atomic read plans  (key-get, index-get, cursor-scan): `readonly`
+ *   - Atomic read plans  (key-get, get-all, cursor-scan): `readonly`
  *   - Atomic write plans (add, put, delete):                 `readwrite`
  *   - Batch plans:        `readwrite` if any op is a write, `readonly` otherwise
  */

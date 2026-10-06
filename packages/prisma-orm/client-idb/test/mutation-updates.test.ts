@@ -27,6 +27,10 @@ const contract = defineContract({
   },
 });
 
+/** Result order is unspecified without `orderBy`, so compare rows sorted by id. */
+const byId = (rows: object[]) =>
+  (rows as Record<string, unknown>[]).sort((a, b) => String(a["id"]).localeCompare(String(b["id"])));
+
 let dbCounter = 0;
 describe("updates with a partially set compound foreign key", () => {
   let client: IdbClient<typeof contract>;
@@ -49,25 +53,25 @@ describe("updates with a partially set compound foreign key", () => {
 
   afterEach(async () => client.close());
 
-  it("update changes only the first match and returns null for no match", async () => {
+  it("update changes exactly one matching row and returns null for no match", async () => {
+    await client.orm["users"]!.create({ tenantId: "new", id: "bob" });
     const updated = await client.orm["posts"]!.where({ tenantId: "old" }).update({ tenantId: "new" });
-    expect(updated).toEqual({ id: "p1", tenantId: "new", authorId: "alice", title: "First" });
-    expect(await client.orm["posts"]!.all().toArray()).toEqual([
-      { id: "p1", tenantId: "new", authorId: "alice", title: "First" },
-      { id: "p2", tenantId: "old", authorId: "bob", title: "Second" },
-    ]);
+    expect(updated).toMatchObject({ tenantId: "new" });
+    const rows = byId(await client.orm["posts"]!.all().toArray());
+    expect(rows.filter((row) => row["tenantId"] === "new")).toEqual([updated]);
+    expect(rows.filter((row) => row["tenantId"] === "old")).toHaveLength(1);
     expect(await client.orm["posts"]!.where({ id: "missing" }).update({ tenantId: "new" })).toBeNull();
   });
 
   it("updateAll rolls back earlier matches when a later row has no matching parent", async () => {
     await expect(client.orm["posts"]!.updateAll({ tenantId: "new" }).toArray()).rejects.toThrow(/FK violation/);
-    expect(await client.orm["posts"]!.all().toArray()).toEqual([
+    expect(byId(await client.orm["posts"]!.all().toArray())).toEqual([
       { id: "p1", tenantId: "old", authorId: "alice", title: "First" },
       { id: "p2", tenantId: "old", authorId: "bob", title: "Second" },
     ]);
 
     await client.orm["users"]!.create({ tenantId: "new", id: "bob" });
-    expect(await client.orm["posts"]!.updateAll({ tenantId: "new" }).toArray()).toEqual([
+    expect(byId(await client.orm["posts"]!.updateAll({ tenantId: "new" }).toArray())).toEqual([
       { id: "p1", tenantId: "new", authorId: "alice", title: "First" },
       { id: "p2", tenantId: "new", authorId: "bob", title: "Second" },
     ]);

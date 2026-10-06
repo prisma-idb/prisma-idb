@@ -163,7 +163,7 @@ Depends on `target-idb` and `driver-idb` (for the driver's plan types).
 | `./control` | Control | A stub driver. The framework requires a `driver` in `prisma.config.ts`, but no CLI command can reach a browser database. |
 | `./runtime` | Runtime | `createIDBRuntimeDriver`, the plan types (`IdbPlanBody`, `IdbAtomicPlan`), `IdbTransactionScope`, and `IdbExecuteError`. |
 
-A plan is plain data plus functions. The kinds are `cursor-scan`, `key-get`, `index-get`, `add`, `put`, `update`, `delete`, `scan-write`, `count`, `keys`, and `batch`, which runs several plans in one transaction. The driver has no dependencies inside this repo. It doesn't know about models, relations or contracts.
+A plan is plain data plus functions. The kinds are `cursor-scan`, `key-get`, `get-all`, `add`, `put`, `update`, `delete`, `scan-write`, `count`, `keys`, and `batch`, which runs several plans in one transaction. The driver has no dependencies inside this repo. It doesn't know about models, relations or contracts.
 
 Adding a plan kind touches five places ([ADR 017](adrs/ADR%20017%20-%20Native%20IndexedDB%20Feature%20Parity.md)): `plan-body.ts`, `execute/ops.ts`, a new error code, the exhaustive switch in `sync-extension-idb`'s `sync-executor.ts`, and the driver's runtime type exports.
 
@@ -201,7 +201,7 @@ The ORM carries immutable query state through the accessor chain. Reads shape a 
 | `store-accessor.ts`                               | The per-model interface, query chaining, read materialization and mutation entrypoints. |
 | `store-state.ts`                                  | Immutable accessor state and include descriptors.                                       |
 | `model-accessor.ts` and `filters.ts`              | Typed field operators and filter combinators.                                           |
-| `query-shaping.ts`                                | Index equality hints, filter composition, row comparators and native count plans.       |
+| `query-shaping.ts`                                | Filter composition and row comparators.                                                 |
 | `aggregate-builder.ts` and `grouped-accessor.ts`  | Aggregate selectors, reductions and grouped results.                                    |
 | `relation-loader.ts`                              | Batched relation reads and per-parent refinements.                                      |
 | `mutation-executor.ts` and `mutation-scope.ts`    | Nested writes, foreign-key checks and referential actions in one transaction.           |

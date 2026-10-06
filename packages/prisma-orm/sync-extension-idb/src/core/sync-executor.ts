@@ -565,7 +565,7 @@ class SyncInterceptingTransactionScope implements IdbTransactionScope {
       // here). Reads are never tracked.
       case "put":
       case "key-get":
-      case "index-get":
+      case "get-all":
       case "cursor-scan":
       case "count":
       case "keys":

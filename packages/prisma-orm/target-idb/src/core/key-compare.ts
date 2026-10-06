@@ -16,10 +16,6 @@
  * objects, `null`/`undefined` and invalid `Date`s are not. An array is a key
  * only if every element is, it has no holes, and no array appears in it
  * twice (which also rules out cycles), as in the spec.
- *
- * Shared by the relation loader (filtering FK values before building
- * `IDBKeyRange.only()` plans) and query-shaping (gating `eq` conditions for
- * index/PK point-range acceleration).
  */
 export function isValidIdbKey(value: unknown): value is IDBValidKey {
   return isValidKey(value, new Set());
