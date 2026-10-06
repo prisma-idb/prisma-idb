@@ -52,12 +52,12 @@ This client sits in the second group, so it follows the second group's rule.
   - IndexedDB needs `add`, not `put`, to catch a collision with an existing key. The client must also collect all matching rows before it writes any, because a cursor sees the writes of its own transaction.
   - In sync, the outbox would carry two unrelated events, a create and a delete. The server would have to create the new row, repoint its children, and then delete the old row. If another device edits the old key while offline, that edit either resurrects the old row or is lost, unless the server keeps an old-to-new redirect.
   - Allowing moves only when sync is off makes behavior depend on the mode. Code that works in development would fail in production, or the reverse.
-- **Keep silently ignoring the key.** The keyed-update bug did exactly this, and it duplicated rows. Rejected.
+- **Keep the old keyed-update behavior.** Before this decision, the client merged the new key into the row and wrote it with `put`. That wrote a second row under the new key and left the original row behind. Rejected.
 
 ## Consequences
 
 - **Prisma over SQL differs here.** Code ported from Prisma over SQL can contain a key update. It now fails to compile, or fails at runtime if the types are bypassed. The fix is to delete the row and create a new one in one transaction.
-- **`onUpdate: Cascade` rarely applies.** The action still runs when an update changes a non-key field that children reference, such as a `@unique` column. It never runs for a primary-key change, because those no longer happen. The default `onUpdate` stays `restrict` ([ADR 009](ADR%20009%20-%20FK%20Validation%20and%20Referential%20Action%20Enforcement.md)).
+- **`onUpdate: Cascade` rarely applies.** The action still runs when an update changes a non-key field that children reference, such as a `@unique` column. A primary-key change can't use it: the client applies the action before the store rejects the write, and the rejection rolls the action's effects back. The default `onUpdate` stays `restrict` ([ADR 009](ADR%20009%20-%20FK%20Validation%20and%20Referential%20Action%20Enforcement.md)).
 - **Natural and compound keys need care.** A model whose key is editable data, such as an email address or a slug, can't change that value. Give the model a surrogate `id` as its primary key and put the editable value in an `@unique` or `@@unique` constraint. Then the value can change and `onUpdate: Cascade` can follow it.
 
 ## Reversal
