@@ -33,6 +33,7 @@ For an overview of how the packages fit together, see [ARCHITECTURE.md](../ARCHI
 | 017 | [Native IndexedDB features](ADR%20017%20-%20Native%20IndexedDB%20Feature%20Parity.md)                                     | Accepted   | Use compound keys, native `count()` and key-only reads where IDB supports them. Report "transaction inactive" errors clearly.                                                               |
 | 018 | [A separate `prisma-idb` CLI](ADR%20018%20-%20Separate%20prisma-idb%20CLI.md)                                             | Accepted   | Three migration commands the `prisma` CLI can't provide for a browser database live in a small companion CLI, for now.                                                                      |
 | 019 | [Apply planned migrations as written](ADR%20019%20-%20Apply%20Planned%20Migrations%20As%20Written.md)                     | Accepted   | The browser applies every planned operation, destructive ones included. Destructive changes are flagged at plan time.                                                                       |
+| 020 | [Primary keys are immutable](ADR%20020%20-%20Primary%20Keys%20Are%20Immutable.md)                                         | Accepted   | Updates reject primary-key changes with `PRIMARY_KEY_CHANGE_UNSUPPORTED`, and the update types omit key fields. To change a key, delete the row and create a new one.                       |
 
 ## Reading order for sync
 
