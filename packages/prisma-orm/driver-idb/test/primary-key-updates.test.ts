@@ -51,7 +51,9 @@ describe("primary-key changes and callback failures", () => {
         const scope = scoped ? createTransactionScope(db, ["items"]) : undefined;
         const result = scope ? scope.execute(plan) : executeIdbPlan(db, plan);
         await expect(result).rejects.toMatchObject({ code: "PRIMARY_KEY_CHANGE_UNSUPPORTED" });
-        await expect(result).rejects.toThrow(/Delete the row and create a new one/);
+        await expect(result).rejects.toThrow(
+          "Delete the row and create it again only after handling dependent records. Restrictive relations can block the delete, and cascading relations can delete dependent records."
+        );
         if (scope) await expect(scope.commit()).rejects.toThrow();
         expect(await read(db)).toEqual([original]);
       },

@@ -32,7 +32,7 @@ The `internal` subpath is for companion packages such as `sync-extension-idb`. A
 
 `update()`, `updateAll()`, `updateCount()` and the update arm of `upsert()` reject changes to an existing row’s primary key with code `PRIMARY_KEY_CHANGE_UNSUPPORTED`. The entire mutation rolls back, including referential actions and sync outbox changes. A patch may repeat the existing key; a query with no matching rows performs no write.
 
-Primary keys are immutable. Delete the row and create a new one instead.
+Primary keys are immutable. Delete the row and create it again only after handling dependent records. Restrictive relations can block the delete, and cascading relations can delete dependent records.
 
 ## Documentation
 

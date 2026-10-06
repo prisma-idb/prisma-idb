@@ -2,4 +2,4 @@
 "@prisma-idb/driver-idb": patch
 ---
 
-Explain that primary keys are immutable and advise deleting the row and creating a new one in the primary-key change error message.
+Explain that primary keys are immutable. Advise handling dependent records before deleting and recreating a row, because restrictive relations can block the delete and cascading relations can delete dependents.
