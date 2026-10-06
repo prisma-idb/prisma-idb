@@ -1,9 +1,18 @@
 /** Compile-time assertions run through `pnpm check`; Vitest groups the public input contracts. */
 import { describe, expectTypeOf, it } from "vitest";
+import type { NamespaceId } from "@prisma/orm-framework/contract/types";
 import type { IdbContractWithTypeMaps, IdbTypeMaps } from "@prisma-idb/target-idb/pack";
-import type { IdbContract, IdbStoreAccessor, PatchInput } from "../src/exports/orm";
+import type {
+  IdbContract,
+  IdbRelationMutator,
+  IdbStoreAccessor,
+  MutationUpdateInput,
+  PatchInput,
+} from "../src/exports/orm";
 
 type KeyPaths = {
+  Parent: "id";
+  Child: "id";
   Single: "id";
   Compound: readonly ["tenant", "id"];
   Dotted: "identity.id";
@@ -23,7 +32,18 @@ type BaseContract = {
         readonly models: {
           readonly [M in keyof KeyPaths]: {
             readonly fields: Record<string, never>;
-            readonly relations: Record<never, never>;
+            readonly relations: M extends "Parent"
+              ? {
+                  readonly children: {
+                    readonly to: { readonly model: "Child"; readonly namespace: NamespaceId };
+                    readonly cardinality: "1:N";
+                    readonly on: {
+                      readonly localFields: readonly ["id"];
+                      readonly targetFields: readonly ["parentId"];
+                    };
+                  };
+                }
+              : Record<never, never>;
             readonly storage: { readonly storeName: M; readonly keyPath: KeyPaths[M] };
           };
         };
@@ -33,6 +53,8 @@ type BaseContract = {
 };
 
 type Rows = {
+  Parent: { readonly id: string };
+  Child: { readonly id: string; readonly parentId: string; readonly state: "active" | "archived" };
   Single: { readonly id: string; readonly title: "draft" | "published"; readonly note?: string };
   Compound: { readonly tenant: string; readonly id: number; readonly role: "member" | "admin" };
   Dotted: { readonly identity: { id: string; label: string }; readonly title: "draft" | "published" };
@@ -55,6 +77,37 @@ type UpdateInputs<M extends keyof Rows> = {
 };
 
 describe("primary-key update inputs", () => {
+  it("allows typed relation callbacks on key-only parents while rejecting scalar keys", () => {
+    const connect: MutationUpdateInput<TestContract, "Parent"> = {
+      children: (rel) => {
+        expectTypeOf(rel).toEqualTypeOf<IdbRelationMutator<TestContract, "Child">>();
+        return rel.connect({ id: "c1" });
+      },
+    };
+    const disconnect: UpdateInputs<"Parent">["update"] = { children: (rel) => rel.disconnect([{ id: "c1" }]) };
+    const create: UpdateInputs<"Parent">["update"] = {
+      children: (rel) => rel.create({ id: "c1", parentId: "p1", state: "active" }),
+    };
+    const empty: UpdateInputs<"Parent"> = { update: {}, updateAll: {}, updateCount: {}, upsert: {} };
+    // Compile actual calls without needing an accessor at runtime.
+    const call = (parent: Accessor<"Parent">) => parent.update({ children: (rel) => rel.connect({ id: "c1" }) });
+    // @ts-expect-error — relation callbacks must not restore primary-key updates.
+    const key: UpdateInputs<"Parent">["update"] = { id: "changed", ...connect };
+    // @ts-expect-error — only declared relations accept callbacks.
+    const unknown: UpdateInputs<"Parent">["update"] = { missing: disconnect.children };
+    // @ts-expect-error — an optional relation callback cannot be explicitly undefined.
+    const undefinedRelation: UpdateInputs<"Parent">["update"] = { children: undefined };
+    const invalidChild: UpdateInputs<"Parent">["update"] = {
+      // @ts-expect-error — nested create retains the child's literal field types.
+      children: (rel) => rel.create({ id: "c1", parentId: "p1", state: "deleted" }),
+    };
+    // @ts-expect-error — bulk scalar patches do not accept relation callbacks.
+    const bulk: UpdateInputs<"Parent">["updateAll"] = connect;
+    // @ts-expect-error — scalar PatchInput remains restrictive for key-only parents.
+    const patch: PatchInput<TestContract, "Parent"> = { id: "changed" };
+    void [connect, disconnect, create, empty, call, key, unknown, undefinedRelation, invalidChild, bulk, patch];
+  });
+
   it("rejects a single key in every update API, including a repeated key", () => {
     const inputs: UpdateInputs<"Single"> = {
       // @ts-expect-error — primary keys are immutable, even when the value is unchanged.
@@ -176,6 +229,7 @@ describe("primary-key update inputs", () => {
 
   it("preserves the untyped fallback when the model name cannot be resolved", () => {
     expectTypeOf<PatchInput<IdbContract, never>>().toEqualTypeOf<Partial<Record<string, unknown>>>();
+    expectTypeOf<MutationUpdateInput<IdbContract, never>>().toEqualTypeOf<Partial<Record<string, unknown>>>();
   });
 
   it("keeps remaining fields optional without widening their literal types", () => {
@@ -191,6 +245,9 @@ describe("primary-key update inputs", () => {
   it("preserves each model's non-key fields when model names form a union", () => {
     expectTypeOf<PatchInput<TestContract, "Single" | "Compound">>().toEqualTypeOf<
       { title?: "draft" | "published"; note?: string } | { role?: "member" | "admin" }
+    >();
+    expectTypeOf<MutationUpdateInput<TestContract, "Single" | "Compound">>().toEqualTypeOf<
+      PatchInput<TestContract, "Single" | "Compound">
     >();
     const inputs: UpdateInputs<"Single" | "Compound"> = {
       update: { title: "draft" },

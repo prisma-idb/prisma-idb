@@ -392,6 +392,11 @@ export type SelectedRow<
 // field. Distribute over compound-key members to omit every containing field.
 type KeyPathRoot<Path extends string> = Path extends `${infer Field}.${string}` ? Field : Path;
 
+type MutableModelRow<TContract, ModelName extends string> = Omit<
+  DefaultModelRow<TContract, ModelName>,
+  KeyPathRoot<ModelKeyPath<TContract, ModelName>>
+>;
+
 // An empty object type accepts arbitrary fields. When no mutable fields remain,
 // allow empty patches while rejecting every supplied field, including keys.
 type PartialPatch<Row> = keyof Row extends never ? Record<string, never> : Partial<Row>;
@@ -407,7 +412,7 @@ export type PatchInput<TContract, ModelName extends string> =
   IsNever<ModelName> extends true
     ? Partial<DefaultModelRow<TContract, ModelName>>
     : ModelName extends string
-      ? PartialPatch<Omit<DefaultModelRow<TContract, ModelName>, KeyPathRoot<ModelKeyPath<TContract, ModelName>>>>
+      ? PartialPatch<MutableModelRow<TContract, ModelName>>
       : never;
 
 // ── Relation mutation types ───────────────────────────────────────────────────
@@ -532,10 +537,16 @@ export type MutationCreateInput<TContract, ModelName extends string> = NestedCre
 /**
  * Input shape for `update()` with optional relation callbacks.
  * Non-key scalar fields are optional (shallow merge); relation fields accept
- * `connect` or `disconnect` callbacks.
+ * `connect` or `disconnect` callbacks. Check emptiness after adding relation
+ * fields so a key-only scalar row can still accept declared callbacks without
+ * an incompatible never index signature.
  */
-export type MutationUpdateInput<TContract, ModelName extends string> = PatchInput<TContract, ModelName> &
-  RelationMutationFields<TContract, ModelName>;
+export type MutationUpdateInput<TContract, ModelName extends string> =
+  IsNever<ModelName> extends true
+    ? PatchInput<TContract, ModelName> & RelationMutationFields<TContract, ModelName>
+    : ModelName extends string
+      ? PartialPatch<MutableModelRow<TContract, ModelName> & RelationMutationFields<TContract, ModelName>>
+      : never;
 
 // ── OrderBy spec ─────────────────────────────────────────────────────────────
 
