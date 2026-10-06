@@ -9,6 +9,9 @@ type KeyPaths = {
   Dotted: "identity.id";
   DottedCompound: readonly ["tenant", "identity.id"];
   Keyless: null;
+  SingleKeyOnly: "id";
+  CompoundKeyOnly: readonly ["tenant", "id"];
+  DottedKeyOnly: "identity.id";
 };
 
 // A structural contract with type maps matches emitted contracts. defineContract()
@@ -35,6 +38,9 @@ type Rows = {
   Dotted: { readonly identity: { id: string; label: string }; readonly title: "draft" | "published" };
   DottedCompound: { readonly tenant: string; readonly identity: { id: string }; readonly label: string };
   Keyless: { readonly id: string; readonly label: string };
+  SingleKeyOnly: { readonly id: string };
+  CompoundKeyOnly: { readonly tenant: string; readonly id: number };
+  DottedKeyOnly: { readonly identity: { id: string } };
 };
 type TestContract = IdbContractWithTypeMaps<
   BaseContract,
@@ -80,6 +86,62 @@ describe("primary-key update inputs", () => {
     };
     void inputs;
     expectTypeOf<PatchInput<TestContract, "Compound">>().toEqualTypeOf<{ role?: "member" | "admin" }>();
+  });
+
+  it("rejects single-key updates when there are no mutable fields", () => {
+    const inputs: UpdateInputs<"SingleKeyOnly"> = {
+      // @ts-expect-error — an empty mutable shape must still reject the key.
+      update: { id: "changed" },
+      // @ts-expect-error — updateAll must reject the key-only patch.
+      updateAll: { id: "changed" },
+      // @ts-expect-error — updateCount must reject the key-only patch.
+      updateCount: { id: "changed" },
+      // @ts-expect-error — upsert.update must reject the key-only patch.
+      upsert: { id: "changed" },
+    };
+    // @ts-expect-error — PatchInput itself must reject key-only patches.
+    const patch: PatchInput<TestContract, "SingleKeyOnly"> = { id: "changed" };
+    const empty: UpdateInputs<"SingleKeyOnly"> = { update: {}, updateAll: {}, updateCount: {}, upsert: {} };
+    void [inputs, patch, empty];
+  });
+
+  it("rejects compound-key updates when there are no mutable fields", () => {
+    const inputs: UpdateInputs<"CompoundKeyOnly"> = {
+      // @ts-expect-error — tenant remains immutable in a key-only model.
+      update: { tenant: "changed" },
+      // @ts-expect-error — id remains immutable in a key-only model.
+      updateAll: { id: 2 },
+      // @ts-expect-error — neither key member belongs in updateCount.
+      updateCount: { tenant: "changed", id: 2 },
+      // @ts-expect-error — neither key member belongs in upsert.update.
+      upsert: { tenant: "changed", id: 2 },
+    };
+    // @ts-expect-error — PatchInput itself must reject compound-key-only patches.
+    const patch: PatchInput<TestContract, "CompoundKeyOnly"> = { tenant: "changed", id: 2 };
+    const empty: UpdateInputs<"CompoundKeyOnly"> = { update: {}, updateAll: {}, updateCount: {}, upsert: {} };
+    void [inputs, patch, empty];
+  });
+
+  it("rejects dotted-key updates when there are no mutable fields", () => {
+    const inputs: UpdateInputs<"DottedKeyOnly"> = {
+      // @ts-expect-error — the key's containing field remains immutable.
+      update: { identity: { id: "changed" } },
+      // @ts-expect-error — updateAll must reject replacement of the containing field.
+      updateAll: { identity: { id: "changed" } },
+      // @ts-expect-error — updateCount must reject replacement of the containing field.
+      updateCount: { identity: { id: "changed" } },
+      // @ts-expect-error — upsert.update must reject replacement of the containing field.
+      upsert: { identity: { id: "changed" } },
+    };
+    const empty: UpdateInputs<"DottedKeyOnly"> = { update: {}, updateAll: {}, updateCount: {}, upsert: {} };
+    void [inputs, empty];
+  });
+
+  it("does not let a key-only union member widen another model's patch", () => {
+    const patch: PatchInput<TestContract, "SingleKeyOnly" | "Single"> = { title: "draft" };
+    // @ts-expect-error — the key-only member must not introduce a permissive {} arm.
+    const invalid: PatchInput<TestContract, "SingleKeyOnly" | "Single"> = { id: "changed" };
+    void [patch, invalid];
   });
 
   it("rejects replacement of a dotted key's containing field in every update API", () => {

@@ -392,6 +392,10 @@ export type SelectedRow<
 // field. Distribute over compound-key members to omit every containing field.
 type KeyPathRoot<Path extends string> = Path extends `${infer Field}.${string}` ? Field : Path;
 
+// An empty object type accepts arbitrary fields. When no mutable fields remain,
+// allow empty patches while rejecting every supplied field, including keys.
+type PartialPatch<Row> = keyof Row extends never ? Record<string, never> : Partial<Row>;
+
 /**
  * Partial update shape for `update()`, `updateAll()`, `updateCount()`, and the
  * `update` arm of `upsert()`. Primary-key fields are excluded. Remaining
@@ -403,7 +407,7 @@ export type PatchInput<TContract, ModelName extends string> =
   IsNever<ModelName> extends true
     ? Partial<DefaultModelRow<TContract, ModelName>>
     : ModelName extends string
-      ? Partial<Omit<DefaultModelRow<TContract, ModelName>, KeyPathRoot<ModelKeyPath<TContract, ModelName>>>>
+      ? PartialPatch<Omit<DefaultModelRow<TContract, ModelName>, KeyPathRoot<ModelKeyPath<TContract, ModelName>>>>
       : never;
 
 // ── Relation mutation types ───────────────────────────────────────────────────
