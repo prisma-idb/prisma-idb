@@ -1,5 +1,27 @@
 # @prisma-idb/client-idb
 
+## 0.11.0
+
+### Minor Changes
+
+- [#281](https://github.com/prisma-idb/prisma-idb/pull/281) [`c184161`](https://github.com/prisma-idb/prisma-idb/commit/c1841610c7a6c98cd1d3eec565f54bbc9a414d26) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Route row reads, aggregates, grouped aggregates, and relation includes through the query planner. Use primary keys and indexes for point, membership, prefix, and range filters. Reapply the full filter to every result.
+
+  Use index cursor order and early limits for supported single-field ordering with `take`. Keep unsupported filters and ordering correct through full scans and in-memory shaping.
+
+  Without `orderBy`, row order is unspecified. `skip`, `take`, and `first` may select different matching rows as the access path changes. Rows tied on all `orderBy` fields also have unspecified order, so pagination may select different rows among ties. Add a unique field to `orderBy` for deterministic pages.
+
+- [#281](https://github.com/prisma-idb/prisma-idb/pull/281) [`a3f0591`](https://github.com/prisma-idb/prisma-idb/commit/a3f05913180cfd7f54555d1d369192e0135d34e1) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Remove the indexed-equality, OR multi-scan, native-count and key-only fast paths. Every read, count, existence check and mutation lookup now scans the store and filters in memory. Only `findUnique` on the primary key still reads by key. Results are unchanged, but without `orderBy` the row order is now unspecified, as in Prisma. Add `orderBy` wherever you rely on an order, including with `first()`, `skip()` and `take()`.
+
+### Patch Changes
+
+- [#281](https://github.com/prisma-idb/prisma-idb/pull/281) [`e4344ea`](https://github.com/prisma-idb/prisma-idb/commit/e4344ea2092b86e3dd4e0f0f1214575fbda5eee3) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Add an internal query catalog and pure access planner with stable plan explanations. The planner is not wired into query execution yet, so client behavior is unchanged.
+
+- Updated dependencies [[`79e3121`](https://github.com/prisma-idb/prisma-idb/commit/79e3121ed740224b9e1a5b2d721654e83cfa966c)]:
+  - @prisma-idb/driver-idb@0.11.0
+  - @prisma-idb/adapter-idb@0.11.0
+  - @prisma-idb/runtime-idb@0.11.0
+  - @prisma-idb/target-idb@0.11.0
+
 ## 0.10.0
 
 ### Minor Changes
