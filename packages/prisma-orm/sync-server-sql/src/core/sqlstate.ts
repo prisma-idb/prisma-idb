@@ -3,13 +3,14 @@ const MAX_CAUSE_DEPTH = 5;
 
 /**
  * The SQLSTATE of a database error, or `undefined` for any other error.
- * The driver's error carries it as `code`; Prisma 8 may wrap that error, so
- * this also looks through `cause`.
+ * Prisma errors carry `sqlState`; driver errors carry `code`. Both can be
+ * wrapped, so this also looks through `cause`.
  */
 export function sqlState(error: unknown): string | undefined {
   let current = error;
   for (let depth = 0; depth < MAX_CAUSE_DEPTH && typeof current === "object" && current !== null; depth++) {
-    const { code, cause } = current as { code?: unknown; cause?: unknown };
+    const { sqlState: state, code, cause } = current as { sqlState?: unknown; code?: unknown; cause?: unknown };
+    if (typeof state === "string" && SQLSTATE.test(state)) return state;
     if (typeof code === "string" && SQLSTATE.test(code)) return code;
     current = cause;
   }

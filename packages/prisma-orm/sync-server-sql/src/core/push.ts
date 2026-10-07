@@ -261,21 +261,26 @@ export async function applyPushEventDecoded(
     console.error(`push apply failed for event ${event.id}`, err);
     // A timed-out first request can commit after the client's retry started:
     // the retry then hits the first one's unique key. The event did apply.
-    if (sqlState(err) === "23505" && (await wasApplied(db, event.id))) return { id: event.id, success: true };
+    let retryable = !isDeterministicWriteFailure(err);
+    if (sqlState(err) === "23505") {
+      const applied = await wasApplied(db, event.id);
+      if (applied === true) return { id: event.id, success: true };
+      if (applied === undefined) retryable = true;
+    }
     return {
       id: event.id,
       success: false,
       error: `Failed to apply event ${event.id}`,
-      retryable: !isDeterministicWriteFailure(err),
+      retryable,
     };
   }
 }
 
-/** A fresh read, outside the failed transaction. A failing read counts as "not applied". */
-async function wasApplied(db: unknown, eventId: string): Promise<boolean> {
+/** A fresh read, outside the failed transaction. `undefined` means the read failed, so the outcome is still unknown. */
+async function wasApplied(db: unknown, eventId: string): Promise<boolean | undefined> {
   try {
     return await isEventApplied(db, eventId);
   } catch {
-    return false;
+    return undefined;
   }
 }

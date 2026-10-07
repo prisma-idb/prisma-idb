@@ -19,6 +19,13 @@ describe("sqlState", () => {
     expect(sqlState(new Error("wrapped", { cause: Object.assign(new Error("dup"), { code: "40001" }) }))).toBe("40001");
   });
 
+  it("reads Prisma SQLSTATE fields, preferring them over generic error codes", () => {
+    expect(sqlState({ sqlState: "23505", code: "P2002" })).toBe("23505");
+    expect(sqlState(new Error("wrapped", { cause: { sqlState: "40001" } }))).toBe("40001");
+    expect(sqlState({ sqlState: "invalid", code: "23503" })).toBe("23503");
+    expect(isDeterministicWriteFailure({ sqlState: "23505" })).toBe(true);
+  });
+
   it.each([new Error("plain"), Object.assign(new Error("net"), { code: "ECONNRESET" }), "23505", null])(
     "returns undefined for %j, which carries no SQLSTATE",
     (error) => {
