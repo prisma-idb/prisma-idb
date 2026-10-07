@@ -1,0 +1,38 @@
+name: Install Playwright browsers
+description: Install Playwright browsers, caching the browser binaries between runs
+
+inputs:
+  working-directory:
+    description: Directory of the app that depends on @playwright/test
+    required: true
+  browsers:
+    description: Space-separated list of browsers to install
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Get Playwright version
+      id: version
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: echo "version=$(pnpm exec playwright --version | awk '{print $2}')" >> "$GITHUB_OUTPUT"
+
+    - name: Cache Playwright browsers
+      id: cache
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/ms-playwright
+        key: playwright-${{ runner.os }}-${{ steps.version.outputs.version }}-${{ inputs.browsers }}
+
+    - name: Install Playwright browsers and system dependencies
+      if: steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: pnpm exec playwright install --with-deps ${{ inputs.browsers }}
+
+    - name: Install Playwright system dependencies
+      if: steps.cache.outputs.cache-hit == 'true'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: pnpm exec playwright install-deps ${{ inputs.browsers }}

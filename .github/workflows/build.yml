@@ -250,7 +250,7 @@ jobs:
   test-prisma-idb-e2e:
     needs: changes
     if: needs.changes.outputs.prisma_idb_e2e == 'true'
-    timeout-minutes: 60
+    timeout-minutes: 20
     runs-on: ubuntu-latest
 
     steps:
@@ -258,8 +258,10 @@ jobs:
       - uses: ./.github/actions/
 
       - name: Install Playwright Browsers
-        working-directory: apps/prisma-orm-usage
-        run: pnpm exec playwright install --with-deps
+        uses: ./.github/actions/playwright
+        with:
+          working-directory: apps/prisma-orm-usage
+          browsers: chromium webkit
 
       - name: Run Prisma 8 E2E tests
         run: pnpm test:prisma-idb-e2e
@@ -274,7 +276,7 @@ jobs:
   test-prisma-idb-kanban-e2e:
     needs: changes
     if: needs.changes.outputs.prisma_idb_kanban_e2e == 'true'
-    timeout-minutes: 60
+    timeout-minutes: 20
     runs-on: ubuntu-latest
 
     services:
@@ -314,8 +316,10 @@ jobs:
         run: pnpm db:init
 
       - name: Install Playwright Browsers
-        working-directory: apps/prisma-orm-kanban-example
-        run: pnpm exec playwright install --with-deps
+        uses: ./.github/actions/playwright
+        with:
+          working-directory: apps/prisma-orm-kanban-example
+          browsers: chromium
 
       - name: Run Prisma 8 kanban E2E tests
         run: pnpm test:prisma-idb-kanban-e2e
