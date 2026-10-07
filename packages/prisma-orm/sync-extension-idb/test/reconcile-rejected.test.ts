@@ -2,7 +2,21 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createSyncWorker } from "../src/core/sync-worker";
 import type { PushCompletedEvent } from "../src/core/sync-worker";
 import type { OutboxEvent, PushResult, VersionMetaRecord } from "../src/types";
-import { asAccessors, createTestSyncClient, keyGet, scanAll } from "./helpers";
+import { defineContract } from "@prisma-idb/family-idb/contract-ts";
+import idbFamilyPack from "@prisma-idb/family-idb/pack";
+import idbTargetPack from "@prisma-idb/target-idb/pack";
+import type { IdbContract } from "@prisma-idb/client-idb/orm";
+import { createSyncIdbClient } from "../src/exports/client";
+import {
+  OUTBOX_STORE,
+  VERSION_META_STORE,
+  asAccessors,
+  createTestSyncClient,
+  keyGet,
+  openTestDb,
+  scanAll,
+  testDbName,
+} from "./helpers";
 
 type TestClient = Awaited<ReturnType<typeof createTestSyncClient>>["client"];
 
@@ -85,6 +99,35 @@ describe("a push the server rejected for good", () => {
     await syncOnce(client, reject({ id: "u1", name: "Alice" }));
 
     expect(await scanAll(client, "users")).toEqual([{ id: "u1", name: "Alice" }]);
+  });
+
+  it.each([
+    { name: "scalar", compound: false },
+    { name: "compound", compound: true },
+  ])("reconciles a rejected create whose key is Bytes ($name key)", async ({ compound }) => {
+    const keyPath = compound ? ["tenant", "id"] : "id";
+    const dbName = testDbName();
+    (await openTestDb(dbName, [{ name: "assets", keyPath }, OUTBOX_STORE, VERSION_META_STORE])).close();
+    const contract = defineContract({
+      family: idbFamilyPack,
+      target: idbTargetPack,
+      models: { Asset: { store: "assets", key: keyPath, fields: { tenant: "String", id: "Bytes", name: "String" } } },
+    }) as unknown as IdbContract;
+    const client = createSyncIdbClient({ contract, dbName, trackedModels: "*" });
+    const assets = asAccessors(client.orm)["assets"]!;
+    const row = { tenant: "t1", id: new Uint8Array([1, 2]), name: "local" };
+    const wireRow = { tenant: "t1", id: "AQI=", name: "server" };
+
+    // `null`: the create is undone.
+    await assets.create(row);
+    await syncOnce(client, reject(null));
+    expect(await scanAll(client, "assets")).toEqual([]);
+
+    // A row: the local write is replaced by it.
+    await assets.create(row);
+    await syncOnce(client, reject(wireRow));
+    expect(await scanAll(client, "assets")).toEqual([{ ...wireRow, id: new Uint8Array([1, 2]) }]);
+    expect(await outbox(client)).toMatchObject([{ retryable: false }, { retryable: false }]);
   });
 
   it("carries on when a rejected delete targets a row the server already deleted", async () => {

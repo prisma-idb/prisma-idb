@@ -796,6 +796,33 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
       expect(event).toMatchObject({ synced: true, tries: 12 });
     });
 
+    it.each(["throw", "timeout"] as const)(
+      "counts a push that fails by %s as a retryable try, so it reaches the stalled signal",
+      async (mode) => {
+        const { client } = await createTestSyncClient();
+        await asAccessors(client.orm)["users"]!.create({ id: "u1", name: "Alice" });
+        const worker = trackedWorker({
+          syncClient: client,
+          backoffBaseMs: 0,
+          requestTimeoutMs: 1,
+          pushHandler: async () => {
+            if (mode === "throw") throw new Error("offline");
+            return new Promise(() => {});
+          },
+          pullHandler: async () => [],
+        });
+        const pushes: PushCompletedEvent[] = [];
+        worker.on("pushcompleted", (p) => pushes.push(p));
+
+        for (let i = 0; i < 12; i++) await expect(worker.forceSync()).rejects.toThrow();
+
+        const [event] = await scanAll(client, "_idb_sync_outbox");
+        expect(event).toMatchObject({ synced: false, retryable: true, tries: 12 });
+        expect(event!["lastError"]).toEqual(expect.any(String));
+        expect(pushes.at(-1)).toMatchObject({ pullBlocked: true, stalled: { tries: 12 } });
+      }
+    );
+
     it("does not resend an event inside its backoff, and does not send later events past it", async () => {
       const { client } = await createTestSyncClient();
       await asAccessors(client.orm)["users"]!.create({ id: "u1", name: "Alice" });

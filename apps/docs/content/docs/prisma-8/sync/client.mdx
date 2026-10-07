@@ -58,7 +58,7 @@ The worker maintains this store; you don't write to it.
 
 ### The pull cursor
 
-A pull applies its rows in order, and local data is always a consistent prefix of the server's history. A later row can depend on an earlier one, so the pull never skips ahead of a row it could not apply.
+A pull applies its rows in order. A later row can depend on an earlier one, so the pull never skips ahead of a row it could not apply: a write failure or a pending local change stops the pull, and no later row lands before it. The one exception is an `invalid` row, which the pull consumes without writing it.
 
 Each row ends in one of four ways:
 
@@ -90,7 +90,7 @@ worker.start();
 
 The worker doesn't start on its own. Each cycle first pushes: it sends batches of outbox events until none is left to send. It then pulls, but only if no retryable event remains in the outbox. This keeps a pull from landing on an edit the server has not seen. A cycle repeats every `intervalMs` while idle, and backs off after failures.
 
-A failed push stays retryable however many times it fails, unless the server says it can never succeed. Events are pushed in order, so an event that is waiting out its backoff holds back the events behind it. After 10 failed tries, `pushcompleted` carries `stalled: { eventId, tries, lastError }` for the oldest event. Show it to the user: the outbox is stuck behind that event, and pulls pause until it clears.
+A failed push, including a request that throws or times out, stays retryable however many times it fails, unless the server says it can never succeed. Events are pushed in order, so an event that is waiting out its backoff holds back the events behind it. After 10 failed tries, `pushcompleted` carries `stalled: { eventId, tries, lastError }` for the oldest event. Show it to the user: the outbox is stuck behind that event, and pulls pause until it clears.
 
 | Option             | Default  | Description                                                                                                                                          |
 | ------------------ | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |

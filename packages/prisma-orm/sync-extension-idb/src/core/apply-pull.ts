@@ -5,8 +5,9 @@
  * do NOT generate outbox events — tracking them would create a push loop.
  *
  * A page is applied in order and stops at the first row that cannot be
- * applied yet (see "Halting" below), so local state is always a consistent
- * prefix of the server's history — a later row may depend on an earlier one.
+ * applied yet (see "Halting" below), so a failed row never lets a later row
+ * land ahead of it — a later row may depend on an earlier one. Rows that are
+ * `invalid` are the exception: they are consumed without being written.
  *
  * Guards per log entry, in this order:
  * 1. **Staleness**: the row counts as already applied if

@@ -16,16 +16,17 @@
 
 import type { IdbTransactionScope } from "@prisma-idb/driver-idb/runtime";
 import type { IdbContract } from "@prisma-idb/client-idb/orm";
-import { getStoreName } from "@prisma-idb/client-idb/orm";
+import { getKeyPath, getStoreName } from "@prisma-idb/client-idb/orm";
 import { decodePullLog } from "./apply-pull";
-import { deleteRecord, putRecord } from "./raw-store";
-import { keyOfVersionMetaId } from "./version-meta";
-import type { OutboxEvent, PushResult } from "../types";
+import { deleteRecord, getRecord, putRecord } from "./raw-store";
+import { VERSION_META_STORE, versionMetaKey } from "./version-meta";
+import type { OutboxEvent, PushResult, VersionMetaRecord } from "../types";
 
 /** A rejected event's server row, decoded and validated, ready to write. */
 export interface Reconciliation {
   readonly storeName: string;
-  readonly key: IDBValidKey;
+  /** The rejected event's version-meta id; it holds the native key a deletion needs. */
+  readonly versionMetaId: string;
   /** The server's row, or `null` if the local row must be deleted. */
   readonly record: Record<string, unknown> | null;
 }
@@ -35,7 +36,8 @@ export interface Reconciliation {
  * opens. Returns `null` if there is nothing safe to write: the server sent no
  * `record` (an old server, or it could not read the key), the event's key is
  * unknown (`versionMetaId` is `null`), or the `record` fails the client
- * contract. The caller then leaves the row for the next pull.
+ * contract or is not the row the event was about. The caller then leaves the
+ * row for the next pull.
  */
 export function planReconciliation<TContract extends IdbContract>(
   contract: TContract,
@@ -43,29 +45,50 @@ export function planReconciliation<TContract extends IdbContract>(
   result: PushResult
 ): Reconciliation | null {
   const { record } = result;
-  if (record === undefined || event.versionMetaId === null) return null;
+  const { versionMetaId } = event;
+  if (record === undefined || versionMetaId === null) return null;
   try {
+    const storeName = getStoreName(contract, event.entityType);
+    if (record === null) return { storeName, versionMetaId, record: null };
+
     const decoded = decodePullLog(
       contract,
       {
         changelogId: event.id,
         model: event.entityType,
-        operation: record === null ? "delete" : "update",
-        keyPath: keyOfVersionMetaId(event.versionMetaId, event.entityType),
+        operation: "update",
+        keyPath: wireKeyOf(getKeyPath(contract, event.entityType), record),
         record,
       },
-      record === null
+      false
     );
-    if (!decoded) return null;
-    return { storeName: getStoreName(contract, event.entityType), key: decoded.key, record: decoded.record };
+    if (!decoded?.record || versionMetaKey(event.entityType, decoded.key) !== versionMetaId) return null;
+    return { storeName, versionMetaId, record: decoded.record };
   } catch {
     return null;
   }
 }
 
-/** Writes the server's row over the local one. `scope` must span the `reconciliation`'s store. */
+/**
+ * The wire key of `record`, read from its own key fields. The key cannot come
+ * from `versionMetaId`: that id is JSON, which flattens native keys such as
+ * `Uint8Array` into something the wire decoder rejects.
+ */
+function wireKeyOf(keyPath: string | readonly string[], record: Record<string, unknown>): unknown {
+  return typeof keyPath === "string" ? record[keyPath] : keyPath.map((field) => record[field]);
+}
+
+/**
+ * Writes the server's row over the local one. `scope` must span the
+ * version-meta store and the `reconciliation`'s store. A deletion takes its
+ * native key from the version-meta record, and does nothing if that record is gone.
+ */
 export async function applyReconciliation(scope: IdbTransactionScope, reconciliation: Reconciliation): Promise<void> {
-  const { storeName, key, record } = reconciliation;
-  if (record === null) await deleteRecord(scope, storeName, key);
-  else await putRecord(scope, storeName, record);
+  const { storeName, versionMetaId, record } = reconciliation;
+  if (record !== null) {
+    await putRecord(scope, storeName, record);
+    return;
+  }
+  const meta = await getRecord<VersionMetaRecord>(scope, VERSION_META_STORE, versionMetaId);
+  if (meta) await deleteRecord(scope, storeName, meta.key as IDBValidKey);
 }

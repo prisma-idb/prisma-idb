@@ -177,20 +177,47 @@ export function createSyncWorker<TContract extends IdbContract>(options: SyncWor
     setStatus("pushing");
     const totals = { synced: 0, failed: 0, unreconciled: 0 };
     let sentAny = false;
-    for (;;) {
-      const events = await getNextBatch(syncClient.rawClient, { limit: batchSize, backoff });
-      if (events.length === 0) break;
-      sentAny = true;
-      const results = await withTimeout((signal) => pushHandler(events, signal), requestTimeoutMs, "pushHandler");
-      const counts = await recordPushResults(events, results);
-      totals.synced += counts.synced;
-      totals.failed += counts.failed;
-      totals.unreconciled += counts.unreconciled;
-      // Stop at a retryable failure rather than resend its event at once, whatever the backoff.
-      // A handler that answers for none of the events would otherwise resend the same batch forever.
-      if (counts.retryableFailure || counts.matched === 0) break;
+    let pullBlocked = false;
+    try {
+      for (;;) {
+        const events = await getNextBatch(syncClient.rawClient, { limit: batchSize, backoff });
+        if (events.length === 0) break;
+        sentAny = true;
+        const results = await sendBatch(events);
+        const counts = await recordPushResults(events, results);
+        totals.synced += counts.synced;
+        totals.failed += counts.failed;
+        totals.unreconciled += counts.unreconciled;
+        // Stop at a retryable failure rather than resend its event at once, whatever the backoff.
+        // A handler that answers for none of the events would otherwise resend the same batch forever.
+        if (counts.retryableFailure || counts.matched === 0) break;
+      }
+    } finally {
+      // Also runs when a request throws, so a failing transport still reports `stalled`.
+      pullBlocked = await reportPush(totals, sentAny);
     }
+    return pullBlocked;
+  }
 
+  /**
+   * Sends one batch. If the request throws or times out, records a retryable
+   * failed attempt on every event, so `tries` and backoff advance as they do
+   * for a server-reported failure, then rethrows for the cycle's own backoff.
+   */
+  async function sendBatch(events: OutboxEvent[]): Promise<PushResult[]> {
+    try {
+      return await withTimeout((signal) => pushHandler(events, signal), requestTimeoutMs, "pushHandler");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      await syncClient.withTransaction([OUTBOX_STORE, VERSION_META_STORE], async (scope) => {
+        for (const { id } of events) await markFailed(scope, id, message);
+      });
+      throw error;
+    }
+  }
+
+  /** Emits `pushcompleted` if a push was attempted or is still owed. Returns whether pull must wait. */
+  async function reportPush(totals: { synced: number; failed: number; unreconciled: number }, sentAny: boolean) {
     const oldest = await getOldestPendingEvent(syncClient.rawClient);
     const stalled =
       oldest !== null && oldest.tries >= STALLED_AFTER_TRIES
