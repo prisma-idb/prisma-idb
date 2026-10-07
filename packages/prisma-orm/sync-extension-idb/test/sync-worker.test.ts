@@ -316,6 +316,39 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
     expect((outbox[0] as { tries: number; lastError: string }).lastError).toBe("server rejected");
   });
 
+  it.each([true, false])("ignores results for unsent events (success = %s)", async (success) => {
+    const { client } = await createTestSyncClient();
+    await asAccessors(client.orm)["users"]!.create({ id: "u1", name: "Alice" });
+    await asAccessors(client.orm)["users"]!.create({ id: "u2", name: "Bob" });
+    const before = await scanAll(client, "_idb_sync_outbox");
+    const metaBefore = await scanAll(client, "_idb_sync_version_meta");
+    let unsent: Record<string, unknown> | undefined;
+    const worker = trackedWorker({
+      syncClient: client,
+      batchSize: 1,
+      pushHandler: async (events) => {
+        unsent = before.find((event) => event["id"] !== events[0]!.id)!;
+        return [
+          { id: events[0]!.id, success: false, error: "temporary failure", retryable: true },
+          { id: unsent["id"] as string, success, error: "rejected", retryable: false, record: null },
+          { id: "unknown-event", success },
+        ];
+      },
+      pullHandler: async () => [],
+    });
+    let completed: PushCompletedEvent | undefined;
+    worker.on("pushcompleted", (event) => (completed = event));
+
+    await worker.forceSync();
+
+    expect(completed).toEqual({ synced: 0, failed: 1, unreconciled: 0, pullBlocked: true });
+    expect((await scanAll(client, "_idb_sync_outbox")).find((event) => event["id"] === unsent!["id"])).toEqual(unsent);
+    expect(
+      (await scanAll(client, "_idb_sync_version_meta")).find((meta) => meta["id"] === unsent!["versionMetaId"])
+    ).toEqual(metaBefore.find((meta) => meta["id"] === unsent!["versionMetaId"]));
+    expect(await scanAll(client, "users")).toHaveLength(2);
+  });
+
   it("keeps events omitted from push results pending without counting a try", async () => {
     const { client } = await createTestSyncClient();
     await asAccessors(client.orm)["users"]!.create({ id: "u1", name: "Alice" });

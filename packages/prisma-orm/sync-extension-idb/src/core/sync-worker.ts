@@ -236,9 +236,10 @@ export function createSyncWorker<TContract extends IdbContract>(options: SyncWor
    */
   async function recordPushResults(events: OutboxEvent[], results: PushResult[]) {
     const eventsById = new Map(events.map((event) => [event.id, event]));
+    const matched = results.filter(({ id }) => eventsById.has(id));
     const reconciliations = new Map<string, Reconciliation>();
     let unreconciled = 0;
-    for (const result of results) {
+    for (const result of matched) {
       const event = eventsById.get(result.id);
       if (!event || result.success || result.retryable !== false) continue;
       const reconciliation = planReconciliation(syncClient.contract, event, result);
@@ -250,7 +251,7 @@ export function createSyncWorker<TContract extends IdbContract>(options: SyncWor
     let synced = 0;
     let failed = 0;
     await syncClient.withTransaction([OUTBOX_STORE, VERSION_META_STORE, ...modelStores], async (scope) => {
-      for (const result of results) {
+      for (const result of matched) {
         if (result.success) {
           await markSynced(scope, result.id);
           synced++;
@@ -262,7 +263,6 @@ export function createSyncWorker<TContract extends IdbContract>(options: SyncWor
         }
       }
     });
-    const matched = results.filter(({ id }) => eventsById.has(id));
     const retryableFailure = matched.some((result) => !result.success && result.retryable !== false);
     return { synced, failed, unreconciled, matched: matched.length, retryableFailure };
   }
