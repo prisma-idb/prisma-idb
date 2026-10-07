@@ -187,4 +187,59 @@ describe("a push the server rejected for good", () => {
     expect(push).toMatchObject({ failed: 1, unreconciled: 0, pullBlocked: true });
     expect(await scanAll(client, "users")).toEqual([{ id: "u1", name: "Alice" }]);
   });
+
+  describe("when a later local event on the same row is still queued", () => {
+    it("leaves the row alone, so the later edit never disappears", async () => {
+      const { client } = await createTestSyncClient();
+      const users = asAccessors(client.orm)["users"]!;
+      await users.create({ id: "u1", name: "Alice" });
+      await syncOnce(client, accept);
+      await users.where({ id: "u1" }).update({ name: "First edit" });
+      await users.where({ id: "u1" }).update({ name: "Second edit" });
+
+      // The first edit is rejected with the server's row as it was before the second edit landed.
+      const [push] = await syncOnce(client, (event) =>
+        (event.payload as { patch?: { name?: string } }).patch?.name === "First edit"
+          ? reject({ id: "u1", name: "Server name" })(event)
+          : accept(event)
+      );
+
+      expect(push).toMatchObject({ synced: 1, failed: 1, unreconciled: 0 });
+      expect(await scanAll(client, "users")).toEqual([{ id: "u1", name: "Second edit" }]);
+      expect((await versionMeta(client, 'User::"u1"'))?.localChangePending).toBe(false);
+    });
+
+    it("lets the last rejected event replace the row with its own, newer server row", async () => {
+      const { client } = await createTestSyncClient();
+      const users = asAccessors(client.orm)["users"]!;
+      await users.create({ id: "u1", name: "Alice" });
+      await syncOnce(client, accept);
+      await users.where({ id: "u1" }).update({ name: "First edit" });
+      await users.where({ id: "u1" }).update({ name: "Second edit" });
+
+      await syncOnce(client, (event) =>
+        reject({
+          id: "u1",
+          name: (event.payload as { patch?: { name?: string } }).patch?.name === "First edit" ? "Stale" : "Fresh",
+        })(event)
+      );
+
+      expect(await scanAll(client, "users")).toEqual([{ id: "u1", name: "Fresh" }]);
+    });
+
+    it("does not delete a row the user deleted and created again under the same key", async () => {
+      const { client } = await createTestSyncClient();
+      const users = asAccessors(client.orm)["users"]!;
+      await users.create({ id: "u1", name: "Alice" });
+      await syncOnce(client, accept);
+      await users.where({ id: "u1" }).update({ name: "Edit" });
+      await users.delete("u1");
+      await users.create({ id: "u1", name: "Again" });
+
+      // Another device already removed the row, so the update and the delete are rejected; the create is not.
+      await syncOnce(client, (event) => (event.operation === "create" ? accept(event) : reject(null)(event)));
+
+      expect(await scanAll(client, "users")).toEqual([{ id: "u1", name: "Again" }]);
+    });
+  });
 });

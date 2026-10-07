@@ -82,13 +82,20 @@ function wireKeyOf(keyPath: string | readonly string[], record: Record<string, u
  * Writes the server's row over the local one. `scope` must span the
  * version-meta store and the `reconciliation`'s store. A deletion takes its
  * native key from the version-meta record, and does nothing if that record is gone.
+ *
+ * Does nothing while the row still has a queued local change. The server read
+ * its row before that change, so writing it would undo the newer local write
+ * until the next pull. The queued change's own result, or that pull, settles
+ * the row. Call this after `markFailed` for the rejected event, which clears
+ * the flag unless another change is queued.
  */
 export async function applyReconciliation(scope: IdbTransactionScope, reconciliation: Reconciliation): Promise<void> {
   const { storeName, versionMetaId, record } = reconciliation;
+  const meta = await getRecord<VersionMetaRecord>(scope, VERSION_META_STORE, versionMetaId);
+  if (meta?.localChangePending) return;
   if (record !== null) {
     await putRecord(scope, storeName, record);
     return;
   }
-  const meta = await getRecord<VersionMetaRecord>(scope, VERSION_META_STORE, versionMetaId);
   if (meta) await deleteRecord(scope, storeName, meta.key as IDBValidKey);
 }
