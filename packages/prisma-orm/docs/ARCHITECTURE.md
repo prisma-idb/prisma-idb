@@ -80,7 +80,7 @@ Sync hooks into both routes. It extends single plans into a batch that also writ
 
 ## Query planning
 
-`client-idb` decides how to read a store before it builds the driver plan. This section explains how, and why the result is always correct. [ADR 020](adrs/ADR%20020%20-%20Query%20Planner.md) records the decision.
+`client-idb` decides how to read a store before it builds the driver plan. This section explains how, and why the result is always correct. [ADR 021](adrs/ADR%20021%20-%20Query%20Planner.md) records the decision.
 
 ### From query to driver plan
 

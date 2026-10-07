@@ -1,4 +1,4 @@
-# ADR 020: A query planner chooses the IndexedDB access path
+# ADR 021: A query planner chooses the IndexedDB access path
 
 - **Status:** Accepted
 - **Date:** 2026-10-05
