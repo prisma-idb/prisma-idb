@@ -1,5 +1,27 @@
 # @prisma-idb/client-idb
 
+## 0.12.0
+
+### Minor Changes
+
+- [#286](https://github.com/prisma-idb/prisma-idb/pull/286) [`a5aa59a`](https://github.com/prisma-idb/prisma-idb/commit/a5aa59a834b43827ce940431481b2db7a49ac99c) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Answer `count()` with the driver's native count when key ranges alone decide the match, without loading rows. Check foreign-key and `restrict` existence by reading one primary key instead of scanning the parent or child store. Filters that ranges cannot decide still read only the rows in the index range, then apply the full filter.
+
+  A `null` value in a `restrict` check now references no child rows.
+
+- [#286](https://github.com/prisma-idb/prisma-idb/pull/286) [`7d7ba73`](https://github.com/prisma-idb/prisma-idb/commit/7d7ba73cfb0ea8c4d8ef518928febba40a2b9155) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Use planned key and index ranges for mutation lookups, bulk writes, upsert, nested relation writes and referential actions. Reapply the full filter before each write. Collect matches before changing the walked index so each row is written once, within the same transaction.
+
+- [#290](https://github.com/prisma-idb/prisma-idb/pull/290) [`036ce01`](https://github.com/prisma-idb/prisma-idb/commit/036ce01208cc41851bd420023556756f86fc5da4) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Exclude primary-key fields from `update`, `updateAll`, `updateCount`, and `upsert.update` input types. This is a breaking type change: ported Prisma code that sets `id` in update data stops compiling, even when it repeats the existing key. For dotted key paths, the containing field is excluded because updates shallow-merge records. Create inputs are unchanged, and runtime protection remains for untyped callers.
+
+### Patch Changes
+
+- [#290](https://github.com/prisma-idb/prisma-idb/pull/290) [`7bf9398`](https://github.com/prisma-idb/prisma-idb/commit/7bf9398f141a0f14f5f9146aff69c50250eff850) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Document the explicit rejection of primary-key changes across client update APIs, with atomic rollback of referential actions and sync metadata.
+
+- Updated dependencies [[`ef3cfac`](https://github.com/prisma-idb/prisma-idb/commit/ef3cfac839a45353b5df68d4569b0c2effe45f2a), [`7bf9398`](https://github.com/prisma-idb/prisma-idb/commit/7bf9398f141a0f14f5f9146aff69c50250eff850)]:
+  - @prisma-idb/driver-idb@0.12.0
+  - @prisma-idb/adapter-idb@0.12.0
+  - @prisma-idb/runtime-idb@0.12.0
+  - @prisma-idb/target-idb@0.12.0
+
 ## 0.11.0
 
 ### Minor Changes

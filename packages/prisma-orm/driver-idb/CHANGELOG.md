@@ -1,5 +1,13 @@
 # @prisma-idb/driver-idb
 
+## 0.12.0
+
+### Patch Changes
+
+- [#290](https://github.com/prisma-idb/prisma-idb/pull/290) [`ef3cfac`](https://github.com/prisma-idb/prisma-idb/commit/ef3cfac839a45353b5df68d4569b0c2effe45f2a) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Explain that primary keys are immutable. Advise handling dependent records before deleting and recreating a row, because restrictive relations can block the delete and cascading relations can delete dependents.
+
+- [#290](https://github.com/prisma-idb/prisma-idb/pull/290) [`7bf9398`](https://github.com/prisma-idb/prisma-idb/commit/7bf9398f141a0f14f5f9146aff69c50250eff850) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Reject primary-key-changing updates consistently instead of hanging or duplicating rows. Route synchronous cursor failures to operation errors, abort failed transactions, and settle pending scope operations on abort.
+
 ## 0.11.0
 
 ### Minor Changes
