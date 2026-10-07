@@ -115,7 +115,7 @@ It scans the whole store and filters in memory for these shapes:
 - `not`, and an OR across different fields or operators,
 - filters on relations,
 - `orderBy` on more than one field,
-- fields that no index covers, and `multiEntry` indexes,
+- queries with an unindexed or `multiEntry` predicate and no other usable source (another source can narrow the candidates, with the full filter still applied),
 - queries whose lookup values multiply to more than 1,024 prefixes on every candidate source (the planner rejects one source at a time, so another source can still serve the query),
 - fields whose index could omit a matching record, such as a `null` in a nullable field.
 

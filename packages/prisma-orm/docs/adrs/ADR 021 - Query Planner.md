@@ -59,7 +59,7 @@ Shapes that aren't accelerated scan the store and filter in memory:
 - `not`, and an OR whose branches use different fields or operators.
 - Filters on relations.
 - `orderBy` with more than one field.
-- Filters on a field with no index, or on a `multiEntry` index.
+- Queries with an unindexed or `multiEntry` predicate and no other usable source. If another source narrows the candidates, the ORM still applies the full filter.
 - A source whose lookup values multiply to more than 1,024 prefixes. The planner rejects that source, not the whole query. Another usable source can still serve it; the query scans the store only when none can.
 
 A single-field `orderBy` with `take` walks an index in order only when that index is also the source that serves the filter, or when the filter needs no source and an index covers the `orderBy` field with complete keys. If the filter picks a source on a different field, the query reads that source's range and sorts the rows in memory.
@@ -76,7 +76,7 @@ A plan is `exact` when the key ranges consume every condition in the filter. The
 
 ### 5. Writes use the same access paths
 
-`updateAll`, `deleteAll`, `update`, `upsert`, nested relation writes and referential actions walk the planned range instead of the whole store. Primary keys stay immutable ([ADR 020](ADR%20020%20-%20Primary%20Keys%20Are%20Immutable.md)). An update that changes a primary key fails and rolls back the whole mutation. Non-primary fields in an index can still change. Two cases need care, because a write can change what the walk sees:
+`updateAll`, `deleteAll`, `update`, `upsert`, nested relation writes and referential actions use the planner's selected access path. This can be a planned range or a full-store scan. Primary keys stay immutable ([ADR 020](ADR%20020%20-%20Primary%20Keys%20Are%20Immutable.md)). An update that changes a primary key fails and rolls back the whole mutation. Non-primary fields in an index can still change. Two cases need care, because a write can change what the walk sees:
 
 - **A patch that changes fields used by the walked index.** The ORM reads and collects every match first, then writes each row by its unchanged primary key. For example, changing an indexed `status` from `"todo"` to `"done"` moves the index entry while the row's `id` stays fixed. Updating during the index walk could make that entry re-enter the cursor or a later range.
 - **Several ranges with a limit.** The limit applies to the combined matches, so the ORM collects first as well.
