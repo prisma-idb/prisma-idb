@@ -29,10 +29,15 @@ runs:
       if: steps.cache.outputs.cache-hit != 'true'
       shell: bash
       working-directory: ${{ inputs.working-directory }}
-      run: pnpm exec playwright install --with-deps ${{ inputs.browsers }}
+      # The apt/CDN download occasionally hangs on a runner; cap each attempt and retry once.
+      run: |
+        timeout 300 pnpm exec playwright install --with-deps ${{ inputs.browsers }} \
+          || timeout 300 pnpm exec playwright install --with-deps ${{ inputs.browsers }}
 
     - name: Install Playwright system dependencies
       if: steps.cache.outputs.cache-hit == 'true'
       shell: bash
       working-directory: ${{ inputs.working-directory }}
-      run: pnpm exec playwright install-deps ${{ inputs.browsers }}
+      run: |
+        timeout 300 pnpm exec playwright install-deps ${{ inputs.browsers }} \
+          || timeout 300 pnpm exec playwright install-deps ${{ inputs.browsers }}

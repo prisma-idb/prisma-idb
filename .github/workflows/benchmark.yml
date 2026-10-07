@@ -49,6 +49,7 @@ env:
 jobs:
   benchmark-pr-compare:
     if: github.event_name == 'pull_request'
+    timeout-minutes: 45
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -101,7 +102,10 @@ jobs:
 
       - name: Install Playwright Browser
         working-directory: ${{ matrix.suite.dir }}
-        run: pnpm exec playwright install --with-deps chromium
+        # The apt/CDN download occasionally hangs on a runner; cap each attempt and retry once.
+        run: |
+          timeout 300 pnpm exec playwright install --with-deps chromium \
+            || timeout 300 pnpm exec playwright install --with-deps chromium
 
       - name: Prepare benchmark app (PR head)
         working-directory: ${{ matrix.suite.dir }}
@@ -318,6 +322,7 @@ jobs:
 
   run-main-benchmark:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    timeout-minutes: 45
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -364,7 +369,10 @@ jobs:
 
       - name: Install Playwright Browser
         working-directory: ${{ matrix.suite.dir }}
-        run: pnpm exec playwright install --with-deps chromium
+        # The apt/CDN download occasionally hangs on a runner; cap each attempt and retry once.
+        run: |
+          timeout 300 pnpm exec playwright install --with-deps chromium \
+            || timeout 300 pnpm exec playwright install --with-deps chromium
 
       - name: Prepare benchmark app
         working-directory: ${{ matrix.suite.dir }}
