@@ -343,7 +343,7 @@ it("matches full scan for each accelerated shape and conservative fallback", asy
       { seed: 99004, numRuns: 40 }
     );
   });
-});
+}, 120_000); // each run checks rows, count and existence for ~40 filters, so it outgrows the 30s default under CI load
 
 it("matches full scan for generated boolean combinations of filters", async () => {
   const atom = fc.oneof(
