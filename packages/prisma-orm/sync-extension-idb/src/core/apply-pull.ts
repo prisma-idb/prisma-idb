@@ -4,11 +4,22 @@
  * Applied server changes use raw driver plans (not the tracked ORM), so they
  * do NOT generate outbox events — tracking them would create a push loop.
  *
- * Guards per log entry:
- * 1. **Staleness**: skip if `lastAppliedChangeId >= log.changelogId` (already newer;
- *    ids are UUID v7, so string order is time order).
- * 2. **Pending push**: skip if `localChangePending === true` (local mutation
+ * A page is applied in order and stops at the first row that cannot be
+ * applied yet (see "Halting" below), so local state is always a consistent
+ * prefix of the server's history — a later row may depend on an earlier one.
+ *
+ * Guards per log entry, in this order:
+ * 1. **Staleness**: the row counts as already applied if
+ *    `lastAppliedChangeId >= log.changelogId` (ids are UUID v7, so string
+ *    order is time order). This is what makes replaying a page safe, for
+ *    example after a crash between applying it and saving the cursor.
+ * 2. **Pending push**: halt if `localChangePending === true` (local mutation
  *    not yet confirmed synced — let it win to avoid last-write-wins races).
+ *
+ * Halting: a transaction failure (for example a full disk or a `restrict`
+ * referential action) or a pending local change stops the page at that row.
+ * The rows after it are not applied and `lastChangelogId` stays before it,
+ * so the next pull starts at the halted row.
  *
  * The meta check, the record write (including any cascading referential
  * actions for `delete`), and the meta update all run inside ONE
@@ -25,10 +36,10 @@
  * IDB stores native JS values, not their JSON-safe wire forms.
  *
  * Decoded records and keys are checked against the client contract. Corrupt
- * rows are counted separately and consumed by the cursor; they never open a
- * write transaction. Server `validationError` markers are consumed the same
- * way, without decoding or deleting. Nullable records still signal a revoked
- * ownership delete.
+ * rows are counted separately and consumed by the cursor, since no retry can
+ * fix them; they never open a write transaction. Server `validationError`
+ * markers are consumed the same way, without decoding or deleting. Nullable
+ * records still signal a revoked ownership delete.
  *
  * A `create`/`update` log with `record: null` means the server re-checked
  * ownership (ADR 014's `buildPullQueries` live re-check) and this client is
@@ -47,7 +58,12 @@ import { deleteRecord, getRecord, putRecord } from "./raw-store";
 import { VERSION_META_STORE, versionMetaKey } from "./version-meta";
 import type { LogWithRecord, ApplyPullResult, VersionMetaRecord } from "../types";
 
-type LogOutcome = "applied" | "skipped" | "validation-failure";
+/**
+ * What happened to one pulled row. The first three are *consumed*: the cursor
+ * may move past them. `halt` means the row could not be applied now and the
+ * page must stop there.
+ */
+type LogOutcome = "applied" | "already-applied" | "invalid" | "halt";
 
 export async function applyPull<TContract extends IdbContract>(
   syncClient: SyncIdbClient<TContract>,
@@ -56,6 +72,7 @@ export async function applyPull<TContract extends IdbContract>(
   let applied = 0;
   let skipped = 0;
   let validationFailed = 0;
+  let halted = false;
   let lastChangelogId: string | null = null;
   const contract = syncClient.contract;
 
@@ -74,17 +91,19 @@ export async function applyPull<TContract extends IdbContract>(
 
     const outcome = await applyLog(syncClient, contract, log);
 
+    if (outcome === "halt") {
+      skipped++;
+      halted = true;
+      break;
+    }
     if (outcome === "applied") applied++;
     else skipped++;
-    if (outcome === "validation-failure") validationFailed++;
+    if (outcome === "invalid") validationFailed++;
 
-    // Applied and corrupt rows are consumed by the cursor; other skips are not.
-    if (outcome !== "skipped" && (lastChangelogId === null || log.changelogId > lastChangelogId)) {
-      lastChangelogId = log.changelogId;
-    }
+    if (lastChangelogId === null || log.changelogId > lastChangelogId) lastChangelogId = log.changelogId;
   }
 
-  return { applied, skipped, validationFailed, lastChangelogId };
+  return { applied, skipped, validationFailed, halted, lastChangelogId };
 }
 
 /**
@@ -94,7 +113,7 @@ export async function applyPull<TContract extends IdbContract>(
  * invalid bigint wire value). A delete or revoked-ownership log has no
  * record to validate, so its `record` is `null`.
  */
-function decodePullLog<TContract extends IdbContract>(
+export function decodePullLog<TContract extends IdbContract>(
   contract: TContract,
   log: LogWithRecord,
   isDelete: boolean
@@ -138,23 +157,23 @@ async function applyLog<TContract extends IdbContract>(
   contract: TContract,
   log: LogWithRecord
 ): Promise<LogOutcome> {
-  if (log.validationError === "KEYPATH_VALIDATION_FAILURE") return "validation-failure";
+  if (log.validationError === "KEYPATH_VALIDATION_FAILURE") return "invalid";
 
   const storeName = getStoreName(contract, log.model);
   const isDelete = log.operation === "delete" || log.record === null;
   const storeNames = isDelete ? collectDeleteStoreNames(contract, log.model) : [storeName];
   const decoded = decodePullLog(contract, log, isDelete);
-  if (!decoded) return "validation-failure";
+  if (!decoded) return "invalid";
   const { key, record } = decoded;
   const metaId = versionMetaKey(log.model, log.keyPath);
 
   try {
-    const applied = await syncClient.withTransaction([VERSION_META_STORE, ...storeNames], async (scope) => {
+    return await syncClient.withTransaction([VERSION_META_STORE, ...storeNames], async (scope): Promise<LogOutcome> => {
       const meta = await getRecord<VersionMetaRecord>(scope, VERSION_META_STORE, metaId);
 
       if (meta) {
-        if (meta.localChangePending) return false;
-        if (meta.lastAppliedChangeId !== null && meta.lastAppliedChangeId >= log.changelogId) return false;
+        if (meta.lastAppliedChangeId !== null && meta.lastAppliedChangeId >= log.changelogId) return "already-applied";
+        if (meta.localChangePending) return "halt";
       }
 
       if (isDelete) {
@@ -175,12 +194,11 @@ async function applyLog<TContract extends IdbContract>(
         localChangePending: false,
       } satisfies VersionMetaRecord);
 
-      return true;
+      return "applied";
     });
-    return applied ? "applied" : "skipped";
   } catch {
-    // e.g. a `restrict` referential action or a write failure mid-transaction —
-    // skip silently, retry next pull.
-    return "skipped";
+    // e.g. a `restrict` referential action or a write failure mid-transaction:
+    // halt the page, so the next pull retries this row before any later one.
+    return "halt";
   }
 }

@@ -35,6 +35,7 @@ For an overview of how the packages fit together, see [ARCHITECTURE.md](../ARCHI
 | 019 | [Apply planned migrations as written](ADR%20019%20-%20Apply%20Planned%20Migrations%20As%20Written.md)                     | Accepted   | The browser applies every planned operation, destructive ones included. Destructive changes are flagged at plan time.                                                                              |
 | 020 | [Primary keys are immutable](ADR%20020%20-%20Primary%20Keys%20Are%20Immutable.md)                                         | Accepted   | Updates reject primary-key changes with `PRIMARY_KEY_CHANGE_UNSUPPORTED`, and the update types omit key fields. To change a key, delete the row and create a new one.                              |
 | 021 | [Query planner](ADR%20021%20-%20Query%20Planner.md)                                                                       | Accepted   | A planner picks a primary-key or index access path. The ORM always reapplies the full filter, and row order is unspecified without `orderBy`.                                                      |
+| 022 | [Rejected pushes reconcile to the server row](ADR%20022%20-%20Rejected%20Pushes%20Reconcile%20to%20the%20Server%20Row.md) | Proposed   | When the server rejects a push for good, the client replaces its local row with the server row from the push result. Rejected events stay in the outbox.                                           |
 
 ## Reading order for sync
 

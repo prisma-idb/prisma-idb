@@ -60,6 +60,7 @@ describe("wire-form SQL keys", () => {
           applied: 0,
           skipped: 1,
           validationFailed: 1,
+          halted: false,
           lastChangelogId: pulled.logs[0]!.changelogId,
         });
         expect(transaction).not.toHaveBeenCalled();
@@ -103,6 +104,7 @@ describe("wire-form SQL keys", () => {
         applied: 1,
         skipped: 0,
         validationFailed: 0,
+        halted: false,
         lastChangelogId: pulled.logs[0]!.changelogId,
       });
       expect(

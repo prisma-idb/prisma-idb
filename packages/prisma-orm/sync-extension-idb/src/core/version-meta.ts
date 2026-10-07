@@ -11,3 +11,10 @@ export const VERSION_META_STORE = "_idb_sync_version_meta";
 export function versionMetaKey(modelName: string, key: unknown): string {
   return `${modelName}::${JSON.stringify(key)}`;
 }
+
+/** The key `id` was built from by `versionMetaKey(modelName, key)`. Throws if `id` is not such an id. */
+export function keyOfVersionMetaId(id: string, modelName: string): unknown {
+  const prefix = `${modelName}::`;
+  if (!id.startsWith(prefix)) throw new Error(`Version meta id "${id}" is not for model "${modelName}"`);
+  return JSON.parse(id.slice(prefix.length));
+}

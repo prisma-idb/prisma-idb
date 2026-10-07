@@ -32,6 +32,12 @@ export const pushResultSchema = z.object({
   success: z.boolean(),
   error: z.string().optional(),
   retryable: z.boolean().optional(),
+  /**
+   * On a non-retryable failure: the row's current state on the server, or
+   * `null` if it is deleted or not the caller's. The client replaces its
+   * rejected local write with it.
+   */
+  record: z.record(z.string(), z.unknown()).nullable().optional(),
 });
 export type PushResultBody = z.infer<typeof pushResultSchema>;
 
