@@ -76,9 +76,9 @@ A plan is `exact` when the key ranges consume every condition in the filter. The
 
 ### 5. Writes use the same access paths
 
-`updateAll`, `deleteAll`, `update`, `upsert`, nested relation writes and referential actions walk the planned range instead of the whole store. Two cases need care, because a write can change what the walk sees:
+`updateAll`, `deleteAll`, `update`, `upsert`, nested relation writes and referential actions walk the planned range instead of the whole store. Primary keys stay immutable ([ADR 020](ADR%20020%20-%20Primary%20Keys%20Are%20Immutable.md)). An update that changes a primary key fails and rolls back the whole mutation. Non-primary fields in an index can still change. Two cases need care, because a write can change what the walk sees:
 
-- **A patch that changes the walked key.** The ORM reads and collects every match first, then writes each row by primary key. Otherwise a moved row could re-enter the cursor or a later range.
+- **A patch that changes fields used by the walked index.** The ORM reads and collects every match first, then writes each row by its unchanged primary key. For example, changing an indexed `status` from `"todo"` to `"done"` moves the index entry while the row's `id` stays fixed. Updating during the index walk could make that entry re-enter the cursor or a later range.
 - **Several ranges with a limit.** The limit applies to the combined matches, so the ORM collects first as well.
 
 All reads and writes of one operation stay in the same transaction. No step waits on anything that yields to another macrotask between requests, such as a timer or a network call. Awaiting an IndexedDB request is fine, because its continuation runs as a microtask before the transaction can auto-commit ([ADR 005](ADR%20005%20-%20Event-Driven%20Execution%20No%20Async%20Await.md)).
