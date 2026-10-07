@@ -209,6 +209,32 @@ describe("a push the server rejected for good", () => {
       expect((await versionMeta(client, 'User::"u1"'))?.localChangePending).toBe(false);
     });
 
+    it("holds when the server answers in a different order than the events were sent", async () => {
+      const { client } = await createTestSyncClient();
+      const users = asAccessors(client.orm)["users"]!;
+      await users.create({ id: "u1", name: "Alice" });
+      await syncOnce(client, accept);
+      await users.where({ id: "u1" }).update({ name: "First edit" });
+      await users.where({ id: "u1" }).update({ name: "Second edit" });
+
+      const worker = createSyncWorker({
+        syncClient: client,
+        pushHandler: async (events) =>
+          events
+            .map((event) =>
+              (event.payload as { patch?: { name?: string } }).patch?.name === "First edit"
+                ? reject({ id: "u1", name: "Server name" })(event)
+                : accept(event)
+            )
+            .reverse(),
+        pullHandler: async () => [],
+      });
+      workers.push(worker);
+      await worker.forceSync();
+
+      expect(await scanAll(client, "users")).toEqual([{ id: "u1", name: "Second edit" }]);
+    });
+
     it("lets the last rejected event replace the row with its own, newer server row", async () => {
       const { client } = await createTestSyncClient();
       const users = asAccessors(client.orm)["users"]!;

@@ -236,7 +236,12 @@ export function createSyncWorker<TContract extends IdbContract>(options: SyncWor
    */
   async function recordPushResults(events: OutboxEvent[], results: PushResult[]) {
     const eventsById = new Map(events.map((event) => [event.id, event]));
-    const matched = results.filter(({ id }) => eventsById.has(id));
+    // In the order the events were sent, whatever order the server answered in: a
+    // rejected event's reconcile relies on the later events of its row being handled after it.
+    const sentOrder = new Map(events.map((event, index) => [event.id, index]));
+    const matched = results
+      .filter(({ id }) => eventsById.has(id))
+      .sort((a, b) => sentOrder.get(a.id)! - sentOrder.get(b.id)!);
     const reconciliations = new Map<string, Reconciliation>();
     let unreconciled = 0;
     for (const result of matched) {
