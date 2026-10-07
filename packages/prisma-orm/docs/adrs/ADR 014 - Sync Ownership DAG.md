@@ -6,7 +6,7 @@
 
 ## Summary
 
-The sync server decides who may push and pull each record by following relations from the record back to a root model, such as `User`. This set of paths is the ownership graph. It is built from the contract when the server starts. A record is allowed if any one of its paths leads to the caller's root record.
+The sync server decides who may push and pull each record by following relations from the record back to a root model, such as `User`. This set of paths is the ownership graph. It is built from the contract when the server starts. Access is allowed if any one of a record's paths leads to the caller's root record. Creates and updates additionally check every populated outgoing tenant parent.
 
 This logic lives in a separate package, `@prisma-idb/sync-server`, which never ships to the browser. It doesn't touch a database itself: it returns descriptions of the checks and queries, and the app runs them.
 
@@ -20,7 +20,7 @@ The old generator (`packages/generator`) solved both with one mechanism:
 - An ownership graph built from every model's relations back to that root.
 - For each model, every path back to the root, not just the shortest one.
 
-Push checked that a record's path led to the pusher's `scopeKey` (the id of the caller's root record). Pull built its queries from the same paths.
+Existing-row access and pull used OR across paths. The later generator separately checked all populated paths on write payloads (`emitMultiPathPayloadOwnershipCheck`, added in commit `5ffaa780`). A matching User path could not mask a foreign-user Meal or Recipe. The SQL adapter now enforces that write-integrity distinction, with OR among alternate routes through the same parent.
 
 Two points shaped where this logic lives:
 
@@ -64,7 +64,9 @@ For each outbox event:
 
 1. If the event names a model that isn't in `clientContract`, reject it as `unknown-model`. A real client can't create events for models it doesn't have.
 2. Find every path from the event's model to the root.
-3. Build one check: the record's own key, plus any one of those paths leading to `scopeKey`. The app runs it. If nothing matches, the push is rejected as a scope violation.
+3. Authorize existing-row access through any path leading to `scopeKey`.
+4. For create/update, authorize the candidate and check every populated outgoing tenant parent. Group root paths by their first relation; each group must resolve to the caller through at least one route. Skip null optional parents. Missing populated parents fail. Merge stored rows with patches so omitted FKs retain their values.
+5. On a resolved violation, reject with non-retryable `SCOPE_VIOLATION` before the entity or changelog write.
 
 Checking that the payload matches the contract comes first, before any of this. That is [ADR 015](ADR%20015%20-%20Contract-Derived%20Validation.md)'s job.
 
@@ -72,7 +74,7 @@ Checking that the payload matches the contract comes first, before any of this. 
 
 ### Pull
 
-For the root model, the row's own key must equal `scopeKey`. For every other model, `buildPullQueries` returns the same multi-path check that push uses. So a client can never pull a row it couldn't have pushed.
+For the root model, the row's own key must equal `scopeKey`. For every other model, `buildPullQueries` returns the OR access check, without candidate parent-integrity checks. Historical mixed-owner rows can therefore pass a live pull check even though a patch retaining those parents fails.
 
 Pull has two steps, as in the old generator. `buildPullQueries` is only the second:
 
@@ -90,7 +92,9 @@ A record reachable through relation A or relation B should be allowed either way
 - **Requiring every path** would wrongly reject a record owned through a secondary relation.
 - **Using only the shortest path** would wrongly reject a record whose shortest path happens to be broken, for example by a null foreign key on that row, while a longer path is intact.
 
-The old generator worked the same way.
+This rule governs existing-row access and pull, and alternate routes within each candidate parent group. It does not allow one populated candidate parent to mask a foreign-user parent. Inverse collections and global parents without root paths are excluded from write integrity; server-only parents with root paths are included. Checked joins must be single-field FKs to parent primary keys. The SQL adapter rejects checked FK defaults until it can materialize them before authorization.
+
+Historical mixed-owner rows retain OR read and delete access. A complete repair that leaves all populated parents in the caller's scope may pass; no sole repair owner is established. This change does not clean up data, propagate ownership transfers to inverse children or validate mutations outside sync. Non-retryable push results reconcile under ordinary pull authorization, as described in [ADR 022](ADR%20022%20-%20Rejected%20Pushes%20Reconcile%20to%20the%20Server%20Row.md).
 
 ### Adding the `Changelog` model to the server schema
 

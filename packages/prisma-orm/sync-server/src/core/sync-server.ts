@@ -2,7 +2,8 @@ import { domainModelsAtDefaultNamespace } from "@prisma/orm-framework/contract/t
 import { assertRecordValidator, validateRecord, validateKeyFields } from "@prisma-idb/target-idb/runtime";
 import type { ValidationCodecLookup } from "@prisma-idb/target-idb/runtime";
 import { defaultValidationCodecs } from "./validation-codecs";
-import { resolveAuthorizationPaths } from "./authorization-paths";
+import { resolveAuthorizationPaths, resolveParentReferenceChecks } from "./authorization-paths";
+import type { ParentReferenceCheck } from "./authorization-paths";
 import { buildOwnershipDag } from "./ownership-dag";
 import type { OwnershipDag, SyncServerContract } from "./ownership-dag";
 
@@ -69,7 +70,11 @@ export type OwnershipCheck =
     };
 
 export type PushCheck =
-  | OwnershipCheck
+  | Exclude<OwnershipCheck, { kind: "scoped" }>
+  | (Extract<OwnershipCheck, { kind: "scoped" }> & {
+      /** Additional candidate integrity checks for create/update. Adapters must derive these when absent. */
+      readonly parentReferences?: readonly ParentReferenceCheck[];
+    })
   | {
       readonly kind: "validation-failure";
       readonly error: "RECORD_VALIDATION_FAILURE" | "KEYPATH_VALIDATION_FAILURE";
@@ -180,7 +185,18 @@ export function validatePush(
         return { kind: "validation-failure", error: "RECORD_VALIDATION_FAILURE", issues: result.issues };
       }
     }
-    return buildOwnershipCheck(dag, contract, getKeyField, event.model, keyField, event.wireKey, options.scopeKey);
+    const check = buildOwnershipCheck(
+      dag,
+      contract,
+      getKeyField,
+      event.model,
+      keyField,
+      event.wireKey,
+      options.scopeKey
+    );
+    return check.kind === "scoped" && event.operation !== "delete"
+      ? { ...check, parentReferences: resolveParentReferenceChecks(contract, getKeyField, event.model, check.paths) }
+      : check;
   }
 
   return events.map((event) => ({ eventId: event.id, model: event.model, check: checkEvent(event) }));

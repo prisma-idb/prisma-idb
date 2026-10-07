@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { createSyncServer } from "../src/core/sync-server";
+import { createSyncServer, defaultGetKeyField, validatePush } from "../src/core/sync-server";
+import { buildOwnershipDag } from "../src/core/ownership-dag";
 import type { SyncServerContract } from "../src/core/ownership-dag";
 import { kanbanClientContract, kanbanContract } from "./helpers";
 
@@ -125,6 +126,7 @@ describe("createSyncServer", () => {
         rootKeyField: "id",
         scopeKey: "u1",
         paths: [["owner"]],
+        parentReferences: [{ relation: "owner", localField: "ownerId", nullable: false, paths: [["owner"]] }],
       });
       expect(missingKey?.check).toMatchObject({ kind: "validation-failure", error: "KEYPATH_VALIDATION_FAILURE" });
       for (const result of [hiddenField, badVisibleCreate, badVisibleUpdate]) {
@@ -207,6 +209,7 @@ describe("createSyncServer", () => {
         rootKeyField: "id",
         scopeKey: "user-1",
         paths: [["board", "owner"]],
+        parentReferences: [{ relation: "board", localField: "boardId", nullable: false, paths: [["board", "owner"]] }],
       });
     });
 
@@ -356,4 +359,49 @@ describe("createSyncServer", () => {
       expect(result?.check).toEqual({ kind: "unknown-model" });
     });
   });
+});
+
+it("adds tenant parent descriptors only to create/update checks", () => {
+  const syncServer = server();
+  const payload = { id: "c1", authorId: "user-1", todoId: null };
+  const checks = syncServer.validatePush(
+    ["create", "update", "delete"].map((operation) => ({
+      id: operation,
+      model: "Comment",
+      operation: operation as "create" | "update" | "delete",
+      payload,
+      wireKey: "c1",
+    })),
+    { scopeKey: "user-1" }
+  );
+  for (const result of checks.slice(0, 2)) {
+    expect(result.check).toMatchObject({
+      parentReferences: [
+        { relation: "author", localField: "authorId", nullable: false, paths: [["author"]] },
+        { relation: "todo", localField: "todoId", nullable: true, paths: [["todo", "board", "owner"]] },
+      ],
+    });
+  }
+  expect(checks[2]!.check).not.toHaveProperty("parentReferences");
+  expect(
+    syncServer.buildPullQueries([{ changelogId: "log", model: "Comment", key: "c1" }], { scopeKey: "user-1" })[0]!.check
+  ).not.toHaveProperty("parentReferences");
+});
+
+it("generates the same parent checks through standalone validatePush", () => {
+  const contract = kanbanContract();
+  const clientContract = kanbanClientContract();
+  const dag = buildOwnershipDag(contract, clientContract, "User");
+  const events = [
+    {
+      id: "e1",
+      model: "Comment",
+      operation: "create" as const,
+      payload: { id: "c1", authorId: "user-1", todoId: null },
+      wireKey: "c1",
+    },
+  ];
+  expect(validatePush(dag, contract, clientContract, defaultGetKeyField, events, { scopeKey: "user-1" })).toEqual(
+    server().validatePush(events, { scopeKey: "user-1" })
+  );
 });

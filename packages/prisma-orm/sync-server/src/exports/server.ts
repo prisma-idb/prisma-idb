@@ -1,7 +1,8 @@
 export type { OwnershipDag, SyncServerContract } from "../core/ownership-dag";
 export { buildOwnershipDag } from "../core/ownership-dag";
 
-export { resolveAuthorizationPaths } from "../core/authorization-paths";
+export type { ParentReferenceCheck } from "../core/authorization-paths";
+export { resolveAuthorizationPaths, resolveParentReferenceChecks } from "../core/authorization-paths";
 
 export type {
   CreateSyncServerOptions,
