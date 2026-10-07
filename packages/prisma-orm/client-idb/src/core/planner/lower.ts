@@ -1,6 +1,6 @@
 import type { PlanMeta } from "@prisma/orm-framework/contract/types";
 import { evaluateFilter } from "@prisma-idb/adapter-idb/runtime";
-import type { IdbAtomicPlan, IdbPlanBody, IdbRowFilter } from "@prisma-idb/driver-idb/runtime";
+import type { IdbAtomicPlan, IdbKeyRangeDescriptor, IdbPlanBody, IdbRowFilter } from "@prisma-idb/driver-idb/runtime";
 import { buildRowComparator } from "../query-shaping";
 import type { QueryCatalog } from "./catalog";
 import type { LogicalPlan, PlanRequest } from "./plan";
@@ -112,4 +112,167 @@ export function lowerRows(
       return result;
     },
   };
+}
+
+/** One driver operation and the synchronous reduction of its result to a row count. */
+export interface LoweredCount {
+  readonly idbPlan: IdbPlanBody;
+  finish(rows: Record<string, unknown>[]): number;
+}
+
+/** One driver operation and the synchronous reduction of its result to a yes or no. */
+export interface LoweredExists {
+  readonly idbPlan: IdbPlanBody;
+  finish(rows: Record<string, unknown>[]): boolean;
+}
+
+/**
+ * Lower a row count. An `exact` plan counts index entries and loads no rows.
+ * The planner emits disjoint ranges on a non-multi-entry source, so each row
+ * is counted once. Anything else counts the rows that pass the filter.
+ * Pagination and `additionalFilter` always take the row path.
+ */
+export function lowerCount(
+  catalog: QueryCatalog,
+  logical: LogicalPlan,
+  meta: PlanMeta,
+  request: RowsRequest,
+  additionalFilter?: IdbRowFilter
+): LoweredCount {
+  const paginated = request.skip !== undefined || request.take !== undefined;
+  if (!logical.exact || paginated || additionalFilter !== undefined) {
+    const lowered = lowerRows(catalog, logical, meta, request, additionalFilter);
+    return { idbPlan: lowered.idbPlan, finish: (rows) => lowered.finish(rows).length };
+  }
+  return {
+    idbPlan: combine(
+      catalog,
+      meta,
+      accessOps(catalog, meta, logical, (target) => ({ ...target, kind: "count" }))
+    ),
+    finish: (rows) => rows.reduce((total, row) => total + (row["count"] as number), 0),
+  };
+}
+
+/**
+ * Lower an existence check. An `exact` plan reads one primary key per range
+ * and loads no rows. Anything else stops each range at its first row that
+ * passes the filter.
+ */
+export function lowerExists(
+  catalog: QueryCatalog,
+  logical: LogicalPlan,
+  meta: PlanMeta,
+  request: PlanRequest,
+  additionalFilter?: IdbRowFilter
+): LoweredExists {
+  if (logical.exact && additionalFilter === undefined) {
+    return {
+      idbPlan: combine(
+        catalog,
+        meta,
+        accessOps(catalog, meta, logical, (target) => ({ ...target, kind: "keys", take: 1 }))
+      ),
+      finish: (rows) => rows.length > 0,
+    };
+  }
+  const filter: IdbRowFilter = (row) =>
+    (request.where === undefined || evaluateFilter(request.where, row)) &&
+    (additionalFilter === undefined || additionalFilter(row));
+  return {
+    idbPlan: combine(
+      catalog,
+      meta,
+      accessOps(catalog, meta, logical, (target) => ({ ...target, kind: "cursor-scan", filter, take: 1 }))
+    ),
+    finish: (rows) => rows.some(filter),
+  };
+}
+
+/** Write inputs. `take` limits matches across all planned ranges. */
+export interface WriteRequest extends PlanRequest {
+  readonly write: "put-merged" | "delete";
+  readonly patch?: Record<string, unknown>;
+}
+
+/** A cursor write, or a read that must finish before any keyed writes begin. */
+export type LoweredWrite =
+  { readonly kind: "scan"; readonly idbPlan: IdbPlanBody } | { readonly kind: "collect"; readonly rows: LoweredRows };
+
+/**
+ * Lower writes through the same access paths as reads. If the patch touches
+ * the walked key, collect every range first so moved rows cannot enter a
+ * later range or change the cursor's position. Multiple ranges with a limit
+ * also collect first, because the limit applies to their combined matches.
+ */
+export function lowerWrite(
+  catalog: QueryCatalog,
+  logical: LogicalPlan,
+  meta: PlanMeta,
+  request: WriteRequest,
+  additionalFilter?: IdbRowFilter
+): LoweredWrite {
+  const { access } = logical;
+  const walkedFields = access.kind === "ranges" ? access.source.fields : catalog.primaryKey.fields;
+  const movesKey = request.write === "put-merged" && walkedFields.some((field) => field in (request.patch ?? {}));
+  const limitedRanges = access.kind === "ranges" && access.ranges.length > 1 && request.take !== undefined;
+  if (movesKey || limitedRanges) {
+    return { kind: "collect", rows: lowerRows(catalog, logical, meta, request, additionalFilter) };
+  }
+  const filter: IdbRowFilter = (row) =>
+    (request.where === undefined || evaluateFilter(request.where, row)) &&
+    (additionalFilter === undefined || additionalFilter(row));
+  return {
+    kind: "scan",
+    idbPlan: combine(
+      catalog,
+      meta,
+      accessOps(catalog, meta, logical, (target) => ({
+        ...target,
+        kind: "scan-write",
+        write: request.write,
+        filter,
+        ...(request.patch === undefined ? {} : { patch: request.patch }),
+        ...(request.take === undefined ? {} : { take: request.take }),
+      }))
+    ),
+  };
+}
+
+interface AccessTarget {
+  readonly meta: PlanMeta;
+  readonly storeName: string;
+  readonly indexName?: string;
+  readonly range?: IdbKeyRangeDescriptor;
+}
+
+/** One operation per planned range, in ascending key order. */
+function accessOps(
+  catalog: QueryCatalog,
+  meta: PlanMeta,
+  logical: LogicalPlan,
+  build: (target: AccessTarget) => IdbAtomicPlan
+): IdbAtomicPlan[] {
+  const { access } = logical;
+  const base = { meta, storeName: catalog.storeName };
+  switch (access.kind) {
+    case "empty":
+      return [];
+    case "full":
+      return [build(base)];
+    case "ranges": {
+      const { indexName } = access.source;
+      return access.ranges.map((range) =>
+        build({
+          ...base,
+          ...(indexName === undefined ? {} : { indexName }),
+          ...(range === undefined ? {} : { range }),
+        })
+      );
+    }
+  }
+}
+
+function combine(catalog: QueryCatalog, meta: PlanMeta, ops: IdbAtomicPlan[]): IdbPlanBody {
+  return ops.length === 1 ? ops[0]! : { meta, kind: "batch", storeNames: [catalog.storeName], ops };
 }

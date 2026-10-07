@@ -4,6 +4,8 @@
 - **Date:** 2026-09-25
 - **Area:** Driver, ORM
 
+> **Partly superseded by [ADR 021](ADR%20021%20-%20Query%20Planner.md).** The query planner now decides when `count()` and key-only reads are safe. Sections 2 and 3 describe the earlier, narrower rules: native `count()` only without OR or compound indexes, and key-only reads only for primary-key existence checks. The planner also uses compound indexes and ranges, which "No single-field acceleration" and the "Deliberately left out" table defer. Sections 1 and 4 still apply.
+
 ## Summary
 
 An audit of the IndexedDB API against what these packages actually use found four gaps. This ADR records what we now use and what we deliberately left out:

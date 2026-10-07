@@ -405,3 +405,97 @@ describe("restrict and cascade on a 1:N", () => {
     db.close();
   });
 });
+
+// ── restrict with a null referenced value ─────────────────────────────────────
+
+// A child row with a null foreign-key field references no parent (SQL's
+// MATCH SIMPLE), so a parent whose referenced field is null has no children,
+// however many unrelated children carry null foreign keys.
+describe("restrict — null in the parent's referenced fields", () => {
+  const contract = defineContract({
+    family: idbFamilyPack,
+    target: idbTargetPack,
+    models: {
+      Org: {
+        store: "orgs",
+        key: "id",
+        fields: { id: "String", orgId: "String", handle: "String" },
+        relations: {
+          members: {
+            to: "Member",
+            cardinality: "1:N",
+            on: { local: ["orgId", "handle"], target: ["memberOrgId", "memberHandle"] },
+            onDelete: "restrict",
+            onUpdate: "restrict",
+          },
+        },
+      },
+      Member: {
+        store: "members",
+        key: "id",
+        fields: { id: "String", memberOrgId: "String", memberHandle: "String" },
+      },
+    },
+  });
+
+  async function seed() {
+    const { db, orm } = await setup(contract, { orgs: "id", members: "id" });
+    // Org rows: one fully set, one with a partly null tuple, one fully null.
+    await orm["orgs"]!.create({ id: "full", orgId: "A", handle: "h" });
+    await orm["orgs"]!.create({ id: "partial", orgId: "A", handle: null });
+    await orm["orgs"]!.create({ id: "empty", orgId: null, handle: null });
+    // Members with null foreign keys match none of the orgs above.
+    await orm["members"]!.create({ id: "m-partial", memberOrgId: "A", memberHandle: null });
+    await orm["members"]!.create({ id: "m-empty", memberOrgId: null, memberHandle: null });
+    return { db, orm, members: await getAllRows(db, "members") };
+  }
+
+  it("delete: removes a parent with a partly null tuple and leaves the children alone", async () => {
+    const { db, orm, members } = await seed();
+    await orm["orgs"]!.delete("partial");
+    expect((await getAllRows(db, "orgs")).map((o) => o["id"]).sort()).toEqual(["empty", "full"]);
+    expect(await getAllRows(db, "members")).toEqual(members);
+    db.close();
+  });
+
+  it("delete: removes a parent whose whole tuple is null and leaves the children alone", async () => {
+    const { db, orm, members } = await seed();
+    await orm["orgs"]!.delete("empty");
+    expect((await getAllRows(db, "orgs")).map((o) => o["id"]).sort()).toEqual(["full", "partial"]);
+    expect(await getAllRows(db, "members")).toEqual(members);
+    db.close();
+  });
+
+  it("delete: still restricts a parent whose whole tuple matches a child", async () => {
+    const { db, orm, members } = await seed();
+    await orm["members"]!.create({ id: "m-full", memberOrgId: "A", memberHandle: "h" });
+    await expect(orm["orgs"]!.delete("full")).rejects.toThrow(/Cannot delete Org/);
+    expect(await getAllRows(db, "orgs")).toHaveLength(3);
+    expect(await getAllRows(db, "members")).toHaveLength(members.length + 1);
+    db.close();
+  });
+
+  it("update: changes a field of a partly null tuple and leaves the children alone", async () => {
+    const { db, orm, members } = await seed();
+    await orm["orgs"]!.where({ id: "partial" }).update({ handle: "h2" });
+    expect((await getAllRows(db, "orgs")).find((o) => o["id"] === "partial")?.["handle"]).toBe("h2");
+    expect(await getAllRows(db, "members")).toEqual(members);
+    db.close();
+  });
+
+  it("update: changes a field of a whole-null tuple and leaves the children alone", async () => {
+    const { db, orm, members } = await seed();
+    await orm["orgs"]!.where({ id: "empty" }).update({ orgId: "B" });
+    expect((await getAllRows(db, "orgs")).find((o) => o["id"] === "empty")?.["orgId"]).toBe("B");
+    expect(await getAllRows(db, "members")).toEqual(members);
+    db.close();
+  });
+
+  it("update: still restricts a change to a tuple that a child references", async () => {
+    const { db, orm } = await seed();
+    await orm["members"]!.create({ id: "m-full", memberOrgId: "A", memberHandle: "h" });
+    await expect(orm["orgs"]!.where({ id: "full" }).update({ handle: "h2" })).rejects.toThrow(/Cannot update Org/);
+    expect((await getAllRows(db, "orgs")).find((o) => o["id"] === "full")?.["handle"]).toBe("h");
+    db.close();
+  });
+});
