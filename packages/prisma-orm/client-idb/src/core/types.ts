@@ -388,12 +388,32 @@ export type SelectedRow<
 
 // ── Patch input ───────────────────────────────────────────────────────────────
 
+// Patches shallow-merge fields, so a dotted key excludes its whole containing
+// field. Distribute over compound-key members to omit every containing field.
+type KeyPathRoot<Path extends string> = Path extends `${infer Field}.${string}` ? Field : Path;
+
+type MutableModelRow<TContract, ModelName extends string> = Omit<
+  DefaultModelRow<TContract, ModelName>,
+  KeyPathRoot<ModelKeyPath<TContract, ModelName>>
+>;
+
+// An empty object type accepts arbitrary fields. When no mutable fields remain,
+// allow empty patches while rejecting every supplied field, including keys.
+type PartialPatch<Row> = keyof Row extends never ? Record<string, never> : Partial<Row>;
+
 /**
  * Partial update shape for `update()`, `updateAll()`, `updateCount()`, and the
- * `update` arm of `upsert()`. All fields are optional — only provided fields
- * are shallow-merged onto the existing record.
+ * `update` arm of `upsert()`. Primary-key fields are excluded. Remaining
+ * fields are optional and shallow-merged onto the existing record. The
+ * conditional preserves each model's fields when ModelName is a union,
+ * while unresolved model names keep the untyped row fallback.
  */
-export type PatchInput<TContract, ModelName extends string> = Partial<DefaultModelRow<TContract, ModelName>>;
+export type PatchInput<TContract, ModelName extends string> =
+  IsNever<ModelName> extends true
+    ? Partial<DefaultModelRow<TContract, ModelName>>
+    : ModelName extends string
+      ? PartialPatch<MutableModelRow<TContract, ModelName>>
+      : never;
 
 // ── Relation mutation types ───────────────────────────────────────────────────
 
@@ -516,11 +536,17 @@ export type MutationCreateInput<TContract, ModelName extends string> = NestedCre
 
 /**
  * Input shape for `update()` with optional relation callbacks.
- * All scalar fields are optional (shallow merge); relation fields accept
- * `connect` or `disconnect` callbacks.
+ * Non-key scalar fields are optional (shallow merge); relation fields accept
+ * `connect` or `disconnect` callbacks. Check emptiness after adding relation
+ * fields so a key-only scalar row can still accept declared callbacks without
+ * an incompatible never index signature.
  */
-export type MutationUpdateInput<TContract, ModelName extends string> = PatchInput<TContract, ModelName> &
-  RelationMutationFields<TContract, ModelName>;
+export type MutationUpdateInput<TContract, ModelName extends string> =
+  IsNever<ModelName> extends true
+    ? PatchInput<TContract, ModelName> & RelationMutationFields<TContract, ModelName>
+    : ModelName extends string
+      ? PartialPatch<MutableModelRow<TContract, ModelName> & RelationMutationFields<TContract, ModelName>>
+      : never;
 
 // ── OrderBy spec ─────────────────────────────────────────────────────────────
 

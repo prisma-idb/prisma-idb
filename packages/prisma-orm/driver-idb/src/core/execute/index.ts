@@ -80,7 +80,14 @@ function executeAtomicPlan(db: IDBDatabase, plan: IdbAtomicPlan): Promise<Row[]>
       (opRows) => {
         for (const row of opRows) rows.push(row);
       },
-      (err) => reject(err)
+      (err) => {
+        reject(err);
+        try {
+          tx.abort();
+        } catch {
+          /* Already finished. */
+        }
+      }
     );
   });
 }
@@ -122,7 +129,14 @@ function executeBatchPlan(db: IDBDatabase, plan: IdbBatchPlan): Promise<Row[]> {
     // Run ops sequentially using recursive callbacks. Each op's `onComplete`
     // triggers the next op synchronously (still inside IDB event handlers),
     // which ensures we never cross a microtask boundary between IDB requests.
-    runOpsSequentially(tx, plan.ops, 0, rows, reject);
+    runOpsSequentially(tx, plan.ops, 0, rows, (err) => {
+      reject(err);
+      try {
+        tx.abort();
+      } catch {
+        /* Already finished. */
+      }
+    });
   });
 }
 

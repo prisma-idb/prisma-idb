@@ -6,6 +6,7 @@
  * branch on `error.code` without string-matching the message.
  */
 export type IdbExecuteErrorCode =
+  | "PRIMARY_KEY_CHANGE_UNSUPPORTED" // update would change an inline primary key
   | "STORE_NOT_FOUND" //        IDB store requested by plan does not exist in the database
   | "KEY_GET_FAILED" //         store.get(key) request failed
   | "GET_ALL_FAILED" //         store.getAll(range) / index.getAll(range) request failed

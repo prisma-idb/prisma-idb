@@ -28,6 +28,12 @@ const open = await db.orm.todo.where({ done: false }).orderBy({ title: "asc" }).
 
 The `internal` subpath is for companion packages such as `sync-extension-idb`. Application code uses the entry points above. For nested writes, pass a relation callback to `create()` or `update()`; the client supplies the relation mutator.
 
+## Primary-key updates
+
+`update()`, `updateAll()`, `updateCount()` and the update arm of `upsert()` reject changes to an existing row’s primary key with code `PRIMARY_KEY_CHANGE_UNSUPPORTED`. The entire mutation rolls back, including referential actions and sync outbox changes. The update input types leave out primary-key fields, so typed code can't set one. This applies to models the contract resolves; for any other model name, only the runtime check applies. At runtime, a patch that repeats the existing key is still allowed, and a query with no matching rows performs no write.
+
+Primary keys are immutable. Delete the row and create it again only after handling dependent records. Restrictive relations can block the delete, and cascading relations can delete dependent records. See [ADR 020](../docs/adrs/ADR%20020%20-%20Primary%20Keys%20Are%20Immutable.md) for the reasons.
+
 ## Documentation
 
 - [Quick Start](https://prisma-idb.dev/docs/prisma-8/getting-started)
