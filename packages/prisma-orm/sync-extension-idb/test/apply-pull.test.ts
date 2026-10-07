@@ -48,6 +48,20 @@ async function seedVersionMeta(
   });
 }
 
+/** Writes `record` over any existing version-meta row with the same id. */
+async function putVersionMeta(
+  client: Awaited<ReturnType<typeof createTestSyncClient>>["client"],
+  record: VersionMetaRecord
+): Promise<void> {
+  await client.withTransaction(["_idb_sync_version_meta"], async (scope) => {
+    await scope.execute({
+      kind: "put",
+      storeName: "_idb_sync_version_meta",
+      record: record as unknown as Record<string, unknown>,
+    } as never);
+  });
+}
+
 describe("applyPull", () => {
   it("counts corrupt rows separately, writes valid rows and consumes the corrupt tail cursor", async () => {
     const { client } = await createTestSyncClient();
@@ -57,7 +71,13 @@ describe("applyPull", () => {
       log({ changelogId: changelogId(2), operation: "create" }),
       log({ changelogId: changelogId(3), operation: "update", record: { id: "u1", name: 42 } }),
     ]);
-    expect(result).toEqual({ applied: 1, skipped: 2, validationFailed: 2, lastChangelogId: changelogId(3) });
+    expect(result).toEqual({
+      applied: 1,
+      skipped: 2,
+      validationFailed: 2,
+      halted: false,
+      lastChangelogId: changelogId(3),
+    });
     expect(transaction).toHaveBeenCalledTimes(1);
     expect(await scanAll(client, "users")).toEqual([{ id: "u1", name: "Alice" }]);
     expect((await getVersionMeta(client, 'User::"u1"'))?.lastAppliedChangeId).toBe(changelogId(2));
@@ -72,7 +92,13 @@ describe("applyPull", () => {
       log({ changelogId: changelogId(3), operation: "update", record: { id: "someone-else", name: "Alice" } }),
       log({ changelogId: changelogId(4), operation: "delete", record: null, keyPath: 42n }),
     ]);
-    expect(result).toEqual({ applied: 0, skipped: 4, validationFailed: 4, lastChangelogId: changelogId(4) });
+    expect(result).toEqual({
+      applied: 0,
+      skipped: 4,
+      validationFailed: 4,
+      halted: false,
+      lastChangelogId: changelogId(4),
+    });
     expect(transaction).not.toHaveBeenCalled();
   });
 
@@ -87,7 +113,13 @@ describe("applyPull", () => {
       log({ changelogId: changelogId(1), operation: "create", record: { id: "u1", name: "not-a-bigint" } }),
       log({ changelogId: changelogId(2), operation: "create", record: { id: "u1", name: "42" } }),
     ]);
-    expect(result).toEqual({ applied: 1, skipped: 1, validationFailed: 1, lastChangelogId: changelogId(2) });
+    expect(result).toEqual({
+      applied: 1,
+      skipped: 1,
+      validationFailed: 1,
+      halted: false,
+      lastChangelogId: changelogId(2),
+    });
     expect(await scanAll(client, "users")).toEqual([{ id: "u1", name: 42n }]);
   });
 
@@ -96,7 +128,7 @@ describe("applyPull", () => {
 
     const result = await applyPull(client, [log({ changelogId: "c1", operation: "create" })]);
 
-    expect(result).toEqual({ applied: 1, skipped: 0, validationFailed: 0, lastChangelogId: "c1" });
+    expect(result).toEqual({ applied: 1, skipped: 0, validationFailed: 0, halted: false, lastChangelogId: "c1" });
     expect(await scanAll(client, "users")).toEqual([{ id: "u1", name: "Alice" }]);
     const meta = await getVersionMeta(client, 'User::"u1"');
     expect(meta?.lastAppliedChangeId).toBe("c1");
@@ -111,7 +143,7 @@ describe("applyPull", () => {
       log({ changelogId: "c2", operation: "update", record: { id: "u1", name: "Alicia" } }),
     ]);
 
-    expect(result).toEqual({ applied: 1, skipped: 0, validationFailed: 0, lastChangelogId: "c2" });
+    expect(result).toEqual({ applied: 1, skipped: 0, validationFailed: 0, halted: false, lastChangelogId: "c2" });
     expect(await scanAll(client, "users")).toEqual([{ id: "u1", name: "Alicia" }]);
   });
 
@@ -130,12 +162,12 @@ describe("applyPull", () => {
 
     const result = await applyPull(client, [log({ changelogId: "c3", operation: "delete", record: null })]);
 
-    expect(result).toEqual({ applied: 1, skipped: 0, validationFailed: 0, lastChangelogId: "c3" });
+    expect(result).toEqual({ applied: 1, skipped: 0, validationFailed: 0, halted: false, lastChangelogId: "c3" });
     expect(await scanAll(client, "users")).toHaveLength(0);
     expect(await scanAll(client, "posts")).toHaveLength(0);
   });
 
-  it("skips a log when the local version-meta has a pending local change (local write wins)", async () => {
+  it("halts at a log when the local version-meta has a pending local change (local write wins)", async () => {
     const { client } = await createTestSyncClient();
     await seedVersionMeta(client, {
       id: 'User::"u1"',
@@ -147,11 +179,11 @@ describe("applyPull", () => {
 
     const result = await applyPull(client, [log({ changelogId: "c1", operation: "create" })]);
 
-    expect(result).toEqual({ applied: 0, skipped: 1, validationFailed: 0, lastChangelogId: null });
+    expect(result).toEqual({ applied: 0, skipped: 1, validationFailed: 0, halted: true, lastChangelogId: null });
     expect(await scanAll(client, "users")).toHaveLength(0);
   });
 
-  it("skips a stale log (lastAppliedChangeId already >= incoming changelogId)", async () => {
+  it("consumes a stale log (lastAppliedChangeId already >= incoming changelogId) without writing", async () => {
     const { client } = await createTestSyncClient();
     await applyPull(client, [log({ changelogId: "c5", operation: "create" })]);
 
@@ -159,8 +191,189 @@ describe("applyPull", () => {
       log({ changelogId: "c3", operation: "update", record: { id: "u1", name: "Stale" } }),
     ]);
 
-    expect(result).toEqual({ applied: 0, skipped: 1, validationFailed: 0, lastChangelogId: null });
+    expect(result).toEqual({ applied: 0, skipped: 1, validationFailed: 0, halted: false, lastChangelogId: "c3" });
     expect(await scanAll(client, "users")).toEqual([{ id: "u1", name: "Alice" }]);
+  });
+
+  it("moves the cursor to the last id when a fully applied page is replayed", async () => {
+    const { client } = await createTestSyncClient();
+    const page = [
+      log({ changelogId: changelogId(1), operation: "create" }),
+      log({ changelogId: changelogId(2), operation: "update", record: { id: "u1", name: "Alicia" } }),
+      log({
+        changelogId: changelogId(3),
+        model: "Post",
+        keyPath: "p1",
+        operation: "create",
+        record: { id: "p1", title: "Hi", authorId: "u1" },
+      }),
+    ];
+    await applyPull(client, page);
+
+    const replay = await applyPull(client, page);
+
+    expect(replay).toEqual({
+      applied: 0,
+      skipped: 3,
+      validationFailed: 0,
+      halted: false,
+      lastChangelogId: changelogId(3),
+    });
+    expect(await scanAll(client, "users")).toEqual([{ id: "u1", name: "Alicia" }]);
+  });
+
+  describe("a row that cannot be applied yet", () => {
+    const page = () => [
+      log({ changelogId: changelogId(1), operation: "create", record: { id: "u1", name: "Alice" } }),
+      log({ changelogId: changelogId(2), keyPath: "u2", operation: "create", record: { id: "u2", name: "Bob" } }),
+      log({ changelogId: changelogId(3), keyPath: "u3", operation: "create", record: { id: "u3", name: "Cy" } }),
+    ];
+
+    /** Makes the nth `withTransaction` call (1-based) reject, as a full disk or a closed connection would. */
+    function failTransaction(client: Awaited<ReturnType<typeof createTestSyncClient>>["client"], nth: number) {
+      const original = client.withTransaction.bind(client);
+      let calls = 0;
+      vi.spyOn(client, "withTransaction").mockImplementation(((...args: Parameters<typeof original>) =>
+        ++calls === nth ? Promise.reject(new Error("QuotaExceededError")) : original(...args)) as never);
+    }
+
+    it("halts at a failed first row: later rows are not applied and the cursor does not move", async () => {
+      const { client } = await createTestSyncClient();
+      failTransaction(client, 1);
+
+      const result = await applyPull(client, page());
+
+      expect(result).toEqual({ applied: 0, skipped: 1, validationFailed: 0, halted: true, lastChangelogId: null });
+      expect(await scanAll(client, "users")).toEqual([]);
+    });
+
+    it("halts at a failed middle row: the cursor stops before it and later rows are not applied", async () => {
+      const { client } = await createTestSyncClient();
+      failTransaction(client, 2);
+
+      const result = await applyPull(client, page());
+
+      expect(result).toEqual({
+        applied: 1,
+        skipped: 1,
+        validationFailed: 0,
+        halted: true,
+        lastChangelogId: changelogId(1),
+      });
+      expect(await scanAll(client, "users")).toEqual([{ id: "u1", name: "Alice" }]);
+    });
+
+    it("applies the rest of the page when the next pull restarts at the halted row", async () => {
+      const { client } = await createTestSyncClient();
+      failTransaction(client, 2);
+      await applyPull(client, page());
+
+      const retry = await applyPull(client, page().slice(1));
+
+      expect(retry).toEqual({
+        applied: 2,
+        skipped: 0,
+        validationFailed: 0,
+        halted: false,
+        lastChangelogId: changelogId(3),
+      });
+      expect(await scanAll(client, "users")).toHaveLength(3);
+    });
+
+    it("halts at a pending local edit until the flag clears", async () => {
+      const { client } = await createTestSyncClient();
+      await seedVersionMeta(client, {
+        id: 'User::"u2"',
+        model: "User",
+        key: "u2",
+        lastAppliedChangeId: null,
+        localChangePending: true,
+      });
+
+      const held = await applyPull(client, page());
+      expect(held).toEqual({
+        applied: 1,
+        skipped: 1,
+        validationFailed: 0,
+        halted: true,
+        lastChangelogId: changelogId(1),
+      });
+      expect(await scanAll(client, "users")).toEqual([{ id: "u1", name: "Alice" }]);
+
+      await putVersionMeta(client, {
+        id: 'User::"u2"',
+        model: "User",
+        key: "u2",
+        lastAppliedChangeId: null,
+        localChangePending: false,
+      });
+      const released = await applyPull(client, page().slice(1));
+      expect(released).toEqual({
+        applied: 2,
+        skipped: 0,
+        validationFailed: 0,
+        halted: false,
+        lastChangelogId: changelogId(3),
+      });
+    });
+
+    it("halts at a delete for a record with a pending local edit and keeps the record", async () => {
+      const { client } = await createTestSyncClient();
+      await applyPull(client, [log({ changelogId: changelogId(1), operation: "create" })]);
+      await putVersionMeta(client, {
+        id: 'User::"u1"',
+        model: "User",
+        key: "u1",
+        lastAppliedChangeId: changelogId(1),
+        localChangePending: true,
+      });
+
+      const result = await applyPull(client, [log({ changelogId: changelogId(2), operation: "delete", record: null })]);
+
+      expect(result).toEqual({ applied: 0, skipped: 1, validationFailed: 0, halted: true, lastChangelogId: null });
+      expect(await scanAll(client, "users")).toEqual([{ id: "u1", name: "Alice" }]);
+    });
+
+    it("consumes a stale row for a record with a pending local edit instead of halting", async () => {
+      const { client } = await createTestSyncClient();
+      await applyPull(client, [log({ changelogId: changelogId(5), operation: "create" })]);
+      await putVersionMeta(client, {
+        id: 'User::"u1"',
+        model: "User",
+        key: "u1",
+        lastAppliedChangeId: changelogId(5),
+        localChangePending: true,
+      });
+
+      const result = await applyPull(client, [
+        log({ changelogId: changelogId(4), operation: "update", record: { id: "u1", name: "Old" } }),
+      ]);
+
+      expect(result).toEqual({
+        applied: 0,
+        skipped: 1,
+        validationFailed: 0,
+        halted: false,
+        lastChangelogId: changelogId(4),
+      });
+    });
+  });
+
+  it("skips a row for a model not present in the contract without halting the page", async () => {
+    const { client } = await createTestSyncClient();
+
+    const result = await applyPull(client, [
+      log({ changelogId: changelogId(1), operation: "create", model: "Nonexistent" }),
+      log({ changelogId: changelogId(2), operation: "create" }),
+    ]);
+
+    expect(result).toEqual({
+      applied: 1,
+      skipped: 1,
+      validationFailed: 0,
+      halted: false,
+      lastChangelogId: changelogId(2),
+    });
   });
 
   it("skips logs for a model not present in the contract", async () => {
@@ -168,7 +381,7 @@ describe("applyPull", () => {
 
     const result = await applyPull(client, [log({ changelogId: "c1", operation: "create", model: "Nonexistent" })]);
 
-    expect(result).toEqual({ applied: 0, skipped: 1, validationFailed: 0, lastChangelogId: null });
+    expect(result).toEqual({ applied: 0, skipped: 1, validationFailed: 0, halted: false, lastChangelogId: null });
   });
 
   it("treats a create/update log with a null record as a no-op when nothing is materialized locally yet", async () => {
@@ -176,7 +389,7 @@ describe("applyPull", () => {
 
     const result = await applyPull(client, [log({ changelogId: "c1", operation: "create", record: null })]);
 
-    expect(result).toEqual({ applied: 1, skipped: 0, validationFailed: 0, lastChangelogId: "c1" });
+    expect(result).toEqual({ applied: 1, skipped: 0, validationFailed: 0, halted: false, lastChangelogId: "c1" });
     expect(await scanAll(client, "users")).toHaveLength(0);
   });
 
@@ -187,7 +400,7 @@ describe("applyPull", () => {
 
     const result = await applyPull(client, [log({ changelogId: "c2", operation: "update", record: null })]);
 
-    expect(result).toEqual({ applied: 1, skipped: 0, validationFailed: 0, lastChangelogId: "c2" });
+    expect(result).toEqual({ applied: 1, skipped: 0, validationFailed: 0, halted: false, lastChangelogId: "c2" });
     expect(await scanAll(client, "users")).toHaveLength(0);
   });
 
@@ -206,7 +419,7 @@ describe("applyPull", () => {
 
     const result = await applyPull(client, [log({ changelogId: "c3", operation: "update", record: null })]);
 
-    expect(result).toEqual({ applied: 1, skipped: 0, validationFailed: 0, lastChangelogId: "c3" });
+    expect(result).toEqual({ applied: 1, skipped: 0, validationFailed: 0, halted: false, lastChangelogId: "c3" });
     expect(await scanAll(client, "users")).toHaveLength(0);
     expect(await scanAll(client, "posts")).toHaveLength(0);
   });
@@ -226,7 +439,7 @@ describe("applyPull", () => {
       log({ changelogId: "c5", operation: "update", record: { id: "u1", name: "Alicia" } }),
     ]);
 
-    expect(result).toEqual({ applied: 3, skipped: 0, validationFailed: 0, lastChangelogId: "c9" });
+    expect(result).toEqual({ applied: 3, skipped: 0, validationFailed: 0, halted: false, lastChangelogId: "c9" });
   });
   describe("UUID v7 changelog ids", () => {
     it("tracks lastChangelogId as the newest id regardless of input order", async () => {
@@ -243,7 +456,13 @@ describe("applyPull", () => {
         }),
       ]);
 
-      expect(result).toEqual({ applied: 2, skipped: 0, validationFailed: 0, lastChangelogId: changelogId(10) });
+      expect(result).toEqual({
+        applied: 2,
+        skipped: 0,
+        validationFailed: 0,
+        halted: false,
+        lastChangelogId: changelogId(10),
+      });
     });
 
     it("applies a newer log whose id is later than the stored one", async () => {
@@ -254,12 +473,18 @@ describe("applyPull", () => {
         log({ changelogId: changelogId(10), operation: "update", record: { id: "u1", name: "Alicia" } }),
       ]);
 
-      expect(result).toEqual({ applied: 1, skipped: 0, validationFailed: 0, lastChangelogId: changelogId(10) });
+      expect(result).toEqual({
+        applied: 1,
+        skipped: 0,
+        validationFailed: 0,
+        halted: false,
+        lastChangelogId: changelogId(10),
+      });
       expect(await scanAll(client, "users")).toEqual([{ id: "u1", name: "Alicia" }]);
       expect((await getVersionMeta(client, 'User::"u1"'))?.lastAppliedChangeId).toBe(changelogId(10));
     });
 
-    it("skips an older log whose id is earlier than the stored one", async () => {
+    it("consumes an older log whose id is earlier than the stored one", async () => {
       const { client } = await createTestSyncClient();
       await applyPull(client, [log({ changelogId: changelogId(10), operation: "create" })]);
 
@@ -267,7 +492,13 @@ describe("applyPull", () => {
         log({ changelogId: changelogId(9), operation: "update", record: { id: "u1", name: "Stale" } }),
       ]);
 
-      expect(result).toEqual({ applied: 0, skipped: 1, validationFailed: 0, lastChangelogId: null });
+      expect(result).toEqual({
+        applied: 0,
+        skipped: 1,
+        validationFailed: 0,
+        halted: false,
+        lastChangelogId: changelogId(9),
+      });
       expect(await scanAll(client, "users")).toEqual([{ id: "u1", name: "Alice" }]);
     });
   });
@@ -304,7 +535,13 @@ describe("applyPull with a compound key", () => {
     const created = await applyPull(client, [
       { changelogId: changelogId(1), model: "Membership", operation: "create", keyPath, record: membership },
     ]);
-    expect(created).toEqual({ applied: 1, skipped: 0, validationFailed: 0, lastChangelogId: changelogId(1) });
+    expect(created).toEqual({
+      applied: 1,
+      skipped: 0,
+      validationFailed: 0,
+      halted: false,
+      lastChangelogId: changelogId(1),
+    });
     expect(await scanAll(client, "memberships")).toEqual([membership]);
     expect((await getVersionMeta(client, 'Membership::["o1","u1"]'))?.lastAppliedChangeId).toBe(changelogId(1));
 
@@ -328,7 +565,13 @@ describe("applyPull with a compound key", () => {
         record: membership,
       },
     ]);
-    expect(result).toEqual({ applied: 0, skipped: 3, validationFailed: 3, lastChangelogId: changelogId(3) });
+    expect(result).toEqual({
+      applied: 0,
+      skipped: 3,
+      validationFailed: 3,
+      halted: false,
+      lastChangelogId: changelogId(3),
+    });
     expect(transaction).not.toHaveBeenCalled();
   });
 });

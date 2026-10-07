@@ -51,12 +51,35 @@ await db.withoutTracking((orm) => orm.user.upsert({ where: { id }, create: user,
 
 For each synced record, `_idb_sync_version_meta` records two things:
 
-- **Whether a local change is waiting to be pushed.** While one is, pulls skip that record, so a local change is never overwritten before it reaches the server.
-- **The last changelog id applied to it.** A pull that isn't newer is skipped, so a repeated or out-of-order pull can't undo a newer change.
+- **Whether a local change is waiting to be pushed.** While one is, a pull stops at that record, so a local change is never overwritten before it reaches the server.
+- **The last changelog id applied to it.** A row that is not newer counts as already applied, so a repeated or out-of-order pull can't undo a newer change.
 
 The worker maintains this store; you don't write to it.
 
-Pulled records and keys are validated against the client contract before a write transaction opens. Corrupt entries count toward `validationFailed`, which is a subset of `skipped` in both the `applyPull` result and the worker's `pullcompleted` event. Valid entries still apply. Invalid entries advance the cursor without changing local records or version metadata.
+### The pull cursor
+
+A pull applies its rows in order. A later row can depend on an earlier one, so the pull never skips ahead of a row it could not apply: a write failure or a pending local change stops the pull, and no later row lands before it. The one exception is an `invalid` row, which the pull consumes without writing it.
+
+Each row ends in one of four ways:
+
+| Outcome           | Meaning                                                                                                                  | Effect on the pull                                                   |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------- |
+| `applied`         | The row was written.                                                                                                     | Continues. The cursor moves past it.                                 |
+| `already-applied` | The record already has a newer or equal change. This happens when a page is replayed after a crash.                      | Continues. The cursor moves past it.                                 |
+| `invalid`         | The record or key fails the client contract. No retry can fix it. It is counted in `validationFailed`. Local data stays. | Continues. The cursor moves past it.                                 |
+| halt              | The write failed (for example a full disk) or the record has a pending local change.                                     | Stops. Later rows are not applied. The cursor stays before this row. |
+
+The `pullcompleted` event reports `halted: true` when a pull stopped early. The next pull restarts at the halted row. A row for a model that is not in the client contract is skipped and does not halt the pull.
+
+### Rejected pushes
+
+When the server rejects an event for good (`retryable: false`), the worker replaces the local row with the server's row from the push result's `record`. A rejected create is removed, a rejected update is replaced by the server's row, and a rejected delete is restored. The change adds no outbox event.
+
+The rejected event stays in the outbox with `retryable: false` and its full payload, so the user's write is not lost. Do not delete it.
+
+If the result has no usable `record` (an older server, or a record that fails the client contract), the local write stays until a pull overwrites it. The `pushcompleted` event counts these in `unreconciled`.
+
+Avoid user-chosen natural-key unique constraints on models that clients create offline. Two devices can create the same value, and the server keeps only the first one. Use a surrogate `id` as the primary key. See [ADR 022](https://github.com/prisma-idb/prisma-idb/blob/main/packages/prisma-orm/docs/adrs/ADR%20022%20-%20Rejected%20Pushes%20Reconcile%20to%20the%20Server%20Row.md).
 
 ## Sync worker
 
@@ -65,7 +88,9 @@ const worker = db.createSyncWorker({ pushHandler, pullHandler });
 worker.start();
 ```
 
-The worker doesn't start on its own. Each cycle pushes a batch of outbox events, then pulls. It repeats every `intervalMs` while idle, and backs off after failures.
+The worker doesn't start on its own. Each cycle first pushes: it sends batches of outbox events until none is left to send. It then pulls, but only if no retryable event remains in the outbox. This keeps a pull from landing on an edit the server has not seen. A cycle repeats every `intervalMs` while idle, and backs off after failures.
+
+A failed push, including a request that throws or times out, stays retryable however many times it fails, unless the server says it can never succeed. Events are pushed in order, so an event that is waiting out its backoff holds back the events behind it. After 10 failed tries, `pushcompleted` carries `stalled: { eventId, tries, lastError }` for the oldest event. Show it to the user: the outbox is stuck behind that event, and pulls pause until it clears.
 
 | Option             | Default  | Description                                                                                                                                          |
 | ------------------ | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -73,10 +98,10 @@ The worker doesn't start on its own. Each cycle pushes a batch of outbox events,
 | `pullHandler`      | Required | `(fromChangelogId, signal) => Promise<LogWithRecord[]>`. Fetches changes after `fromChangelogId`, which is `null` on the first pull.                 |
 | `getCursor`        | None     | `() => string \| null \| Promise<string \| null>`. Loads the saved pull cursor once, before the first pull. Without it the cursor is in memory only. |
 | `setCursor`        | None     | `(changelogId) => void \| Promise<void>`. Saves the cursor after a pull advances it. A throw fails the cycle and the save is retried.                |
-| `batchSize`        | `20`     | Outbox events pushed per cycle.                                                                                                                      |
+| `batchSize`        | `20`     | Outbox events pushed per request.                                                                                                                    |
 | `intervalMs`       | `5000`   | Time between cycles while idle.                                                                                                                      |
-| `backoffBaseMs`    | `1000`   | Wait after the first failed cycle. Doubles with each failure in a row.                                                                               |
-| `backoffMaxMs`     | `30000`  | The longest wait between failed cycles.                                                                                                              |
+| `backoffBaseMs`    | `1000`   | Wait after the first failure. Doubles with each failure in a row. Applies to failed cycles and to each outbox event.                                 |
+| `backoffMaxMs`     | `30000`  | The longest wait, for both.                                                                                                                          |
 | `requestTimeoutMs` | `30000`  | Aborts a handler call through its `signal` after this long.                                                                                          |
 
 | Method or property | Description                                                                                              |

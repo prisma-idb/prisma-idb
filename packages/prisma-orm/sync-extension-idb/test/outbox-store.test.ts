@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getNextBatch, markFailed, markSynced } from "../src/core/outbox-store";
+import { getNextBatch, getOldestPendingEvent, markFailed, markSynced } from "../src/core/outbox-store";
 import type { OutboxEvent, VersionMetaRecord } from "../src/types";
 import { createTestSyncClient, keyGet, scanAll } from "./helpers";
 
@@ -32,6 +32,21 @@ function outboxEvent(overrides: Partial<OutboxEvent> & Pick<OutboxEvent, "id">):
     versionMetaId: null,
     ...overrides,
   };
+}
+
+async function addOutboxEvents(
+  client: Awaited<ReturnType<typeof createTestSyncClient>>["client"],
+  events: OutboxEvent[]
+): Promise<void> {
+  await client.withTransaction(["_idb_sync_outbox"], async (scope) => {
+    for (const event of events) {
+      await scope.execute({
+        kind: "add",
+        storeName: "_idb_sync_outbox",
+        record: event as unknown as Record<string, unknown>,
+      } as never);
+    }
+  });
 }
 
 describe("getNextBatch", () => {
@@ -80,6 +95,66 @@ describe("getNextBatch", () => {
     const batch = await getNextBatch(client.rawClient, { limit: 2 });
 
     expect(batch).toHaveLength(2);
+  });
+});
+
+describe("getNextBatch with a backoff", () => {
+  const backoff = { baseMs: 1_000, maxMs: 30_000 };
+  const failedAt = new Date("2026-01-01T00:00:00.000Z");
+  const after = (ms: number) => new Date(failedAt.getTime() + ms);
+
+  it.each([
+    [1, 1_000],
+    [2, 2_000],
+    [3, 4_000],
+    [6, 30_000],
+    [20, 30_000],
+  ])("holds an event with %i failed tries for %i ms from its last attempt", async (tries, delayMs) => {
+    const { client } = await createTestSyncClient();
+    await addOutboxEvents(client, [outboxEvent({ id: "e1", tries, lastAttemptedAt: failedAt })]);
+
+    const early = await getNextBatch(client.rawClient, { backoff, now: after(delayMs - 1) });
+    const due = await getNextBatch(client.rawClient, { backoff, now: after(delayMs) });
+
+    expect(early).toEqual([]);
+    expect(due.map((e) => e.id)).toEqual(["e1"]);
+  });
+
+  it("sends an event that never failed immediately", async () => {
+    const { client } = await createTestSyncClient();
+    await addOutboxEvents(client, [outboxEvent({ id: "e1" })]);
+
+    const batch = await getNextBatch(client.rawClient, { backoff, now: failedAt });
+
+    expect(batch.map((e) => e.id)).toEqual(["e1"]);
+  });
+
+  it("stops at the first event in backoff so later events never overtake it", async () => {
+    const { client } = await createTestSyncClient();
+    await addOutboxEvents(client, [
+      outboxEvent({ id: "e1", createdAt: new Date("2026-01-01") }),
+      outboxEvent({ id: "e2", createdAt: new Date("2026-01-02"), tries: 3, lastAttemptedAt: failedAt }),
+      outboxEvent({ id: "e3", createdAt: new Date("2026-01-03") }),
+    ]);
+
+    const batch = await getNextBatch(client.rawClient, { backoff, now: after(500) });
+
+    expect(batch.map((e) => e.id)).toEqual(["e1"]);
+  });
+});
+
+describe("getOldestPendingEvent", () => {
+  it("returns the oldest unsynced, retryable event, or null for an empty outbox", async () => {
+    const { client } = await createTestSyncClient();
+    expect(await getOldestPendingEvent(client.rawClient)).toBeNull();
+
+    await addOutboxEvents(client, [
+      outboxEvent({ id: "e-dead", createdAt: new Date("2026-01-01"), retryable: false }),
+      outboxEvent({ id: "e2", createdAt: new Date("2026-01-03") }),
+      outboxEvent({ id: "e1", createdAt: new Date("2026-01-02") }),
+    ]);
+
+    expect((await getOldestPendingEvent(client.rawClient))?.id).toBe("e1");
   });
 });
 
@@ -214,23 +289,18 @@ describe("markFailed", () => {
     expect(event?.retryable).toBe(true);
   });
 
-  it("flips retryable to false once tries reaches 10", async () => {
+  it("keeps a failure without a server verdict retryable past 10 tries", async () => {
     const { client } = await createTestSyncClient();
-    await client.withTransaction(["_idb_sync_outbox"], async (scope) => {
-      await scope.execute({
-        kind: "add",
-        storeName: "_idb_sync_outbox",
-        record: outboxEvent({ id: "e1", tries: 9 }) as unknown as Record<string, unknown>,
-      } as never);
-    });
+    await addOutboxEvents(client, [outboxEvent({ id: "e1", tries: 9 })]);
 
     await client.withTransaction(["_idb_sync_outbox"], async (scope) => {
       await markFailed(scope, "e1", "still failing");
+      await markFailed(scope, "e1", "still failing", true);
     });
 
     const event = await getOutboxEvent(client, "e1");
-    expect(event?.tries).toBe(10);
-    expect(event?.retryable).toBe(false);
+    expect(event?.tries).toBe(11);
+    expect(event?.retryable).toBe(true);
   });
 
   it("a server-side non-retryable verdict flips retryable immediately, regardless of tries", async () => {

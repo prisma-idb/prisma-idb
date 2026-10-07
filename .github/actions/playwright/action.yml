@@ -1,0 +1,51 @@
+name: Install Playwright browsers
+description: Install Playwright browsers, caching the browser binaries between runs
+
+inputs:
+  working-directory:
+    description: Directory of the app that depends on @playwright/test
+    required: true
+  browsers:
+    description: Space-separated list of browsers to install
+    required: true
+  with-deps:
+    description: >-
+      Install OS packages through apt. Chromium needs none on ubuntu-latest, so
+      only enable this for browsers such as WebKit.
+    required: false
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    - name: Get Playwright version
+      id: version
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: echo "version=$(pnpm exec playwright --version | awk '{print $2}')" >> "$GITHUB_OUTPUT"
+
+    - name: Cache Playwright browsers
+      id: cache
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+      with:
+        path: ~/.cache/ms-playwright
+        key: playwright-${{ runner.os }}-${{ steps.version.outputs.version }}-${{ inputs.browsers }}
+
+    - name: Install Playwright browsers
+      if: steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        DEPS_FLAG: ${{ inputs.with-deps == 'true' && '--with-deps' || '' }}
+      # The apt/CDN download occasionally hangs on a runner; cap each attempt and retry once.
+      run: |
+        timeout 300 pnpm exec playwright install $DEPS_FLAG ${{ inputs.browsers }} \
+          || timeout 300 pnpm exec playwright install $DEPS_FLAG ${{ inputs.browsers }}
+
+    - name: Install Playwright system dependencies
+      if: steps.cache.outputs.cache-hit == 'true' && inputs.with-deps == 'true'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        timeout 300 pnpm exec playwright install-deps ${{ inputs.browsers }} \
+          || timeout 300 pnpm exec playwright install-deps ${{ inputs.browsers }}

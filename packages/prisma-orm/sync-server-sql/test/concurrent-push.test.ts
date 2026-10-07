@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { OrmRoot } from "../src/core/orm-root";
 import { createSqlSyncAdapter } from "../src/core/create-adapter";
 import { seed, testContract, testDb, testSyncServer } from "./helpers";
 
@@ -60,6 +61,54 @@ function pausedAfterChangelogInsert(db: TestDb) {
   return { db: wrapped, inserted: insertedSignal, release };
 }
 
+/** Signals before the retry's Board insert, which must wait for the first request's commit. */
+function observedBoardInsert(db: TestDb, failAppliedRead: boolean) {
+  let inserting!: () => void;
+  const insertingSignal = new Promise<void>((resolve) => (inserting = resolve));
+  const wrapBoard = (root: OrmRoot): OrmRoot => ({
+    first: (where) => root.first(where),
+    where: (clause) => root.where(clause),
+    select: (...fields) => {
+      const selected = root.select(...fields);
+      return {
+        where: (clause) => selected.where(clause),
+        create: (data) => {
+          const result = selected.create(data);
+          inserting();
+          return result;
+        },
+      };
+    },
+  });
+  return {
+    inserting: insertingSignal,
+    db: {
+      raw: db.raw,
+      orm: {
+        public: new Proxy(db.orm.public, {
+          get: (models, model: string) =>
+            failAppliedRead && model === "Changelog"
+              ? { first: () => Promise.reject(new Error("connection lost during applied-event read")) }
+              : Reflect.get(models, model),
+        }),
+      },
+      transaction: <T>(fn: (tx: never) => Promise<T>) =>
+        db.transaction((tx) =>
+          fn({
+            query: tx.query.bind(tx),
+            execute: tx.execute.bind(tx),
+            orm: {
+              public: new Proxy(tx.orm.public, {
+                get: (models, model: string) =>
+                  model === "Board" ? wrapBoard(Reflect.get(models, model) as OrmRoot) : Reflect.get(models, model),
+              }),
+            },
+          } as never)
+        ),
+    },
+  };
+}
+
 const createBoard = (eventId: string, boardId: string, ownerId: string) => ({
   id: eventId,
   entityType: "Board",
@@ -104,6 +153,45 @@ describe("concurrent pushes on one scope", () => {
     const second = await pullAll(db, "u1", cursor);
     const seen = [...first, ...second].map((log) => log.keyPath);
     expect(seen.sort()).toEqual(["ba", "bb"]);
+  });
+
+  it.each([false, true])("handles a racing retry with applied-event read failure = %s", async (failAppliedRead) => {
+    const db = await testDb();
+    await seed(db, { User: [{ id: "u1", name: "Ann" }] });
+
+    // The first request applied the event but has not committed; a timed-out
+    // client retries the same event meanwhile and collides with its unique keys.
+    const first = pausedAfterChangelogInsert(db);
+    const pushFirst = adapter.applyPush(first.db, { scopeKey: "u1", events: [createBoard("ea", "ba", "u1")] });
+    const observed = observedBoardInsert(db, failAppliedRead);
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+    let retry: ReturnType<typeof adapter.applyPush>;
+    try {
+      await first.inserted;
+      retry = adapter.applyPush(observed.db, { scopeKey: "u1", events: [createBoard("ea", "ba", "u1")] });
+      await Promise.race([
+        observed.inserting,
+        retry.then(() => {
+          throw new Error("Retry completed before reaching its conflicting insert");
+        }),
+      ]);
+    } finally {
+      first.release();
+    }
+
+    const expected = { ok: true, results: [{ id: "ea", success: true }] };
+    expect(await pushFirst).toEqual(expected);
+    try {
+      expect(await retry).toEqual(
+        failAppliedRead
+          ? { ok: true, results: [{ id: "ea", success: false, error: "Failed to apply event ea", retryable: true }] }
+          : expected
+      );
+      expect(errorLog).toHaveBeenCalled();
+    } finally {
+      errorLog.mockRestore();
+    }
+    expect((await pullAll(db, "u1", null)).map((log) => log.keyPath)).toEqual(["ba"]);
   });
 
   it("does not block pushes on a different scope", async () => {

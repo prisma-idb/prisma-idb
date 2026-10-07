@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { logWithRecordSchema } from "../src/schemas";
+import { logWithRecordSchema, pushResultSchema } from "../src/schemas";
 
 const identity = {
   changelogId: "c1",
@@ -30,5 +30,22 @@ describe("pull wire schema", () => {
     expect(logWithRecordSchema.safeParse({ ...identity, validationError: "UNKNOWN", record: null }).success).toBe(
       false
     );
+  });
+});
+
+describe("push result wire schema", () => {
+  const failure = { id: "e1", success: false, error: "Failed to apply event e1", retryable: false };
+
+  it.each([{ id: "u1", name: "Alice" }, null])("keeps the server row sent with a rejection: %j", (record) => {
+    const result = { ...failure, record };
+    expect(pushResultSchema.parse(JSON.parse(JSON.stringify(result)))).toEqual(result);
+  });
+
+  it("accepts a result from a server that sends no record", () => {
+    expect(pushResultSchema.parse(failure)).toEqual(failure);
+  });
+
+  it("rejects a record that is not an object", () => {
+    expect(pushResultSchema.safeParse({ ...failure, record: "u1" }).success).toBe(false);
   });
 });

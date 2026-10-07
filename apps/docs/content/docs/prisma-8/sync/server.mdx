@@ -112,7 +112,15 @@ Handle each known failure reason explicitly. The reason unions can grow in futur
 
 Push results include the first retryable failure and omit all later events. The worker keeps omitted events pending without counting a try against them. This ordering lets a Todo wait until its Board succeeds on retry.
 
-When a database write fails, `applyPushEvent` logs the real error on the server and returns a generic, retryable failure. Database details such as constraint names do not reach the browser.
+When a database write fails, `applyPushEvent` logs the real error on the server and returns a generic failure. Database details such as constraint names do not reach the browser. The failure is non-retryable when the database reports SQLSTATE class 22 (data exception) or class 23 (integrity constraint violation), such as a unique violation. Retrying the same write cannot succeed. Every other failure stays retryable, including lost connections, timeouts, deadlocks and errors with no SQLSTATE.
+
+If a retry hits a unique key of its own first request, which timed out but still committed, `applyPushEvent` returns `success: true`.
+
+### Rejected events carry the server's row
+
+`applyPush` adds a `record` field to every non-retryable failure. It holds the row's current state for `scopeKey`, as `pull` would return it: the row, or `null` if it is deleted or belongs to another user. The server runs the same ownership check as `pull`, so `record` never exposes a row the caller could not already pull. The client replaces its rejected local write with `record`. Serialize it the same way you serialize pulled records.
+
+`record` is absent when the server cannot read the row: the key cannot be decoded or the model is unknown. The lower-level `applyPushEvent` never sets it.
 
 For required Postgres `Json` fields (`pg/json@1` and `pg/jsonb@1`), wire `null` is written as JSON null. Nullable JSON fields retain the ORM's SQL NULL behavior.
 

@@ -59,22 +59,39 @@ export type LogWithRecord = LogWithRecordBody;
  * Per-event result from the push endpoint. `retryable` (present only for
  * `success: false`) is the server's own verdict on whether trying again
  * could ever change the outcome — `markFailed` (outbox-store.ts) uses it to
- * decide whether to give up on this local change immediately rather than
- * waiting out the client-side retry cap.
+ * decide whether to give up on this local change immediately.
  */
 export interface PushResult {
   id: string;
   success: boolean;
   error?: string;
   retryable?: boolean;
+  /**
+   * Sent with a non-retryable failure: the row's current state on the
+   * server, or `null` if it is deleted or not the caller's. The worker
+   * replaces the rejected local write with it (see `reconcile-rejected.ts`).
+   * Absent if the server could not read the row.
+   */
+  record?: Record<string, unknown> | null;
 }
 
 /** Stats returned by `applyPull`. */
 export interface ApplyPullResult {
   applied: number;
+  /** Rows not applied: already applied, invalid, for an unknown model, or the row the page halted at. Rows after a halt are not counted. */
   skipped: number;
   /** Subset of skipped: invalid decoded records, keys, or wire values. */
   validationFailed: number;
-  /** Highest applied or corrupt-row id; advancing can pass earlier transaction failures in the batch. */
+  /**
+   * True if the page stopped early at a row that could not be applied yet: a
+   * transaction failure or a pending local change. The next pull restarts at
+   * that row.
+   */
+  halted: boolean;
+  /**
+   * The newest id the cursor may move to: the highest id among the rows
+   * before any halt that were applied, already applied or invalid. `null` if
+   * there is none, so the cursor must not move.
+   */
   lastChangelogId: string | null;
 }

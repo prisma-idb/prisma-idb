@@ -18,14 +18,31 @@ export type { OutboxEvent };
 /** The object store holding pending and finished outbox events. */
 export const OUTBOX_STORE = "_idb_sync_outbox";
 
-/** An event the next push may still send: not yet synced, and not given up on. */
+/** An event the next push may still send: not yet synced, and the server has not ruled it out. */
 const isPending = (event: OutboxEvent) => !event.synced && event.retryable;
 
 // ── Read helpers ──────────────────────────────────────────────────────────────
 
+/** How long a failed event waits before its next attempt: `baseMs`, doubling per failed try, capped at `maxMs`. */
+export interface RetryBackoff {
+  readonly baseMs: number;
+  readonly maxMs: number;
+}
+
+/** The wait after an event's `tries`-th failure. */
+function retryDelayMs(tries: number, { baseMs, maxMs }: RetryBackoff): number {
+  return Math.min(baseMs * Math.pow(2, tries - 1), maxMs);
+}
+
+/** True while `event` is still waiting out the backoff after its last failed attempt. */
+function isInBackoff(event: OutboxEvent, backoff: RetryBackoff, now: Date): boolean {
+  if (event.tries === 0 || !(event.lastAttemptedAt instanceof Date)) return false;
+  return now.getTime() < event.lastAttemptedAt.getTime() + retryDelayMs(event.tries, backoff);
+}
+
 /**
- * Fetch the next batch of unsynced, retryable outbox events sorted by
- * `createdAt` ascending (oldest-first → FIFO ordering for push).
+ * Every unsynced, retryable outbox event, oldest first (`createdAt`
+ * ascending → FIFO ordering for push).
  *
  * Filters `synced`/`retryable` in-memory over a full store scan — `boolean`
  * is not a valid IndexedDB key type (still an open spec proposal:
@@ -34,23 +51,47 @@ const isPending = (event: OutboxEvent) => !event.synced && event.retryable;
  * and silently omit records on write. The contract no longer declares that
  * index.
  */
+async function readPendingEvents(scope: IdbTransactionScope): Promise<OutboxEvent[]> {
+  const at = (d: Date | null) => (d instanceof Date ? d.getTime() : 0);
+  return (await scanStore<OutboxEvent>(scope, OUTBOX_STORE))
+    .filter(isPending)
+    .sort((a, b) => at(a.createdAt) - at(b.createdAt));
+}
+
+/**
+ * Fetch the next batch of events to push: pending events, oldest first.
+ *
+ * With `backoff`, the batch stops at the first event still waiting out its
+ * retry delay. A later event never overtakes an earlier one, because it may
+ * depend on it (a Todo created in a Board the earlier event creates), and a
+ * failing event cannot fill the batch while the ones behind it starve.
+ */
 export async function getNextBatch<TContract extends IdbContract>(
   client: IdbClient<TContract>,
-  options?: { limit?: number }
+  options?: { limit?: number; backoff?: RetryBackoff; now?: Date }
 ): Promise<OutboxEvent[]> {
-  const limit = options?.limit ?? 20;
-  const events: OutboxEvent[] = [];
+  const { limit = 20, backoff, now = new Date() } = options ?? {};
+  const batch: OutboxEvent[] = [];
 
   await client.withTransaction([OUTBOX_STORE], async (scope) => {
-    // Sort by createdAt ascending and apply limit in-memory.
-    const sorted = (await scanStore<OutboxEvent>(scope, OUTBOX_STORE)).filter(isPending).sort((a, b) => {
-      const at = (d: Date | null) => (d instanceof Date ? d.getTime() : 0);
-      return at(a.createdAt) - at(b.createdAt);
-    });
-    for (const e of sorted.slice(0, limit)) events.push(e);
+    for (const event of await readPendingEvents(scope)) {
+      if (batch.length === limit || (backoff && isInBackoff(event, backoff, now))) break;
+      batch.push(event);
+    }
   });
 
-  return events;
+  return batch;
+}
+
+/** The oldest event the next push may still send, or `null` if the outbox has none. */
+export async function getOldestPendingEvent<TContract extends IdbContract>(
+  client: IdbClient<TContract>
+): Promise<OutboxEvent | null> {
+  let oldest: OutboxEvent | null = null;
+  await client.withTransaction([OUTBOX_STORE], async (scope) => {
+    oldest = (await readPendingEvents(scope))[0] ?? null;
+  });
+  return oldest;
 }
 
 // ── Write helpers (inside an existing transaction scope) ──────────────────────
@@ -103,19 +144,19 @@ export async function markSynced(scope: IdbTransactionScope, id: string): Promis
 }
 
 /**
- * Record a push failure — increment tries, store error, mark non-retryable
- * after too many attempts OR immediately when the server says so.
+ * Record a push failure — increment tries and store the error. The event
+ * stays retryable, however many tries it has had, unless the server says it
+ * never can succeed; `getNextBatch` spaces the attempts out with a backoff.
  *
  * `serverRetryable` is the push result's own `retryable` flag: `undefined`
  * for a failure the server never actually weighed in on (e.g. a network/
- * timeout error caught client-side before a response came back), in which
- * case only the tries-based cap applies. A server verdict of `false` (e.g.
- * SCOPE_VIOLATION because the record was already deleted by another device)
- * means this specific local change can never succeed no matter how many
- * times it's retried — clearing `localChangePending` immediately (instead of
- * only once `tries` hits the client-side cap) is what lets the delete that
- * made it moot actually apply on the next pull, instead of that pull's
- * `apply-pull.ts` guard deferring to a local edit that's already dead.
+ * timeout error caught client-side before a response came back), which stays
+ * retryable. A server verdict of `false` (e.g. SCOPE_VIOLATION because the
+ * record was already deleted by another device) means this specific local
+ * change can never succeed no matter how many times it's retried — clearing
+ * `localChangePending` immediately is what lets the delete that made it moot
+ * actually apply on the next pull, instead of that pull's `apply-pull.ts`
+ * guard deferring to a local edit that's already dead.
  */
 export async function markFailed(
   scope: IdbTransactionScope,
@@ -125,11 +166,10 @@ export async function markFailed(
 ): Promise<void> {
   const existing = await getRecord<OutboxEvent>(scope, OUTBOX_STORE, id);
   if (!existing) return;
-  const tries = existing.tries + 1;
-  const retryable = serverRetryable !== false && tries < 10;
+  const retryable = serverRetryable !== false;
   await putRecord(scope, OUTBOX_STORE, {
     ...existing,
-    tries,
+    tries: existing.tries + 1,
     lastError: error,
     lastAttemptedAt: new Date(),
     retryable,

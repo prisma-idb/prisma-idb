@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createSyncWorker } from "../src/core/sync-worker";
+import type { PullCompletedEvent, PushCompletedEvent } from "../src/core/sync-worker";
 import type { SyncIdbClient } from "../src/exports/client";
 import type { LogWithRecord, OutboxEvent } from "../src/types";
 import { asAccessors, changelogId, createTestSyncClient, scanAll } from "./helpers";
@@ -277,7 +278,7 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
       pullHandler: async () => [],
     });
 
-    let pushCompleted: { synced: number; failed: number } | undefined;
+    let pushCompleted: PushCompletedEvent | undefined;
     worker.on("pushcompleted", (p) => {
       pushCompleted = p;
     });
@@ -286,7 +287,7 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
 
     expect(pushed).toHaveLength(1);
     expect(pushed[0]!.entityType).toBe("User");
-    expect(pushCompleted).toEqual({ synced: 1, failed: 0 });
+    expect(pushCompleted).toEqual({ synced: 1, failed: 0, unreconciled: 0, pullBlocked: false });
 
     const outbox = await scanAll(client, "_idb_sync_outbox");
     expect((outbox[0] as { synced: boolean }).synced).toBe(true);
@@ -302,17 +303,50 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
       pullHandler: async () => [],
     });
 
-    let pushCompleted: { synced: number; failed: number } | undefined;
+    let pushCompleted: PushCompletedEvent | undefined;
     worker.on("pushcompleted", (p) => {
       pushCompleted = p;
     });
 
     await worker.forceSync();
 
-    expect(pushCompleted).toEqual({ synced: 0, failed: 1 });
+    expect(pushCompleted).toEqual({ synced: 0, failed: 1, unreconciled: 0, pullBlocked: true });
     const outbox = await scanAll(client, "_idb_sync_outbox");
     expect((outbox[0] as { tries: number; lastError: string }).tries).toBe(1);
     expect((outbox[0] as { tries: number; lastError: string }).lastError).toBe("server rejected");
+  });
+
+  it.each([true, false])("ignores results for unsent events (success = %s)", async (success) => {
+    const { client } = await createTestSyncClient();
+    await asAccessors(client.orm)["users"]!.create({ id: "u1", name: "Alice" });
+    await asAccessors(client.orm)["users"]!.create({ id: "u2", name: "Bob" });
+    const before = await scanAll(client, "_idb_sync_outbox");
+    const metaBefore = await scanAll(client, "_idb_sync_version_meta");
+    let unsent: Record<string, unknown> | undefined;
+    const worker = trackedWorker({
+      syncClient: client,
+      batchSize: 1,
+      pushHandler: async (events) => {
+        unsent = before.find((event) => event["id"] !== events[0]!.id)!;
+        return [
+          { id: events[0]!.id, success: false, error: "temporary failure", retryable: true },
+          { id: unsent["id"] as string, success, error: "rejected", retryable: false, record: null },
+          { id: "unknown-event", success },
+        ];
+      },
+      pullHandler: async () => [],
+    });
+    let completed: PushCompletedEvent | undefined;
+    worker.on("pushcompleted", (event) => (completed = event));
+
+    await worker.forceSync();
+
+    expect(completed).toEqual({ synced: 0, failed: 1, unreconciled: 0, pullBlocked: true });
+    expect((await scanAll(client, "_idb_sync_outbox")).find((event) => event["id"] === unsent!["id"])).toEqual(unsent);
+    expect(
+      (await scanAll(client, "_idb_sync_version_meta")).find((meta) => meta["id"] === unsent!["versionMetaId"])
+    ).toEqual(metaBefore.find((meta) => meta["id"] === unsent!["versionMetaId"]));
+    expect(await scanAll(client, "users")).toHaveLength(2);
   });
 
   it("keeps events omitted from push results pending without counting a try", async () => {
@@ -348,7 +382,13 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
       tries: 0,
     });
 
-    await worker.forceSync();
+    // The failed event waits out its backoff (1 s by default) before the next attempt.
+    vi.useFakeTimers({ toFake: ["Date"], now: Date.now() + 1_001 });
+    try {
+      await worker.forceSync();
+    } finally {
+      vi.useRealTimers();
+    }
     expect(batches[1]!.map((event) => event.id)).toEqual(firstBatch.map((event) => event.id));
     expect((await scanAll(client, "_idb_sync_outbox")).every((event) => event["synced"])).toBe(true);
   });
@@ -364,14 +404,14 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
       ],
     });
 
-    let pullCompleted: { applied: number; skipped: number } | undefined;
+    let pullCompleted: PullCompletedEvent | undefined;
     worker.on("pullcompleted", (p) => {
       pullCompleted = p;
     });
 
     await worker.forceSync();
 
-    expect(pullCompleted).toEqual({ applied: 1, skipped: 0, validationFailed: 0 });
+    expect(pullCompleted).toEqual({ applied: 1, skipped: 0, validationFailed: 0, halted: false });
     expect(await scanAll(client, "users")).toEqual([{ id: "u1", name: "Remote" }]);
   });
   describe("pull cursor", () => {
@@ -414,7 +454,7 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
         const completed = vi.fn();
         worker.on("pullcompleted", completed);
         await worker.forceSync();
-        expect(completed).toHaveBeenCalledWith({ applied: 1, skipped: 1, validationFailed: 1 });
+        expect(completed).toHaveBeenCalledWith({ applied: 1, skipped: 1, validationFailed: 1, halted: false });
         expect(setCursor).toHaveBeenCalledWith(changelogId(10));
         const restarted = trackedWorker({
           syncClient: client,
@@ -617,6 +657,224 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
       await worker.forceSync();
 
       expect(from).toEqual([changelogId(7)]);
+    });
+  });
+
+  describe("pull cursor under failure", () => {
+    const userLog = (changelogId: string, id: string): Extract<LogWithRecord, { record: unknown }> => ({
+      changelogId,
+      model: "User",
+      operation: "create",
+      keyPath: id,
+      record: { id, name: id },
+    });
+    const history = [1, 2, 3, 4, 5].map((n) => userLog(changelogId(n), `u${n}`));
+
+    /** A server that returns the next `pageSize` changes after the cursor, oldest first. */
+    const pagedServer = (pageSize: number) => async (cursor: string | null) =>
+      history.filter((entry) => cursor === null || entry.changelogId > cursor).slice(0, pageSize);
+
+    it("recovers from a cursor save that failed after the page was applied", async () => {
+      const { client } = await createTestSyncClient();
+      let persisted: string | null = null;
+      let failSave = true;
+      const options = {
+        syncClient: client,
+        pushHandler: async () => [],
+        pullHandler: pagedServer(2),
+        getCursor: () => persisted,
+        setCursor: (id: string) => {
+          if (failSave) throw new Error("storage full");
+          persisted = id;
+        },
+      };
+      const crashed = trackedWorker(options);
+      await expect(crashed.forceSync()).rejects.toThrow("storage full");
+      crashed.stop();
+      expect(await scanAll(client, "users")).toHaveLength(2);
+      expect(persisted).toBeNull();
+
+      // A new session resumes from the old cursor and replays the applied page.
+      failSave = false;
+      const restarted = trackedWorker(options);
+      const pulls: PullCompletedEvent[] = [];
+      restarted.on("pullcompleted", (p) => pulls.push(p));
+      await restarted.forceSync();
+      expect(pulls[0]).toEqual({ applied: 0, skipped: 2, validationFailed: 0, halted: false });
+      expect(persisted).toBe(changelogId(2));
+
+      await restarted.forceSync();
+      expect(persisted).toBe(changelogId(4));
+      await restarted.forceSync();
+      expect(persisted).toBe(changelogId(5));
+      expect(await scanAll(client, "users")).toHaveLength(5);
+    });
+
+    it("re-pulls from a held cursor after a failed row and applies the page once it recovers", async () => {
+      const { client } = await createTestSyncClient();
+      const from: (string | null)[] = [];
+      const server = pagedServer(3);
+      const worker = trackedWorker({
+        syncClient: client,
+        pushHandler: async () => [],
+        pullHandler: async (cursor) => {
+          from.push(cursor);
+          return server(cursor);
+        },
+      });
+      const pulls: PullCompletedEvent[] = [];
+      worker.on("pullcompleted", (p) => pulls.push(p));
+
+      // The second row's transaction fails once, as a full disk would.
+      const original = client.withTransaction.bind(client);
+      let calls = 0;
+      vi.spyOn(client, "withTransaction").mockImplementation(((...args: Parameters<typeof original>) =>
+        ++calls === 2 ? Promise.reject(new Error("QuotaExceededError")) : original(...args)) as never);
+
+      await worker.forceSync();
+      await worker.forceSync();
+
+      expect(pulls.map((p) => p.halted)).toEqual([true, false]);
+      expect(from).toEqual([null, changelogId(1)]);
+      expect(await scanAll(client, "users")).toHaveLength(4);
+    });
+  });
+
+  describe("push before pull", () => {
+    it("drains every batch before pulling", async () => {
+      const { client } = await createTestSyncClient();
+      for (const id of ["u1", "u2", "u3", "u4", "u5"]) await asAccessors(client.orm)["users"]!.create({ id, name: id });
+      const calls: string[] = [];
+      const worker = trackedWorker({
+        syncClient: client,
+        batchSize: 2,
+        pushHandler: async (events) => {
+          calls.push(`push:${events.length}`);
+          return events.map((e) => ({ id: e.id, success: true }));
+        },
+        pullHandler: async () => {
+          calls.push("pull");
+          return [];
+        },
+      });
+
+      await worker.forceSync();
+
+      expect(calls).toEqual(["push:2", "push:2", "push:1", "pull"]);
+    });
+
+    it("skips the pull while a retryable event remains, and pulls once it succeeds", async () => {
+      const { client } = await createTestSyncClient();
+      await asAccessors(client.orm)["users"]!.create({ id: "u1", name: "Alice" });
+      const pullHandler = vi.fn(async (): Promise<LogWithRecord[]> => []);
+      let failPush = true;
+      const worker = trackedWorker({
+        syncClient: client,
+        backoffBaseMs: 0,
+        pushHandler: async (events) =>
+          events.map((e) =>
+            failPush ? { id: e.id, success: false, error: "db down", retryable: true } : { id: e.id, success: true }
+          ),
+        pullHandler,
+      });
+      const pushes: PushCompletedEvent[] = [];
+      worker.on("pushcompleted", (p) => pushes.push(p));
+
+      await worker.forceSync();
+      expect(pullHandler).not.toHaveBeenCalled();
+      expect(pushes.at(-1)).toMatchObject({ pullBlocked: true });
+
+      failPush = false;
+      await worker.forceSync();
+      expect(pullHandler).toHaveBeenCalledTimes(1);
+      expect(pushes.at(-1)).toMatchObject({ synced: 1, pullBlocked: false });
+    });
+
+    it("keeps retrying an event past 10 failed tries, reports it as stalled, and delivers it once the server recovers", async () => {
+      const { client } = await createTestSyncClient();
+      await asAccessors(client.orm)["users"]!.create({ id: "u1", name: "Alice" });
+      let serverUp = false;
+      const attempts: number[] = [];
+      const worker = trackedWorker({
+        syncClient: client,
+        backoffBaseMs: 1_000,
+        backoffMaxMs: 30_000,
+        pushHandler: async (events) => {
+          attempts.push(Date.now());
+          return events.map((e) =>
+            serverUp ? { id: e.id, success: true } : { id: e.id, success: false, error: "db down", retryable: true }
+          );
+        },
+        pullHandler: async () => [],
+      });
+      const pushes: PushCompletedEvent[] = [];
+      worker.on("pushcompleted", (p) => pushes.push(p));
+
+      vi.useFakeTimers({ toFake: ["Date"], now: new Date("2026-01-01T00:00:00Z") });
+      try {
+        for (let i = 0; i < 12; i++) {
+          await worker.forceSync();
+          vi.setSystemTime(Date.now() + 30_000);
+        }
+        expect(attempts).toHaveLength(12);
+        expect(pushes[9]).toMatchObject({ stalled: { tries: 10, lastError: "db down" } });
+        expect(pushes[8]?.stalled).toBeUndefined();
+
+        serverUp = true;
+        await worker.forceSync();
+      } finally {
+        vi.useRealTimers();
+      }
+      const [event] = await scanAll(client, "_idb_sync_outbox");
+      expect(event).toMatchObject({ synced: true, tries: 12 });
+    });
+
+    it.each(["throw", "timeout"] as const)(
+      "counts a push that fails by %s as a retryable try, so it reaches the stalled signal",
+      async (mode) => {
+        const { client } = await createTestSyncClient();
+        await asAccessors(client.orm)["users"]!.create({ id: "u1", name: "Alice" });
+        const worker = trackedWorker({
+          syncClient: client,
+          backoffBaseMs: 0,
+          requestTimeoutMs: 1,
+          pushHandler: async () => {
+            if (mode === "throw") throw new Error("offline");
+            return new Promise(() => {});
+          },
+          pullHandler: async () => [],
+        });
+        const pushes: PushCompletedEvent[] = [];
+        worker.on("pushcompleted", (p) => pushes.push(p));
+
+        for (let i = 0; i < 12; i++) await expect(worker.forceSync()).rejects.toThrow();
+
+        const [event] = await scanAll(client, "_idb_sync_outbox");
+        expect(event).toMatchObject({ synced: false, retryable: true, tries: 12 });
+        expect(event!["lastError"]).toEqual(expect.any(String));
+        expect(pushes.at(-1)).toMatchObject({ pullBlocked: true, stalled: { tries: 12 } });
+      }
+    );
+
+    it("does not resend an event inside its backoff, and does not send later events past it", async () => {
+      const { client } = await createTestSyncClient();
+      await asAccessors(client.orm)["users"]!.create({ id: "u1", name: "Alice" });
+      await asAccessors(client.orm)["users"]!.create({ id: "u2", name: "Bob" });
+      const batches: string[][] = [];
+      const worker = trackedWorker({
+        syncClient: client,
+        pushHandler: async (events) => {
+          batches.push(events.map((e) => e.id));
+          return [{ id: events[0]!.id, success: false, error: "db down", retryable: true }];
+        },
+        pullHandler: async () => [],
+      });
+
+      await worker.forceSync();
+      await worker.forceSync();
+
+      expect(batches).toHaveLength(1);
+      expect(batches[0]).toHaveLength(2);
     });
   });
 });
