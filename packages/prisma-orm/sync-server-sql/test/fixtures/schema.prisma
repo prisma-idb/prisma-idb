@@ -4,10 +4,16 @@
 // contract gets emitted from. `writeSqlSchemaWithSync` (see
 // ../../prisma.config.ts) appends the synthetic `Changelog` model.
 model User {
-  id        String @id
-  name      String
-  boards    Board[]
-  jsonItems JsonItem[]
+  id               String            @id
+  name             String
+  boards           Board[]
+  jsonItems        JsonItem[]
+  meals            Meal[]
+  recipes          Recipe[]
+  foodEntries      FoodEntry[]
+  alternateParents AlternateParent[]
+  alternateEntries AlternateEntry[]
+  ownerBridges     OwnerBridge[]
 }
 
 model Board {
@@ -46,4 +52,73 @@ model JsonItem {
   value         Jsonb
   jsonValue     Json
   optionalValue Json?
+}
+
+// MyFit-shaped tenant references: direct User plus optional Meal and Recipe.
+model Meal {
+  id               String            @id
+  userId           String
+  user             User              @relation(fields: [userId], references: [id])
+  foodEntries      FoodEntry[]
+  alternateParents AlternateParent[]
+}
+
+model Recipe {
+  id          String             @id
+  userId      String
+  user        User               @relation(fields: [userId], references: [id])
+  foodEntries FoodEntry[]
+  ingredients RecipeIngredient[]
+}
+
+model FoodEntry {
+  id       String       @id
+  userId   String
+  user     User         @relation(fields: [userId], references: [id])
+  mealId   String?
+  meal     Meal?        @relation(fields: [mealId], references: [id])
+  recipeId String?
+  recipe   Recipe?      @relation(fields: [recipeId], references: [id])
+  name     String?
+  lookupId String?
+  lookup   Lookup?      @relation(fields: [lookupId], references: [id])
+  bridgeId String?
+  bridge   OwnerBridge? @relation(fields: [bridgeId], references: [id])
+}
+
+model RecipeIngredient {
+  id       String @id
+  recipeId String
+  recipe   Recipe @relation(fields: [recipeId], references: [id])
+}
+
+// Either route can authorize a parent, including when the shortest is null.
+model AlternateParent {
+  id      String           @id
+  userId  String?
+  user    User?            @relation(fields: [userId], references: [id])
+  mealId  String?
+  meal    Meal?            @relation(fields: [mealId], references: [id])
+  entries AlternateEntry[]
+}
+
+model AlternateEntry {
+  id       String           @id
+  userId   String?
+  user     User?            @relation(fields: [userId], references: [id])
+  parentId String?
+  parent   AlternateParent? @relation(fields: [parentId], references: [id])
+}
+
+// Global lookup parents have no root path; server-only tenant parents do.
+model Lookup {
+  id      String      @id
+  entries FoodEntry[]
+}
+
+model OwnerBridge {
+  id      String      @id
+  userId  String
+  user    User        @relation(fields: [userId], references: [id])
+  entries FoodEntry[]
 }

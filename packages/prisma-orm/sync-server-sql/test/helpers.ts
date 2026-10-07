@@ -38,7 +38,9 @@ const testClientContract = (() => {
         public: {
           ...rest,
           models: Object.fromEntries(
-            Object.entries(models).filter(([name]) => !["Changelog", "BigUser", "BigItem"].includes(name))
+            Object.entries(models).filter(
+              ([name]) => !["Changelog", "BigUser", "BigItem", "Lookup", "OwnerBridge"].includes(name)
+            )
           ),
           enum: without(enums, "ChangeOperation"),
         },
@@ -127,7 +129,23 @@ export async function resetTestDb(): Promise<void> {
  */
 export async function seed(
   db: Awaited<ReturnType<typeof testDb>>,
-  rows: Partial<Record<"User" | "Board" | "Todo" | "Changelog", Record<string, unknown>[]>>
+  rows: Partial<
+    Record<
+      | "User"
+      | "Board"
+      | "Todo"
+      | "Changelog"
+      | "Meal"
+      | "Recipe"
+      | "FoodEntry"
+      | "RecipeIngredient"
+      | "AlternateParent"
+      | "AlternateEntry"
+      | "Lookup"
+      | "OwnerBridge",
+      Record<string, unknown>[]
+    >
+  >
 ): Promise<void> {
   for (const [model, modelRows] of Object.entries(rows)) {
     for (const row of modelRows ?? []) {

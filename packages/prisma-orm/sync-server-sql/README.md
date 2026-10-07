@@ -29,6 +29,14 @@ if (!pulled.ok) return json({ error: pulled.reason }, { status: 400 }); // "inva
 return json(pulled.logs);
 ```
 
+Creates and updates require every populated outgoing tenant parent to reach the authenticated root. For example, Alice's FoodEntry cannot reference Bob's Meal or Recipe, even if its `userId` is Alice. Each parent's alternate root paths use OR. Null optional parents are skipped; missing populated parents fail. Updates check the stored row merged with the patch, so an omitted FK is rechecked. Checks run before entity and changelog writes in the same transaction. A resolved violation returns non-retryable `SCOPE_VIOLATION` and writes neither row. Database lookup failures retain ordinary SQLSTATE retry handling.
+
+No relation policy configuration is needed. Upgrading the paired server and adapter packages tightens create/update acceptance by default. Lower-level `applyPushEvent` calls also enforce the rule when their scoped check lacks `parentReferences`. Unsupported checked joins and mismatched descriptors throw configuration errors. Only single-field FKs to parent primary keys are supported. Checked FK defaults, including database and ORM-generated defaults, are rejected because authorization needs their resolved values before insertion. Remove those defaults and supply the FKs explicitly. With `syncServer`, the adapter validates this metadata at construction; lower-level calls validate it before a transaction.
+
+Existing-row access, pull and delete retain any-path OR authorization. Historical mixed-owner rows remain readable or deletable through either matching path. Patches retaining mixed-user parents fail; a complete repair to the caller's scope can pass. Global parents without root paths and inverse collections are excluded. Server-only tenant parents are checked. This does not clean up historical data or make a single User relation authoritative.
+
+Through `applyPush`, a tenant rejection returns the unchanged target row under ordinary pull authorization, or `record: null` if missing or inaccessible. It never returns the attempted candidate or a foreign parent. Lower-level `applyPushEvent` keeps its existing result without a reconciliation record. See [ADR 022](../docs/adrs/ADR%20022%20-%20Rejected%20Pushes%20Reconcile%20to%20the%20Server%20Row.md).
+
 ## API
 
 `createSqlSyncAdapter({ contract, syncServer?, getKeyField? })` returns:

@@ -1,7 +1,7 @@
 import { domainModelsAtDefaultNamespace } from "@prisma/orm-framework/contract/types";
 import type { GetKeyField, PushCheck, SyncPushEvent, SyncServerContract } from "@prisma-idb/sync-server";
 import { ormRootFor } from "./orm-root";
-import { checkAuthorization } from "./authorization";
+import { checkAuthorization, checkParentReferences, prepareParentReferenceChecks } from "./authorization";
 import { appendChangelogRow, isEventApplied } from "./changelog";
 import { isDeterministicWriteFailure, sqlState } from "./sqlstate";
 import { reviveWireValues, WireValidationError } from "./wire-values";
@@ -198,6 +198,10 @@ export async function applyPushEventDecoded(
     return { id: event.id, success: false, error: "KEYPATH_VALIDATION_FAILURE", retryable: false };
   }
   const { model } = event;
+  const parents =
+    check.kind === "scoped" && event.operation !== "delete"
+      ? prepareParentReferenceChecks(contract, getKeyField, model, check)
+      : [];
 
   try {
     return await (db as { transaction<T>(fn: (tx: unknown) => Promise<T>): Promise<T> }).transaction(async (tx) => {
@@ -220,16 +224,15 @@ export async function applyPushEventDecoded(
 
       if (!(await isAuthorized(startRow))) return scopeViolation;
 
-      // For updates, also re-check ownership against the row *as the patch
-      // would leave it* — a patch that reassigns a parent FK (e.g. moves a
-      // Todo to a Board the caller doesn't own) is authorized by the
-      // pre-patch startRow check above but must not be allowed to land the
-      // record in a scope the caller doesn't own.
-      if (
-        event.operation === "update" &&
-        !(await isAuthorized({ ...(startRow as Record<string, unknown>), ...patch }))
-      ) {
-        return scopeViolation;
+      if (event.operation !== "delete") {
+        const candidate = event.operation === "create" ? event.payload : { ...startRow, ...patch };
+        if (event.operation === "update" && !(await isAuthorized(candidate))) return scopeViolation;
+        if (
+          check.kind === "scoped" &&
+          !(await checkParentReferences(tx, contract, getKeyField, model, check, candidate, parents))
+        ) {
+          return scopeViolation;
+        }
       }
 
       const root = ormRootFor(tx, model);

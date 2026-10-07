@@ -1,3 +1,6 @@
+import { domainModelsAtDefaultNamespace } from "@prisma/orm-framework/contract/types";
+import { resolveAuthorizationPaths, resolveParentReferenceChecks } from "@prisma-idb/sync-server";
+import { assertNoParentDefaults } from "./authorization";
 import type { GetKeyField, OwnershipCheck, PushCheck, SyncServer, SyncServerContract } from "@prisma-idb/sync-server";
 import type { ApplyPushInput, ApplyPushOutcome } from "./apply-push";
 import type { PullInput, PullOutcome } from "./pull";
@@ -57,6 +60,12 @@ export interface SqlSyncAdapter {
  */
 export function createSqlSyncAdapter(options: CreateSqlSyncAdapterOptions): SqlSyncAdapter {
   const { contract, getKeyField = sqlGetKeyField, syncServer } = options;
+  if (syncServer) {
+    for (const model of Object.keys(domainModelsAtDefaultNamespace(contract.domain))) {
+      const paths = resolveAuthorizationPaths(contract, syncServer.rootModel, model);
+      assertNoParentDefaults(contract, model, resolveParentReferenceChecks(contract, getKeyField, model, paths));
+    }
+  }
   const requireSyncServer = (method: string): SyncServer => {
     if (!syncServer) throw new Error(`createSqlSyncAdapter: ${method} needs the \`syncServer\` option.`);
     return syncServer;
