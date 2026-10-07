@@ -8,6 +8,12 @@ inputs:
   browsers:
     description: Space-separated list of browsers to install
     required: true
+  with-deps:
+    description: >-
+      Install OS packages through apt. Chromium needs none on ubuntu-latest, so
+      only enable this for browsers such as WebKit.
+    required: false
+    default: "false"
 
 runs:
   using: composite
@@ -25,17 +31,19 @@ runs:
         path: ~/.cache/ms-playwright
         key: playwright-${{ runner.os }}-${{ steps.version.outputs.version }}-${{ inputs.browsers }}
 
-    - name: Install Playwright browsers and system dependencies
+    - name: Install Playwright browsers
       if: steps.cache.outputs.cache-hit != 'true'
       shell: bash
       working-directory: ${{ inputs.working-directory }}
+      env:
+        DEPS_FLAG: ${{ inputs.with-deps == 'true' && '--with-deps' || '' }}
       # The apt/CDN download occasionally hangs on a runner; cap each attempt and retry once.
       run: |
-        timeout 300 pnpm exec playwright install --with-deps ${{ inputs.browsers }} \
-          || timeout 300 pnpm exec playwright install --with-deps ${{ inputs.browsers }}
+        timeout 300 pnpm exec playwright install $DEPS_FLAG ${{ inputs.browsers }} \
+          || timeout 300 pnpm exec playwright install $DEPS_FLAG ${{ inputs.browsers }}
 
     - name: Install Playwright system dependencies
-      if: steps.cache.outputs.cache-hit == 'true'
+      if: steps.cache.outputs.cache-hit == 'true' && inputs.with-deps == 'true'
       shell: bash
       working-directory: ${{ inputs.working-directory }}
       run: |

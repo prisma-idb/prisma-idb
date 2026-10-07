@@ -262,6 +262,7 @@ jobs:
         with:
           working-directory: apps/prisma-orm-usage
           browsers: chromium webkit
+          with-deps: "true"
 
       - name: Run Prisma 8 E2E tests
         run: pnpm test:prisma-idb-e2e

@@ -104,8 +104,8 @@ jobs:
         working-directory: ${{ matrix.suite.dir }}
         # The apt/CDN download occasionally hangs on a runner; cap each attempt and retry once.
         run: |
-          timeout 300 pnpm exec playwright install --with-deps chromium \
-            || timeout 300 pnpm exec playwright install --with-deps chromium
+          timeout 300 pnpm exec playwright install chromium \
+            || timeout 300 pnpm exec playwright install chromium
 
       - name: Prepare benchmark app (PR head)
         working-directory: ${{ matrix.suite.dir }}
@@ -371,8 +371,8 @@ jobs:
         working-directory: ${{ matrix.suite.dir }}
         # The apt/CDN download occasionally hangs on a runner; cap each attempt and retry once.
         run: |
-          timeout 300 pnpm exec playwright install --with-deps chromium \
-            || timeout 300 pnpm exec playwright install --with-deps chromium
+          timeout 300 pnpm exec playwright install chromium \
+            || timeout 300 pnpm exec playwright install chromium
 
       - name: Prepare benchmark app
         working-directory: ${{ matrix.suite.dir }}
