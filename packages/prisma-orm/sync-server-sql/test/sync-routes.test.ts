@@ -93,31 +93,29 @@ describe("applyPush", () => {
   );
 
   it("rejects malformed creates, patches and keys without opening an ownership transaction", async () => {
-    const transaction = vi.fn();
-    const outcome = await adapter.applyPush(
-      { transaction },
-      {
-        scopeKey: "u1",
-        events: [
-          create("create", "User", { id: "u1", name: 42 }),
-          {
-            id: "update",
-            entityType: "Todo",
-            operation: "update",
-            payload: { key: "t1", patch: { dueAt: "invalid-date" } },
-          },
-          { id: "key", entityType: "User", operation: "delete", payload: { key: 42 } },
-          { id: "rekey", entityType: "User", operation: "update", payload: { key: "u1", patch: { id: "u2" } } },
-        ],
-      }
-    );
+    const db = await testDb();
+    const transaction = vi.spyOn(db, "transaction");
+    const outcome = await adapter.applyPush(db, {
+      scopeKey: "u1",
+      events: [
+        create("create", "User", { id: "u1", name: 42 }),
+        {
+          id: "update",
+          entityType: "Todo",
+          operation: "update",
+          payload: { key: "t1", patch: { dueAt: "invalid-date" } },
+        },
+        { id: "key", entityType: "User", operation: "delete", payload: { key: 42 } },
+        { id: "rekey", entityType: "User", operation: "update", payload: { key: "u1", patch: { id: "u2" } } },
+      ],
+    });
     expect(outcome).toEqual({
       ok: true,
       results: [
-        { id: "create", success: false, error: "RECORD_VALIDATION_FAILURE", retryable: false },
-        { id: "update", success: false, error: "RECORD_VALIDATION_FAILURE", retryable: false },
-        { id: "key", success: false, error: "KEYPATH_VALIDATION_FAILURE", retryable: false },
-        { id: "rekey", success: false, error: "KEYPATH_VALIDATION_FAILURE", retryable: false },
+        { id: "create", success: false, error: "RECORD_VALIDATION_FAILURE", retryable: false, record: null },
+        { id: "update", success: false, error: "RECORD_VALIDATION_FAILURE", retryable: false, record: null },
+        { id: "key", success: false, error: "KEYPATH_VALIDATION_FAILURE", retryable: false, record: null },
+        { id: "rekey", success: false, error: "KEYPATH_VALIDATION_FAILURE", retryable: false, record: null },
       ],
     });
     expect(transaction).not.toHaveBeenCalled();
@@ -273,7 +271,13 @@ describe("applyPush", () => {
     expect(outcome).toEqual({
       ok: true,
       results: [
-        { id: "bad", success: false, error: "RECORD_VALIDATION_FAILURE", retryable: false },
+        {
+          id: "bad",
+          success: false,
+          error: "RECORD_VALIDATION_FAILURE",
+          retryable: false,
+          record: { id: "u1", name: "Ann" },
+        },
         { id: "good", success: true },
       ],
     });
@@ -306,7 +310,8 @@ describe("applyPush", () => {
           error: "KEYPATH_VALIDATION_FAILURE",
           retryable: false,
         },
-        { id: "e4", success: false, error: "SCOPE_VIOLATION", retryable: false },
+        // Another scope's board: the server reports "no row" and leaks nothing.
+        { id: "e4", success: false, error: "SCOPE_VIOLATION", retryable: false, record: null },
       ],
     });
     expect(await ormRootFor(db, "Board").first({ id: "b2" })).not.toBeNull();

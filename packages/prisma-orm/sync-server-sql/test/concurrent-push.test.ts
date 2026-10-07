@@ -106,6 +106,29 @@ describe("concurrent pushes on one scope", () => {
     expect(seen.sort()).toEqual(["ba", "bb"]);
   });
 
+  it("reports success for a retry that races its own still-committing first request", async () => {
+    const db = await testDb();
+    await seed(db, { User: [{ id: "u1", name: "Ann" }] });
+
+    // The first request applied the event but has not committed; a timed-out
+    // client retries the same event meanwhile and collides with its unique keys.
+    const first = pausedAfterChangelogInsert(db);
+    const pushFirst = adapter.applyPush(first.db, { scopeKey: "u1", events: [createBoard("ea", "ba", "u1")] });
+    let retry: ReturnType<typeof adapter.applyPush>;
+    try {
+      await first.inserted;
+      retry = adapter.applyPush(db, { scopeKey: "u1", events: [createBoard("ea", "ba", "u1")] });
+      await Promise.race([retry, sleep(300)]);
+    } finally {
+      first.release();
+    }
+
+    const expected = { ok: true, results: [{ id: "ea", success: true }] };
+    expect(await pushFirst).toEqual(expected);
+    expect(await retry).toEqual(expected);
+    expect((await pullAll(db, "u1", null)).map((log) => log.keyPath)).toEqual(["ba"]);
+  });
+
   it("does not block pushes on a different scope", async () => {
     const db = await testDb();
     await seed(db, {

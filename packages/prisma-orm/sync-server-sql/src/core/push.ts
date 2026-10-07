@@ -3,6 +3,7 @@ import type { GetKeyField, PushCheck, SyncPushEvent, SyncServerContract } from "
 import { ormRootFor } from "./orm-root";
 import { checkAuthorization } from "./authorization";
 import { appendChangelogRow, isEventApplied } from "./changelog";
+import { isDeterministicWriteFailure, sqlState } from "./sqlstate";
 import { reviveWireValues, WireValidationError } from "./wire-values";
 
 /**
@@ -25,6 +26,13 @@ export interface SqlPushResult {
   readonly success: boolean;
   readonly error?: string;
   readonly retryable?: boolean;
+  /**
+   * Set by `applyPush` on a non-retryable failure: the row's current state as
+   * `scopeKey` may read it, or `null` if it is deleted or not theirs. The
+   * client replaces its local row with it. Absent when the server could not
+   * read it (an undecodable key or an unknown model).
+   */
+  readonly record?: Record<string, unknown> | null;
 }
 
 // Prisma 8 rc.12 short-circuits bare null parameters to SQL NULL before
@@ -251,11 +259,23 @@ export async function applyPushEventDecoded(
     // Log the real error server-side only — it can carry DB-internal detail
     // (constraint names, SQL fragments) that shouldn't reach the client.
     console.error(`push apply failed for event ${event.id}`, err);
+    // A timed-out first request can commit after the client's retry started:
+    // the retry then hits the first one's unique key. The event did apply.
+    if (sqlState(err) === "23505" && (await wasApplied(db, event.id))) return { id: event.id, success: true };
     return {
       id: event.id,
       success: false,
       error: `Failed to apply event ${event.id}`,
-      retryable: true,
+      retryable: !isDeterministicWriteFailure(err),
     };
+  }
+}
+
+/** A fresh read, outside the failed transaction. A failing read counts as "not applied". */
+async function wasApplied(db: unknown, eventId: string): Promise<boolean> {
+  try {
+    return await isEventApplied(db, eventId);
+  } catch {
+    return false;
   }
 }

@@ -1,6 +1,7 @@
 import type { GetKeyField, SyncServer, SyncPushEvent, SyncServerContract } from "@prisma-idb/sync-server";
 import { applyPushEventDecoded, decodeFailureResult, decodeWireEvent } from "./push";
 import type { SqlPushResult } from "./push";
+import { withCurrentRecord } from "./rejected-record";
 
 /**
  * Generous headroom over the browser client's own batch size (default 20) —
@@ -45,6 +46,8 @@ export type ApplyPushOutcome =
  * Validates and applies a whole push batch, one call. Results are returned in
  * `events` order: an unknown entity type or unsupported
  * operation fails only that event (non-retryable), never the batch.
+ * A non-retryable failure also carries `record`, the row's current state for
+ * the caller (see `SqlPushResult.record`).
  *
  * Events are applied sequentially, not concurrently: a batch can carry data
  * dependencies (a Todo created right after the Board it belongs to), and
@@ -88,7 +91,7 @@ export async function applyPush(
       const { check } = checksById.get(event.id)!;
       result = await applyPushEventDecoded(db, contract, getKeyField, decodedById.get(event.id)!, check, scopeKey);
     }
-    results.push(result);
+    results.push(await withCurrentRecord(db, syncServer, contract, getKeyField, scopeKey, event, result));
     if (!result.success && result.retryable) break;
   }
 

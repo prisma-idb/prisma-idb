@@ -142,11 +142,17 @@ describe("wire-form SQL keys", () => {
       })
     ).toEqual({
       ok: true,
-      results: ["wrong-root", "wrong-item", "reassign"].map((id) => ({
+      // Rows of another scope read as `null`; the caller's own row comes back as the server has it.
+      results: [
+        ["wrong-root", null],
+        ["wrong-item", null],
+        ["reassign", { id: 11n, ownerId: 1n, name: "first" }],
+      ].map(([id, record]) => ({
         id,
         success: false,
         error: "SCOPE_VIOLATION",
         retryable: false,
+        record,
       })),
     });
     expect((await ormRootFor(db, "BigItem").first({ id: 11n }))?.["ownerId"]).toBe(1n);
