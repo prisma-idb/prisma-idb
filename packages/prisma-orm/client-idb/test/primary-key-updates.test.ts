@@ -44,7 +44,9 @@ describe("primary-key updates", () => {
         const result =
           operation === "update" ? accessor.update({ id: "z9" }) : accessor.updateAll({ id: "z9" }).toArray();
         await expect(result).rejects.toMatchObject({ code: "PRIMARY_KEY_CHANGE_UNSUPPORTED" });
-        await expect(result).rejects.toThrow(/Delete the row and create a new one/);
+        await expect(result).rejects.toThrow(
+          /Delete the row and create it again only after handling dependent records/
+        );
         expect(await client.orm["items"]!.all().toArray()).toEqual([original]);
       }, 1000);
     }
