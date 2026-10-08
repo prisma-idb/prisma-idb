@@ -7,7 +7,8 @@ import idbTargetPack from "@prisma-idb/target-idb/pack";
  * by it: single-field equality and ranges (`byCategory`, `byScore`), a
  * compound index (`byOrgRank`), and indexed foreign keys for relation loads
  * and referential actions (`byAuthor`, `byPublisher`). `status` and `note`
- * are deliberately unindexed.
+ * are deliberately unindexed. Activity preferences use a unique user/date
+ * index to measure ordered history reads with the Date codec.
  */
 export const contract = defineContract({
   family: idbFamilyPack,
@@ -30,6 +31,20 @@ export const contract = defineContract({
         byScore: { keyPath: "score", unique: false },
         byOrgRank: { keyPath: ["orgId", "rank"], unique: false },
       },
+    },
+    ActivityPreference: {
+      store: "activityPreferences",
+      key: "id",
+      fields: {
+        id: "String",
+        userId: "String",
+        effectiveFrom: "DateTime",
+        activityLevel: "Float",
+        steps: "Int",
+        weight: "Float",
+        note: "String",
+      },
+      indexes: { byUserEffective: { keyPath: ["userId", "effectiveFrom"], unique: true } },
     },
     Author: {
       store: "authors",

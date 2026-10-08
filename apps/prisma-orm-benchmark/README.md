@@ -32,6 +32,25 @@ their untimed `prepare` step and delete the rows they create in their untimed
 samples round-robin across operations, so no operation may leave data behind
 for the next one. `pnpm test:unit` checks this against `fake-indexeddb`.
 
+## Date history fixture
+
+`activityPreferences` has a unique `[userId, effectiveFrom]` index and uses
+`idb/date@1`. Each row has activity, step and weight preferences, plus a
+nonempty note. Five users share `datasetSize` rows. Use 5,000 total rows for
+1,000 rows per user, or 25,000 for 5,000 per user. The strict cutoff leaves
+the last 20% of each user's history in the future.
+
+`find-date-compound-suffix-first` filters one user and dates before the cutoff,
+orders by `effectiveFrom` descending, and reads the first result. It repeats
+five queries per sample. Divide the reported times by five for milliseconds
+per query. `find-compound-suffix-first` is the numeric control on the existing
+`[orgId, rank]` index.
+
+This Date query matches MyFit's activity-preferences query semantics in the
+new client. MyFit still uses the legacy generated client, so these timings
+do not measure the current MyFit build. An inclusive-only Date bound keeps
+the full-scan fallback because it can match invalid Dates omitted by an index.
+
 ## Running it
 
 ```bash

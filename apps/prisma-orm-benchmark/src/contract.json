@@ -4,6 +4,10 @@
   "target": "idb",
   "profileHash": "40329830af4e39e0774683fbebcdc24dcf983a5da02c5fe6079a2a57579f861c",
   "roots": {
+    "activityPreferences": {
+      "model": "ActivityPreference",
+      "namespace": "__unbound__"
+    },
     "authors": {
       "model": "Author",
       "namespace": "__unbound__"
@@ -25,6 +29,64 @@
     "namespaces": {
       "__unbound__": {
         "models": {
+          "ActivityPreference": {
+            "fields": {
+              "activityLevel": {
+                "nullable": false,
+                "type": {
+                  "codecId": "idb/double@1",
+                  "kind": "scalar"
+                }
+              },
+              "effectiveFrom": {
+                "nullable": false,
+                "type": {
+                  "codecId": "idb/date@1",
+                  "kind": "scalar"
+                }
+              },
+              "id": {
+                "nullable": false,
+                "type": {
+                  "codecId": "idb/string@1",
+                  "kind": "scalar"
+                }
+              },
+              "note": {
+                "nullable": false,
+                "type": {
+                  "codecId": "idb/string@1",
+                  "kind": "scalar"
+                }
+              },
+              "steps": {
+                "nullable": false,
+                "type": {
+                  "codecId": "idb/int32@1",
+                  "kind": "scalar"
+                }
+              },
+              "userId": {
+                "nullable": false,
+                "type": {
+                  "codecId": "idb/string@1",
+                  "kind": "scalar"
+                }
+              },
+              "weight": {
+                "nullable": false,
+                "type": {
+                  "codecId": "idb/double@1",
+                  "kind": "scalar"
+                }
+              }
+            },
+            "relations": {},
+            "storage": {
+              "keyPath": "id",
+              "storeName": "activityPreferences"
+            }
+          },
           "Author": {
             "fields": {
               "id": {
@@ -231,8 +293,17 @@
         "id": "__unbound__"
       }
     },
-    "storageHash": "202d4de2b477b120cfdd0b293cfb3f418fbe49e3104e8ff4e9dd17d8de02e0dc",
+    "storageHash": "4fe8c61e576527d611d0eb6f8b11ba97dadde0a5920065c0819221e9af78896f",
     "stores": {
+      "activityPreferences": {
+        "indexes": {
+          "byUserEffective": {
+            "keyPath": ["userId", "effectiveFrom"],
+            "unique": true
+          }
+        },
+        "keyPath": "id"
+      },
       "authors": {
         "keyPath": "id"
       },

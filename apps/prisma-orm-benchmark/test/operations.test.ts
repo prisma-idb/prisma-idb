@@ -1,3 +1,4 @@
+import { and } from "@prisma-idb/client-idb/orm";
 import { runBenchmarkSuite } from "@prisma-idb/benchmark-kit";
 import { describe, expect, it } from "vitest";
 import { authorId, BOOKS_PER_AUTHOR, createSeededDatabase, openClient, type BenchmarkClient } from "../src/database";
@@ -9,6 +10,7 @@ const DATASET_SIZE = 100;
 async function countRows(client: BenchmarkClient) {
   return {
     items: (await client.orm.items.all().toArray()).length,
+    activityPreferences: await client.orm.activityPreferences.count(),
     authors: (await client.orm.authors.all().toArray()).length,
     books: (await client.orm.books.all().toArray()).length,
     booksOfFirstAuthor: await client.orm.books.where({ authorId: authorId(1) }).count(),
@@ -45,4 +47,25 @@ describe("operationDefinitions", () => {
       await client.close();
     }
   });
+});
+
+it("seeds realistic Date history with a strict cutoff and future rows", async () => {
+  await createSeededDatabase(100);
+  const client = openClient();
+  try {
+    expect(await client.orm.activityPreferences.count()).toBe(100);
+    const cutoff = new Date(Date.UTC(2010, 0, 17));
+    const first = await client.orm.activityPreferences
+      .where((m) => and(m.userId.eq("u1"), m.effectiveFrom.lt(cutoff)))
+      .orderBy({ effectiveFrom: "desc" })
+      .first();
+    expect(first).toMatchObject({ userId: "u1", effectiveFrom: new Date(Date.UTC(2010, 0, 16)) });
+    expect(first?.note).toMatch(/^.{200,}$/);
+    expect(await client.orm.activityPreferences.where((m) => m.effectiveFrom.gte(cutoff)).count()).toBe(20);
+    expect(operationDefinitions.map((definition) => definition.operationId)).toContain(
+      "find-date-compound-suffix-first"
+    );
+  } finally {
+    await client.close();
+  }
 });

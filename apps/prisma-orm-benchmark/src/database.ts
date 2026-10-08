@@ -23,10 +23,21 @@ export const BOOKS_PER_AUTHOR = 10;
 const CATEGORY_COUNT = 10;
 const ORG_COUNT = 5;
 
+/** History rows cycle through five users. */
+export const HISTORY_USERS = 5;
+const HISTORY_START = Date.UTC(2010, 0, 1);
+const DAY_MS = 86_400_000;
+
+const effectiveDate = (rank: number) => new Date(HISTORY_START + rank * DAY_MS);
+
+/** The last fifth of each user's history lies after this strict bound. */
+export const historyCutoff = (n: number) => effectiveDate(Math.floor((n / HISTORY_USERS) * 0.8));
+
 /**
  * `n` items: `CATEGORY_COUNT` categories, scores `0..n-1`, two statuses and
  * `ORG_COUNT` orgs. `n / BOOKS_PER_AUTHOR` authors, `n` books spread evenly
  * across them, and one publisher (`p-main`) that owns every book.
+ * `n` activity preferences span five users, with valid Date keys and payloads.
  */
 function seedRows(n: number): Record<string, Record<string, unknown>[]> {
   const authors = Math.max(1, Math.floor(n / BOOKS_PER_AUTHOR));
@@ -40,6 +51,20 @@ function seedRows(n: number): Record<string, Record<string, unknown>[]> {
       rank: i,
       note: "",
     })),
+    activityPreferences: Array.from({ length: n }, (_, i) => {
+      const rank = Math.floor(i / HISTORY_USERS);
+      return {
+        id: `preference-${pad(i)}`,
+        userId: `u${i % HISTORY_USERS}`,
+        effectiveFrom: effectiveDate(rank),
+        activityLevel: 1.2 + (rank % 5) / 10,
+        steps: 5000 + (rank % 10) * 1000,
+        weight: 65 + (rank % 30) / 10,
+        note: `Preference revision ${rank}: walking and strength training; daily targets adjusted for current activity. `.repeat(
+          3
+        ),
+      };
+    }),
     authors: Array.from({ length: authors }, (_, i) => ({ id: authorId(i), name: `Author ${i}` })),
     publishers: [{ id: "p-main", name: "Main" }],
     books: Array.from({ length: n }, (_, i) => ({

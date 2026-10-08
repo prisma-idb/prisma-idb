@@ -1,6 +1,6 @@
 import type { BenchmarkOperationDefinition } from "@prisma-idb/benchmark-kit";
 import { and, or } from "@prisma-idb/client-idb/orm";
-import { authorId, BOOKS_PER_AUTHOR, itemId, type BenchmarkClient } from "./database";
+import { authorId, BOOKS_PER_AUTHOR, historyCutoff, itemId, type BenchmarkClient } from "./database";
 
 /**
  * Read operations run against the database seeded once before the suite.
@@ -27,6 +27,8 @@ export const BENCHMARK_OPERATION_IDS = [
   "find-or-with-and-branch",
   "find-compound-exact",
   "find-compound-prefix",
+  "find-compound-suffix-first",
+  "find-date-compound-suffix-first",
   "find-order-by-indexed-take",
   "count-eq-indexed",
   "count-lt-indexed",
@@ -151,6 +153,26 @@ export const operationDefinitions: readonly Definition[] = [
   ),
   read("find-compound-prefix", "findMany, compound index prefix", (c) =>
     c.orm.items.where({ orgId: "o1" }).all().toArray()
+  ),
+  read(
+    "find-compound-suffix-first",
+    "findFirst, descending numeric compound suffix",
+    (c, n) =>
+      c.orm.items
+        .where((m) => and(m.orgId.eq("o1"), m.rank.lt(Math.floor(n * 0.8))))
+        .orderBy({ rank: "desc" })
+        .first(),
+    SHORT
+  ),
+  read(
+    "find-date-compound-suffix-first",
+    "findFirst, descending Date history suffix",
+    (c, n) =>
+      c.orm.activityPreferences
+        .where((m) => and(m.userId.eq("u1"), m.effectiveFrom.lt(historyCutoff(n))))
+        .orderBy({ effectiveFrom: "desc" })
+        .first(),
+    SHORT
   ),
   read("find-order-by-indexed-take", "findMany, orderBy indexed field, take 10", (c) =>
     c.orm.items.orderBy({ score: "asc" }).take(10).all().toArray()
