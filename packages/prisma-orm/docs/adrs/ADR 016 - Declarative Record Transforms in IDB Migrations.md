@@ -66,6 +66,8 @@ There are two kinds of change, kept apart on purpose:
 - **Value changes** (`fields`) read one field's value and return its replacement. That makes them composable: `pipe` passes one value through several steps in order.
 - **Shape changes** (`renameFields`, `removeFields`) change which keys a record has. Modelling a rename as a value transform would make it unclear which field is being read, so they are separate lists.
 
+Renames read from the original record, remove all source fields, then write the destinations. Swaps and chains preserve the original values regardless of entry order.
+
 For each record, the steps always run in this order: **rename, then transform values, then remove.** So you can rename a field and change its type in one pass, as long as the transform uses the new name.
 
 The exported pure `transformRecord(op, value, mode)` returns a rewritten copy. `full` mode applies every transform. `patch` mode only transforms fields present after renaming. It skips `defaultIfMissing` and `setLiteral`, including inside `pipe`, so absent fields stay absent.

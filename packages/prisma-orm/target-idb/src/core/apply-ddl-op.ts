@@ -30,13 +30,13 @@ function toDomKeyPath(keyPath: IdbKeyPath): string | string[] {
  * transaction; `onError` lets callers retain the original exception.
  *
  * **Idempotency.** Each structural op checks whether its store or index
- * already exists (or is already gone) and does nothing if so. IndexedDB itself has no such
- * tolerance: `createObjectStore` and `createIndex` throw `ConstraintError` on
- * an existing target, which would abort the whole upgrade. Migrations and
- * their markers now commit together, so a normal run never replays an op.
- * The guards cover databases whose schema is ahead of their marker anyway,
- * for example ones left by an older build that wrote the marker in a
- * separate transaction and was closed in between.
+ * already exists (or is already gone) and does nothing if so. IndexedDB
+ * itself has no such tolerance: `createObjectStore` and `createIndex` throw
+ * `ConstraintError` on an existing target, which would abort the whole
+ * upgrade. Migrations and their markers now commit together, so a normal
+ * run never replays an op. The guards cover databases whose schema is ahead
+ * of their marker anyway, for example ones left by an older build that
+ * wrote the marker in a separate transaction and was closed in between.
  */
 export function applyOneDdlOp(
   db: IDBDatabase,

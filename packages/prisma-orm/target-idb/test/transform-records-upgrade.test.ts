@@ -1,5 +1,5 @@
 import { IDBFactory } from "fake-indexeddb";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { openAndUpgrade, readMarker, applyOneDdlOp } from "../src/core/apply-ddl-op";
 import {
   createObjectStoreOp,
@@ -9,6 +9,7 @@ import {
   dropObjectStoreOp,
   transformRecordsOp,
   coerce,
+  pipe,
   defaultIfMissing,
   setLiteral,
   type IdbDdlOp,
@@ -84,6 +85,16 @@ describe("transformRecords upgrades", () => {
     ]);
   });
 
+  it("keeps absent fields absent in stored records", async () => {
+    const factory = await seed();
+    const before = await snapshot(factory);
+    await upgrade(factory, [transformRecordsOp("users", { fields: { count: coerce("int"), role: pipe() } })]);
+    const state = await snapshot(factory);
+    expect(state.records).toStrictEqual(before.records);
+    expect(state.version).toBe(2);
+    expect(state.marker?.storageHash).toBe("new");
+  });
+
   it("rolls back earlier record updates, structural ops and markers when a later record throws", async () => {
     const factory = await seed();
     const before = await snapshot(factory);
@@ -97,6 +108,47 @@ describe("transformRecords upgrades", () => {
     const db = await open(factory);
     expect(db.objectStoreNames.contains("temporary")).toBe(false);
     db.close();
+  });
+
+  it("rethrows cursor errors and rolls back when onError is omitted", async () => {
+    const factory = await seed();
+    const before = await snapshot(factory);
+    let completions = 0;
+    await expect(
+      new Promise<void>((resolve, reject) => {
+        const request = factory.open("records", 2);
+        let thrown: unknown;
+        request.onupgradeneeded = () => {
+          const tx = request.transaction!;
+          const store = tx.objectStore("users");
+          const openCursor = vi.spyOn(store, "openCursor");
+          applyOneDdlOp(
+            request.result,
+            tx,
+            transformRecordsOp("users", { fields: { synced: coerce("int") } }),
+            () => completions++
+          );
+          const cursorRequest = openCursor.mock.results[0]!.value as IDBRequest<IDBCursorWithValue | null>;
+          openCursor.mockRestore();
+          const onSuccess = cursorRequest.onsuccess!;
+          // Catch the public executor's rethrow before it escapes the event loop.
+          cursorRequest.onsuccess = function (event) {
+            try {
+              onSuccess.call(this, event);
+            } catch (error) {
+              thrown = error;
+            }
+          };
+        };
+        request.onsuccess = () => {
+          request.result.close();
+          resolve();
+        };
+        request.onerror = () => reject(thrown ?? request.error);
+      })
+    ).rejects.toThrow("cannot coerce invalid to int");
+    expect(completions).toBe(0);
+    expect(await snapshot(factory)).toEqual(before);
   });
 
   it("rolls back when a cursor update violates an existing unique index", async () => {

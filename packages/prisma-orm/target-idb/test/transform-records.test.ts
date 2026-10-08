@@ -29,14 +29,16 @@ const conversions: readonly [IdbValueTransform, unknown, unknown][] = [
   [coerce("isoDateString"), "2026-01-02", "2026-01-02"],
 ];
 
-const invalid: readonly [IdbValueTransform, unknown][] = [
-  [coerce("int"), "abc"],
-  [coerce("boolean"), "yes"],
-  [coerce("boolean"), "TRUE"],
-  [coerce("isoDateString"), true],
-  [coerce("isoDateString"), false],
-  [coerce("isoDateString"), "not a date"],
-  [coerce("isoDateString"), Infinity],
+const invalid: readonly [IdbValueTransform, unknown, string][] = [
+  [coerce("int"), "abc", "cannot coerce abc to int"],
+  [coerce("boolean"), "yes", "cannot coerce yes to boolean"],
+  [coerce("boolean"), "TRUE", "cannot coerce TRUE to boolean"],
+  [coerce("isoDateString"), true, "cannot coerce true to isoDateString"],
+  [coerce("isoDateString"), false, "cannot coerce false to isoDateString"],
+  [coerce("isoDateString"), "not a date", "cannot coerce not a date to isoDateString"],
+  [coerce("isoDateString"), Infinity, "Invalid time value"],
+  [coerce("isoDateString"), NaN, "Invalid time value"],
+  [coerce("isoDateString"), 8_640_000_000_000_001, "Invalid time value"],
 ];
 
 describe.each(["full", "patch"] as const)("transformRecord in %s mode", (mode) => {
@@ -49,17 +51,23 @@ describe.each(["full", "patch"] as const)("transformRecord in %s mode", (mode) =
     expect(input.field).toEqual(value);
   });
 
-  it.each(invalid)("rejects invalid input to %j: %j", (transform, value) => {
+  it.each(invalid)("rejects invalid input to %j: %j", (transform, value, message) => {
     expect(() =>
       transformRecord(transformRecordsOp("users", { fields: { field: transform } }), { field: value }, mode)
-    ).toThrow();
+    ).toThrow(message);
   });
 
   it.each(["int", "string", "boolean", "isoDateString"] as const)("passes null and undefined through %s", (to) => {
     const op = transformRecordsOp("users", { fields: { field: coerce(to) } });
     expect(transformRecord(op, { field: null }, mode)).toEqual({ field: null });
     expect(transformRecord(op, { field: undefined }, mode)).toEqual({ field: undefined });
-    if (mode === "patch") expect(transformRecord(op, {}, mode)).toEqual({});
+    expect(transformRecord(op, {}, mode)).toStrictEqual({});
+  });
+
+  it("keeps absent fields absent through an empty pipe", () => {
+    const op = transformRecordsOp("users", { fields: { field: pipe() } });
+    expect(transformRecord(op, {}, mode)).toStrictEqual({});
+    expect(transformRecord(op, { field: undefined }, mode)).toStrictEqual({ field: undefined });
   });
 
   it("renames, transforms the new name, then removes fields", () => {
@@ -71,6 +79,17 @@ describe.each(["full", "patch"] as const)("transformRecord in %s mode", (mode) =
     });
     expect(transformRecord(op, input, mode)).toEqual({ renamed: 1 });
     expect(input).toEqual({ old: true, obsolete: 1 });
+  });
+
+  it.each([
+    { renameFields: { a: "b", b: "a" }, expected: { a: "y", b: "x" } },
+    { renameFields: { c: "b", b: "a" }, expected: { c: "y", b: "x" } },
+    { renameFields: { b: "a", c: "b" }, expected: { b: "x", c: "y" } },
+  ])("reads overlapping renames from the original record: %j", ({ renameFields, expected }) => {
+    const input = Object.freeze({ a: "x", b: "y" });
+    const op = transformRecordsOp("users", { renameFields });
+    expect(transformRecord(op, input, mode)).toStrictEqual(expected);
+    expect(input).toStrictEqual({ a: "x", b: "y" });
   });
 
   it("keeps absent rename sources absent and permits a self-rename", () => {

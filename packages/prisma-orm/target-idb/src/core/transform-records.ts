@@ -14,21 +14,25 @@ export function transformRecord(
   mode: RecordTransformMode
 ): Record<string, unknown> {
   const result = { ...value };
+  const renames = Object.entries(op.renameFields ?? {}).filter(([, oldName]) => Object.hasOwn(value, oldName));
+  // Remove sources before writing destinations so swaps and chains keep every original value.
+  for (const [, oldName] of renames) delete result[oldName];
   // Define own properties so names such as __proto__ stay data.
-  for (const [newName, oldName] of Object.entries(op.renameFields ?? {})) {
-    if (!Object.hasOwn(result, oldName) || newName === oldName) continue;
+  for (const [newName, oldName] of renames) {
     Object.defineProperty(result, newName, {
-      value: result[oldName],
+      value: value[oldName],
       enumerable: true,
       configurable: true,
       writable: true,
     });
-    delete result[oldName];
   }
   for (const [field, transform] of Object.entries(op.fields ?? {})) {
-    if (mode === "patch" && !Object.hasOwn(result, field)) continue;
+    const present = Object.hasOwn(result, field);
+    if (mode === "patch" && !present) continue;
+    const transformed = transformValue(transform, present ? result[field] : undefined, mode);
+    if (!present && transformed === undefined) continue;
     Object.defineProperty(result, field, {
-      value: transformValue(transform, Object.hasOwn(result, field) ? result[field] : undefined, mode),
+      value: transformed,
       enumerable: true,
       configurable: true,
       writable: true,
