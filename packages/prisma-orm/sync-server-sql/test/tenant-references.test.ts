@@ -4,7 +4,11 @@ import { createSqlSyncAdapter } from "../src/core/create-adapter";
 import { ormRootFor } from "../src/core/orm-root";
 import { seed, testContract, testDb, testSyncServer } from "./helpers";
 
-const adapter = createSqlSyncAdapter({ contract: testContract, syncServer: testSyncServer });
+const adapter = createSqlSyncAdapter({
+  contract: testContract,
+  syncServer: testSyncServer,
+  contractFingerprintCheck: "off",
+});
 
 async function seedTenants() {
   const db = await testDb();

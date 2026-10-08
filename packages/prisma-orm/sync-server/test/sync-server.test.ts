@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { contractFingerprint } from "@prisma-idb/target-idb/runtime";
 import { createSyncServer, defaultGetKeyField, validatePush } from "../src/core/sync-server";
 import { buildOwnershipDag } from "../src/core/ownership-dag";
 import type { SyncServerContract } from "../src/core/ownership-dag";
@@ -32,6 +33,26 @@ describe("createSyncServer", () => {
     expect(() =>
       createSyncServer({ contract: kanbanContract(), clientContract: kanbanClientContract(), rootModel: "Ghost" })
     ).toThrow();
+  });
+
+  describe("contractFingerprint", () => {
+    it("is the fingerprint of the client contract, which is what clients are compared against", async () => {
+      expect(await server().contractFingerprint()).toBe(await contractFingerprint(kanbanClientContract()));
+    });
+
+    it("does not move when only the server-side contract changes", async () => {
+      const serverOnly = kanbanContract();
+      Object.values(serverOnly.domain.namespaces)[0]!.models["Todo"]!.fields["serverNote"] = {
+        type: { kind: "scalar", codecId: "idb/string@1" },
+        nullable: true,
+      };
+      const changed = createSyncServer({
+        contract: serverOnly,
+        clientContract: kanbanClientContract(),
+        rootModel: "User",
+      });
+      expect(await changed.contractFingerprint()).toBe(await server().contractFingerprint());
+    });
   });
 
   describe("validatePush", () => {

@@ -13,7 +13,11 @@ export type {
   SyncWorkerStatus,
   PushCompletedEvent,
   PullCompletedEvent,
+  ContractMismatchEvent,
+  SyncRequestContext,
 } from "../core/sync-worker";
+
+export { ContractMismatchError } from "../core/contract-mismatch-error";
 
 export { applyPull } from "../core/apply-pull";
 export { getNextBatch, markSynced, markFailed } from "../core/outbox-store";

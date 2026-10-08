@@ -7,7 +7,7 @@ npm install @prisma-idb/sync-extension-idb
 ```
 
 ```ts
-import { createManagedAutoSyncIdbClient } from "@prisma-idb/sync-extension-idb/client";
+import { ContractMismatchError, createManagedAutoSyncIdbClient } from "@prisma-idb/sync-extension-idb/client";
 import { idbSyncExtension } from "@prisma-idb/sync-extension-idb/control";
 import { contractSpace } from "./prisma/contract-space.generated";
 
@@ -15,12 +15,32 @@ const managedDb = createManagedAutoSyncIdbClient({ contractSpace, dbName: "my-ap
 
 const db = await managedDb.get();
 const worker = db.createSyncWorker({
-  pushHandler: (events, signal) =>
-    fetch("/api/sync/push", { method: "POST", body: JSON.stringify({ events }), signal }).then((r) => r.json()),
-  pullHandler: (since, signal) => fetch(`/api/sync/pull?since=${since ?? ""}`, { signal }).then((r) => r.json()),
+  pushHandler: async (events, signal, context) => {
+    const response = await fetch("/api/sync/push", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-contract-fingerprint": await context.contractFingerprint(),
+      },
+      body: JSON.stringify({ events }),
+      signal,
+    });
+    if (response.status === 409) throw new ContractMismatchError();
+    return response.json();
+  },
+  pullHandler: async (since, signal, context) => {
+    const response = await fetch(`/api/sync/pull?since=${since ?? ""}`, {
+      headers: { "x-contract-fingerprint": await context.contractFingerprint() },
+      signal,
+    });
+    if (response.status === 409) throw new ContractMismatchError();
+    return response.json();
+  },
 });
 worker.start();
 ```
+
+Each handler also receives `context.contractFingerprint()`. Send it to the server, which refuses a client on a different contract; throw `ContractMismatchError` from the handler on HTTP 409. See [Contract fingerprint](https://prisma-idb.dev/docs/prisma-8/sync/server#contract-fingerprint).
 
 `trackedModels` defaults to `"*"`; pass model names to keep other writes local. Tracked models need keys that are unique across devices, such as `uuid()` or `cuid()`. Auto-incremented keys are rejected for tracked stores.
 
