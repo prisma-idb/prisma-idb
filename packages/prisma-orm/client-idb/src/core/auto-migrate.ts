@@ -1,3 +1,4 @@
+import { domainModelsAtDefaultNamespace } from "@prisma/orm-framework/contract/types";
 import type { Contract } from "@prisma/orm-framework/contract/types";
 import type { ContractSpace, MigrationPackage } from "@prisma/orm-framework/components/control";
 import { APP_SPACE_ID } from "@prisma/orm-framework/components/control";
@@ -7,9 +8,15 @@ import type { IdbExtensionSpace } from "@prisma-idb/family-idb/control";
 import { computeMigrationHash } from "./migration-hash";
 // Import from `./runtime` (not `./migration`) so `MigrationCLI` → `node:fs`
 // is not bundled into the browser client.
-import { isIdbDdlOp, openAndUpgrade, readMarker, type IdbDdlOp } from "@prisma-idb/target-idb/runtime";
+import {
+  isIdbDdlOp,
+  openAndUpgrade,
+  readMarker,
+  type IdbDdlOp,
+  type TransformRecordsOp,
+} from "@prisma-idb/target-idb/runtime";
 import { createIdbClient, type IdbClient } from "./idb-client";
-import type { IdbContract } from "./types";
+import { getStoreName, type IdbContract } from "./types";
 
 // ── Public API ───────────────────────────────────────────────────────────────
 
@@ -184,7 +191,45 @@ export async function autoMigrate(input: {
     targetVersion: initialVersion + 1,
     ops: orderedPending.flatMap((space) => space.ops),
     markers: orderedPending.map((space) => ({ space: space.spaceId, storageHash: space.storageHash })),
+    onTransformRecords: createTransformRecordsCallback(input.contractSpace.contractJson, input.extensions ?? []),
   });
+}
+
+/**
+ * Build the `openAndUpgrade` callback that runs extension hooks after a `transformRecords` op.
+ * Hooks see app model names, so they never learn the app's store naming. A store with no app
+ * model, such as an extension's own store, skips the hooks.
+ */
+function createTransformRecordsCallback(contract: Contract, extensions: ReadonlyArray<IdbExtensionSpace>) {
+  const models = Object.keys(domainModelsAtDefaultNamespace(contract.domain));
+  const hooks = extensions.flatMap((extension) => (extension.onTransformRecords ? [extension.onTransformRecords] : []));
+  return (tx: IDBTransaction, op: TransformRecordsOp, onDone: (error?: unknown) => void): void => {
+    const modelName = models.find((model) => getStoreName(contract as IdbContract, model) === op.storeName);
+    if (modelName === undefined) {
+      onDone();
+      return;
+    }
+    const runHook = (index: number): void => {
+      const hook = hooks[index];
+      if (!hook) {
+        onDone();
+        return;
+      }
+      let completed = false;
+      const next = (error?: unknown): void => {
+        if (completed) return;
+        completed = true;
+        if (error === undefined) runHook(index + 1);
+        else onDone(error);
+      };
+      try {
+        hook(tx, op, modelName, next);
+      } catch (error) {
+        next(error);
+      }
+    };
+    runHook(0);
+  };
 }
 
 /** Validates bundled descriptors before the migration loop opens the database. */

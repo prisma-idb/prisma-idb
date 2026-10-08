@@ -1,3 +1,4 @@
+import type { TransformRecordsOp } from "@prisma-idb/target-idb/runtime";
 import type { ContractSpace } from "@prisma/orm-framework/components/control";
 
 /**
@@ -26,4 +27,15 @@ export interface IdbExtensionSpace {
   readonly spaceId: string;
   /** The extension's bundled contract + migration graph. */
   readonly contractSpace: ContractSpace;
+  /**
+   * Rewrite the extension's data after an app model's `transformRecords` op, in the same
+   * upgrade transaction. Do not `await`; chain through IDB events. Call `onDone()` once to
+   * continue, or `onDone(error)` to abort the upgrade and reject with `error`.
+   */
+  readonly onTransformRecords?: (
+    tx: IDBTransaction,
+    op: TransformRecordsOp,
+    modelName: string,
+    onDone: (error?: unknown) => void
+  ) => void;
 }
