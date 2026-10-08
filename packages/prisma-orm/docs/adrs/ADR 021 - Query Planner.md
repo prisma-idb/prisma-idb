@@ -62,7 +62,11 @@ Shapes that aren't accelerated scan the store and filter in memory:
 - Queries with an unindexed or `multiEntry` predicate and no other usable source. If another source narrows the candidates, the ORM still applies the full filter.
 - A source whose lookup values multiply to more than 1,024 prefixes. The planner rejects that source, not the whole query. Another usable source can still serve it; the query scans the store only when none can.
 
-A single-field `orderBy` with `take` walks an index in order only when that index is also the source that serves the filter, or when the filter needs no source and an index covers the `orderBy` field with complete keys. If the filter picks a source on a different field, the query reads that source's range and sorts the rows in memory.
+A single-field `orderBy` with `take` can walk the selected filtering source in order. For a compound source, every key field before the ordered field must have exactly one normalized valid-key point. For example, `userId = x` fixes the prefix of `[userId, effectiveFrom]`, so the cursor can order by `effectiveFrom`. Singleton `in`, duplicate points and intersected constraints also qualify when normalization leaves one point. Missing, ranged or multiple-point prefixes keep the in-memory sort. Trailing key fields can break ties; tied rows still have no specified order, including at page boundaries.
+
+The planner does not change source ranking to serve ordering. If the selected source cannot prove the order, the query reads its range and sorts the rows. When no filtering source is selected, ordering-only scans still require a single-field source with complete keys. Multi-field ordering and `multiEntry` sources keep their existing fallback.
+
+Index coverage checks still apply to every compound field. Date and double codecs can store non-key values that indexes omit. A strict Date `lt` bound rejects invalid Dates, so `userId = x AND effectiveFrom < cutoff` can use the user/date index in reverse. An inclusive-only `lte` bound can match invalid Dates and keeps the full-store fallback. Nullable or key-partial trailing fields also need a rejecting predicate. The cursor reapplies the full filter before `skip` and `take`, then stops when the page is complete.
 
 When several sources can serve a query, the planner picks the highest-ranked candidate. The ranking is a fixed heuristic, not a measured selectivity: a unique-index point, then a primary-key point, an index point, a compound prefix, a two-sided range and a one-sided range. Ties go to fewer ranges, then to the primary key, then to declaration order.
 
@@ -104,6 +108,23 @@ This matches Prisma, which also defines no order without `orderBy`.
 - **A new accelerated shape needs a gate entry.** Add the shape to the plan-shape gate in the same change. The diff of the table is the evidence that the shape improved and nothing regressed.
 - **Indexes matter more.** A contract with no index on a filtered field still scans. Authors add `@@index` for fields they filter on.
 - **The gate counts requests in `fake-indexeddb`.** It doesn't measure timing. The benchmark app measures timing in Chromium, and we haven't yet checked WebKit or Firefox.
+
+## Compound suffix timing evidence
+
+On 2026-10-08, Chromium 153.0.8010.12 on Linux arm64 compared main `35b691d8` with the fixed-prefix planner. The fixture had five users, 1,000 or 5,000 Date history rows per user, a unique `[userId, effectiveFrom]` index, and about 427 bytes of preference payload per row. A strict cutoff excluded the final 20% of each user's history. Both clients ran the same descending `first()` query and checked results against a full-filter oracle before timing.
+
+Each of three paired rounds used five warmups and 30 samples per path, with five queries per sample. The paths alternated on the same browser and machine. Times below are milliseconds per query. The 95% bootstrap interval uses benchmark-kit's 2,000 resamples and describes candidate latency change relative to main; negative values mean faster.
+
+| Rows per user | Round | Main ms | Candidate ms | Median gain | 95% interval of change |
+| ------------- | ----- | ------- | ------------ | ----------- | ---------------------- |
+| 1,000         | 1     | 41.81   | 0.93         | 97.78%      | [-97.88%, -97.49%]     |
+| 1,000         | 2     | 41.85   | 0.99         | 97.63%      | [-97.80%, -97.34%]     |
+| 1,000         | 3     | 41.06   | 0.96         | 97.66%      | [-97.81%, -97.54%]     |
+| 5,000         | 1     | 198.15  | 0.98         | 99.50%      | [-99.53%, -99.43%]     |
+| 5,000         | 2     | 194.54  | 0.97         | 99.50%      | [-99.53%, -99.46%]     |
+| 5,000         | 3     | 197.56  | 0.94         | 99.52%      | [-99.54%, -99.48%]     |
+
+Every round exceeded the agreed 20% and 0.5 ms/query improvement bar. The plan-shape gate separately pins one value read for numeric and Date suffix `first()`, and six for a residual-filtered page with `skip(1).take(2)`, at 100 and 1,000 total rows. These timings measure equivalent MyFit query semantics in `client-idb`. MyFit still uses the legacy generated client, so its current build does not receive this speedup.
 
 ## Related
 

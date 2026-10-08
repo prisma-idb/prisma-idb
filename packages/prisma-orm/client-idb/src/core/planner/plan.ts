@@ -125,7 +125,7 @@ export function planQuery(catalog: QueryCatalog, request: PlanRequest): LogicalP
   if (orders.length === 1 && request.take !== undefined) {
     const [field, order] = orders[0]!;
     if (selected) {
-      if (singleFieldSource(selected.source, field)) direction = order === "asc" ? "next" : "prev";
+      if (sourceOrdersField(selected.source, field, constraints)) direction = order === "asc" ? "next" : "prev";
     } else {
       const ordering = sources.find(
         (source) => !source.multiEntry && singleFieldSource(source, field) && completeKeyField(catalog.fields[field])
@@ -213,6 +213,16 @@ function keyPartial(field: CatalogField | undefined): boolean {
 function completeKeyField(field: CatalogField | undefined, constraint?: Constraint): boolean {
   return keyTyped(field) && field?.nullable === false && (!keyPartial(field) || constraint?.rejectsNonKeys === true);
 }
+/** A compound cursor orders a suffix only within one fixed preceding key. */
+function sourceOrdersField(
+  source: CatalogSource,
+  field: string,
+  constraints: ReadonlyMap<string, Constraint>
+): boolean {
+  const position = source.fields.indexOf(field);
+  return position >= 0 && source.fields.slice(0, position).every((name) => constraints.get(name)?.points?.length === 1);
+}
+
 function singleFieldSource(source: CatalogSource, field: string): boolean {
   return source.fields.length === 1 && source.fields[0] === field;
 }
