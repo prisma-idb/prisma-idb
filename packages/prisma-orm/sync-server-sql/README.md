@@ -1,10 +1,18 @@
 # `@prisma-idb/sync-server-sql`
 
-Runs Prisma 8 IDB sync against a SQL database. It carries out the ownership checks that [`@prisma-idb/sync-server`](https://www.npmjs.com/package/@prisma-idb/sync-server) describes, and applies pushes and resolves pulls, through your Prisma 8 SQL ORM client. It works with any model in your schema.
+This adapter runs Prisma 8 IDB sync against a SQL database through your Prisma 8 SQL ORM client.
+It executes the authorization checks from [`@prisma-idb/sync-server`](https://www.npmjs.com/package/@prisma-idb/sync-server), applies pushes and resolves pulls.
+
+## Set up the adapter
+
+1. Install the package.
 
 ```bash
 npm install @prisma-idb/sync-server-sql
 ```
+
+2. Create the server and adapter from your contracts.
+3. Call `applyPush` and `pull` from your endpoints. Take `scopeKey` from the authenticated session.
 
 ```ts
 import { createSyncServer } from "@prisma-idb/sync-server";
@@ -29,13 +37,57 @@ if (!pulled.ok) return json({ error: pulled.reason }, { status: 400 }); // "inva
 return json(pulled.logs);
 ```
 
-Creates and updates require every populated outgoing tenant parent to reach the authenticated root. For example, Alice's FoodEntry cannot reference Bob's Meal or Recipe, even if its `userId` is Alice. Each parent's alternate root paths use OR. Null optional parents are skipped; missing populated parents fail. Updates check the stored row merged with the patch, so an omitted FK is rechecked. Checks run before entity and changelog writes in the same transaction. A resolved violation returns non-retryable `SCOPE_VIOLATION` and writes neither row. Database lookup failures retain ordinary SQLSTATE retry handling.
+## Tenant parent rules
 
-No relation policy configuration is needed. Upgrading the paired server and adapter packages tightens create/update acceptance by default. Lower-level `applyPushEvent` calls also enforce the rule when their scoped check lacks `parentReferences`. Unsupported checked joins and mismatched descriptors throw configuration errors. Only single-field FKs to parent primary keys are supported. Checked FK defaults, including database and ORM-generated defaults, are rejected because authorization needs their resolved values before insertion. Remove those defaults and supply the FKs explicitly. With `syncServer`, the adapter validates this metadata at construction; lower-level calls validate it before a transaction.
+Creates and updates require every populated tenant parent to belong to the caller's scope.
+See the [term definitions](../sync-server/README.md#tenant-parent-rules) for scope, tenant parent and candidate row.
 
-Existing-row access, pull and delete retain any-path OR authorization. Historical mixed-owner rows remain readable or deletable through either matching path. Patches retaining mixed-user parents fail; a complete repair to the caller's scope can pass. Global parents without root paths and inverse collections are excluded. Server-only tenant parents are checked. This does not clean up historical data or make a single User relation authoritative.
+- Each tenant parent needs at least one path to the caller's scope.
+- Null optional tenant parents need no check. A populated foreign key that references a missing tenant parent fails.
+- Updates check the complete candidate row, including foreign keys omitted from the patch.
+- Checks include server-only tenant parents. They exclude inverse collections and global parents with no path to the root.
+- The adapter runs checks before the record and changelog writes, within the same transaction.
+- A resolved violation returns non-retryable `SCOPE_VIOLATION`. Neither write occurs.
+- Database lookup failures retain ordinary SQLSTATE retry handling.
+- Lower-level `applyPushEvent` calls also enforce these rules when a scoped check omits `parentReferences`.
 
-Through `applyPush`, a tenant rejection returns the unchanged target row under ordinary pull authorization, or `record: null` if missing or inaccessible. It never returns the attempted candidate or a foreign parent. Lower-level `applyPushEvent` keeps its existing result without a reconciliation record. See [ADR 022](../docs/adrs/ADR%20022%20-%20Rejected%20Pushes%20Reconcile%20to%20the%20Server%20Row.md).
+### Example: Alice's FoodEntry
+
+Alice creates a `FoodEntry` with `userId: "alice"` and `mealId` pointing to Bob's `Meal`.
+The adapter rejects it with `SCOPE_VIOLATION`, even though its direct `User` path reaches Alice.
+The same rule applies if `recipeId` points to Bob's `Recipe`.
+
+### Supported relations
+
+- Checked relations must use a single-field foreign key to the tenant parent's primary key.
+- Unsupported checked relations and mismatched `parentReferences` descriptors cause configuration errors.
+- Checked foreign keys cannot have database or ORM-generated defaults. Authorization requires their resolved values before insertion.
+- With `syncServer`, the adapter validates this metadata at construction. Lower-level calls validate it before opening a transaction.
+
+### Historical rows
+
+- Existing-row access, pull and delete require at least one path to the caller's scope.
+- Historical rows with tenant parents in different scopes remain readable or deletable through any matching path.
+- An update that retains a tenant parent outside the caller's scope fails.
+- A complete repair to the caller's scope may pass. No single `User` relation determines who may repair the row.
+- The adapter does not clean up historical data.
+
+### Rejected pushes
+
+- `applyPush` returns the unchanged target row if ordinary pull authorization allows access.
+- It returns `record: null` if the target row is missing or inaccessible.
+- It never returns the candidate row or a foreign tenant parent.
+- Lower-level `applyPushEvent` results do not include a reconciliation record.
+
+See [ADR 022](../docs/adrs/ADR%20022%20-%20Rejected%20Pushes%20Reconcile%20to%20the%20Server%20Row.md) for rejection reconciliation.
+
+## Upgrade the server and adapter
+
+Upgrading both packages tightens create and update acceptance by default. No relation policy configuration is required.
+
+1. Remove database and ORM-generated defaults from checked foreign keys.
+2. Supply those foreign keys explicitly when creating records.
+3. When updating historical rows, replace any tenant parents outside the caller's scope in the same patch.
 
 ## API
 
