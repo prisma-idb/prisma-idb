@@ -3,12 +3,14 @@
  */
 
 import type { IdbContract } from "@prisma-idb/client-idb/orm";
+import { contractFingerprint } from "@prisma-idb/target-idb/runtime";
 import type { SyncIdbClient } from "./sync-client";
 import type { OutboxEvent } from "./outbox-store";
 import { getNextBatch, getOldestPendingEvent, markSynced, markFailed, OUTBOX_STORE } from "./outbox-store";
 import { applyPull } from "./apply-pull";
 import { applyReconciliation, planReconciliation } from "./reconcile-rejected";
 import type { Reconciliation } from "./reconcile-rejected";
+import { ContractMismatchError } from "./contract-mismatch-error";
 import { createEmitter } from "./emitter";
 import { createPullCursor } from "./pull-cursor";
 import { VERSION_META_STORE } from "./version-meta";
@@ -18,12 +20,37 @@ import type { LogWithRecord, PushResult } from "../types";
 
 export type SyncWorkerStatus = "idle" | "pushing" | "pulling" | "error" | "stopped";
 
+/** What the worker passes to a handler besides its data: the facts the server needs to vet the request. */
+export interface SyncRequestContext {
+  /**
+   * Resolves to the fingerprint of this client's contract. Send it with the
+   * request (for example as a header) and forward it to the server's
+   * `pull`/`applyPush`. The server refuses a request whose fingerprint
+   * differs from its own. Computed on first call, then reused.
+   */
+  readonly contractFingerprint: () => Promise<string>;
+}
+
 export interface SyncWorkerOptions<TContract extends IdbContract> {
   readonly syncClient: SyncIdbClient<TContract>;
-  /** Called with a batch of unsynced events. Must return per-event results. */
-  readonly pushHandler: (events: OutboxEvent[], signal: AbortSignal) => Promise<PushResult[]>;
-  /** Called with the last applied changelog ID (null if none). Returns new logs. See `getCursor`/`setCursor` to persist the ID across reloads. */
-  readonly pullHandler: (fromChangelogId: string | null, signal: AbortSignal) => Promise<LogWithRecord[]>;
+  /**
+   * Called with a batch of unsynced events. Must return per-event results.
+   * Throw `ContractMismatchError` if the server answers 409.
+   */
+  readonly pushHandler: (
+    events: OutboxEvent[],
+    signal: AbortSignal,
+    context: SyncRequestContext
+  ) => Promise<PushResult[]>;
+  /**
+   * Called with the last applied changelog ID (null if none). Returns new logs. See `getCursor`/`setCursor` to persist the ID across reloads.
+   * Throw `ContractMismatchError` if the server answers 409.
+   */
+  readonly pullHandler: (
+    fromChangelogId: string | null,
+    signal: AbortSignal,
+    context: SyncRequestContext
+  ) => Promise<LogWithRecord[]>;
   /**
    * Loads the persisted pull cursor. Called once, before the worker's first
    * pull, so a reload resumes from where the last session stopped instead of
@@ -116,10 +143,17 @@ export interface PullCompletedEvent {
   halted: boolean;
 }
 
+export interface ContractMismatchEvent {
+  /** The request the server refused. */
+  during: "push" | "pull";
+}
+
 type SyncEventMap = {
   statuschange: SyncWorkerStatus;
   pushcompleted: PushCompletedEvent;
   pullcompleted: PullCompletedEvent;
+  /** The server refused a request because this client's contract is out of step with its own. Nothing was consumed or dropped. */
+  contractmismatch: ContractMismatchEvent;
 };
 
 export interface SyncWorker {
@@ -168,6 +202,15 @@ export function createSyncWorker<TContract extends IdbContract>(options: SyncWor
     emit("statuschange", next);
   }
 
+  let fingerprint: Promise<string> | undefined;
+  const requestContext: SyncRequestContext = {
+    contractFingerprint: () => (fingerprint ??= contractFingerprint(syncClient.contract)),
+  };
+
+  function reportContractMismatch(error: unknown, during: ContractMismatchEvent["during"]): void {
+    if (error instanceof ContractMismatchError) emit("contractmismatch", { during });
+  }
+
   /**
    * Pushes batches until the outbox has nothing left to send now: it is empty,
    * or its oldest event is waiting out a retry backoff. Returns whether a
@@ -206,8 +249,13 @@ export function createSyncWorker<TContract extends IdbContract>(options: SyncWor
    */
   async function sendBatch(events: OutboxEvent[]): Promise<PushResult[]> {
     try {
-      return await withTimeout((signal) => pushHandler(events, signal), requestTimeoutMs, "pushHandler");
+      return await withTimeout(
+        (signal) => pushHandler(events, signal, requestContext),
+        requestTimeoutMs,
+        "pushHandler"
+      );
     } catch (error) {
+      reportContractMismatch(error, "push");
       const message = error instanceof Error ? error.message : String(error);
       await syncClient.withTransaction([OUTBOX_STORE, VERSION_META_STORE], async (scope) => {
         for (const { id } of events) await markFailed(scope, id, message);
@@ -275,7 +323,17 @@ export function createSyncWorker<TContract extends IdbContract>(options: SyncWor
   async function pullChanges(): Promise<void> {
     setStatus("pulling");
     await cursor.load();
-    const logs = await withTimeout((signal) => pullHandler(cursor.value, signal), requestTimeoutMs, "pullHandler");
+    let logs: LogWithRecord[];
+    try {
+      logs = await withTimeout(
+        (signal) => pullHandler(cursor.value, signal, requestContext),
+        requestTimeoutMs,
+        "pullHandler"
+      );
+    } catch (error) {
+      reportContractMismatch(error, "pull");
+      throw error;
+    }
     const { applied, skipped, validationFailed, halted, lastChangelogId } = await applyPull(syncClient, logs);
     cursor.advance(lastChangelogId);
     emit("pullcompleted", { applied, skipped, validationFailed, halted });

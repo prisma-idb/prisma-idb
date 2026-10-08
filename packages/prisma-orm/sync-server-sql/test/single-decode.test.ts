@@ -9,7 +9,11 @@ vi.mock("../src/core/wire-values", async (importOriginal) => {
   return { ...original, reviveWireValues: vi.fn(original.reviveWireValues) };
 });
 
-const adapter = createSqlSyncAdapter({ contract: testContract, syncServer: testSyncServer });
+const adapter = createSqlSyncAdapter({
+  contract: testContract,
+  syncServer: testSyncServer,
+  contractFingerprintCheck: "off",
+});
 
 /** Payload revivals so far: one call per decoded event. A second decode of the same event would raise the count. */
 const revivals = () => vi.mocked(reviveWireValues).mock.calls.length;

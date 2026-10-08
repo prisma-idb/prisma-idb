@@ -1,6 +1,8 @@
 export { createSqlSyncAdapter } from "../core/create-adapter";
 export type { CreateSqlSyncAdapterOptions, SqlSyncAdapter } from "../core/create-adapter";
 
+export type { ContractFingerprintCheck, ContractMismatchOutcome } from "../core/contract-fingerprint-gate";
+
 export { sqlGetKeyField } from "../core/get-key-field";
 
 export type { SqlPushEvent, SqlPushResult } from "../core/push";

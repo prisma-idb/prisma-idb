@@ -4,7 +4,11 @@ import { ormRootFor } from "../src/core/orm-root";
 import { isDeterministicWriteFailure, sqlState } from "../src/core/sqlstate";
 import { seed, testContract, testDb, testSyncServer } from "./helpers";
 
-const adapter = createSqlSyncAdapter({ contract: testContract, syncServer: testSyncServer });
+const adapter = createSqlSyncAdapter({
+  contract: testContract,
+  syncServer: testSyncServer,
+  contractFingerprintCheck: "off",
+});
 
 const createBoard = (eventId: string, boardId: string, ownerId: string) => ({
   id: eventId,

@@ -3,7 +3,11 @@ import type { OrmRoot } from "../src/core/orm-root";
 import { createSqlSyncAdapter } from "../src/core/create-adapter";
 import { seed, testContract, testDb, testSyncServer } from "./helpers";
 
-const adapter = createSqlSyncAdapter({ contract: testContract, syncServer: testSyncServer });
+const adapter = createSqlSyncAdapter({
+  contract: testContract,
+  syncServer: testSyncServer,
+  contractFingerprintCheck: "off",
+});
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 

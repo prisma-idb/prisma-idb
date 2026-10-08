@@ -5,6 +5,7 @@ import type { PushResultBody } from "@prisma-idb/sync-extension-idb/schemas";
 import { auth } from "$lib/server/auth";
 import { getPostgres } from "$lib/server/db";
 import { sqlSyncAdapter } from "$lib/server/sync";
+import { CONTRACT_FINGERPRINT_HEADER } from "$lib/prisma/sync";
 
 /**
  * ADR 014's push endpoint: `sqlSyncAdapter.applyPush` (built once in
@@ -43,6 +44,7 @@ export const POST: RequestHandler = async ({ request }) => {
     events: parsed.data.events,
     scopeKey,
     maxBatchSize: MAX_PUSH_BATCH_SIZE,
+    clientContractFingerprint: request.headers.get(CONTRACT_FINGERPRINT_HEADER),
   });
   if (!outcome.ok) {
     switch (outcome.reason) {
@@ -50,6 +52,8 @@ export const POST: RequestHandler = async ({ request }) => {
         return json({ error: `events exceeds max batch size of ${outcome.maxBatchSize}` }, { status: 400 });
       case "duplicate-event-id":
         return json({ error: "Duplicate event id in push batch" }, { status: 400 });
+      case "contract-mismatch":
+        return json({ error: "Client contract is out of date" }, { status: 409 });
     }
     throw new Error(`Unhandled push outcome: ${outcome satisfies never}`);
   }

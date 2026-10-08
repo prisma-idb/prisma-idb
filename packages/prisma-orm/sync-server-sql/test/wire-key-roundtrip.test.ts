@@ -42,7 +42,11 @@ describe("wire-form SQL keys", () => {
     "preserves a local string-key row when a malformed SQL BigInt %s log is pulled",
     async (operation) => {
       const db = await testDb();
-      const adapter = createSqlSyncAdapter({ contract: testContract, syncServer: testBigSyncServer });
+      const adapter = createSqlSyncAdapter({
+        contract: testContract,
+        syncServer: testBigSyncServer,
+        contractFingerprintCheck: "off",
+      });
       await seed(db, {
         Changelog: [{ model: "BigItem", keyPath: "invalid-bigint", operation, scopeKey: "1", outboxEventId: "bad" }],
       });
@@ -82,7 +86,11 @@ describe("wire-form SQL keys", () => {
 
   it("still deletes a local BigItem when live ownership is revoked and the pull record is null", async () => {
     const db = await testDb();
-    const adapter = createSqlSyncAdapter({ contract: testContract, syncServer: testBigSyncServer });
+    const adapter = createSqlSyncAdapter({
+      contract: testContract,
+      syncServer: testBigSyncServer,
+      contractFingerprintCheck: "off",
+    });
     for (const id of [1n, 2n]) await ormRootFor(db, "BigUser").select("id").create({ id, name: "owner" });
     await ormRootFor(db, "BigItem").select("id").create({ id: 11n, ownerId: 2n, name: "reassigned" });
     await seed(db, {
@@ -119,7 +127,11 @@ describe("wire-form SQL keys", () => {
 
   it("rejects another BigInt scope and ownership reassignment", async () => {
     const db = await testDb();
-    const adapter = createSqlSyncAdapter({ contract: testContract, syncServer: testBigSyncServer });
+    const adapter = createSqlSyncAdapter({
+      contract: testContract,
+      syncServer: testBigSyncServer,
+      contractFingerprintCheck: "off",
+    });
     for (const id of [1n, 2n]) await ormRootFor(db, "BigUser").select("id").create({ id, name: "owner" });
     await ormRootFor(db, "BigItem").select("id").create({ id: 11n, ownerId: 1n, name: "first" });
     await ormRootFor(db, "BigItem").select("id").create({ id: 22n, ownerId: 2n, name: "second" });
@@ -163,7 +175,11 @@ describe("wire-form SQL keys", () => {
 
   it("pushes, pulls and applies BigInt root/scoped keys, including updates and deletes", async () => {
     const db = await testDb();
-    const adapter = createSqlSyncAdapter({ contract: testContract, syncServer: testBigSyncServer });
+    const adapter = createSqlSyncAdapter({
+      contract: testContract,
+      syncServer: testBigSyncServer,
+      contractFingerprintCheck: "off",
+    });
     const scopeKey = "9007199254740993";
     const itemKey = "9007199254740995";
     const outcome = await adapter.applyPush(db, {

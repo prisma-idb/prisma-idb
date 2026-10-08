@@ -205,19 +205,27 @@ export async function POST(req: Request) {
   if (!parsed.success) {
     return Response.json({ error: "Malformed request body", details: parsed.error.issues }, { status: 400 });
   }
-  const outcome = await sqlSyncAdapter.applyPush(db, { events: parsed.data.events, scopeKey });
+  const outcome = await sqlSyncAdapter.applyPush(db, {
+    events: parsed.data.events,
+    scopeKey,
+    clientContractFingerprint: req.headers.get("x-contract-fingerprint"),
+  });
   if (!outcome.ok) {
     switch (outcome.reason) {
       case "batch-too-large":
         return Response.json({ error: "Too many events" }, { status: 400 });
       case "duplicate-event-id":
         return Response.json({ error: "Duplicate event id" }, { status: 400 });
+      case "contract-mismatch":
+        return Response.json({ error: "Client contract is out of date" }, { status: 409 });
     }
     throw new Error(`Unhandled push outcome: ${outcome satisfies never}`);
   }
   return Response.json(outcome.results);
 }
 ```
+
+Both endpoints read the client's contract fingerprint from a request header and refuse a client whose contract differs from the server's. See [Contract fingerprint](/docs/prisma-8/sync/server#contract-fingerprint).
 
 `applyPush` decodes wire values and validates each event. It applies events in order, checking ownership and writing the record and its `Changelog` row in one transaction. It stops at the first retryable failure so dependent events remain pending until their parent succeeds.
 
@@ -239,13 +247,16 @@ export async function GET(req: Request) {
     scopeKey,
     lastChangelogId: new URL(req.url).searchParams.get("since") || null,
     limit: 50,
+    clientContractFingerprint: req.headers.get("x-contract-fingerprint"),
   });
   if (!outcome.ok) {
     switch (outcome.reason) {
       case "invalid-cursor":
         return Response.json({ error: "since must be a changelog id" }, { status: 400 });
+      case "contract-mismatch":
+        return Response.json({ error: "Client contract is out of date" }, { status: 409 });
     }
-    throw new Error(`Unhandled pull reason: ${outcome.reason satisfies never}`);
+    throw new Error(`Unhandled pull outcome: ${outcome satisfies never}`);
   }
   return Response.json(outcome.logs);
 }
@@ -262,11 +273,18 @@ Back in the browser, create a worker that calls your two endpoints, and start it
 
 ```ts
 const db = await getDb();
+const send = async (url: string, init: RequestInit, { contractFingerprint }: SyncRequestContext) => {
+  const headers = { ...init.headers, "x-contract-fingerprint": await contractFingerprint() };
+  const response = await fetch(url, { ...init, headers });
+  if (response.status === 409) throw new ContractMismatchError();
+  return response.json();
+};
+
 const worker = db.createSyncWorker({
-  pushHandler: (events, signal) =>
-    fetch("/api/sync/push", { method: "POST", body: JSON.stringify({ events }), signal }).then((r) => r.json()),
-  pullHandler: (fromChangelogId, signal) =>
-    fetch(`/api/sync/pull?since=${fromChangelogId ?? ""}`, { signal }).then((r) => r.json()),
+  pushHandler: (events, signal, context) =>
+    send("/api/sync/push", { method: "POST", body: JSON.stringify({ events }), signal }, context),
+  pullHandler: (fromChangelogId, signal, context) =>
+    send(`/api/sync/pull?since=${fromChangelogId ?? ""}`, { signal }, context),
 });
 worker.start();
 ```

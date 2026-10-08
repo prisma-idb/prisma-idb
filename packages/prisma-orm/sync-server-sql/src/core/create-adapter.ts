@@ -5,6 +5,8 @@ import type { GetKeyField, OwnershipCheck, PushCheck, SyncServer, SyncServerCont
 import type { ApplyPushInput, ApplyPushOutcome } from "./apply-push";
 import type { PullInput, PullOutcome } from "./pull";
 import type { SqlPushEvent, SqlPushResult } from "./push";
+import type { ContractFingerprintCheck } from "./contract-fingerprint-gate";
+import { findContractMismatch } from "./contract-fingerprint-gate";
 import { sqlGetKeyField } from "./get-key-field";
 import { applyPushEvent as applyPushEventImpl, toSyncPushPayload } from "./push";
 import { resolvePullRecord as resolvePullRecordImpl } from "./resolve-pull-record";
@@ -21,6 +23,13 @@ export interface CreateSqlSyncAdapterOptions {
    * the lower-level methods work without it.
    */
   readonly syncServer?: SyncServer;
+  /**
+   * Whether `applyPush` and `pull` require the client's contract fingerprint
+   * to match the server's (ADR 015). Pass `"off"` only if your deploys already
+   * keep clients and server on the same contract.
+   * @default "required"
+   */
+  readonly contractFingerprintCheck?: ContractFingerprintCheck;
 }
 
 export interface SqlSyncAdapter {
@@ -59,7 +68,7 @@ export interface SqlSyncAdapter {
  * built once per app, not per request.
  */
 export function createSqlSyncAdapter(options: CreateSqlSyncAdapterOptions): SqlSyncAdapter {
-  const { contract, getKeyField = sqlGetKeyField, syncServer } = options;
+  const { contract, getKeyField = sqlGetKeyField, syncServer, contractFingerprintCheck = "required" } = options;
   if (syncServer) {
     for (const model of Object.keys(domainModelsAtDefaultNamespace(contract.domain))) {
       const paths = resolveAuthorizationPaths(contract, syncServer.rootModel, model);
@@ -78,7 +87,15 @@ export function createSqlSyncAdapter(options: CreateSqlSyncAdapterOptions): SqlS
       applyPushEventImpl(db, contract, getKeyField, event, model, check, scopeKey),
     resolvePullRecord: (db, model, check, keyPath, operation) =>
       resolvePullRecordImpl(db, contract, getKeyField, model, check, keyPath, operation),
-    applyPush: async (db, input) => applyPushImpl(db, requireSyncServer("applyPush"), contract, getKeyField, input),
-    pull: async (db, input) => pullImpl(db, requireSyncServer("pull"), contract, getKeyField, input),
+    applyPush: async (db, input) => {
+      const server = requireSyncServer("applyPush");
+      const mismatch = await findContractMismatch(server, contractFingerprintCheck, input.clientContractFingerprint);
+      return mismatch ?? applyPushImpl(db, server, contract, getKeyField, input);
+    },
+    pull: async (db, input) => {
+      const server = requireSyncServer("pull");
+      const mismatch = await findContractMismatch(server, contractFingerprintCheck, input.clientContractFingerprint);
+      return mismatch ?? pullImpl(db, server, contract, getKeyField, input);
+    },
   };
 }

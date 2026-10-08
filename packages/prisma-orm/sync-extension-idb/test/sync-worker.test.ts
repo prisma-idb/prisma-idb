@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { contractFingerprint } from "@prisma-idb/target-idb/runtime";
+import { ContractMismatchError } from "../src/core/contract-mismatch-error";
 import { createSyncWorker } from "../src/core/sync-worker";
-import type { PullCompletedEvent, PushCompletedEvent } from "../src/core/sync-worker";
+import type { ContractMismatchEvent, PullCompletedEvent, PushCompletedEvent } from "../src/core/sync-worker";
 import type { SyncIdbClient } from "../src/exports/client";
 import type { LogWithRecord, OutboxEvent } from "../src/types";
 import { asAccessors, changelogId, createTestSyncClient, scanAll } from "./helpers";
@@ -19,7 +21,7 @@ const emptyScope = {
 
 function makeStubSyncClient(): SyncIdbClient<never> {
   return {
-    contract: {} as never,
+    contract: { domain: { namespaces: {} } } as never,
     orm: {} as never,
     withoutTracking: (async (fn: (rawOrm: unknown) => unknown) => fn({})) as never,
     withTransaction: (async (_stores: string[], fn: (scope: unknown) => unknown) => fn(emptyScope)) as never,
@@ -414,6 +416,90 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
     expect(pullCompleted).toEqual({ applied: 1, skipped: 0, validationFailed: 0, halted: false });
     expect(await scanAll(client, "users")).toEqual([{ id: "u1", name: "Remote" }]);
   });
+  describe("contract fingerprint", () => {
+    it("passes the client contract's fingerprint to both handlers", async () => {
+      const { client } = await createTestSyncClient();
+      await asAccessors(client.orm)["users"]!.create({ id: "u1", name: "Alice" });
+      const fingerprints: Promise<string>[] = [];
+      const worker = trackedWorker({
+        syncClient: client,
+        pushHandler: async (events, _signal, context) => {
+          fingerprints.push(context.contractFingerprint());
+          return events.map((event) => ({ id: event.id, success: true }));
+        },
+        pullHandler: async (_from, _signal, context) => {
+          fingerprints.push(context.contractFingerprint());
+          return [];
+        },
+      });
+
+      await worker.forceSync();
+
+      const expected = await contractFingerprint(client.contract);
+      expect(await Promise.all(fingerprints)).toEqual([expected, expected]);
+    });
+
+    it("leaves the cursor untouched and reports the mismatch when a pull is refused", async () => {
+      const { client } = await createTestSyncClient();
+      const setCursor = vi.fn();
+      const worker = trackedWorker({
+        syncClient: client,
+        getCursor: () => changelogId(7),
+        setCursor,
+        pushHandler: async () => [],
+        pullHandler: async () => {
+          throw new ContractMismatchError();
+        },
+      });
+      const mismatches: ContractMismatchEvent[] = [];
+      worker.on("contractmismatch", (event) => mismatches.push(event));
+
+      await expect(worker.forceSync()).rejects.toBeInstanceOf(ContractMismatchError);
+
+      expect(mismatches).toEqual([{ during: "pull" }]);
+      expect(setCursor).not.toHaveBeenCalled();
+    });
+
+    it("keeps refused edits queued and unchanged, and sends them once the server accepts", async () => {
+      const { client } = await createTestSyncClient();
+      await asAccessors(client.orm)["users"]!.create({ id: "u1", name: "Alice" });
+      const queued = await scanAll(client, "_idb_sync_outbox");
+
+      let refuse = true;
+      const worker = trackedWorker({
+        syncClient: client,
+        pushHandler: async (events) => {
+          if (refuse) throw new ContractMismatchError();
+          return events.map((event) => ({ id: event.id, success: true }));
+        },
+        pullHandler: async () => [],
+      });
+      const mismatches: ContractMismatchEvent[] = [];
+      worker.on("contractmismatch", (event) => mismatches.push(event));
+
+      await expect(worker.forceSync()).rejects.toBeInstanceOf(ContractMismatchError);
+
+      expect(mismatches).toEqual([{ during: "push" }]);
+      const [refused] = await scanAll(client, "_idb_sync_outbox");
+      expect(refused).toMatchObject({
+        id: queued[0]!["id"],
+        payload: queued[0]!["payload"],
+        synced: false,
+        retryable: true,
+        tries: 1,
+      });
+
+      refuse = false;
+      vi.useFakeTimers({ toFake: ["Date"], now: Date.now() + 1_001 });
+      try {
+        await worker.forceSync();
+      } finally {
+        vi.useRealTimers();
+      }
+      expect(await scanAll(client, "_idb_sync_outbox")).toMatchObject([{ synced: true }]);
+    });
+  });
+
   describe("pull cursor", () => {
     const userLog = (changelogId: string, id: string): Extract<LogWithRecord, { record: unknown }> => ({
       changelogId,

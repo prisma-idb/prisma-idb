@@ -22,6 +22,8 @@ const worker = db.createSyncWorker({
 worker.start();
 ```
 
+Each handler also receives `context.contractFingerprint()`. Send it to the server, which refuses a client on a different contract; throw `ContractMismatchError` from the handler on HTTP 409. See [Contract fingerprint](https://prisma-idb.dev/docs/prisma-8/sync/server#contract-fingerprint).
+
 `trackedModels` defaults to `"*"`; pass model names to keep other writes local. Tracked models need keys that are unique across devices, such as `uuid()` or `cuid()`. Auto-incremented keys are rejected for tracked stores.
 
 `db.on("outboxwrite", callback)` fires after commit, once per tracked IndexedDB write call. Bulk calls can report several entries. Nested or cascading ORM writes can produce several notifications. Rolled-back writes produce none.

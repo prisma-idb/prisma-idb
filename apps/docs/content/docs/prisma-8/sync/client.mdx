@@ -94,8 +94,8 @@ A failed push, including a request that throws or times out, stays retryable how
 
 | Option             | Default  | Description                                                                                                                                          |
 | ------------------ | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `pushHandler`      | Required | `(events, signal) => Promise<PushResult[]>`. Sends events to your push endpoint.                                                                     |
-| `pullHandler`      | Required | `(fromChangelogId, signal) => Promise<LogWithRecord[]>`. Fetches changes after `fromChangelogId`, which is `null` on the first pull.                 |
+| `pushHandler`      | Required | `(events, signal, context) => Promise<PushResult[]>`. Sends events to your push endpoint.                                                            |
+| `pullHandler`      | Required | `(fromChangelogId, signal, context) => Promise<LogWithRecord[]>`. Fetches changes after `fromChangelogId`, which is `null` on the first pull.        |
 | `getCursor`        | None     | `() => string \| null \| Promise<string \| null>`. Loads the saved pull cursor once, before the first pull. Without it the cursor is in memory only. |
 | `setCursor`        | None     | `(changelogId) => void \| Promise<void>`. Saves the cursor after a pull advances it. A throw fails the cycle and the save is retried.                |
 | `batchSize`        | `20`     | Outbox events pushed per request.                                                                                                                    |
@@ -104,13 +104,15 @@ A failed push, including a request that throws or times out, stays retryable how
 | `backoffMaxMs`     | `30000`  | The longest wait, for both.                                                                                                                          |
 | `requestTimeoutMs` | `30000`  | Aborts a handler call through its `signal` after this long.                                                                                          |
 
-| Method or property | Description                                                                                              |
-| ------------------ | -------------------------------------------------------------------------------------------------------- |
-| `start()`          | Starts the loop. Does nothing if it's running.                                                           |
-| `stop()`           | Lets the current cycle finish, then stops.                                                               |
-| `forceSync()`      | Runs a cycle now, ignoring any backoff.                                                                  |
-| `status`           | `"idle"`, `"pushing"`, `"pulling"`, `"error"` or `"stopped"`.                                            |
-| `on(event, cb)`    | Subscribes to `"statuschange"`, `"pushcompleted"` or `"pullcompleted"`. Returns an unsubscribe function. |
+Each handler receives `context.contractFingerprint()`, which resolves to a digest of this client's contract. Send it with the request, for example in a header, and forward it to the server's `pull` and `applyPush`. If the server answers 409, throw `ContractMismatchError` (exported from `@prisma-idb/sync-extension-idb/client`) from the handler. The worker then keeps the pull cursor and the outbox as they are, emits `contractmismatch` with `{ during: "push" | "pull" }`, and retries with backoff. Use the event to ask the user to reload. See [Contract fingerprint](/docs/prisma-8/sync/server#contract-fingerprint).
+
+| Method or property | Description                                                                                                                    |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------ |
+| `start()`          | Starts the loop. Does nothing if it's running.                                                                                 |
+| `stop()`           | Lets the current cycle finish, then stops.                                                                                     |
+| `forceSync()`      | Runs a cycle now, ignoring any backoff.                                                                                        |
+| `status`           | `"idle"`, `"pushing"`, `"pulling"`, `"error"` or `"stopped"`.                                                                  |
+| `on(event, cb)`    | Subscribes to `"statuschange"`, `"pushcompleted"`, `"pullcompleted"` or `"contractmismatch"`. Returns an unsubscribe function. |
 
 Most apps also call `forceSync()` on the browser's `online` event, and `stop()` on sign-out.
 

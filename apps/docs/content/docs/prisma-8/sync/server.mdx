@@ -81,16 +81,16 @@ The second step matters because ownership can change after a push. Say Alice cre
 
 ## SQL adapter
 
-`createSqlSyncAdapter({ contract, syncServer, getKeyField? })` from `@prisma-idb/sync-server-sql` binds the server contract and ownership graph once at startup. `getKeyField` defaults to `sqlGetKeyField`. The route helpers require `syncServer`; the other methods work without it. The package also exports `sqlGetKeyField`, `DEFAULT_MAX_PUSH_BATCH_SIZE` (1000) and `DEFAULT_PULL_LIMIT` (50), plus the adapter's option, input and result types.
+`createSqlSyncAdapter({ contract, syncServer, getKeyField?, contractFingerprintCheck? })` from `@prisma-idb/sync-server-sql` binds the server contract and ownership graph once at startup. `getKeyField` defaults to `sqlGetKeyField`. The route helpers require `syncServer`; the other methods work without it. The package also exports `sqlGetKeyField`, `DEFAULT_MAX_PUSH_BATCH_SIZE` (1000) and `DEFAULT_PULL_LIMIT` (50), plus the adapter's option, input and result types.
 
-| Member                                                    | Result                                                                                                                                                                                                               |
-| --------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `applyPush(db, { events, scopeKey, maxBatchSize? })`      | Validates and applies events in order. Returns `{ ok: true, results }` through the first retryable failure. Rejects oversized batches and duplicate event ids before any writes. The default maximum is 1000 events. |
-| `pull(db, { scopeKey, lastChangelogId?, limit? })`        | Reads the next page, checks current ownership and resolves each record. Returns `{ ok: true, logs }`. The default page size is 50. The cursor is exclusive.                                                          |
-| `getKeyField(model)`                                      | The model's primary-key field.                                                                                                                                                                                       |
-| `toSyncPushPayload(operation, payload, keyField)`         | Maps a decoded payload to the shape `validatePush` expects.                                                                                                                                                          |
-| `applyPushEvent(db, event, model, check, scopeKey)`       | Checks ownership, writes the record and inserts its `Changelog` row in one transaction. Repeated event ids do not apply twice.                                                                                       |
-| `resolvePullRecord(db, model, check, keyPath, operation)` | Returns the current record if the user still owns it, or `null`.                                                                                                                                                     |
+| Member                                                                           | Result                                                                                                                                                                                                               |
+| -------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `applyPush(db, { events, scopeKey, clientContractFingerprint?, maxBatchSize? })` | Validates and applies events in order. Returns `{ ok: true, results }` through the first retryable failure. Rejects oversized batches and duplicate event ids before any writes. The default maximum is 1000 events. |
+| `pull(db, { scopeKey, clientContractFingerprint?, lastChangelogId?, limit? })`   | Reads the next page, checks current ownership and resolves each record. Returns `{ ok: true, logs }`. The default page size is 50. The cursor is exclusive.                                                          |
+| `getKeyField(model)`                                                             | The model's primary-key field.                                                                                                                                                                                       |
+| `toSyncPushPayload(operation, payload, keyField)`                                | Maps a decoded payload to the shape `validatePush` expects.                                                                                                                                                          |
+| `applyPushEvent(db, event, model, check, scopeKey)`                              | Checks ownership, writes the record and inserts its `Changelog` row in one transaction. Repeated event ids do not apply twice.                                                                                       |
+| `resolvePullRecord(db, model, check, keyPath, operation)`                        | Returns the current record if the user still owns it, or `null`.                                                                                                                                                     |
 
 `db` is your Prisma 8 SQL client. It must have `.transaction(fn)` and `.orm.public.<Model>`. Resolve `scopeKey` from the authenticated session, never the request body or query string.
 
@@ -102,9 +102,20 @@ Handle each known failure reason explicitly. The reason unions can grow in futur
 | ----------- | ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `applyPush` | `"batch-too-large"`    | No writes. Includes `maxBatchSize` and `received`.                                                                                                                                                   |
 | `applyPush` | `"duplicate-event-id"` | No writes. Includes the repeated `eventId`.                                                                                                                                                          |
+| both        | `"contract-mismatch"`  | Nothing read or written. The client's fingerprint is missing or differs from the server's. Includes `expected`. Answer HTTP 409. See [Contract fingerprint](#contract-fingerprint).                  |
 | `pull`      | `"invalid-cursor"`     | No pull query. The cursor must be a UUID v7 changelog id. `null` and `undefined` start at the beginning. An empty string is invalid; convert an empty query parameter to `null`, as in the tutorial. |
 
 `pull` throws `RangeError` for a limit that is not a positive, finite integer. Database and ORM errors reject the pull promise.
+
+### Contract fingerprint
+
+A client on an older contract can receive a row it cannot decode. It would then drop the row and move its cursor past it, losing the row for good. To prevent this, the server compares contract fingerprints before it reads or writes anything.
+
+`syncServer.contractFingerprint()` returns a SHA-256 digest of the client contract's fields, value objects and enums. It ignores stores and indexes. The browser computes the same digest from its own contract and passes it to your handlers (see [Sync worker](/docs/prisma-8/sync/client#sync-worker)). Forward it to `pull` and `applyPush` as `clientContractFingerprint`.
+
+By default, a missing or different fingerprint returns `"contract-mismatch"`. Answer it with HTTP 409. The worker keeps the client's unsent edits and its pull cursor unchanged, reports `contractmismatch`, and retries with backoff. After the user reloads onto the new contract, the same edits push and the same cursor pulls.
+
+Pass `contractFingerprintCheck: "off"` to `createSqlSyncAdapter` only if your deploys already keep clients and server on one contract. Deploy a new server contract and its client together, or accept that older clients wait until they update.
 
 ### Per-event validation and retries
 

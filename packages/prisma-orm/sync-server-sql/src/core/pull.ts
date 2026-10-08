@@ -1,5 +1,6 @@
 import type { GetKeyField, SyncServer, SyncServerContract } from "@prisma-idb/sync-server";
 import type { LogWithRecordBody } from "@prisma-idb/sync-extension-idb/schemas";
+import type { ContractMismatchOutcome } from "./contract-fingerprint-gate";
 import { parseChangelogCursor, readChangelogPage } from "./changelog";
 import { resolvePullRecord } from "./resolve-pull-record";
 import { WireValidationError } from "./wire-values";
@@ -18,6 +19,8 @@ export interface PullInput {
   readonly lastChangelogId?: string | null;
   /** Positive, finite integer. Invalid values throw `RangeError`. @default DEFAULT_PULL_LIMIT */
   readonly limit?: number;
+  /** The client's contract fingerprint, as it sent it. Checked against the server's before anything is read. */
+  readonly clientContractFingerprint?: string | null;
 }
 
 /**
@@ -31,7 +34,8 @@ export type SqlPullLog = Readonly<LogWithRecordBody>;
 /** The `reason` union may gain new values in future releases; handle each known reason explicitly. */
 export type PullOutcome =
   | { readonly ok: true; readonly logs: readonly SqlPullLog[] }
-  | { readonly ok: false; readonly reason: "invalid-cursor" };
+  | { readonly ok: false; readonly reason: "invalid-cursor" }
+  | ContractMismatchOutcome;
 
 /**
  * Pulls the next page of changes for `scopeKey`: a cheap changelog pre-filter

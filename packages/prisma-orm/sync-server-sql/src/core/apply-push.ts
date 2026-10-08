@@ -1,4 +1,5 @@
 import type { GetKeyField, SyncServer, SyncPushEvent, SyncServerContract } from "@prisma-idb/sync-server";
+import type { ContractMismatchOutcome } from "./contract-fingerprint-gate";
 import { applyPushEventDecoded, decodeFailureResult, decodeWireEvent } from "./push";
 import type { SqlPushResult } from "./push";
 import { withCurrentRecord } from "./rejected-record";
@@ -28,19 +29,24 @@ export interface ApplyPushInput {
   readonly scopeKey: string;
   /** @default DEFAULT_MAX_PUSH_BATCH_SIZE */
   readonly maxBatchSize?: number;
+  /** The client's contract fingerprint, as it sent it. Checked against the server's before anything is applied. */
+  readonly clientContractFingerprint?: string | null;
 }
 
 /**
  * `batch-too-large` and `duplicate-event-id` describe a request that no
  * well-behaved client sends, so the caller should reject it outright (HTTP
- * 400/413) instead of returning per-event results. Nothing was applied.
+ * 400/413) instead of returning per-event results. `contract-mismatch` is a
+ * well-behaved client on an outdated contract: answer 409, which the client
+ * treats as retryable. Nothing was applied in any of these cases.
  * The `reason` union may gain new values in future releases; callers should
  * handle each known reason explicitly and review new values when upgrading.
  */
 export type ApplyPushOutcome =
   | { readonly ok: true; readonly results: readonly SqlPushResult[] }
   | { readonly ok: false; readonly reason: "batch-too-large"; readonly maxBatchSize: number; readonly received: number }
-  | { readonly ok: false; readonly reason: "duplicate-event-id"; readonly eventId: string };
+  | { readonly ok: false; readonly reason: "duplicate-event-id"; readonly eventId: string }
+  | ContractMismatchOutcome;
 
 /**
  * Validates and applies a whole push batch, one call. Results are returned in

@@ -1,5 +1,10 @@
 import { domainModelsAtDefaultNamespace } from "@prisma/orm-framework/contract/types";
-import { assertRecordValidator, validateRecord, validateKeyFields } from "@prisma-idb/target-idb/runtime";
+import {
+  assertRecordValidator,
+  contractFingerprint,
+  validateRecord,
+  validateKeyFields,
+} from "@prisma-idb/target-idb/runtime";
 import type { ValidationCodecLookup } from "@prisma-idb/target-idb/runtime";
 import { defaultValidationCodecs } from "./validation-codecs";
 import { resolveAuthorizationPaths, resolveParentReferenceChecks } from "./authorization-paths";
@@ -235,6 +240,12 @@ export interface CreateSyncServerOptions {
 
 export interface SyncServer {
   readonly rootModel: string;
+  /**
+   * Digest of the client contract's decodable shape (ADR 015). A request
+   * is in step with this server only if it carries the same digest.
+   * Computed on first call, then reused.
+   */
+  contractFingerprint(): Promise<string>;
   /** Resolve every event's ownership check. Pure — never touches a database. */
   validatePush(
     events: readonly SyncPushEvent[],
@@ -268,8 +279,11 @@ export function createSyncServer(options: CreateSyncServerOptions): SyncServer {
     }
   }
 
+  let fingerprint: Promise<string> | undefined;
+
   return {
     rootModel: dag.rootModel,
+    contractFingerprint: () => (fingerprint ??= contractFingerprint(options.clientContract)),
     validatePush: (events, pushOptions) =>
       validatePush(dag, options.contract, options.clientContract, getKeyField, events, {
         ...pushOptions,

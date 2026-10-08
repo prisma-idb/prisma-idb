@@ -8,7 +8,11 @@ import { ormRootFor } from "../src/core/orm-root";
 import { WireValidationError } from "../src/core/wire-values";
 import { seed, testBigSyncServer, testContract, testDb, testSyncServer } from "./helpers";
 
-const adapter = createSqlSyncAdapter({ contract: testContract, syncServer: testSyncServer });
+const adapter = createSqlSyncAdapter({
+  contract: testContract,
+  syncServer: testSyncServer,
+  contractFingerprintCheck: "off",
+});
 
 const UUID_V7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
@@ -60,7 +64,7 @@ describe("applyPush", () => {
         rootModel: "User",
         getKeyField: sqlGetKeyField,
       });
-      const dateAdapter = createSqlSyncAdapter({ contract, syncServer });
+      const dateAdapter = createSqlSyncAdapter({ contract, syncServer, contractFingerprintCheck: "off" });
       const db = await testDb();
       const firstDate = "2026-01-02T03:04:05.000Z";
       const nextDate = "2026-02-03T04:05:06.000Z";
@@ -376,7 +380,11 @@ describe("pull", () => {
 
   it.each([0, 1, 2])("preserves malformed key row %s and valid rows across pull pages", async (malformedIndex) => {
     const db = await testDb();
-    const bigAdapter = createSqlSyncAdapter({ contract: testContract, syncServer: testBigSyncServer });
+    const bigAdapter = createSqlSyncAdapter({
+      contract: testContract,
+      syncServer: testBigSyncServer,
+      contractFingerprintCheck: "off",
+    });
     await ormRootFor(db, "BigUser").select("id").create({ id: 1n, name: "Ann" });
     for (const id of [11n, 12n]) {
       await ormRootFor(db, "BigItem")
@@ -462,6 +470,7 @@ describe("pull", () => {
     const baseline = await adapter.pull(db, { scopeKey: "u1" });
     const reordered = createSqlSyncAdapter({
       contract: testContract,
+      contractFingerprintCheck: "off",
       syncServer: {
         ...testSyncServer,
         buildPullQueries: (logs, options) => [...testSyncServer.buildPullQueries(logs, options)].reverse(),

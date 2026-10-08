@@ -4,7 +4,11 @@ import { createSqlSyncAdapter } from "../src/core/create-adapter";
 import { ormRootFor } from "../src/core/orm-root";
 import { seed, testContract, testDb, testSyncServer } from "./helpers";
 
-const adapter = createSqlSyncAdapter({ contract: testContract, syncServer: testSyncServer });
+const adapter = createSqlSyncAdapter({
+  contract: testContract,
+  syncServer: testSyncServer,
+  contractFingerprintCheck: "off",
+});
 
 describe("required JSON null", () => {
   it("acknowledges create and update, stores JSON null, and pulls it through the real ORM", async () => {
