@@ -117,7 +117,7 @@ describe("pending outbox migrations", () => {
     }
   });
 
-  it("leaves synced, abandoned and other-model events unchanged, and keeps empty updates queued", async () => {
+  it("leaves synced and other-model events unchanged, and keeps empty updates queued", async () => {
     const factory = new IDBFactory();
     const before = await seed(factory);
     const client = await createAutoMigratingSyncIdbClient({
@@ -127,7 +127,6 @@ describe("pending outbox migrations", () => {
     const create = before.find((event) => event["operation"] === "create")!;
     const unchanged = [
       { ...create, id: "synced", synced: true },
-      { ...create, id: "abandoned", retryable: false },
       { ...create, id: "other-model", entityType: "Post" },
     ];
     const emptyUpdate = {
@@ -160,6 +159,35 @@ describe("pending outbox migrations", () => {
         ...sparseUpdate,
         payload: { key: "update", patch: { label: "Only label" } },
       });
+    } finally {
+      await migrated.close();
+    }
+  });
+
+  it("rewrites rejected events like pending ones and keeps one it cannot convert", async () => {
+    const factory = new IDBFactory();
+    const before = await seed(factory);
+    const client = await createAutoMigratingSyncIdbClient({
+      ...options(factory),
+      contractSpace: buildContractSpaceFixture(v1),
+    });
+    const create = before.find((event) => event["operation"] === "create")!;
+    const rejected = { ...create, id: "rejected", retryable: false, tries: 3, lastError: "unique violation" };
+    const invalid = { ...rejected, id: "invalid", payload: { id: "bad", enabled: "invalid" } };
+    await client.withTransaction(["_idb_sync_outbox"], async (scope) => {
+      for (const record of [rejected, invalid]) {
+        await scope.execute({ kind: "put", storeName: "_idb_sync_outbox", record } as never);
+      }
+    });
+    await client.close();
+    const migrated = await createAutoMigratingSyncIdbClient({ ...options(factory), contractSpace: evolvedSpace() });
+    try {
+      const events = await scanAll(migrated, "_idb_sync_outbox");
+      expect(events.find((row) => row["id"] === "rejected")).toStrictEqual({
+        ...rejected,
+        payload: { id: "create", label: "Create", count: 1, role: "member" },
+      });
+      expect(events.find((row) => row["id"] === "invalid")).toStrictEqual(invalid);
     } finally {
       await migrated.close();
     }

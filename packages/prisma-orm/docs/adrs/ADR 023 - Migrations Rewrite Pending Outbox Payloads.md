@@ -18,13 +18,14 @@ An outbox payload has the shape of the model at the time of the edit. After a mi
 
 - **A hook on the extension space.** `IdbExtensionSpace` has an optional `onTransformRecords(tx, op, modelName, onDone)`. It runs after a `transformRecords` op finishes its store walk, on the same upgrade transaction, and before the next op.
 - **`target-idb` stays outbox-agnostic.** `openAndUpgrade` takes one optional callback, `onTransformRecords(tx, op, onDone)`. `client-idb` supplies it. It maps the op's store to an app model through the app's head contract, then runs each extension's hook in turn. If the store belongs to no app model, such as an extension's own store, it skips the hooks.
-- **The sync extension rewrites matching events.** Its hook walks the outbox store with a cursor and rewrites an event only if `!synced && retryable && entityType === model`:
+- **The sync extension rewrites matching events.** Its hook walks the outbox store with a cursor and rewrites an event only if `!synced && entityType === model`. That covers pending events and events the server rejected for good (`retryable === false`):
   - `create`: transform `payload` in `full` mode, the same mode that rewrites a stored record.
   - `update`: transform `payload.patch` in `patch` mode. `payload.key` is untouched. In `patch` mode a missing field stays missing, and a patch emptied by `removeFields` stays queued as a no-op update.
   - `delete`: untouched. A delete carries only the key, and ADR 016 rejects transforms that name a key field.
-- **Other events stay byte-for-byte unchanged.** This covers events that are synced, events abandoned after a non-retryable failure (`retryable === false`), and events of other models.
+- **A rejected event is rewritten on a best-effort basis.** [ADR 022](ADR%20022%20-%20Rejected%20Pushes%20Reconcile%20to%20the%20Server%20Row.md) keeps rejected events as the only recovery record, so an app can resurrect one later. Rewriting it keeps that record in the current shape. A rejected event never gets pushed, and it may have been rejected because a value was invalid. If the transform throws on one, the event stays exactly as written and the upgrade goes on. A pending event that throws still aborts the upgrade.
+- **Other events stay byte-for-byte unchanged.** This covers events that are already synced and events of other models.
 - **One transform gives the same result in both places.** Outbox payloads hold the same encoded values as the store, so the transform needs no outbox-specific logic.
-- **A failure aborts everything.** If the transform throws on a queued payload, the hook calls `onDone(error)`. The upgrade aborts, the database stays at its old version, and the open request rejects with the original error. The store, the outbox and the markers are all unchanged.
+- **A failure on a pending event aborts everything.** If the transform throws on a pending payload, the hook calls `onDone(error)`. The upgrade aborts, the database stays at its old version, and the open request rejects with the original error. The store, the outbox and the markers are all unchanged.
 - **No `await`.** The hook chains through IDB events on the upgrade transaction ([ADR 005](ADR%20005%20-%20Event-Driven%20Execution%20No%20Async%20Await.md)). [ADR 010](ADR%20010%20-%20Combined%20Single-Transaction%20Multi-Space%20Apply.md) applies extension ops before app ops, so the outbox store exists when the hook runs.
 
 ## Alternatives considered
