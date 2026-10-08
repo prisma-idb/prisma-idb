@@ -163,6 +163,7 @@ function applyPackage(input: {
 }): Promise<void> {
   return new Promise((resolve, reject) => {
     const req = input.factory.open(input.dbName, input.targetVersion);
+    let upgradeError: unknown;
     req.onupgradeneeded = (event) => {
       const target = event.target as IDBOpenDBRequest;
       const db = target.result;
@@ -171,19 +172,32 @@ function applyPackage(input: {
         reject(new Error("upgradeneeded fired with null version-change transaction"));
         return;
       }
-      try {
-        for (const op of input.ops) {
-          applyOneDdlOp(db, tx, op);
+      const runNext = (i: number): void => {
+        try {
+          const op = input.ops[i];
+          if (op) {
+            applyOneDdlOp(
+              db,
+              tx,
+              op,
+              () => runNext(i + 1),
+              (error) => {
+                upgradeError = error;
+              }
+            );
+          }
+        } catch (error) {
+          upgradeError = error;
+          tx.abort();
         }
-      } catch (err) {
-        reject(err);
-      }
+      };
+      runNext(0);
     };
     req.onsuccess = () => {
       req.result.close();
       resolve();
     };
-    req.onerror = () => reject(req.error ?? new Error("preflight open request failed"));
+    req.onerror = () => reject(upgradeError ?? req.error ?? new Error("preflight open request failed"));
   });
 }
 

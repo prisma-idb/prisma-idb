@@ -158,6 +158,8 @@ function renderIndexDefLiteral(def: IdbIndexDefinition): string {
 
 function renderOpCall(op: IdbDdlOp): string {
   switch (op.kind) {
+    case "transformRecords":
+      throw new Error("IDB: transformRecords must be authored by hand in migration.ts");
     case "createObjectStore": {
       const optsParts = [`keyPath: ${JSON.stringify(op.def.keyPath)}`];
       if (op.def.autoIncrement !== undefined) {

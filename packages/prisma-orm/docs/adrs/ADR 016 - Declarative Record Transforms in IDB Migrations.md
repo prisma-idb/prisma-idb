@@ -1,6 +1,6 @@
 # ADR 016: Record transforms in migrations
 
-- **Status:** Proposed. Not implemented, pending review.
+- **Status:** Accepted.
 - **Date:** 2026-08-13
 - **Area:** Migrations
 
@@ -66,7 +66,13 @@ There are two kinds of change, kept apart on purpose:
 - **Value changes** (`fields`) read one field's value and return its replacement. That makes them composable: `pipe` passes one value through several steps in order.
 - **Shape changes** (`renameFields`, `removeFields`) change which keys a record has. Modelling a rename as a value transform would make it unclear which field is being read, so they are separate lists.
 
+Renames read from the original record, remove all source fields, then write the destinations. Swaps and chains preserve the original values regardless of entry order.
+
 For each record, the steps always run in this order: **rename, then transform values, then remove.** So you can rename a field and change its type in one pass, as long as the transform uses the new name.
+
+The exported pure `transformRecord(op, value, mode)` returns a rewritten copy. `full` mode applies every transform. `patch` mode only transforms fields present after renaming. It skips `defaultIfMissing` and `setLiteral`, including inside `pipe`, so absent fields stay absent.
+
+The executor rejects changes to key fields before opening the cursor. This includes both sides of a rename, value transforms, and removals. Compound key fields and the parent of a nested key path are protected because keys are immutable ([ADR 020](ADR%20020%20-%20Primary%20Keys%20Are%20Immutable.md)).
 
 ### The transforms
 
@@ -166,7 +172,7 @@ case "transformRecords": {
       onDone();
       return;
     }
-    cursor.update(transformOneRecord(cursor.value as Record<string, unknown>, op));
+    cursor.update(transformRecord(op, cursor.value as Record<string, unknown>, "full"));
     cursor.continue(); // issued synchronously, inside this onsuccess
   };
   return; // onDone() is called later, when the cursor is exhausted
@@ -192,20 +198,21 @@ A failed request during the walk isn't caught separately. As with every other re
 - **The IndexedDB target gains its first real data migration.** Renames, type changes, backfills and field removals all reuse the same six transforms. An earlier idea, a single hard-coded `booleanToInt01` transform, would have needed a new operation for every case.
 - **`ops.json` stays plain JSON.** No functions, no `eval`. Postgres and Mongo handle `"data"` operations the same way.
 - **Authors must know this exists.** `migration plan` keeps producing empty diffs for pure type or value changes, and nothing prompts the author.
-- **`applyOneDdlOp`'s signature changes.** This only affects its internal callers and tests, not any package's public API.
+- **`applyOneDdlOp`'s signature changes.** Callers pass a completion callback. An optional error callback preserves exceptions from the cursor walk.
 - **Cost grows with the store's size.** The walk visits every record before the upgrade can commit. For client-side data this is fine, but it would matter on an unexpectedly large store.
 - **The vocabulary is deliberately small.** It doesn't compute one field from others, such as `fullName` from `firstName` and `lastName`, and it can't transform across stores. Adding a transform means adding an `IdbValueTransform` variant and a case in the executor.
 
 ## Open questions
 
-- **Should data operations need explicit approval?** `migration plan`'s allowed operation classes don't apply here, because the author adds the operation after planning. Should `preflight` require something like `--allow-data-ops` before accepting a chain that contains one?
-- **Should `coerce` be able to skip invalid values** instead of throwing, for example with `onInvalid: "throw" | "skip"`? This ADR chooses to always throw. It's easy to loosen later, and hard to tighten once someone relies on skipping.
+- **Should data operations need explicit approval?** No. Authors explicitly add them to `migration.ts`, so preflight needs no approval flag.
+- **Should `coerce` skip invalid values?** No. Invalid values abort the upgrade so every record and marker stays consistent.
 
 ## Related
 
 - [ADR 002](ADR%20002%20-%20Two-Phase%20Migration.md): the upgrade transaction this operation runs in.
 - [ADR 005](ADR%20005%20-%20Event-Driven%20Execution%20No%20Async%20Await.md): the no-`await` rule the cursor walk must follow.
 - [ADR 011](ADR%20011%20-%20No%20Migration%20Materialization%20for%20IDB%20Extensions.md): `--space` authoring works the same way for this operation.
+- [ADR 023](ADR%20023%20-%20Migrations%20Rewrite%20Pending%20Outbox%20Payloads.md): how the same transform rewrites edits still queued in the sync outbox.
 - `target-idb/src/core/schema-diff.ts`: `diffIdbSchema`, which stays blind to field types.
 - `target-idb/src/core/apply-ddl-op.ts`: `applyOneDdlOp` and `openAndUpgrade`, which change shape.
 - `family-idb/src/core/preflight.ts`: `applyPackage`, which changes the same way.

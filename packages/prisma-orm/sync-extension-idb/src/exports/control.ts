@@ -1,3 +1,4 @@
+import { transformOutbox } from "../core/transform-outbox";
 import type { IdbExtensionSpace } from "@prisma-idb/family-idb/control";
 import { contractSpaceFromJson } from "@prisma/orm-toolchain/migration-tools/spaces";
 import contractJson from "../contract.json" with { type: "json" };
@@ -25,4 +26,5 @@ const syncContractSpace = contractSpaceFromJson({
 export const idbSyncExtension = {
   spaceId: SYNC_SPACE_ID,
   contractSpace: syncContractSpace,
+  onTransformRecords: transformOutbox,
 } satisfies IdbExtensionSpace;

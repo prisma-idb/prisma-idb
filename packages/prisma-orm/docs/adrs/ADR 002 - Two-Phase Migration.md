@@ -25,13 +25,13 @@ Replaying was only safe because every schema operation checks whether its store 
 
 `openAndUpgrade` in `target-idb/src/core/apply-ddl-op.ts` does everything inside `upgradeneeded`, in this order:
 
-1. Apply every schema operation (`applyOneDdlOp`). The first migration also creates the marker store.
+1. Apply every operation with `applyOneDdlOp(db, tx, op, onDone, onError)`. Its `onDone` callback starts the next operation. The first migration also creates the marker store.
 2. Put every marker record into `_prisma_next_marker`.
 
 ```
 factory.open(dbName, db.version + 1)
   └── upgradeneeded (one version-change transaction)
-        ├── applyOneDdlOp(db, tx, op) for each op
+        ├── applyOneDdlOp(db, tx, op, onDone, onError) for each op
         │     ├── createObjectStore("users", ...)
         │     ├── createIndex("users", ...)
         │     └── createObjectStore("_prisma_next_marker", ...)   first migration only

@@ -10,6 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { computeMigrationHash } from "@prisma/orm-toolchain/migration-tools/hash";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { transformRecordsOp, coerce } from "@prisma-idb/target-idb/migration";
 import { runPreflight } from "../src/core/preflight";
 import { createRawIdbContract } from "./_raw-contract";
 
@@ -115,6 +116,34 @@ const indexOnMissingStore = {
 };
 
 describe("runPreflight", () => {
+  it("accepts a hand-authored transform followed by structural operations", async () => {
+    const head = await writeSnapshot({ users: { keyPath: "id" }, posts: { keyPath: "id" } });
+    await writePackage({
+      dirName: "001_init",
+      from: null,
+      to: head,
+      ops: [createMarker, createUsers, transformRecordsOp("users", { fields: { status: coerce("int") } }), createPosts],
+    });
+    expect(await runPreflight({ migrationsDir: join(cwd, "migrations") })).toBe(0);
+  });
+
+  it.each([
+    { fields: { id: coerce("int") } },
+    { renameFields: { renamed: "id" } },
+    { renameFields: { id: "other" } },
+    { removeFields: ["id"] },
+  ])("rejects transforms of key fields before an empty cursor walk: %j", async (options) => {
+    await writePackage({
+      dirName: "001_init",
+      from: null,
+      to: "head",
+      ops: [createUsers, transformRecordsOp("users", options), createPosts],
+    });
+    const errors: string[] = [];
+    expect(await runPreflight({ migrationsDir: join(cwd, "migrations"), err: (line) => errors.push(line) })).toBe(1);
+    expect(errors.join("")).toContain('store "users" cannot change key field "id"');
+  });
+
   it("returns 0 with no packages", async () => {
     const code = await runPreflight({ migrationsDir: join(cwd, "migrations") });
     expect(code).toBe(0);

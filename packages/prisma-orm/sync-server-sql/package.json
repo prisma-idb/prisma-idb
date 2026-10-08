@@ -42,6 +42,7 @@
   "devDependencies": {
     "@prisma/cli-engine": "0.6.1",
     "@prisma/orm-postgres": "8.0.0-rc.12",
+    "@prisma/orm-toolchain": "8.0.0-rc.12",
     "@types/node": "^24.13.3",
     "@types/pg": "^8.21.0",
     "dotenv": "^17.4.2",
