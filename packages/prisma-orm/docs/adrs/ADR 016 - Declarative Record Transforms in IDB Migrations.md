@@ -212,6 +212,7 @@ A failed request during the walk isn't caught separately. As with every other re
 - [ADR 002](ADR%20002%20-%20Two-Phase%20Migration.md): the upgrade transaction this operation runs in.
 - [ADR 005](ADR%20005%20-%20Event-Driven%20Execution%20No%20Async%20Await.md): the no-`await` rule the cursor walk must follow.
 - [ADR 011](ADR%20011%20-%20No%20Migration%20Materialization%20for%20IDB%20Extensions.md): `--space` authoring works the same way for this operation.
+- [ADR 023](ADR%20023%20-%20Migrations%20Rewrite%20Pending%20Outbox%20Payloads.md): how the same transform rewrites edits still queued in the sync outbox.
 - `target-idb/src/core/schema-diff.ts`: `diffIdbSchema`, which stays blind to field types.
 - `target-idb/src/core/apply-ddl-op.ts`: `applyOneDdlOp` and `openAndUpgrade`, which change shape.
 - `family-idb/src/core/preflight.ts`: `applyPackage`, which changes the same way.
