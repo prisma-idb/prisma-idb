@@ -350,7 +350,11 @@ export function createSyncWorker<TContract extends IdbContract>(options: SyncWor
 
   /** Push first, then pull only if nothing is left to push. The two never overlap, so a pull never lands on an unsent local edit. */
   async function runCycle(): Promise<void> {
-    await syncClient.withTransaction([OUTBOX_STORE], pruneSyncedEvents);
+    try {
+      await syncClient.withTransaction([OUTBOX_STORE], pruneSyncedEvents);
+    } catch {
+      // History cleanup is best-effort; a failure must not block pending pushes.
+    }
     const pullBlocked = await pushPending();
     if (!pullBlocked) await pullChanges();
   }

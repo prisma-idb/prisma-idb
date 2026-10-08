@@ -290,6 +290,32 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
   }
 
   describe("acknowledged retention", () => {
+    it("continues pushing and pulling when cycle-start pruning fails", async () => {
+      const { client } = await createTestSyncClient();
+      await seedAcknowledgedEvents(client, 105);
+      await asAccessors(client.orm)["users"]!.create({ id: "u1", name: "Alice" });
+      const pushHandler = vi.fn(async (events: OutboxEvent[]) =>
+        events.map((event) => ({ id: event.id, success: true }))
+      );
+      const pullHandler = vi.fn(async () => []);
+      const worker = trackedWorker({ syncClient: client, pushHandler, pullHandler });
+      const spy = vi.spyOn(client, "withTransaction").mockRejectedValueOnce(new Error("cleanup failure"));
+
+      try {
+        await expect(worker.forceSync()).resolves.toBeUndefined();
+      } finally {
+        spy.mockRestore();
+      }
+
+      expect(pushHandler).toHaveBeenCalledTimes(1);
+      expect(pushHandler.mock.calls[0]?.[0]).toHaveLength(1);
+      expect(pullHandler).toHaveBeenCalledTimes(1);
+      expect(worker.status).toBe("idle");
+      const retained = await scanAll(client, "_idb_sync_outbox");
+      expect(retained).toHaveLength(100);
+      expect(retained.every((event) => event["synced"] === true)).toBe(true);
+    });
+
     it("prunes existing history during an idle cycle and remains idempotent", async () => {
       const { client } = await createTestSyncClient();
       await seedAcknowledgedEvents(client, 105);
