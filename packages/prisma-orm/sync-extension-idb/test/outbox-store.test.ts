@@ -1,5 +1,11 @@
-import { describe, expect, it } from "vitest";
-import { getNextBatch, getOldestPendingEvent, markFailed, markSynced } from "../src/core/outbox-store";
+import { describe, expect, it, vi } from "vitest";
+import {
+  getNextBatch,
+  getOldestPendingEvent,
+  markFailed,
+  markSynced,
+  pruneSyncedEvents,
+} from "../src/core/outbox-store";
 import type { OutboxEvent, VersionMetaRecord } from "../src/types";
 import { createTestSyncClient, keyGet, scanAll } from "./helpers";
 
@@ -387,5 +393,151 @@ describe("markFailed", () => {
 
     const meta = await getVersionMeta(client, 'Board::"b1"');
     expect(meta?.localChangePending).toBe(true);
+  });
+});
+
+describe("pruneSyncedEvents", () => {
+  it("retains the newest 100 acknowledged events by creation time", async () => {
+    const { client } = await createTestSyncClient();
+    await addOutboxEvents(
+      client,
+      Array.from({ length: 105 }, (_, i) =>
+        outboxEvent({
+          id: `e${String(i).padStart(3, "0")}`,
+          createdAt: new Date(i),
+          synced: true,
+        })
+      )
+    );
+
+    await client.withTransaction(["_idb_sync_outbox"], pruneSyncedEvents);
+
+    const retained = await scanAll(client, "_idb_sync_outbox");
+    expect(retained).toHaveLength(100);
+    expect(retained[0]?.["id"]).toBe("e005");
+    expect(retained.at(-1)?.["id"]).toBe("e104");
+  });
+  it.each([0, 99, 100])("keeps all %i acknowledgements within the limit", async (count) => {
+    const { client } = await createTestSyncClient();
+    const events = Array.from({ length: count }, (_, i) => outboxEvent({ id: `e${i}`, synced: true }));
+    await addOutboxEvents(client, events);
+
+    await client.withTransaction(["_idb_sync_outbox"], pruneSyncedEvents);
+
+    expect(await scanAll(client, "_idb_sync_outbox")).toEqual(expect.arrayContaining(events));
+    expect(await scanAll(client, "_idb_sync_outbox")).toHaveLength(count);
+  });
+
+  it("breaks equal creation times by descending id and ignores acknowledgement times", async () => {
+    const { client } = await createTestSyncClient();
+    const events = Array.from({ length: 104 }, (_, i) =>
+      outboxEvent({
+        id: `e${String(i).padStart(3, "0")}`,
+        synced: true,
+        createdAt: new Date(0),
+        syncedAt: i % 3 === 0 ? null : i % 3 === 1 ? new Date(104 - i) : new Date(0),
+      })
+    );
+    await addOutboxEvents(client, events);
+
+    await client.withTransaction(["_idb_sync_outbox"], pruneSyncedEvents);
+
+    const retained = await scanAll(client, "_idb_sync_outbox");
+    expect(retained).toEqual(events.slice(4));
+  });
+
+  it("preserves old unsent and failed rows and every version-meta row", async () => {
+    const { client } = await createTestSyncClient();
+    const live = [
+      outboxEvent({ id: "unsent", createdAt: new Date(0), payload: { name: "Unsent" } }),
+      outboxEvent({
+        id: "backoff",
+        createdAt: new Date(0),
+        tries: 3,
+        lastAttemptedAt: new Date(),
+        lastError: "offline",
+      }),
+      outboxEvent({
+        id: "retryable",
+        createdAt: new Date(0),
+        tries: 10,
+        lastError: "retry",
+        payload: { name: "Retry" },
+      }),
+      outboxEvent({
+        id: "rejected",
+        createdAt: new Date(0),
+        tries: 1,
+        retryable: false,
+        lastError: "rejected",
+        payload: { name: "Rejected" },
+      }),
+    ];
+    await addOutboxEvents(client, [
+      ...live,
+      ...Array.from({ length: 105 }, (_, i) =>
+        outboxEvent({
+          id: `history-${i}`,
+          synced: true,
+          createdAt: new Date(i + 1),
+          versionMetaId: 'User::"u1"',
+        })
+      ),
+    ]);
+    const metas = [true, false].map((localChangePending, i) => ({
+      id: `User::"u${i}"`,
+      model: "User",
+      key: `u${i}`,
+      lastAppliedChangeId: "c1",
+      localChangePending,
+    }));
+    await client.withTransaction(["_idb_sync_version_meta"], async (scope) => {
+      for (const record of metas)
+        await scope.execute({ kind: "put", storeName: "_idb_sync_version_meta", record } as never);
+    });
+
+    await client.withTransaction(["_idb_sync_outbox"], pruneSyncedEvents);
+
+    const retained = await scanAll(client, "_idb_sync_outbox");
+    expect(retained.filter((e) => !e["synced"])).toEqual([...live].sort((a, b) => a.id.localeCompare(b.id)));
+    expect(retained).toHaveLength(104);
+    expect(await scanAll(client, "_idb_sync_version_meta")).toEqual(metas);
+  });
+
+  it("is idempotent and bounds the rows scanned by subsequent pending reads", async () => {
+    const { client } = await createTestSyncClient();
+    const live = [
+      ...Array.from({ length: 20 }, (_, i) => outboxEvent({ id: `pending-${i}` })),
+      outboxEvent({ id: "failed", tries: 1, lastError: "offline" }),
+      outboxEvent({ id: "rejected", retryable: false, tries: 1, lastError: "rejected" }),
+    ];
+    await addOutboxEvents(client, [
+      ...live,
+      ...Array.from({ length: 1_000 }, (_, i) => outboxEvent({ id: `history-${i}`, synced: true })),
+    ]);
+    await client.withTransaction(["_idb_sync_outbox"], pruneSyncedEvents);
+    const first = await scanAll(client, "_idb_sync_outbox");
+    await client.withTransaction(["_idb_sync_outbox"], pruneSyncedEvents);
+    expect(await scanAll(client, "_idb_sync_outbox")).toEqual(first);
+
+    const scannedRows: number[] = [];
+    const original = client.rawClient.withTransaction.bind(client.rawClient);
+    const spy = vi.spyOn(client.rawClient, "withTransaction").mockImplementation(((stores, fn) =>
+      original(stores, async (scope) => {
+        const execute = scope.execute.bind(scope);
+        scope.execute = async (plan) => {
+          const rows = await execute(plan);
+          if (plan.kind === "cursor-scan") scannedRows.push(rows.length);
+          return rows;
+        };
+        return fn(scope);
+      })) as typeof client.rawClient.withTransaction);
+    try {
+      expect(await getNextBatch(client.rawClient, { limit: 30 })).toHaveLength(21);
+      expect(await getNextBatch(client.rawClient, { limit: 30 })).toHaveLength(21);
+      expect(scannedRows).toEqual([122, 122]);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

@@ -6,7 +6,14 @@ import type { IdbContract } from "@prisma-idb/client-idb/orm";
 import { contractFingerprint } from "@prisma-idb/target-idb/runtime";
 import type { SyncIdbClient } from "./sync-client";
 import type { OutboxEvent } from "./outbox-store";
-import { getNextBatch, getOldestPendingEvent, markSynced, markFailed, OUTBOX_STORE } from "./outbox-store";
+import {
+  getNextBatch,
+  getOldestPendingEvent,
+  markSynced,
+  markFailed,
+  pruneSyncedEvents,
+  OUTBOX_STORE,
+} from "./outbox-store";
 import { applyPull } from "./apply-pull";
 import { applyReconciliation, planReconciliation } from "./reconcile-rejected";
 import type { Reconciliation } from "./reconcile-rejected";
@@ -315,6 +322,7 @@ export function createSyncWorker<TContract extends IdbContract>(options: SyncWor
           failed++;
         }
       }
+      await pruneSyncedEvents(scope);
     });
     const retryableFailure = matched.some((result) => !result.success && result.retryable !== false);
     return { synced, failed, unreconciled, matched: matched.length, retryableFailure };
@@ -342,6 +350,7 @@ export function createSyncWorker<TContract extends IdbContract>(options: SyncWor
 
   /** Push first, then pull only if nothing is left to push. The two never overlap, so a pull never lands on an unsent local edit. */
   async function runCycle(): Promise<void> {
+    await syncClient.withTransaction([OUTBOX_STORE], pruneSyncedEvents);
     const pullBlocked = await pushPending();
     if (!pullBlocked) await pullChanges();
   }
