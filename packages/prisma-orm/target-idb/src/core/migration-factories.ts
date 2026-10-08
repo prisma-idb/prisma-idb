@@ -49,19 +49,42 @@ export type DropIndexOp = MigrationPlanOperation & {
   readonly indexName: string;
 };
 
-/** Union of all IDB DDL plan operations. */
-export type IdbDdlOp = CreateObjectStoreOp | DropObjectStoreOp | CreateIndexOp | DropIndexOp;
+/** Primitive constants that can be serialized in a migration package. */
+export type IdbJsonLiteral = string | number | boolean | null;
+
+/** Declarative steps applied to one field's value. */
+export type IdbValueTransform =
+  | { readonly kind: "coerce"; readonly to: "int" | "string" | "boolean" | "isoDateString" }
+  | { readonly kind: "defaultIfMissing"; readonly value: IdbJsonLiteral }
+  | { readonly kind: "setLiteral"; readonly value: IdbJsonLiteral }
+  | { readonly kind: "pipe"; readonly steps: readonly IdbValueTransform[] };
+
+/** Rewrites records in one store. Always `data`; authored by hand. */
+export type TransformRecordsOp = MigrationPlanOperation & {
+  readonly kind: "transformRecords";
+  readonly storeName: string;
+  /** Per-field value transforms, keyed by field name. */
+  readonly fields?: Readonly<Record<string, IdbValueTransform>>;
+  /** `{ newName: oldName }`: moves a value to a new key. */
+  readonly renameFields?: Readonly<Record<string, string>>;
+  /** Fields to delete. */
+  readonly removeFields?: readonly string[];
+};
+
+/** Union of all IDB migration plan operations. */
+export type IdbDdlOp = CreateObjectStoreOp | DropObjectStoreOp | CreateIndexOp | DropIndexOp | TransformRecordsOp;
 
 // ── Type guard ────────────────────────────────────────────────────────────────
 
-/** Returns `true` if `op` is one of the four IDB DDL op kinds. */
+/** Returns `true` if `op` is an IDB migration op kind. */
 export function isIdbDdlOp(op: MigrationPlanOperation): op is IdbDdlOp {
   return (
     "kind" in op &&
     (op.kind === "createObjectStore" ||
       op.kind === "dropObjectStore" ||
       op.kind === "createIndex" ||
-      op.kind === "dropIndex")
+      op.kind === "dropIndex" ||
+      op.kind === "transformRecords")
   );
 }
 
@@ -146,4 +169,39 @@ export function deletedDataWarning(ops: readonly unknown[]): string | undefined 
     droppedStores.map((store) => `  - ${store}\n`).join("") +
     "Check that this is intended before shipping it.\n"
   );
+}
+
+/** Create a record rewrite. The schema differ never emits this operation. */
+export function transformRecordsOp(
+  storeName: string,
+  options: Pick<TransformRecordsOp, "fields" | "renameFields" | "removeFields">
+): TransformRecordsOp {
+  return {
+    kind: "transformRecords",
+    id: `object-store.${storeName}.transform-records`,
+    label: `Transform records in "${storeName}"`,
+    operationClass: "data",
+    storeName,
+    ...options,
+  };
+}
+
+/** Convert a primitive value using ADR 016's conversion rules. */
+export function coerce(to: Extract<IdbValueTransform, { kind: "coerce" }>["to"]): IdbValueTransform {
+  return { kind: "coerce", to };
+}
+
+/** Backfill an undefined field without replacing null or an existing value. */
+export function defaultIfMissing(value: IdbJsonLiteral): IdbValueTransform {
+  return { kind: "defaultIfMissing", value };
+}
+
+/** Replace a field with a constant. */
+export function setLiteral(value: IdbJsonLiteral): IdbValueTransform {
+  return { kind: "setLiteral", value };
+}
+
+/** Apply field transforms in the supplied order. */
+export function pipe(...steps: readonly IdbValueTransform[]): IdbValueTransform {
+  return { kind: "pipe", steps };
 }

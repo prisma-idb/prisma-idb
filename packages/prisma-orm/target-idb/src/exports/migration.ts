@@ -36,16 +36,27 @@ export {
   createIndexOp,
   dropIndexOp,
   isIdbDdlOp,
+  transformRecordsOp,
+  coerce,
+  defaultIfMissing,
+  setLiteral,
+  pipe,
   deletedDataWarning,
 } from "../core/migration-factories";
 
 export type {
   IdbDdlOp,
+  TransformRecordsOp,
+  IdbJsonLiteral,
+  IdbValueTransform,
   CreateObjectStoreOp,
   DropObjectStoreOp,
   CreateIndexOp,
   DropIndexOp,
 } from "../core/migration-factories";
+
+export { transformRecord } from "../core/transform-records";
+export type { RecordTransformMode } from "../core/transform-records";
 
 // ── Schema diffing ────────────────────────────────────────────────────────────
 

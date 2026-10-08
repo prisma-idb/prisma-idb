@@ -21,8 +21,13 @@ export {
 export { applyOneDdlOp, openAndUpgrade, readMarker, writeMarker, writeMarkers } from "../core/apply-ddl-op";
 export type { IdbMarkerRecord, MarkerWriteInput } from "../core/apply-ddl-op";
 export { isIdbDdlOp } from "../core/migration-factories";
+export { transformRecord } from "../core/transform-records";
+export type { RecordTransformMode } from "../core/transform-records";
 export type {
   IdbDdlOp,
+  TransformRecordsOp,
+  IdbJsonLiteral,
+  IdbValueTransform,
   CreateObjectStoreOp,
   DropObjectStoreOp,
   CreateIndexOp,

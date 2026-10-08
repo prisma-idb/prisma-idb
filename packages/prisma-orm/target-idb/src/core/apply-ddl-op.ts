@@ -1,4 +1,5 @@
 import type { ContractMarkerRecord } from "@prisma/orm-framework/contract/types";
+import { transformRecord } from "./transform-records";
 import type { IdbKeyPath } from "./idb-contract-types";
 import { IDB_MARKER_STORE, type IdbDdlOp } from "./migration-factories";
 
@@ -25,8 +26,11 @@ function toDomKeyPath(keyPath: IdbKeyPath): string | string[] {
  * (client-idb), and the preflight CLI (family-idb) so all three apply paths
  * use a single, byte-identical implementation.
  *
- * **Idempotency.** Each op checks whether its store or index already exists
- * (or is already gone) and does nothing if so. IndexedDB itself has no such
+ * Calls `onDone` after successful completion. Cursor failures abort the
+ * transaction; `onError` lets callers retain the original exception.
+ *
+ * **Idempotency.** Each structural op checks whether its store or index
+ * already exists (or is already gone) and does nothing if so. IndexedDB itself has no such
  * tolerance: `createObjectStore` and `createIndex` throw `ConstraintError` on
  * an existing target, which would abort the whole upgrade. Migrations and
  * their markers now commit together, so a normal run never replays an op.
@@ -34,37 +38,77 @@ function toDomKeyPath(keyPath: IdbKeyPath): string | string[] {
  * for example ones left by an older build that wrote the marker in a
  * separate transaction and was closed in between.
  */
-export function applyOneDdlOp(db: IDBDatabase, tx: IDBTransaction, op: IdbDdlOp): void {
+export function applyOneDdlOp(
+  db: IDBDatabase,
+  tx: IDBTransaction,
+  op: IdbDdlOp,
+  onDone: () => void,
+  onError?: (error: unknown) => void
+): void {
   switch (op.kind) {
     case "createObjectStore": {
-      if (db.objectStoreNames.contains(op.storeName)) return;
-      db.createObjectStore(op.storeName, {
-        keyPath: toDomKeyPath(op.def.keyPath),
-        ...(op.def.autoIncrement !== undefined && { autoIncrement: op.def.autoIncrement }),
-      });
-      return;
+      if (!db.objectStoreNames.contains(op.storeName)) {
+        db.createObjectStore(op.storeName, {
+          keyPath: toDomKeyPath(op.def.keyPath),
+          ...(op.def.autoIncrement !== undefined && { autoIncrement: op.def.autoIncrement }),
+        });
+      }
+      break;
     }
     case "dropObjectStore": {
-      if (!db.objectStoreNames.contains(op.storeName)) return;
-      db.deleteObjectStore(op.storeName);
-      return;
+      if (db.objectStoreNames.contains(op.storeName)) db.deleteObjectStore(op.storeName);
+      break;
     }
     case "createIndex": {
       const store = tx.objectStore(op.storeName);
-      if (store.indexNames.contains(op.indexName)) return;
-      store.createIndex(op.indexName, toDomKeyPath(op.def.keyPath), {
-        unique: op.def.unique,
-        ...(op.def.multiEntry !== undefined && { multiEntry: op.def.multiEntry }),
-      });
-      return;
+      if (!store.indexNames.contains(op.indexName)) {
+        store.createIndex(op.indexName, toDomKeyPath(op.def.keyPath), {
+          unique: op.def.unique,
+          ...(op.def.multiEntry !== undefined && { multiEntry: op.def.multiEntry }),
+        });
+      }
+      break;
     }
     case "dropIndex": {
       const store = tx.objectStore(op.storeName);
-      if (!store.indexNames.contains(op.indexName)) return;
-      store.deleteIndex(op.indexName);
+      if (store.indexNames.contains(op.indexName)) store.deleteIndex(op.indexName);
+      break;
+    }
+    case "transformRecords": {
+      const store = tx.objectStore(op.storeName);
+      const keys = typeof store.keyPath === "string" ? [store.keyPath] : (store.keyPath ?? []);
+      const fields = [
+        ...Object.keys(op.fields ?? {}),
+        ...Object.keys(op.renameFields ?? {}),
+        ...Object.values(op.renameFields ?? {}),
+        ...(op.removeFields ?? []),
+      ];
+      for (const field of fields) {
+        if (keys.some((key) => key === field || key.startsWith(`${field}.`))) {
+          throw new Error(`IDB: transformRecords on store "${op.storeName}" cannot change key field "${field}"`);
+        }
+      }
+      const request = store.openCursor();
+      request.onsuccess = () => {
+        try {
+          const cursor = request.result;
+          if (!cursor) {
+            onDone();
+            return;
+          }
+          cursor.update(transformRecord(op, cursor.value as Record<string, unknown>, "full"));
+          cursor.continue();
+        } catch (error) {
+          // Preserve the cause for callers instead of reporting only AbortError.
+          tx.abort();
+          if (onError) onError(error);
+          else throw error;
+        }
+      };
       return;
     }
   }
+  onDone();
 }
 
 /**
@@ -221,29 +265,41 @@ export function openAndUpgrade(input: {
       tx.addEventListener("abort", () => {
         upgradeError ??= tx.error ?? undefined;
       });
-      try {
-        for (const op of input.ops) {
-          input.onOperationStart?.(op);
-          applyOneDdlOp(db, tx, op);
-          input.onOperationComplete?.(op);
+      const runNext = (i: number): void => {
+        try {
+          const op = input.ops[i];
+          if (op) {
+            input.onOperationStart?.(op);
+            applyOneDdlOp(
+              db,
+              tx,
+              op,
+              () => {
+                input.onOperationComplete?.(op);
+                runNext(i + 1);
+              },
+              (error) => {
+                upgradeError = error;
+              }
+            );
+            return;
+          }
+          const markers = input.markers ?? [];
+          if (markers.length === 0) return;
+          if (!db.objectStoreNames.contains(IDB_MARKER_STORE)) {
+            throw new Error(
+              `IDB: the "${IDB_MARKER_STORE}" store does not exist after applying the migration, ` +
+                "so its marker can't be written. The migration chain should create this store in its first migration."
+            );
+          }
+          const markerStore = tx.objectStore(IDB_MARKER_STORE);
+          for (const marker of markers) markerStore.put(toMarkerRecord(marker));
+        } catch (error) {
+          upgradeError = error;
+          tx.abort();
         }
-        const markers = input.markers ?? [];
-        if (markers.length === 0) return;
-        if (!db.objectStoreNames.contains(IDB_MARKER_STORE)) {
-          throw new Error(
-            `IDB: the "${IDB_MARKER_STORE}" store does not exist after applying the migration, ` +
-              "so its marker can't be written. The migration chain should create this store in its first migration."
-          );
-        }
-        const markerStore = tx.objectStore(IDB_MARKER_STORE);
-        for (const marker of markers) {
-          markerStore.put(toMarkerRecord(marker));
-        }
-      } catch (err) {
-        upgradeError = err;
-        // Rolls back the schema changes and any markers already queued.
-        tx.abort();
-      }
+      };
+      runNext(0);
     };
 
     request.onsuccess = (event) => {
