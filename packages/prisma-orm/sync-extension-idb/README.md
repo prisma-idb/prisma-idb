@@ -46,6 +46,8 @@ Each handler also receives `context.contractFingerprint()`. Send it to the serve
 
 `db.on("outboxwrite", callback)` fires after commit, once per tracked IndexedDB write call. Bulk calls can report several entries. Nested or cascading ORM writes can produce several notifications. Rolled-back writes produce none.
 
+The worker automatically keeps the newest 100 successfully acknowledged outbox events per database, ordered by `createdAt` descending and event id descending for ties. It prunes before each cycle's first push, including idle cycles, and after each push-result batch in the same transaction as the results. Unsent and failed events keep their full payload and error, including permanent rejections. Version metadata is preserved. This cleanup applies only to the worker; direct calls to low-level outbox helpers such as `markSynced` do not prune history.
+
 The server side uses [`@prisma-idb/sync-server`](https://www.npmjs.com/package/@prisma-idb/sync-server).
 
 ## Entry points

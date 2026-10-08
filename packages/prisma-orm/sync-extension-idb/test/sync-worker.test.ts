@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { IdbContract } from "@prisma-idb/client-idb/orm";
 import { contractFingerprint } from "@prisma-idb/target-idb/runtime";
 import { ContractMismatchError } from "../src/core/contract-mismatch-error";
 import { createSyncWorker } from "../src/core/sync-worker";
@@ -264,6 +265,163 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
 
   afterEach(() => {
     for (const worker of workers.splice(0)) worker.stop();
+  });
+
+  async function seedAcknowledgedEvents(client: SyncIdbClient<IdbContract>, count: number): Promise<void> {
+    await client.withTransaction(["_idb_sync_outbox"], async (scope) => {
+      for (let i = 0; i < count; i++) {
+        const event: OutboxEvent = {
+          id: `history-${String(i).padStart(3, "0")}`,
+          entityType: "User",
+          operation: "create",
+          payload: {},
+          createdAt: new Date(i),
+          synced: true,
+          syncedAt: null,
+          lastAttemptedAt: null,
+          tries: 0,
+          lastError: null,
+          retryable: true,
+          versionMetaId: null,
+        };
+        await scope.execute({ kind: "put", storeName: "_idb_sync_outbox", record: event } as never);
+      }
+    });
+  }
+
+  describe("acknowledged retention", () => {
+    it("continues pushing and pulling when cycle-start pruning fails", async () => {
+      const { client } = await createTestSyncClient();
+      await seedAcknowledgedEvents(client, 105);
+      await asAccessors(client.orm)["users"]!.create({ id: "u1", name: "Alice" });
+      const pushHandler = vi.fn(async (events: OutboxEvent[]) =>
+        events.map((event) => ({ id: event.id, success: true }))
+      );
+      const pullHandler = vi.fn(async () => []);
+      const worker = trackedWorker({ syncClient: client, pushHandler, pullHandler });
+      const spy = vi.spyOn(client, "withTransaction").mockRejectedValueOnce(new Error("cleanup failure"));
+
+      try {
+        await expect(worker.forceSync()).resolves.toBeUndefined();
+      } finally {
+        spy.mockRestore();
+      }
+
+      expect(pushHandler).toHaveBeenCalledTimes(1);
+      expect(pushHandler.mock.calls[0]?.[0]).toHaveLength(1);
+      expect(pullHandler).toHaveBeenCalledTimes(1);
+      expect(worker.status).toBe("idle");
+      const retained = await scanAll(client, "_idb_sync_outbox");
+      expect(retained).toHaveLength(100);
+      expect(retained.every((event) => event["synced"] === true)).toBe(true);
+    });
+
+    it("prunes existing history during an idle cycle and remains idempotent", async () => {
+      const { client } = await createTestSyncClient();
+      await seedAcknowledgedEvents(client, 105);
+      const pushHandler = vi.fn(async () => []);
+      const worker = trackedWorker({ syncClient: client, pushHandler, pullHandler: async () => [] });
+
+      await worker.forceSync();
+
+      const retained = await scanAll(client, "_idb_sync_outbox");
+      expect(retained).toHaveLength(100);
+      expect(retained[0]?.["id"]).toBe("history-005");
+      expect(pushHandler).not.toHaveBeenCalled();
+      await worker.forceSync();
+      expect(await scanAll(client, "_idb_sync_outbox")).toEqual(retained);
+    });
+    it("bounds history after each result batch and counts every success", async () => {
+      const { client } = await createTestSyncClient();
+      await seedAcknowledgedEvents(client, 100);
+      for (let i = 0; i < 45; i++) await asAccessors(client.orm)["users"]!.create({ id: `u${i}`, name: `User ${i}` });
+      const retainedCounts: number[] = [];
+      const batchSizes: number[] = [];
+      const worker = trackedWorker({
+        syncClient: client,
+        pushHandler: async (events) => {
+          retainedCounts.push((await scanAll(client, "_idb_sync_outbox")).filter((e) => e["synced"]).length);
+          batchSizes.push(events.length);
+          return [...events].reverse().map((e) => ({ id: e.id, success: true }));
+        },
+        pullHandler: async () => {
+          retainedCounts.push((await scanAll(client, "_idb_sync_outbox")).filter((e) => e["synced"]).length);
+          return [];
+        },
+      });
+      const completed: PushCompletedEvent[] = [];
+      worker.on("pushcompleted", (event) => completed.push(event));
+
+      await worker.forceSync();
+
+      expect(batchSizes).toEqual([20, 20, 5]);
+      expect(retainedCounts).toEqual([100, 100, 100, 100]);
+      expect(completed).toEqual([{ synced: 45, failed: 0, unreconciled: 0, pullBlocked: false }]);
+      expect(await scanAll(client, "_idb_sync_outbox")).toHaveLength(100);
+    });
+
+    it.each(["during cleanup", "after cleanup"])(
+      "rolls back result writes, reconciliation and pruning on failure %s",
+      async (failure) => {
+        const { client } = await createTestSyncClient();
+        await seedAcknowledgedEvents(client, 100);
+        await asAccessors(client.orm)["users"]!.create({ id: "accepted", name: "Accepted" });
+        await asAccessors(client.orm)["users"]!.create({ id: "rejected", name: "Local" });
+        const beforeOutbox = await scanAll(client, "_idb_sync_outbox");
+        const beforeMeta = await scanAll(client, "_idb_sync_version_meta");
+        const beforeUsers = await scanAll(client, "users");
+        const deleted: string[] = [];
+        const reconciled: unknown[] = [];
+        const original = client.withTransaction.bind(client);
+        const spy = vi.spyOn(client, "withTransaction").mockImplementation(((stores, fn) =>
+          original(stores, async (scope) => {
+            if (!stores.includes("_idb_sync_version_meta") || !stores.includes("_idb_sync_outbox")) return fn(scope);
+            const execute = scope.execute.bind(scope);
+            scope.execute = async (plan) => {
+              const rows = await execute(plan);
+              if (plan.kind === "put" && plan.storeName === "users") reconciled.push(plan.record);
+              if (plan.kind === "delete" && plan.storeName === "_idb_sync_outbox") {
+                deleted.push(String(plan.key));
+                if (failure === "during cleanup") throw new Error("cleanup failure");
+              }
+              return rows;
+            };
+            await fn(scope);
+            throw new Error("result transaction failure");
+          })) as typeof client.withTransaction);
+        const pullHandler = vi.fn(async () => []);
+        const worker = trackedWorker({
+          syncClient: client,
+          pushHandler: async (events) =>
+            [...events].reverse().map((event) =>
+              event.versionMetaId === 'User::"rejected"'
+                ? {
+                    id: event.id,
+                    success: false,
+                    retryable: false,
+                    error: "rejected",
+                    record: { id: "rejected", name: "Server" },
+                  }
+                : { id: event.id, success: true }
+            ),
+          pullHandler,
+        });
+        try {
+          await expect(worker.forceSync()).rejects.toThrow(
+            failure === "during cleanup" ? "cleanup failure" : "result transaction failure"
+          );
+        } finally {
+          spy.mockRestore();
+        }
+
+        expect(deleted).toEqual(["history-000"]);
+        expect(reconciled).toEqual([{ id: "rejected", name: "Server" }]);
+        expect(await scanAll(client, "_idb_sync_outbox")).toEqual(beforeOutbox);
+        expect(await scanAll(client, "_idb_sync_version_meta")).toEqual(beforeMeta);
+        expect(await scanAll(client, "users")).toEqual(beforeUsers);
+        expect(pullHandler).not.toHaveBeenCalled();
+      }
+    );
   });
 
   it("pushes queued outbox events, marks them synced on success, and emits pushcompleted", async () => {
@@ -815,7 +973,9 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
       const original = client.withTransaction.bind(client);
       let calls = 0;
       vi.spyOn(client, "withTransaction").mockImplementation(((...args: Parameters<typeof original>) =>
-        ++calls === 2 ? Promise.reject(new Error("QuotaExceededError")) : original(...args)) as never);
+        args[0].includes("users") && ++calls === 2
+          ? Promise.reject(new Error("QuotaExceededError"))
+          : original(...args)) as never);
 
       await worker.forceSync();
       await worker.forceSync();

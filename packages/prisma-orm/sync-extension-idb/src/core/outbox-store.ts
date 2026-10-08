@@ -10,7 +10,7 @@ import type { IdbTransactionScope } from "@prisma-idb/driver-idb/runtime";
 import type { IdbClient } from "@prisma-idb/client-idb/client";
 import type { IdbContract } from "@prisma-idb/client-idb/orm";
 import type { OutboxEvent } from "../types";
-import { getRecord, putRecord, scanStore } from "./raw-store";
+import { deleteRecord, getRecord, putRecord, scanStore } from "./raw-store";
 import { VERSION_META_STORE } from "./version-meta";
 
 export type { OutboxEvent };
@@ -95,6 +95,16 @@ export async function getOldestPendingEvent<TContract extends IdbContract>(
 }
 
 // ── Write helpers (inside an existing transaction scope) ──────────────────────
+
+/** Keep the newest 100 acknowledged events; failed and unsent events remain for retry or recovery. */
+export async function pruneSyncedEvents(scope: IdbTransactionScope): Promise<void> {
+  const acknowledged = (await scanStore<OutboxEvent>(scope, OUTBOX_STORE))
+    .filter((event) => event.synced === true)
+    .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime() || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0));
+  for (const event of acknowledged.slice(100)) {
+    await deleteRecord(scope, OUTBOX_STORE, event.id);
+  }
+}
 
 /**
  * True if some OTHER outbox event still references `versionMetaId` and could
