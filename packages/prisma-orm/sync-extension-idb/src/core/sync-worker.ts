@@ -152,7 +152,7 @@ type SyncEventMap = {
   statuschange: SyncWorkerStatus;
   pushcompleted: PushCompletedEvent;
   pullcompleted: PullCompletedEvent;
-  /** The server refused a request because this client's contract is out of step with its own. Nothing was consumed or dropped. */
+  /** The server refused a request because this client's contract is out of step with its own. The pull cursor, queued edits and their payloads are preserved. */
   contractmismatch: ContractMismatchEvent;
 };
 

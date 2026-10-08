@@ -272,6 +272,8 @@ export async function GET(req: Request) {
 Back in the browser, create a worker that calls your two endpoints, and start it once the user is signed in:
 
 ```ts
+import { ContractMismatchError, type SyncRequestContext } from "@prisma-idb/sync-extension-idb/client";
+
 const db = await getDb();
 const send = async (url: string, init: RequestInit, { contractFingerprint }: SyncRequestContext) => {
   const headers = { ...init.headers, "x-contract-fingerprint": await contractFingerprint() };

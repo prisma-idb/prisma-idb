@@ -61,7 +61,7 @@ The server therefore refuses to serve a client whose contract it does not recogn
 - **Fingerprint.** `contractFingerprint(contract)` (`target-idb/runtime`) is the SHA-256 of the contract's models' fields, value objects and enums. It ignores stores and indexes. `storage.storageHash` cannot serve here, because for IDB it covers only stores and indexes: a new non-indexed field or enum member leaves it unchanged.
 - **Which side.** The server is authoritative, because it knows what it emits. `SyncServer.contractFingerprint()` fingerprints `clientContract` (ADR 012), which is the contract the browser ships. The client sends the fingerprint of its own contract with every push and pull.
 - **Strict equality, on by default.** `pull` and `applyPush` return `{ ok: false, reason: "contract-mismatch", expected }` when the fingerprint is missing or different. The route answers HTTP 409. An app opts out explicitly with `contractFingerprintCheck: "off"`.
-- **Client reaction.** The handler throws `ContractMismatchError` on 409. The worker leaves the cursor and outbox untouched, emits `contractmismatch`, and retries with backoff. A refused push keeps its events pending and retryable, so unsent edits survive until the app updates.
+- **Client reaction.** The handler throws `ContractMismatchError` on 409. The worker leaves the cursor unchanged, preserves queued edits and their payloads, emits `contractmismatch`, and retries with backoff. A refused push keeps its events pending and retryable, so unsent edits survive until the app updates.
 
 Rollout order: ship clients that send the fingerprint before, or together with, a server that requires it. A server that requires it refuses every client that does not send it.
 
