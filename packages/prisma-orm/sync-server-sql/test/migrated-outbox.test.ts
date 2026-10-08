@@ -87,7 +87,12 @@ describe("migrated outbox push", () => {
     // The SQL fixture represents the server after its matching legacyName → name migration.
     const serverDb = await testDb();
     await seed(serverDb, { User: [{ id: scopeKey, name: "Before" }] });
-    const adapter = createSqlSyncAdapter({ contract: testContract, syncServer: testSyncServer });
+    const adapter = createSqlSyncAdapter({
+      contract: testContract,
+      syncServer: testSyncServer,
+      // This fixture tests migrated outbox delivery, not contract fingerprint negotiation.
+      contractFingerprintCheck: "off",
+    });
     const client = await createAutoMigratingSyncIdbClient({
       ...options,
       contractSpace: space(newContract, [baseline, migration(oldContract, newContract)]),
