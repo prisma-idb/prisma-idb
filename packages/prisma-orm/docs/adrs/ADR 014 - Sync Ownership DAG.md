@@ -6,9 +6,22 @@
 
 ## Summary
 
-The sync server decides who may push and pull each record by following relations from the record back to a root model, such as `User`. This set of paths is the ownership graph. It is built from the contract when the server starts. A record is allowed if any one of its paths leads to the caller's root record.
+Creates and updates must keep every populated tenant parent in the caller's scope.
+Existing-row access, pull and delete require only one matching path to that scope.
 
-This logic lives in a separate package, `@prisma-idb/sync-server`, which never ships to the browser. It doesn't touch a database itself: it returns descriptions of the checks and queries, and the app runs them.
+The sync server follows relations from each record to a root model, such as `User`.
+These paths form the ownership graph. The server builds it from the contract at startup.
+
+`@prisma-idb/sync-server` describes the checks and queries. The app executes them against its database.
+The package runs only on the server.
+
+### Terms
+
+| Term          | Meaning                                                                                  |
+| ------------- | ---------------------------------------------------------------------------------------- |
+| Scope         | The caller's root record, such as Alice's `User` row. `scopeKey` identifies this record. |
+| Tenant parent | A row referenced by an outgoing foreign key whose relation has a path to the root model. |
+| Candidate row | The proposed row: the create payload, or the stored row merged with an update patch.     |
 
 ## Context
 
@@ -20,7 +33,9 @@ The old generator (`packages/generator`) solved both with one mechanism:
 - An ownership graph built from every model's relations back to that root.
 - For each model, every path back to the root, not just the shortest one.
 
-Push checked that a record's path led to the pusher's `scopeKey` (the id of the caller's root record). Pull built its queries from the same paths.
+Existing-row access and pull accepted any matching ownership path. The later generator also checked every populated path in write payloads.
+Commit `5ffaa780` added this check as `emitMultiPathPayloadOwnershipCheck`.
+The SQL adapter now preserves that distinction between access and writes. Each tenant parent can use any of its paths to the root.
 
 Two points shaped where this logic lives:
 
@@ -60,19 +75,37 @@ A broken graph is a configuration error, so it fails when the server starts, not
 
 ### Push
 
-For each outbox event:
+The app must authorize the candidate row and every populated tenant parent before a create or update.
+A matching path through one tenant parent cannot authorize another tenant parent outside the caller's scope.
 
-1. If the event names a model that isn't in `clientContract`, reject it as `unknown-model`. A real client can't create events for models it doesn't have.
-2. Find every path from the event's model to the root.
-3. Build one check: the record's own key, plus any one of those paths leading to `scopeKey`. The app runs it. If nothing matches, the push is rejected as a scope violation.
+For each outbox event, the server and adapter follow this sequence:
 
-Checking that the payload matches the contract comes first, before any of this. That is [ADR 015](ADR%20015%20-%20Contract-Derived%20Validation.md)'s job.
+1. Reject models outside `clientContract` as `unknown-model`.
+2. Validate the payload against the client contract, as described in [ADR 015](ADR%20015%20-%20Contract-Derived%20Validation.md).
+3. Find every path from the event's model to the root.
+4. For updates and deletes, authorize the stored row through any path to the caller's scope.
+5. For creates and updates, build the candidate row. Merge the stored row with the update patch, retaining omitted foreign keys.
+6. Require at least one candidate row path to the caller's scope.
+7. Check every populated tenant parent. Each parent must reach the caller's scope through at least one of its paths.
+8. Reject resolved violations with non-retryable `SCOPE_VIOLATION`, before writing the record or changelog entry.
 
-**The app must run the ownership check, the write and the changelog entry in one database transaction**, with the check immediately before the write. If the check ran before the transaction opened, the ownership chain could change in between, for example a board reassigned to another user. `sync-server` never touches the database, so it can't enforce this. The README's push example shows the right shape.
+Null optional tenant parents need no check. A populated foreign key that references a missing tenant parent fails.
+
+The adapter must run the authorization checks, record write and changelog write in one transaction.
+Otherwise, a concurrent ownership change could invalidate the checks before the write.
+`sync-server` describes the checks but cannot enforce the transaction because it never accesses the database.
+
+#### Example: Alice's FoodEntry
+
+Alice creates a `FoodEntry` with `userId: "alice"` and `mealId` pointing to Bob's `Meal`.
+Its direct `User` path reaches Alice, but its tenant parent check fails.
+The SQL adapter returns `SCOPE_VIOLATION` and writes neither the record nor the changelog entry.
+The same rule applies if `recipeId` points to Bob's `Recipe`.
 
 ### Pull
 
-For the root model, the row's own key must equal `scopeKey`. For every other model, `buildPullQueries` returns the same multi-path check that push uses. So a client can never pull a row it couldn't have pushed.
+For the root model, the row's own key must equal `scopeKey`.
+For other models, `buildPullQueries` requires any one path to the caller's scope. It does not apply candidate row or tenant parent checks.
 
 Pull has two steps, as in the old generator. `buildPullQueries` is only the second:
 
@@ -83,14 +116,21 @@ The live re-check is needed because ownership can change after the push. For exa
 
 When a record fails the live check, the server sends it with `record: null`. On the client, `applyPull` treats a `null` record as a delete, including cascades, rather than skipping it. A record the client may no longer see has to disappear locally.
 
-### Any one path is enough
+### Why access accepts any matching path
 
-A record reachable through relation A or relation B should be allowed either way:
+A record can belong to the caller's scope through more than one relation.
+Requiring every path would reject records that belong to the caller through only one relation.
+Checking only the shortest path would fail when that path has a null foreign key but a longer path still matches.
 
-- **Requiring every path** would wrongly reject a record owned through a secondary relation.
-- **Using only the shortest path** would wrongly reject a record whose shortest path happens to be broken, for example by a null foreign key on that row, while a longer path is intact.
+The same reasoning applies to alternate paths through a single tenant parent.
+It does not apply across different tenant parents: each populated tenant parent must belong to the caller's scope.
 
-The old generator worked the same way.
+### Tenant parent check boundaries
+
+- Checks include server-only tenant parents.
+- Checks exclude inverse collections and global parents with no path to the root.
+- Checked relations must use a single-field foreign key to the tenant parent's primary key.
+- The SQL adapter rejects defaults on checked foreign keys because authorization requires their resolved values before insertion.
 
 ### Adding the `Changelog` model to the server schema
 
@@ -135,6 +175,22 @@ So `createSyncServer` can take the real server contract directly. The kanban exa
 - **Push costs more reads.** Each event may need up to one read per path, and each path can span several relations. The old generator had the same cost. We'll optimise it if it becomes a problem.
 - **There is no client-side authorization, by design.** A client can still put events for other users' data in its outbox. They just won't be accepted. Client state is never trusted.
 - **`model.owner` and `rootModel` are independent.** A model can have both, pointing at different models.
+
+### Historical rows
+
+Historical rows with tenant parents in different scopes remain readable or deletable through any matching path.
+An update that retains a tenant parent outside the caller's scope fails.
+A complete repair to the caller's scope may pass. No single relation determines who may repair the row.
+
+The new checks do not clean up historical data or propagate ownership transfers to inverse children.
+They also do not validate writes outside sync.
+Non-retryable push rejections reconcile under ordinary pull authorization, as described in [ADR 022](ADR%20022%20-%20Rejected%20Pushes%20Reconcile%20to%20the%20Server%20Row.md).
+
+### Upgrade impact
+
+- Upgrading the server and SQL adapter tightens create and update acceptance by default.
+- No relation policy configuration is required.
+- Checked foreign keys cannot have database or ORM-generated defaults. Callers must supply those values explicitly.
 
 ### Known limitation: pull assumes ownership doesn't move away from a client
 
