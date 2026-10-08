@@ -85,6 +85,81 @@ describe("transformRecords upgrades", () => {
     ]);
   });
 
+  it("finishes the transform hook before applying the next operation", async () => {
+    const factory = await seed();
+    let calls = 0;
+    await openAndUpgrade({
+      factory,
+      dbName: "records",
+      targetVersion: 2,
+      ops: [
+        transformRecordsOp("users", { fields: { synced: coerce("string") } }),
+        transformRecordsOp("users", { renameFields: { role: "hookValue" } }),
+      ],
+      onTransformRecords: (tx, op, onDone) => {
+        calls++;
+        if (op.renameFields) {
+          onDone();
+          return;
+        }
+        const request = tx.objectStore("users").openCursor();
+        request.onsuccess = () => {
+          const cursor = request.result;
+          if (!cursor) {
+            onDone();
+            onDone(); // A repeated completion must not replay later operations.
+            return;
+          }
+          expect(typeof cursor.value.synced).toBe("string");
+          cursor.update({ ...cursor.value, hookValue: "finished" });
+          cursor.continue();
+        };
+      },
+    });
+    expect(calls).toBe(2);
+    expect((await snapshot(factory)).records).toMatchObject([{ role: "finished" }, { role: "finished" }]);
+  });
+
+  it("aborts without completing later operations when the transform hook throws", async () => {
+    const factory = await seed();
+    const before = await snapshot(factory);
+    const completed = vi.fn();
+    await expect(
+      openAndUpgrade({
+        factory,
+        dbName: "records",
+        targetVersion: 2,
+        ops: [transformRecordsOp("users", { removeFields: ["obsolete"] }), dropObjectStoreOp("users")],
+        markers: [{ space: "app", storageHash: "new" }],
+        onTransformRecords: () => {
+          throw new Error("hook failed");
+        },
+        onOperationComplete: completed,
+      })
+    ).rejects.toThrow("hook failed");
+    expect(completed).not.toHaveBeenCalled();
+    expect(await snapshot(factory)).toStrictEqual(before);
+  });
+
+  it("aborts with the hook's error when it reports a failure after rewriting records", async () => {
+    const factory = await seed();
+    const before = await snapshot(factory);
+    await expect(
+      openAndUpgrade({
+        factory,
+        dbName: "records",
+        targetVersion: 2,
+        ops: [transformRecordsOp("users", { removeFields: ["obsolete"] })],
+        markers: [{ space: "app", storageHash: "new" }],
+        onTransformRecords: (tx, _op, onDone) => {
+          const request = tx.objectStore("users").put({ id: 3 });
+          request.onsuccess = () => onDone(new Error("hook reported"));
+        },
+      })
+    ).rejects.toThrow("hook reported");
+    expect(await snapshot(factory)).toStrictEqual(before);
+  });
+
   it("keeps absent fields absent in stored records", async () => {
     const factory = await seed();
     const before = await snapshot(factory);

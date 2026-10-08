@@ -1,7 +1,7 @@
 import type { ContractMarkerRecord } from "@prisma/orm-framework/contract/types";
 import { transformRecord } from "./transform-records";
 import type { IdbKeyPath } from "./idb-contract-types";
-import { IDB_MARKER_STORE, type IdbDdlOp } from "./migration-factories";
+import { IDB_MARKER_STORE, type IdbDdlOp, type TransformRecordsOp } from "./migration-factories";
 
 /**
  * `lib.dom.d.ts` types `IDBObjectStoreParameters.keyPath` / `createIndex`'s
@@ -230,6 +230,12 @@ export function openAndUpgrade(input: {
   readonly markers?: readonly MarkerWriteInput[];
   readonly onOperationStart?: (op: IdbDdlOp) => void;
   readonly onOperationComplete?: (op: IdbDdlOp) => void;
+  /**
+   * Runs after a `transformRecords` op rewrites its store, in the same transaction, so a
+   * failure rolls back both. Do not `await`; chain through IDB events. Call `onDone()` once
+   * to continue, or `onDone(error)` to abort the upgrade and reject with `error`.
+   */
+  readonly onTransformRecords?: (tx: IDBTransaction, op: TransformRecordsOp, onDone: (error?: unknown) => void) => void;
 }): Promise<number> {
   return new Promise((resolve, reject) => {
     const request = input.factory.open(input.dbName, input.targetVersion);
@@ -275,8 +281,28 @@ export function openAndUpgrade(input: {
               tx,
               op,
               () => {
-                input.onOperationComplete?.(op);
-                runNext(i + 1);
+                let completed = false;
+                const onDone = (hookError?: unknown) => {
+                  if (completed) return;
+                  completed = true;
+                  try {
+                    if (hookError !== undefined) throw hookError;
+                    input.onOperationComplete?.(op);
+                    runNext(i + 1);
+                  } catch (error) {
+                    upgradeError = error;
+                    tx.abort();
+                  }
+                };
+                if (op.kind === "transformRecords" && input.onTransformRecords) {
+                  try {
+                    input.onTransformRecords(tx, op, onDone);
+                  } catch (error) {
+                    onDone(error);
+                  }
+                } else {
+                  onDone();
+                }
               },
               (error) => {
                 upgradeError = error;
