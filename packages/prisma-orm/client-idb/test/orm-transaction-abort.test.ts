@@ -22,6 +22,8 @@ type LooseAccessor = {
   create(data: Row): Promise<Row>;
   where(filter: Row): { update(patch: Row): Promise<Row | null>; all(): { toArray(): Promise<Row[]> } };
   all(): { toArray(): Promise<Row[]> };
+  createAll(data: Row[]): PromiseLike<Row[]>;
+  include(relation: string, refine: (related: { count(): unknown }) => unknown): unknown;
 };
 type LooseClient = {
   orm: Record<string, LooseAccessor>;
@@ -93,6 +95,56 @@ describe("db.transaction() — validation failures the callback catches", () => 
     ).rejects.toThrow();
 
     expect(await ids(db.orm["member"]!)).toEqual(["m1"]);
+  });
+
+  it("aborts when a createAll that is awaited directly is rejected and the callback catches it", async () => {
+    const db = await openClient(enumContract, ["member"]);
+
+    await expect(
+      db.transaction(["member"], async (tx) => {
+        await tx["member"]!.create({ id: "good", role: "USER" });
+        try {
+          await tx["member"]!.createAll([{ id: "bad", role: "OWNER" }]);
+        } catch {
+          // The callback swallows the error; the transaction must still abort.
+        }
+      })
+    ).rejects.toThrow();
+
+    expect(await ids(db.orm["member"]!)).toEqual([]);
+  });
+});
+
+describe("db.transaction() — errors thrown synchronously by an accessor", () => {
+  const contract = defineContract({
+    family: idbFamilyPack,
+    target: idbTargetPack,
+    models: {
+      User: { store: "users", key: "id", fields: { id: "String" } },
+      Post: {
+        store: "posts",
+        key: "id",
+        fields: { id: "String", authorId: "String" },
+        relations: { author: { to: "User", cardinality: "N:1", on: { local: ["authorId"], target: ["id"] } } },
+      },
+    },
+  });
+
+  it("aborts when a to-one include() count() throws and the callback catches it", async () => {
+    const db = await openClient(contract, ["users", "posts"]);
+
+    await expect(
+      db.transaction(["users", "posts"], async (tx) => {
+        await tx["users"]!.create({ id: "u1" });
+        try {
+          tx["posts"]!.include("author", (author) => author.count());
+        } catch {
+          // The callback swallows the error; the transaction must still abort.
+        }
+      })
+    ).rejects.toThrow();
+
+    expect(await ids(db.orm["users"]!)).toEqual([]);
   });
 });
 

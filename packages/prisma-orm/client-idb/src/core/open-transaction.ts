@@ -109,20 +109,23 @@ export class OpenTransaction implements IdbQueryExecutorWithTransaction, IdbTran
   }
 
   /**
-   * Wrap an ORM accessor so that any call that rejects aborts the transaction.
+   * Wrap an ORM accessor so that any call that fails aborts the transaction.
    *
-   * Some failures, such as enum validation, are thrown before an operation
-   * reaches this executor. Without this wrapper the callback could catch them
-   * and commit the writes made before. Objects the accessor returns, such as
-   * `where()` builders, are wrapped too.
+   * Some failures, such as enum validation, happen before an operation reaches
+   * this executor. Without this wrapper the callback could catch them and
+   * commit the writes made before. The wrapper covers errors thrown
+   * synchronously, rejected promises, and rejections of a result that is
+   * awaited directly (`AsyncIterableResult`). Objects the accessor returns,
+   * such as `where()` builders, are wrapped too.
    */
   abortOnFailure<T extends object>(target: T): T {
     return new Proxy(target, {
       get: (object, property) => {
         const value: unknown = Reflect.get(object, property, object);
         if (typeof value !== "function") return value;
+        if (property === "then") return this.#observeThen(object, value as (...args: unknown[]) => unknown);
         return (...args: unknown[]): unknown => {
-          const result: unknown = value.apply(object, args);
+          const result: unknown = this.#recordThrown(() => value.apply(object, args));
           if (result instanceof Promise) {
             result.catch((error: unknown) => this.#recordFailure(error));
             return result;
@@ -131,6 +134,28 @@ export class OpenTransaction implements IdbQueryExecutorWithTransaction, IdbTran
         };
       },
     });
+  }
+
+  /**
+   * `await result` passes its own rejection handler to `then()`, which turns the
+   * rejection into a fulfilled promise. Record the failure before that handler runs.
+   */
+  #observeThen(object: object, then: (...args: unknown[]) => unknown): unknown {
+    return (onFulfilled: unknown, onRejected: unknown): unknown =>
+      then.call(object, onFulfilled, (error: unknown) => {
+        this.#recordFailure(error);
+        if (typeof onRejected !== "function") throw error;
+        return onRejected(error);
+      });
+  }
+
+  #recordThrown<R>(call: () => R): R {
+    try {
+      return call();
+    } catch (error) {
+      this.#recordFailure(error);
+      throw error;
+    }
   }
 
   #assertNotEnded(): void {
