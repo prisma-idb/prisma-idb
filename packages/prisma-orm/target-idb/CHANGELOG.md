@@ -1,5 +1,15 @@
 # @prisma-idb/target-idb
 
+## 0.13.0
+
+### Minor Changes
+
+- [#304](https://github.com/prisma-idb/prisma-idb/pull/304) [`455eabe`](https://github.com/prisma-idb/prisma-idb/commit/455eabef835489b4241dc1b6d4cb92808e3cd726) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Add `contractFingerprint(contract)` to `@prisma-idb/target-idb/runtime`. It returns a SHA-256 digest of the fields, value objects and enums that decide whether a record decodes, and ignores stores and indexes.
+
+- [#305](https://github.com/prisma-idb/prisma-idb/pull/305) [`a27967d`](https://github.com/prisma-idb/prisma-idb/commit/a27967d50b37983ea73b7cdf407a35e5975c8eb8) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Add declarative record transforms to migrations and export a pure transformer for full records and patches. Apply transforms in order inside the upgrade transaction and reject key changes.
+
+- [#305](https://github.com/prisma-idb/prisma-idb/pull/305) [`8dafeac`](https://github.com/prisma-idb/prisma-idb/commit/8dafeacf1e7d3a70d97ab4e167d9b2a0837b414f) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Add an optional `onTransformRecords` callback to `openAndUpgrade`. It runs in the upgrade transaction after each store transform, so callers can rewrite related data atomically. Call `onDone(error)` to abort the upgrade with that error.
+
 ## 0.12.0
 
 ## 0.11.0

@@ -1,5 +1,34 @@
 # @prisma-idb/sync-extension-idb
 
+## 0.8.0
+
+### Minor Changes
+
+- [#304](https://github.com/prisma-idb/prisma-idb/pull/304) [`455eabe`](https://github.com/prisma-idb/prisma-idb/commit/455eabef835489b4241dc1b6d4cb92808e3cd726) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Let the server refuse a client on an outdated contract without losing data. `pushHandler` and `pullHandler` get a third argument, `context.contractFingerprint()`, to send with the request. Throw the new `ContractMismatchError` from a handler on HTTP 409: the worker keeps the pull cursor and unsent edits, emits `contractmismatch`, and retries with backoff.
+
+- [#297](https://github.com/prisma-idb/prisma-idb/pull/297) [`7967a1c`](https://github.com/prisma-idb/prisma-idb/commit/7967a1c6dd487caddc9b34e5486e5b1070353baf) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Make the pull cursor reliable, keep retryable pushes retryable, and reconcile rejected pushes with the server.
+
+  - A pull applies its rows in order and halts at the first row it cannot apply (a failed write or a pending local change). The cursor stops before that row, and the next pull restarts there. A replayed page of already applied rows now moves the cursor. `ApplyPullResult` and `pullcompleted` gain `halted`.
+  - The worker pushes every batch, then pulls only if no retryable outbox event remains. A retryable push failure no longer expires after 10 tries. Each event waits `backoffBaseMs`, doubled per failure up to `backoffMaxMs`, and later events never overtake it. `pushcompleted` gains `stalled` (set once the oldest event has failed 10 times), `pullBlocked` and `unreconciled`.
+  - When the server rejects an event for good, the worker replaces the local row with the `record` in the push result (`null` deletes it) in the same transaction as the failure. `pushResultSchema` and `PushResult` gain an optional `record`. Needs `@prisma-idb/sync-server-sql` with the matching change to receive it.
+  - Push results affect only events in the submitted batch. Unexpected result IDs leave queued edits and pending flags unchanged.
+
+- [#305](https://github.com/prisma-idb/prisma-idb/pull/305) [`7b625b0`](https://github.com/prisma-idb/prisma-idb/commit/7b625b047e7fc2ea9bb559422be1bb098d15af4c) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Rewrite unsynced outbox payloads when a migration transforms a model's records. Unsent `create` and `update` events keep working after a rename, retype or backfill, and events the server rejected stay in the current shape so an app can still resurrect them. Synced and other-model events stay unchanged. A failing transform on a pending event rolls back the store and the outbox together. A rejected event that cannot be converted is kept as written.
+
+- [#310](https://github.com/prisma-idb/prisma-idb/pull/310) [`c320d17`](https://github.com/prisma-idb/prisma-idb/commit/c320d17c13d760544087195391f551b526f6c7cf) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Add `transaction(rootKeys, async (tx) => ...)` to the sync client. It groups several ORM calls in one IndexedDB transaction and records an outbox event for each tracked write in that same transaction. `outboxwrite` listeners run once after the commit, and never after a rollback. `withTransaction()` stays raw and records no outbox events.
+
+### Patch Changes
+
+- [#308](https://github.com/prisma-idb/prisma-idb/pull/308) [`d2e86ab`](https://github.com/prisma-idb/prisma-idb/commit/d2e86abe2cf48e49cdf67eafc936698b893dd78d) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Automatically retain the newest 100 acknowledged outbox events by creation time in the sync worker. Keep all unsent and failed events and version metadata. Direct calls to low-level outbox helpers do not prune history.
+
+- Updated dependencies [[`627c2d4`](https://github.com/prisma-idb/prisma-idb/commit/627c2d4c8d8238d8c12cb89a0fc46b435f1b722c), [`e4c317d`](https://github.com/prisma-idb/prisma-idb/commit/e4c317dfe5523909c721eeaa64d0c2254f13e084), [`c320d17`](https://github.com/prisma-idb/prisma-idb/commit/c320d17c13d760544087195391f551b526f6c7cf), [`a27967d`](https://github.com/prisma-idb/prisma-idb/commit/a27967d50b37983ea73b7cdf407a35e5975c8eb8), [`e4c317d`](https://github.com/prisma-idb/prisma-idb/commit/e4c317dfe5523909c721eeaa64d0c2254f13e084), [`455eabe`](https://github.com/prisma-idb/prisma-idb/commit/455eabef835489b4241dc1b6d4cb92808e3cd726), [`a27967d`](https://github.com/prisma-idb/prisma-idb/commit/a27967d50b37983ea73b7cdf407a35e5975c8eb8), [`8dafeac`](https://github.com/prisma-idb/prisma-idb/commit/8dafeacf1e7d3a70d97ab4e167d9b2a0837b414f)]:
+  - @prisma-idb/client-idb@0.13.0
+  - @prisma-idb/family-idb@0.13.0
+  - @prisma-idb/target-idb@0.13.0
+  - @prisma-idb/adapter-idb@0.13.0
+  - @prisma-idb/runtime-idb@0.13.0
+  - @prisma-idb/driver-idb@0.13.0
+
 ## 0.7.5
 
 ### Patch Changes

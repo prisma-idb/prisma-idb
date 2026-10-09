@@ -1,6 +1,6 @@
 {
   "name": "@prisma-idb/family-idb",
-  "version": "0.12.0",
+  "version": "0.13.0",
   "description": "Prisma 8 IDB family — control-plane descriptor and family instance (CLI/config integration)",
   "license": "MIT",
   "files": ["dist"],
