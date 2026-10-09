@@ -17,7 +17,7 @@ import idbFamilyPack from "@prisma-idb/family-idb/pack";
 import idbTargetPack from "@prisma-idb/target-idb/pack";
 import { createIDBRuntimeDriver, type IdbRuntimeDriverInstance } from "@prisma-idb/driver-idb/runtime";
 import type { IdbQueryPlan } from "@prisma-idb/adapter-idb/runtime";
-import { idbOrm } from "../src/exports/orm";
+import { idbOrm, IdbRecordValidationError } from "../src/exports/orm";
 import type { IdbQueryExecutor, IdbQueryExecutorWithTransaction, IdbRelationMutator } from "../src/exports/orm";
 import {
   executeNestedCreateMutation,
@@ -43,7 +43,7 @@ const contract = defineContract({
     Post: {
       store: "posts",
       key: "id",
-      fields: { id: "String", authorId: "String", title: "String" },
+      fields: { id: "String", authorId: "String?", title: "String" },
       relations: {
         author: { to: "User", cardinality: "N:1", on: { local: ["authorId"], target: ["id"] } },
       },
@@ -407,9 +407,9 @@ describe("executeNestedUpdateMutation — 1:N connect matches all", () => {
     const orm = idbOrm({ contract, executor });
     await orm["users"]!.create({ id: "u1", name: "Alice" } as never);
     // Two posts share a non-unique `title`; a third does not match.
-    await orm["posts"]!.create({ id: "p1", title: "shared" } as never);
-    await orm["posts"]!.create({ id: "p2", title: "shared" } as never);
-    await orm["posts"]!.create({ id: "p3", title: "other" } as never);
+    await orm["posts"]!.create({ id: "p1", title: "shared", authorId: null } as never);
+    await orm["posts"]!.create({ id: "p2", title: "shared", authorId: null } as never);
+    await orm["posts"]!.create({ id: "p3", title: "other", authorId: null } as never);
 
     const { fieldFilter } = await import("@prisma-idb/adapter-idb/runtime");
     await executeNestedUpdateMutation({
@@ -424,7 +424,7 @@ describe("executeNestedUpdateMutation — 1:N connect matches all", () => {
     expect(posts.find((p) => p["id"] === "p1")?.["authorId"]).toBe("u1");
     expect(posts.find((p) => p["id"] === "p2")?.["authorId"]).toBe("u1");
     // Non-matching child is untouched.
-    expect(posts.find((p) => p["id"] === "p3")?.["authorId"]).toBeUndefined();
+    expect(posts.find((p) => p["id"] === "p3")?.["authorId"]).toBeNull();
   });
 });
 
@@ -520,10 +520,10 @@ describe("scalar FK validation — create()", () => {
     expect(post).toMatchObject({ id: "p1", authorId: null });
   });
 
-  it("create without FK field present skips validation and stores the record", async () => {
+  it("create without a declared nullable FK rejects the incomplete record", async () => {
     const orm = idbOrm({ contract, executor });
-    const post = await orm["posts"]!.create({ id: "p1", title: "Hello" } as never);
-    expect(post).toMatchObject({ id: "p1" });
+    await expect(orm["posts"]!.create({ id: "p1", title: "Hello" } as never)).rejects.toThrow(IdbRecordValidationError);
+    expect(await orm["posts"]!.all()).toEqual([]);
   });
 });
 
@@ -564,5 +564,97 @@ describe("scalar FK validation — update()", () => {
     await orm["posts"]!.create({ id: "p1", title: "Hello", authorId: "u1" } as never);
     const updated = await orm["posts"]!.where({ id: "p1" } as never).update({ authorId: null } as never);
     expect(updated).toMatchObject({ id: "p1", authorId: null });
+  });
+});
+
+describe("ORM nested scalar validation", () => {
+  let db: IDBDatabase;
+  let executor: TestExecutorWithTransaction;
+  beforeEach(async () => {
+    const name = nextDbName();
+    db = await openTestDb(name);
+    executor = new TestExecutorWithTransaction(createIDBRuntimeDriver(name).create());
+  });
+  afterEach(() => db.close());
+
+  it("rolls back the parent and earlier valid children when a later child is invalid", async () => {
+    const orm = idbOrm({ contract, executor });
+    await expect(
+      orm["users"]!.create({
+        id: "u1",
+        name: "Alice",
+        posts: (rel: RelMutator) =>
+          rel.create([
+            { id: "p1", title: "valid" },
+            { id: "p2", title: 3 },
+          ]),
+      } as never)
+    ).rejects.toThrow(IdbRecordValidationError);
+    expect(await orm["users"]!.all()).toEqual([]);
+    expect(await orm["posts"]!.all()).toEqual([]);
+  });
+
+  it("rolls back a nested parent-owned create when the outer update is invalid", async () => {
+    const orm = idbOrm({ contract, executor });
+    await orm["posts"]!.create({ id: "p1", title: "before", authorId: null } as never);
+    await expect(
+      orm["posts"]!.where({ id: "p1" }).update({
+        title: 3,
+        author: (rel: RelMutator) => rel.create({ id: "u1", name: "Alice" }),
+      } as never)
+    ).rejects.toThrow(IdbRecordValidationError);
+    expect(await orm["users"]!.all()).toEqual([]);
+    expect(await orm["posts"]!.findUnique("p1")).toMatchObject({ title: "before", authorId: null });
+  });
+
+  it.each(["disconnect-all", "disconnect-key", "delete"])("rolls back invalid generated %s patches", async (action) => {
+    const requiredContract = defineContract({
+      family: idbFamilyPack,
+      target: idbTargetPack,
+      models: {
+        User: {
+          store: "users",
+          key: "id",
+          fields: { id: "String", name: "String" },
+          relations: {
+            posts: { to: "Post", cardinality: "1:N", on: { local: ["id"], target: ["authorId"] }, onDelete: "setNull" },
+          },
+        },
+        Post: {
+          store: "posts",
+          key: "id",
+          fields: { id: "String", title: "String", authorId: "String" },
+          relations: {
+            author: { to: "User", cardinality: "N:1", on: { local: ["authorId"], target: ["id"] } },
+          },
+        },
+      },
+    });
+    const orm = idbOrm({ contract: requiredContract, executor });
+    await orm["users"]!.create({ id: "u1", name: "before" } as never);
+    await orm["posts"]!.create({ id: "p1", title: "before", authorId: "u1" } as never);
+    const write =
+      action === "delete"
+        ? orm["users"]!.delete("u1")
+        : orm["users"]!.where({ id: "u1" }).update({
+            name: "after",
+            posts: (rel: RelMutator) =>
+              action === "disconnect-key" ? rel.disconnect([{ id: "p1" }]) : rel.disconnect(),
+          } as never);
+    await expect(write).rejects.toThrow(IdbRecordValidationError);
+    expect(await orm["users"]!.findUnique("u1")).toMatchObject({ name: "before" });
+    expect(await orm["posts"]!.findUnique("p1")).toMatchObject({ authorId: "u1" });
+  });
+
+  it.each(["createAll", "createCount"] as const)("rolls back invalid scalar data in FK %s batches", async (method) => {
+    const orm = idbOrm({ contract, executor });
+    await orm["users"]!.create({ id: "u1", name: "Alice" } as never);
+    const write = async () =>
+      await orm["posts"]![method]([
+        { id: "p1", title: "valid", authorId: "u1" },
+        { id: "p2", title: 3, authorId: "u1" },
+      ] as never);
+    await expect(write()).rejects.toThrow(IdbRecordValidationError);
+    expect(await orm["posts"]!.all()).toEqual([]);
   });
 });

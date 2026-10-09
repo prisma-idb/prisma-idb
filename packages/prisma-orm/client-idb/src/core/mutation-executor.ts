@@ -33,6 +33,7 @@ import type { IdbFilterExpr } from "@prisma-idb/adapter-idb/runtime";
 import type { IdbReferentialAction } from "@prisma-idb/target-idb/pack";
 import type { IdbQueryExecutor } from "./executor";
 import { assertEnumValues } from "./enum-validation";
+import { assertValidRecord } from "./record-validation";
 import {
   applyCreateDefaults,
   applyUpdateDefaults,
@@ -315,6 +316,7 @@ async function updateFirstGraph(
     const meta = makePlanMeta(contract);
     const patch = applyUpdateDefaults(contract.execution?.mutations.defaults, storeName, scalarData, defaultsCache);
     assertEnumValues(contract, modelName, patch);
+    assertValidRecord(contract, modelName, "update", patch);
     await validateScalarFks(scope, contract, modelName, patch, existingRow);
     await applyReferentialActionsForRowOnUpdate(scope, contract, modelName, existingRow, patch);
     const rows = await scope.execute({ meta, kind: "update", storeName, key, patch });
@@ -571,6 +573,7 @@ async function insertSingleRow(
   const meta = makePlanMeta(contract);
   const record = applyCreateDefaults(contract.execution?.mutations.defaults, storeName, data, defaultsCache);
   assertEnumValues(contract, modelName, record);
+  assertValidRecord(contract, modelName, "create", record);
   await validateScalarFks(scope, contract, modelName, record);
   const rows = await scope.execute({ meta, kind: "add", storeName, record });
   return rows[0] ?? record;
@@ -649,6 +652,7 @@ async function writeMutationRows(
   modelName: string,
   request: WriteRequest
 ): Promise<Record<string, unknown>[]> {
+  if (request.write !== "delete") assertValidRecord(contract, modelName, "update", request.patch ?? {});
   const catalog = buildCatalog(contract, getStoreName(contract, modelName));
   const meta = makePlanMeta(contract);
   const lowered = lowerWrite(catalog, planQuery(catalog, request), meta, request);
@@ -1299,6 +1303,7 @@ async function executeScalarUpdates(options: ScalarUpdateOptions, take?: 1): Pro
     createMutationDefaultsCache()
   );
   assertEnumValues(contract, modelName, patch);
+  assertValidRecord(contract, modelName, "update", patch);
   const { storeNames, enforcesOnUpdate } = collectUpdateStoreNames(contract, modelName, patch);
   const needsRowForFks = fkCheckNeedsExistingRow(contract, modelName, patch);
   return withMutationScope(executor, storeNames, async (scope) => {

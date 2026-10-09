@@ -6,6 +6,7 @@
  */
 import { describe, expect, it, vi } from "vitest";
 import { IdbTransactionCommittedEarlyError } from "@prisma-idb/client-idb/client";
+import { IdbRecordValidationError } from "@prisma-idb/client-idb/orm";
 import { asAccessors, createTestSyncClient, scanAll, type TestStoreAccessor } from "./helpers";
 
 type TestTx = Record<string, TestStoreAccessor>;
@@ -36,6 +37,48 @@ function untilNextTransactionFinishes(): () => Promise<void> {
 }
 
 describe("SyncIdbClient.transaction()", () => {
+  it.each([false, true])("rolls back scalar failures, outbox rows and notifications (caught: %s)", async (caught) => {
+    const { client } = await createTestSyncClient();
+    const emitted: number[] = [];
+    let caughtError: unknown;
+    client.on("outboxwrite", (entries) => emitted.push(entries.length));
+    await expect(
+      transactionOf(client)(["users"], async (tx) => {
+        await tx["users"]!.create({ id: "u1", name: "Alice" });
+        const invalid = tx["users"]!.where({ id: "u1" }).update({ name: 3 });
+        if (caught)
+          await invalid.catch((error: unknown) => {
+            caughtError = error;
+          });
+        else await invalid;
+      })
+    ).rejects.toThrow();
+    if (caught) expect(caughtError).toBeInstanceOf(IdbRecordValidationError);
+    expect(await scanAll(client, "users")).toEqual([]);
+    expect(await scanAll(client, "_idb_sync_outbox")).toEqual([]);
+    expect(emitted).toEqual([]);
+  });
+
+  it("rolls back nested scalar failures and their tracked writes", async () => {
+    const { client } = await createTestSyncClient();
+    const emitted: number[] = [];
+    client.on("outboxwrite", (entries) => emitted.push(entries.length));
+    await expect(
+      asAccessors(client.orm)["users"]!.create({
+        id: "u1",
+        name: "Alice",
+        posts: (rel: { create(data: Record<string, unknown>[]): unknown }) =>
+          rel.create([
+            { id: "p1", title: "valid" },
+            { id: "p2", title: 3 },
+          ]),
+      })
+    ).rejects.toThrow(IdbRecordValidationError);
+    expect(await scanAll(client, "users")).toEqual([]);
+    expect(await scanAll(client, "posts")).toEqual([]);
+    expect(await scanAll(client, "_idb_sync_outbox")).toEqual([]);
+    expect(emitted).toEqual([]);
+  });
   it("records outbox rows for every tracked write and notifies once the transaction commits", async () => {
     const { client } = await createTestSyncClient();
     const emitted: number[] = [];
@@ -105,6 +148,17 @@ describe("SyncIdbClient.transaction()", () => {
 });
 
 describe("SyncIdbClient.rawClient.transaction()", () => {
+  it("validates untracked ORM writes and rolls back earlier writes", async () => {
+    const { client } = await createTestSyncClient();
+    await expect(
+      transactionOf(client.rawClient)(["users"], async (tx) => {
+        await tx["users"]!.create({ id: "u1", name: "Alice" });
+        await tx["users"]!.create({ id: "u2", name: 3 });
+      })
+    ).rejects.toThrow(IdbRecordValidationError);
+    expect(await scanAll(client, "users")).toEqual([]);
+    expect(await scanAll(client, "_idb_sync_outbox")).toEqual([]);
+  });
   it("writes the models without recording outbox rows", async () => {
     const { client } = await createTestSyncClient();
 
