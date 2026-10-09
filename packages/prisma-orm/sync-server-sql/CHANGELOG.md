@@ -1,5 +1,26 @@
 # @prisma-idb/sync-server-sql
 
+## 0.7.0
+
+### Minor Changes
+
+- [#303](https://github.com/prisma-idb/prisma-idb/pull/303) [`02bb4ab`](https://github.com/prisma-idb/prisma-idb/commit/02bb4ab270842be7c3e11df543c7fe0e3ac721c9) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Reject creates and updates that reference another user's tenant parents. Require checked foreign keys to target single-field parent primary keys and have no defaults.
+
+- [#304](https://github.com/prisma-idb/prisma-idb/pull/304) [`455eabe`](https://github.com/prisma-idb/prisma-idb/commit/455eabef835489b4241dc1b6d4cb92808e3cd726) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Refuse clients on a different contract. `pull` and `applyPush` take `clientContractFingerprint` and return `{ ok: false, reason: "contract-mismatch", expected }` before reading or writing anything when it is missing or differs from the server's. Answer HTTP 409. The check is on by default; pass `contractFingerprintCheck: "off"` to `createSqlSyncAdapter` to opt out. Existing routes must now forward the fingerprint.
+
+- [#297](https://github.com/prisma-idb/prisma-idb/pull/297) [`e709eb9`](https://github.com/prisma-idb/prisma-idb/commit/e709eb978ce1ce35c757fa22e1cd6f15e6720e92) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Classify push write failures by SQLSTATE and return the server's row with every rejection.
+
+  - A write that fails with SQLSTATE class 22 (data exception) or 23 (integrity constraint violation) is now `retryable: false`. Before, any database error was retryable, so a unique violation made the client retry forever. Connection loss, timeouts, deadlocks and errors with no SQLSTATE stay retryable.
+  - A retry that collides with its own first request (SQLSTATE `23505` on an event the server already applied) now returns `success: true`.
+  - `applyPush` adds `record` to each non-retryable failure: the row's current state for the caller, or `null` if it is deleted or not theirs. The ownership check is the same one `pull` runs. It is absent when the key cannot be decoded or the model is unknown. A client that does not know `record` ignores it.
+
+### Patch Changes
+
+- Updated dependencies [[`455eabe`](https://github.com/prisma-idb/prisma-idb/commit/455eabef835489b4241dc1b6d4cb92808e3cd726), [`7967a1c`](https://github.com/prisma-idb/prisma-idb/commit/7967a1c6dd487caddc9b34e5486e5b1070353baf), [`d2e86ab`](https://github.com/prisma-idb/prisma-idb/commit/d2e86abe2cf48e49cdf67eafc936698b893dd78d), [`7b625b0`](https://github.com/prisma-idb/prisma-idb/commit/7b625b047e7fc2ea9bb559422be1bb098d15af4c), [`c320d17`](https://github.com/prisma-idb/prisma-idb/commit/c320d17c13d760544087195391f551b526f6c7cf), [`455eabe`](https://github.com/prisma-idb/prisma-idb/commit/455eabef835489b4241dc1b6d4cb92808e3cd726), [`455eabe`](https://github.com/prisma-idb/prisma-idb/commit/455eabef835489b4241dc1b6d4cb92808e3cd726), [`a27967d`](https://github.com/prisma-idb/prisma-idb/commit/a27967d50b37983ea73b7cdf407a35e5975c8eb8), [`8dafeac`](https://github.com/prisma-idb/prisma-idb/commit/8dafeacf1e7d3a70d97ab4e167d9b2a0837b414f), [`0202333`](https://github.com/prisma-idb/prisma-idb/commit/020233367b702ea86103a4d7b0a5313185c87b72)]:
+  - @prisma-idb/sync-extension-idb@0.8.0
+  - @prisma-idb/sync-server@0.8.0
+  - @prisma-idb/target-idb@0.13.0
+
 ## 0.6.2
 
 ### Patch Changes

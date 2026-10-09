@@ -1,5 +1,19 @@
 # @prisma-idb/sync-server
 
+## 0.8.0
+
+### Minor Changes
+
+- [#304](https://github.com/prisma-idb/prisma-idb/pull/304) [`455eabe`](https://github.com/prisma-idb/prisma-idb/commit/455eabef835489b4241dc1b6d4cb92808e3cd726) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Add `SyncServer.contractFingerprint()`, the digest of the client contract that a client's own fingerprint must equal.
+
+- [#303](https://github.com/prisma-idb/prisma-idb/pull/303) [`0202333`](https://github.com/prisma-idb/prisma-idb/commit/020233367b702ea86103a4d7b0a5313185c87b72) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Add automatic tenant parent checks so adapters can reject creates and updates that reference another user's rows. Reads and deletes retain access through any matching ownership path.
+
+### Patch Changes
+
+- Updated dependencies [[`a27967d`](https://github.com/prisma-idb/prisma-idb/commit/a27967d50b37983ea73b7cdf407a35e5975c8eb8), [`e4c317d`](https://github.com/prisma-idb/prisma-idb/commit/e4c317dfe5523909c721eeaa64d0c2254f13e084), [`455eabe`](https://github.com/prisma-idb/prisma-idb/commit/455eabef835489b4241dc1b6d4cb92808e3cd726), [`a27967d`](https://github.com/prisma-idb/prisma-idb/commit/a27967d50b37983ea73b7cdf407a35e5975c8eb8), [`8dafeac`](https://github.com/prisma-idb/prisma-idb/commit/8dafeacf1e7d3a70d97ab4e167d9b2a0837b414f)]:
+  - @prisma-idb/family-idb@0.13.0
+  - @prisma-idb/target-idb@0.13.0
+
 ## 0.7.2
 
 ### Patch Changes

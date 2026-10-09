@@ -1,5 +1,23 @@
 # @prisma-idb/client-idb
 
+## 0.13.0
+
+### Minor Changes
+
+- [#305](https://github.com/prisma-idb/prisma-idb/pull/305) [`e4c317d`](https://github.com/prisma-idb/prisma-idb/commit/e4c317dfe5523909c721eeaa64d0c2254f13e084) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Run each extension's `onTransformRecords` hook after a migration transforms an app model's store. The hook receives the model name. Stores with no app model, such as an extension's own store, skip the hooks.
+
+- [#310](https://github.com/prisma-idb/prisma-idb/pull/310) [`c320d17`](https://github.com/prisma-idb/prisma-idb/commit/c320d17c13d760544087195391f551b526f6c7cf) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Add `db.transaction(rootKeys, async (tx) => ...)`, which runs several ORM calls in one IndexedDB transaction. `tx` has the ORM accessors of the listed models only. The transaction commits when the callback resolves and rolls back when it throws. It opens the extra stores that foreign-key checks, cascades and `include` need. If the transaction commits early because the callback awaited a timer or a network call, `IdbTransactionCommittedEarlyError` reports that the earlier writes were saved. `db.withTransaction()` is unchanged.
+
+### Patch Changes
+
+- [#309](https://github.com/prisma-idb/prisma-idb/pull/309) [`627c2d4`](https://github.com/prisma-idb/prisma-idb/commit/627c2d4c8d8238d8c12cb89a0fc46b435f1b722c) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Use the selected compound index for single-field ordering with a limit when every preceding key field is fixed to one normalized valid-key point. Ordered history reads can stop after the requested page instead of sorting all matches. Existing index-coverage checks and inclusive-Date fallbacks remain in place.
+
+- Updated dependencies [[`455eabe`](https://github.com/prisma-idb/prisma-idb/commit/455eabef835489b4241dc1b6d4cb92808e3cd726), [`a27967d`](https://github.com/prisma-idb/prisma-idb/commit/a27967d50b37983ea73b7cdf407a35e5975c8eb8), [`8dafeac`](https://github.com/prisma-idb/prisma-idb/commit/8dafeacf1e7d3a70d97ab4e167d9b2a0837b414f)]:
+  - @prisma-idb/target-idb@0.13.0
+  - @prisma-idb/adapter-idb@0.13.0
+  - @prisma-idb/runtime-idb@0.13.0
+  - @prisma-idb/driver-idb@0.13.0
+
 ## 0.12.0
 
 ### Minor Changes
