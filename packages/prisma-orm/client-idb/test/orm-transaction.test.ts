@@ -239,6 +239,20 @@ describe("db.transaction()", () => {
       expect((failure as IdbTransactionCommittedEarlyError).cause).toBe(original);
       expect(await userIds()).toEqual(["u1"]);
     });
+
+    it("reports that writes were committed when the callback returns after an awaited timer without another operation", async () => {
+      const failure = await db
+        .transaction(["users"], async (tx) => {
+          await tx.users.create({ id: "u1", name: "Alice" });
+          await sleep(20);
+        })
+        .catch((error: unknown) => error);
+
+      expect(failure).toBeInstanceOf(IdbTransactionCommittedEarlyError);
+      const { cause } = failure as IdbTransactionCommittedEarlyError;
+      expect((cause as IdbExecuteError).code).toBe("TRANSACTION_INACTIVE");
+      expect(await userIds()).toEqual(["u1"]);
+    });
   });
 
   describe("nesting", () => {

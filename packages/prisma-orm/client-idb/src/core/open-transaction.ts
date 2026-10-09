@@ -56,7 +56,8 @@ export class OpenTransaction implements IdbQueryExecutorWithTransaction, IdbTran
   /**
    * Whether IndexedDB has already finished this transaction on its own, so a
    * rollback can no longer undo its writes. Probes the transaction when no
-   * operation has failed yet, so call it before rolling back.
+   * operation has failed yet, and records the probe error as the cause, so call
+   * it before rolling back or committing.
    */
   async hasAutoCommitted(): Promise<boolean> {
     if (this.#state !== "open") return this.#state === "auto-committed";
@@ -65,7 +66,10 @@ export class OpenTransaction implements IdbQueryExecutorWithTransaction, IdbTran
       await this.#scope.execute({ meta: this.#meta, kind: "key-get", storeName: storeName!, key: "" });
       return false;
     } catch (error) {
-      return isTransactionInactive(error);
+      if (!isTransactionInactive(error)) return false;
+      this.#state = "auto-committed";
+      this.#autoCommitCause = error;
+      return true;
     }
   }
 

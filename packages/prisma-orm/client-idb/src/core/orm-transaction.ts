@@ -84,8 +84,8 @@ export async function runOrmTransaction<
     throw committedEarly ? new IdbTransactionCommittedEarlyError(error) : error;
   }
   open.end();
+  if (await open.hasAutoCommitted()) throw new IdbTransactionCommittedEarlyError(open.autoCommitCause);
   await scope.commit();
-  if (open.autoCommitCause !== undefined) throw new IdbTransactionCommittedEarlyError(open.autoCommitCause);
   return result;
 }
 
