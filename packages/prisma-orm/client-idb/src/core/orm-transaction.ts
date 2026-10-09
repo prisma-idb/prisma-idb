@@ -16,6 +16,7 @@ import {
 } from "./mutation-executor";
 import { OpenTransaction } from "./open-transaction";
 import type { IdbQueryExecutorWithTransaction } from "./mutation-scope";
+import type { IdbTransactionScope } from "@prisma-idb/driver-idb/runtime";
 
 /** The ORM accessors available inside `db.transaction()`: only the listed root keys. */
 export type IdbOrmTransaction<TContract extends IdbContract, TRootKey extends string & keyof TContract["roots"]> = Pick<
@@ -79,14 +80,24 @@ export async function runOrmTransaction<
     result = await fn(pickRoots(idbOrm({ contract, executor: open }), rootKeys, open));
   } catch (error) {
     open.end();
-    const committedEarly = await open.hasAutoCommitted();
+    if (await open.hasAutoCommitted()) await failCommittedEarly(scope, error);
     scope.rollback();
-    throw committedEarly ? new IdbTransactionCommittedEarlyError(error) : error;
+    throw error;
   }
   open.end();
-  if (await open.hasAutoCommitted()) throw new IdbTransactionCommittedEarlyError(open.autoCommitCause);
+  if (await open.hasAutoCommitted()) await failCommittedEarly(scope, open.autoCommitCause);
   await scope.commit();
   return result;
+}
+
+/**
+ * Reports a transaction that IndexedDB committed before the callback ended. The writes
+ * persisted, so the scope is committed rather than rolled back: a tracked scope only
+ * announces its writes (for example, sync outbox notifications) when it commits.
+ */
+async function failCommittedEarly(scope: IdbTransactionScope, cause: unknown): Promise<never> {
+  await scope.commit().catch(() => {});
+  throw new IdbTransactionCommittedEarlyError(cause);
 }
 
 function storeNamesNeededBy(contract: IdbContract, modelName: string): string[] {

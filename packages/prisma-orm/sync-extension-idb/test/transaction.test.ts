@@ -4,7 +4,8 @@
  * `transaction()` records outbox rows for tracked writes in the same IDB
  * transaction. `rawClient.transaction()` is the untracked counterpart.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { IdbTransactionCommittedEarlyError } from "@prisma-idb/client-idb/client";
 import { asAccessors, createTestSyncClient, scanAll, type TestStoreAccessor } from "./helpers";
 
 type TestTx = Record<string, TestStoreAccessor>;
@@ -13,6 +14,25 @@ type LooseTransaction = <T>(rootKeys: string[], fn: (tx: TestTx) => Promise<T>) 
 /** `transaction()` is typed against the contract's roots, which the untyped test contract does not carry. */
 function transactionOf(client: { transaction: unknown }): LooseTransaction {
   return client.transaction as LooseTransaction;
+}
+
+/**
+ * Resolves once the next IndexedDB transaction opened after this call has finished. A timer
+ * cannot wait for the auto-commit: it races fake-indexeddb's setImmediate-based commit.
+ */
+function untilNextTransactionFinishes(): () => Promise<void> {
+  const finished: Promise<void>[] = [];
+  const open = IDBDatabase.prototype.transaction;
+  vi.spyOn(IDBDatabase.prototype, "transaction").mockImplementation(function (this: IDBDatabase, ...args) {
+    const tx = open.apply(this, args);
+    finished.push(
+      new Promise<void>((resolve) => {
+        for (const event of ["complete", "abort", "error"]) tx.addEventListener(event, () => resolve());
+      })
+    );
+    return tx;
+  });
+  return () => Promise.all(finished).then(() => undefined);
 }
 
 describe("SyncIdbClient.transaction()", () => {
@@ -49,6 +69,23 @@ describe("SyncIdbClient.transaction()", () => {
     expect(emitted).toEqual([]);
     expect(await scanAll(client, "_idb_sync_outbox")).toEqual([]);
     expect(await scanAll(client, "users")).toEqual([]);
+  });
+
+  it("notifies about the outbox rows that persisted when IndexedDB commits the transaction before the callback ends", async () => {
+    const { client } = await createTestSyncClient();
+    const emitted: number[] = [];
+    client.on("outboxwrite", (entries) => emitted.push(entries.length));
+    const finished = untilNextTransactionFinishes();
+
+    const failure = await transactionOf(client)(["users"], async (tx) => {
+      await tx["users"]!.create({ id: "u1", name: "Alice" });
+      await finished();
+    }).catch((error: unknown) => error);
+    vi.restoreAllMocks();
+
+    expect(failure).toBeInstanceOf(IdbTransactionCommittedEarlyError);
+    expect(await scanAll(client, "_idb_sync_outbox")).toHaveLength(1);
+    expect(emitted).toEqual([1]);
   });
 
   it("records updates and deletes of existing rows", async () => {
