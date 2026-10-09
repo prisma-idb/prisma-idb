@@ -13,8 +13,8 @@ import { createIDBRuntimeDriver } from "@prisma-idb/driver-idb/runtime";
 import type { IdbTransactionScope } from "@prisma-idb/driver-idb/runtime";
 import { createIdbRuntime } from "@prisma-idb/runtime-idb/runtime";
 import { idbCodecLookup } from "@prisma-idb/target-idb/runtime";
-import { idbOrm } from "@prisma-idb/client-idb/orm";
-import type { IdbOrmClient, IdbContract } from "@prisma-idb/client-idb/orm";
+import { idbOrm, runOrmTransaction } from "@prisma-idb/client-idb/orm";
+import type { IdbOrmClient, IdbOrmTransaction, IdbContract } from "@prisma-idb/client-idb/orm";
 import type { IdbClient } from "@prisma-idb/client-idb/client";
 import { createEmitter } from "./emitter";
 import { SyncInterceptorExecutor } from "./sync-executor";
@@ -71,8 +71,24 @@ export interface SyncIdbClient<TContract extends IdbContract> {
   withoutTracking<T>(fn: (rawOrm: IdbOrmClient<TContract>) => Promise<T>): Promise<T>;
 
   /**
+   * Run `fn` in one readwrite transaction over the models behind `rootKeys`,
+   * with outbox tracking. Like {@link IdbClient.transaction}, but every tracked
+   * write also appends its outbox event (and version-meta update) in the same
+   * IDB transaction. `outboxwrite` listeners are notified once, after the
+   * transaction commits, and never when it rolls back.
+   *
+   * Unlike {@link SyncIdbClient.withTransaction}, which is raw and records
+   * nothing, this method tracks writes.
+   */
+  transaction<TRootKey extends string & keyof TContract["roots"], T>(
+    rootKeys: readonly TRootKey[],
+    fn: (tx: IdbOrmTransaction<TContract, TRootKey>) => Promise<T>
+  ): Promise<T>;
+
+  /**
    * Open a raw multi-store IDB transaction spanning the given stores.
    * Useful for low-level atomic writes (e.g. `applyPull` internals).
+   * Records no outbox rows; use {@link SyncIdbClient.transaction} for tracked writes.
    */
   withTransaction<T>(storeNames: string[], fn: (scope: IdbTransactionScope) => Promise<T>): Promise<T>;
 
@@ -185,6 +201,7 @@ export function createSyncIdbClient<TContract extends IdbContract>(
 
   const rawClient: IdbClient<TContract> = {
     orm: rawOrm,
+    transaction: (rootKeys, fn) => runOrmTransaction({ contract: options.contract, executor: runtime }, rootKeys, fn),
     withTransaction,
     verifyMarker: () => runtime.verifyMarker(),
     async close() {
@@ -198,6 +215,8 @@ export function createSyncIdbClient<TContract extends IdbContract>(
   const client: SyncIdbClient<TContract> = {
     contract: options.contract,
     orm: syncOrm,
+    transaction: (rootKeys, fn) =>
+      runOrmTransaction({ contract: options.contract, executor: syncExecutor }, rootKeys, fn),
     withoutTracking: <T>(fn: (rawOrm: IdbOrmClient<TContract>) => Promise<T>) => fn(rawOrm),
     withTransaction,
     createSyncWorker: (opts) => createSyncWorker({ ...opts, syncClient: client }),

@@ -1,6 +1,6 @@
 ---
 title: Transactions
-description: What runs in one transaction, and the low-level transaction scope
+description: What runs in one transaction, how to group several ORM calls, and the low-level transaction scope
 icon: Lock
 ---
 
@@ -14,23 +14,54 @@ Every write method runs in a single IndexedDB transaction that covers all the st
 
 If any part fails, IndexedDB rolls back the whole write.
 
-Separate calls are separate transactions. There is no way yet to group several ORM calls into one transaction:
+Separate calls are separate transactions. To group several ORM calls, use `db.transaction()`.
+
+## Group several ORM calls in one transaction
+
+`db.transaction()` takes the root keys of the models you will use and a callback. The callback receives `tx`, which has the ORM accessors of those models only:
 
 ```ts
-await db.orm.user.create({ id: "u1", name: "Alice", email: null });
-await db.orm.todo.create({ id: "t1", title: "First", done: false, userId: "u1" }); // a second transaction
-```
-
-To make these atomic, write them as one call with a relation function:
-
-```ts
-await db.orm.user.create({
-  id: "u1",
-  name: "Alice",
-  email: null,
-  todos: (todos) => todos.create([{ id: "t1", title: "First", done: false }]),
+const user = await db.transaction(["user", "todo"], async (tx) => {
+  const user = await tx.user.create({ id: "u1", name: "Alice", email: null });
+  await tx.todo.create({ id: "t1", title: "First", done: false, userId: user.id });
+  return user;
 });
 ```
+
+The transaction commits when the callback returns. It rolls back, and `transaction()` rethrows the error, when the callback throws.
+
+Every ORM method works on `tx`, with the same foreign-key checks and `onDelete`/`onUpdate` actions as on `db.orm`. Reads see the writes made earlier in the same transaction.
+
+Keep these rules in mind:
+
+- **List the models you use.** `tx` has no accessor for a model you leave out. The transaction also opens the stores those models need for foreign-key checks, cascades and `include`, so you don't list them.
+- **A failed call aborts the transaction.** This holds even if your callback catches the error. The transaction then rejects when the callback returns.
+- **Don't use `tx` after the callback returns.** Calls fail with an error.
+- **Don't nest.** A `db.transaction()` call inside the callback is a separate transaction. Awaiting it counts as awaiting other work, so the outer transaction commits early (see below).
+
+With the sync client, `syncDb.transaction()` also records an outbox event for each tracked write, in the same transaction. Listeners of `outboxwrite` run once, after the commit. `syncDb.withTransaction()` records no outbox events.
+
+### Don't await other work inside the callback
+
+IndexedDB commits a transaction as soon as it has no pending requests at the end of a task. Await only `tx` calls inside the callback. Do other work, such as `fetch()` or a timer, before or after the transaction.
+
+```ts
+// Wrong: the fetch lets the transaction commit before the second write.
+await db.transaction(["user", "todo"], async (tx) => {
+  await tx.user.create({ id: "u1", name: "Alice", email: null });
+  const response = await fetch("/api/todo-title");
+  await tx.todo.create({ id: "t1", title: await response.text(), done: false, userId: "u1" });
+});
+
+// Right: fetch first, then write.
+const title = await (await fetch("/api/todo-title")).text();
+await db.transaction(["user", "todo"], async (tx) => {
+  await tx.user.create({ id: "u1", name: "Alice", email: null });
+  await tx.todo.create({ id: "t1", title, done: false, userId: "u1" });
+});
+```
+
+If the transaction commits early, the next `tx` call, or a later throw from your callback, fails with `IdbTransactionCommittedEarlyError`. The writes made before that point are saved and not rolled back. The error's `cause` holds the original error.
 
 ## Low-level transaction scope
 
@@ -43,8 +74,8 @@ await db.withTransaction(["user", "todo"], async (scope) => {
 });
 ```
 
-ORM methods can't run inside this scope.
+ORM methods can't run inside this scope. To use ORM methods in a transaction, use `db.transaction()` instead.
 
-### Don't await other work inside a transaction
+### Don't await other work inside a scope
 
-IndexedDB commits a transaction as soon as it has no pending requests at the end of a task. Awaiting anything other than the scope's own requests, such as `fetch()` or a timer, lets the transaction commit early. The next request then fails with an `IdbExecuteError` whose code is `TRANSACTION_INACTIVE`. Do that other work before or after the transaction.
+The same rule applies to `db.withTransaction()`. Awaiting anything other than the scope's own requests lets the transaction commit early. The next request then fails with an `IdbExecuteError` whose code is `TRANSACTION_INACTIVE`.

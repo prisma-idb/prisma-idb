@@ -83,7 +83,7 @@ interface ParsedMutationInput {
 
 // ── Plan meta helpers ─────────────────────────────────────────────────────────
 
-function makePlanMeta(contract: IdbContract): PlanMeta {
+export function makePlanMeta(contract: IdbContract): PlanMeta {
   return {
     target: "idb",
     storageHash: contract.storage.storageHash,
@@ -618,7 +618,10 @@ async function findFirstByFilters(
 }
 
 /** Execute lowered atomic operations without leaving the transaction's microtask chain. */
-async function executeMutationPlan(scope: IdbTransactionScope, plan: IdbPlanBody): Promise<Record<string, unknown>[]> {
+export async function executeMutationPlan(
+  scope: IdbTransactionScope,
+  plan: IdbPlanBody
+): Promise<Record<string, unknown>[]> {
   const plans = plan.kind === "batch" ? plan.ops : [plan];
   const rows: Record<string, unknown>[] = [];
   for (const op of plans) rows.push(...(await scope.execute(op)));
@@ -1318,6 +1321,13 @@ export function hasEnforceableChildRelations(contract: IdbContract, modelName: s
   return getRelationDefinitions(contract, modelName).some((def) =>
     isChildEnforcementRelation(contract, modelName, def)
   );
+}
+
+/** The store of `modelName` plus the store of every model it has a relation to, in either direction. */
+export function collectRelatedStoreNames(contract: IdbContract, modelName: string): string[] {
+  const stores = new Set([getStoreName(contract, modelName)]);
+  for (const def of getRelationDefinitions(contract, modelName)) stores.add(def.relatedStoreName);
+  return [...stores];
 }
 
 /**
