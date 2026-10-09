@@ -83,7 +83,8 @@ interface ParsedMutationInput {
 
 // ── Plan meta helpers ─────────────────────────────────────────────────────────
 
-function makePlanMeta(contract: IdbContract): PlanMeta {
+/** Plan metadata for the raw plans the mutation executor issues itself, outside any accessor's grouping key. */
+export function makePlanMeta(contract: IdbContract): PlanMeta {
   return {
     target: "idb",
     storageHash: contract.storage.storageHash,
@@ -618,7 +619,10 @@ async function findFirstByFilters(
 }
 
 /** Execute lowered atomic operations without leaving the transaction's microtask chain. */
-async function executeMutationPlan(scope: IdbTransactionScope, plan: IdbPlanBody): Promise<Record<string, unknown>[]> {
+export async function executeMutationPlan(
+  scope: IdbTransactionScope,
+  plan: IdbPlanBody
+): Promise<Record<string, unknown>[]> {
   const plans = plan.kind === "batch" ? plan.ops : [plan];
   const rows: Record<string, unknown>[] = [];
   for (const op of plans) rows.push(...(await scope.execute(op)));
@@ -929,28 +933,16 @@ export function collectOnUpdateEnforcementStoreNames(
   data: Record<string, unknown>
 ): { storeNames: string[]; enforces: boolean } {
   const stores = new Set([getStoreName(contract, modelName)]);
-  const visitedModels = new Set<string>();
+  const visitedModels = new Set<string>([modelName]);
   let enforces = false;
 
-  function walkCascadeChain(mName: string): void {
-    if (visitedModels.has(mName)) return;
-    visitedModels.add(mName);
-    for (const def of getRelationDefinitions(contract, mName)) {
-      if (!isChildEnforcementRelation(contract, mName, def)) continue;
-      const action = getReferentialActionForRelation(contract, mName, def, "onUpdate");
-      stores.add(def.relatedStoreName);
-      if (action === "cascade") walkCascadeChain(def.relatedModelName);
-    }
-  }
-
-  visitedModels.add(modelName);
   for (const def of getRelationDefinitions(contract, modelName)) {
     if (!isChildEnforcementRelation(contract, modelName, def)) continue;
     if (!def.localFields.some((f) => f in data)) continue;
     const action = getReferentialActionForRelation(contract, modelName, def, "onUpdate");
     enforces = true;
     stores.add(def.relatedStoreName);
-    if (action === "cascade") walkCascadeChain(def.relatedModelName);
+    if (action === "cascade") addOnUpdateCascadeStores(contract, def.relatedModelName, stores, visitedModels);
   }
 
   return { storeNames: [...stores], enforces };
@@ -1210,6 +1202,38 @@ export async function executeScalarCreateAllWithFkValidation(options: {
 }
 
 /**
+ * Adds the stores an `onUpdate` cascade reaches from `modelName`: every child
+ * relation's store, walking further through `cascade` edges only.
+ */
+function addOnUpdateCascadeStores(
+  contract: IdbContract,
+  modelName: string,
+  stores: Set<string>,
+  visitedModels: Set<string>
+): void {
+  if (visitedModels.has(modelName)) return;
+  visitedModels.add(modelName);
+  for (const def of getRelationDefinitions(contract, modelName)) {
+    if (!isChildEnforcementRelation(contract, modelName, def)) continue;
+    stores.add(def.relatedStoreName);
+    if (getReferentialActionForRelation(contract, modelName, def, "onUpdate") === "cascade") {
+      addOnUpdateCascadeStores(contract, def.relatedModelName, stores, visitedModels);
+    }
+  }
+}
+
+/**
+ * Every store an `onUpdate` enforcement on `modelName` could touch, whichever
+ * fields the write sets. Use it to open a transaction before the write's
+ * fields are known.
+ */
+export function collectOnUpdateClosureStoreNames(contract: IdbContract, modelName: string): string[] {
+  const stores = new Set([getStoreName(contract, modelName)]);
+  addOnUpdateCascadeStores(contract, modelName, stores, new Set());
+  return [...stores];
+}
+
+/**
  * Combines FK-existence store scope (this model's own N:1 relations) with
  * `onUpdate` enforcement store scope (this model's child relations) for a
  * single write. Returns the union alongside whether `onUpdate` enforcement
@@ -1318,6 +1342,13 @@ export function hasEnforceableChildRelations(contract: IdbContract, modelName: s
   return getRelationDefinitions(contract, modelName).some((def) =>
     isChildEnforcementRelation(contract, modelName, def)
   );
+}
+
+/** The store of `modelName` plus the store of every model it has a relation to, in either direction. */
+export function collectRelatedStoreNames(contract: IdbContract, modelName: string): string[] {
+  const stores = new Set([getStoreName(contract, modelName)]);
+  for (const def of getRelationDefinitions(contract, modelName)) stores.add(def.relatedStoreName);
+  return [...stores];
 }
 
 /**

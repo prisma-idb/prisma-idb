@@ -7,6 +7,8 @@ import { idbCodecLookup } from "@prisma-idb/target-idb/runtime";
 import { withMutationScope } from "./mutation-scope";
 import { idbOrm } from "./idb-orm";
 import type { IdbOrmClient } from "./idb-orm";
+import { runOrmTransaction } from "./orm-transaction";
+import type { IdbOrmTransaction } from "./orm-transaction";
 import type { IdbContract } from "./types";
 
 export interface IdbClientOptions<TContract extends IdbContract> {
@@ -20,6 +22,34 @@ export interface IdbClientOptions<TContract extends IdbContract> {
 
 export interface IdbClient<TContract extends IdbContract> {
   readonly orm: IdbOrmClient<TContract>;
+  /**
+   * Run `fn` in one readwrite transaction over the models behind `rootKeys`.
+   *
+   * `tx` has the ORM accessors of the listed root keys only, and every
+   * operation on it takes part in the transaction, including foreign-key
+   * checks, referential actions and `include`. The transaction commits when
+   * `fn` resolves and rolls back when it throws. A failed operation aborts the
+   * whole transaction, even if `fn` catches the error.
+   *
+   * Await only `tx` operations inside `fn`. IndexedDB commits a transaction
+   * once it has no pending request, so awaiting a timer or a network call ends
+   * the transaction early (ADR 005). The next operation, or a later throw,
+   * then fails with `IdbTransactionCommittedEarlyError`, and the writes made
+   * before that point stay saved. Do not call `transaction()` from inside `fn`;
+   * awaiting the inner call counts as awaiting other work and ends the outer transaction early.
+   *
+   * @example
+   * ```ts
+   * await db.transaction(["users", "posts"], async (tx) => {
+   *   const user = await tx.users.create({ id: "u1", name: "Alice" });
+   *   await tx.posts.create({ id: "p1", authorId: user.id, title: "First" });
+   * });
+   * ```
+   */
+  transaction<TRootKey extends string & keyof TContract["roots"], T>(
+    rootKeys: readonly TRootKey[],
+    fn: (tx: IdbOrmTransaction<TContract, TRootKey>) => Promise<T>
+  ): Promise<T>;
   /**
    * Run `fn` inside a single multi-store readwrite IDB transaction.
    *
@@ -76,6 +106,7 @@ export function createIdbClient<TContract extends IdbContract>(
 
   return {
     orm,
+    transaction: (rootKeys, fn) => runOrmTransaction({ contract: options.contract, executor: runtime }, rootKeys, fn),
     withTransaction: <T>(storeNames: string[], fn: (scope: IdbTransactionScope) => Promise<T>) =>
       withMutationScope(runtime, storeNames, fn),
     verifyMarker: () => runtime.verifyMarker(),

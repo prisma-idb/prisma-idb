@@ -73,3 +73,7 @@ export type {
 // Multi-store transaction scope API
 export { withMutationScope } from "../core/mutation-scope";
 export type { IdbQueryExecutorWithTransaction } from "../core/mutation-scope";
+
+// Typed ORM transaction: `db.transaction([...], async (tx) => ...)`
+export { runOrmTransaction, IdbTransactionCommittedEarlyError } from "../core/orm-transaction";
+export type { IdbOrmTransaction } from "../core/orm-transaction";
