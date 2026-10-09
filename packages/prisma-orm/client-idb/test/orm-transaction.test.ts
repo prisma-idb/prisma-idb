@@ -293,4 +293,15 @@ describe("OpenTransaction", () => {
     expect(scope.execute).not.toHaveBeenCalled();
     expect(scope.rollback).toHaveBeenCalledOnce();
   });
+
+  it("aborts when a view of the transaction asks for stores it did not open", async () => {
+    const scope: IdbTransactionScope = { execute: vi.fn(), commit: vi.fn(), rollback: vi.fn() };
+    const open = new OpenTransaction(scope, ["users"], meta);
+
+    await expect(open.transaction(["users", "posts"])).rejects.toThrow(
+      /Stores "posts" are not part of this transaction/
+    );
+
+    expect(scope.rollback).toHaveBeenCalledOnce();
+  });
 });

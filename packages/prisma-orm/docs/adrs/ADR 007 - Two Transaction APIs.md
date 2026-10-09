@@ -9,7 +9,7 @@
 There are two ways to get a transaction that spans several object stores:
 
 - **Automatic**, for nested writes. The ORM works out which stores a nested write touches from the contract, and opens one transaction over all of them.
-- **Manual**, for everything else. The caller names the stores up front, because the ORM can't predict what arbitrary application code will touch.
+- **Manual**, for everything else. The caller names the models (`transaction()`) or the stores (`withTransaction()`) up front, because the ORM can't predict what arbitrary application code will touch.
 
 ## Context
 
@@ -36,7 +36,7 @@ This works because the stores are known before any request is issued. `parseMuta
 
 ### Manual: application-controlled transactions
 
-Some multi-store work doesn't fit a single nested write: conditional logic, two unrelated model writes, or operations the ORM doesn't model. For these, the caller names the stores explicitly.
+Some multi-store work doesn't fit a single nested write: conditional logic, two unrelated model writes, or operations the ORM doesn't model. For these, the caller names the models or stores explicitly.
 
 The typed API gives the callback ORM accessors for the models it names:
 
@@ -55,9 +55,9 @@ The first argument lists root keys. `tx` is typed as the ORM client restricted t
 
 - A plain read or write runs its plan on the open transaction instead of opening a new one.
 - An operation that opens its own mutation scope, such as an FK-checked create or a cascade delete, receives a view of the open transaction. `commit()` on the view does nothing, so only the outer call commits. `rollback()` aborts the whole transaction.
-- A failed operation aborts the whole transaction, even if the callback catches the error. A half-applied write cannot be told apart from a clean validation failure, so the transaction does not continue.
+- A failed operation aborts the whole transaction, even if the callback catches the error. A half-applied write cannot be told apart from a clean validation failure, so the transaction does not continue. This includes failures that occur before the operation reaches IndexedDB, such as enum validation, and a request for a store that the transaction did not open.
 
-The caller lists models, not stores. The transaction also opens the stores those models need: related models for FK checks and `include`, and the cascade graph for deletes (`collectDeleteStoreNames`). An operation that needs any other store fails with an error that names it.
+The caller lists models, not stores. The transaction also opens the stores those models need: related models for FK checks and `include`, the cascade graph for deletes (`collectDeleteStoreNames`), and the `onUpdate` cascade graph (`collectOnUpdateClosureStoreNames`). An operation that needs any other store fails with an error that names it.
 
 Sync tracking needs no extra code. The sync client builds the transaction on its sync executor, so the scope is the `SyncInterceptingTransactionScope`. It records an outbox event for each tracked write in the same transaction, and notifies `outboxwrite` listeners once after the commit. `SyncIdbClient.withTransaction()` runs on the raw runtime and records nothing.
 
@@ -70,7 +70,7 @@ The caller must name the models because the callback can decide at runtime which
 The two APIs make different promises:
 
 - **Automatic:** "This is a nested write the ORM models. You know which stores it needs."
-- **Manual:** "This is something the ORM doesn't model. I'll tell you which stores it needs."
+- **Manual:** "This is something the ORM doesn't model. I'll tell you which models (`transaction()`) or stores (`withTransaction()`) it needs."
 
 A single API would either make every nested write list its stores by hand, which is worse to use, or need to analyse the callback's code at runtime, which isn't possible. The older generator made the same split for the same reasons.
 
@@ -79,7 +79,7 @@ A single API would either make every nested write list its stores by hand, which
 - Nested writes are atomic with no extra work from the user.
 - Multi-store work that the ORM doesn't model uses the manual API.
 - Using the manual API for something the ORM could do automatically is fine. The manual API can do everything the automatic one can.
-- The manual API exposes store names to application code. This is deliberate: the caller is opting into IndexedDB's transaction rules.
+- `withTransaction()` exposes store names to application code. This is deliberate: the caller is opting into IndexedDB's transaction rules. `transaction()` takes root keys, the same keys as `db.orm`, and opens the stores itself.
 - Inside a manual transaction, the caller must only `await` promises that resolve from IndexedDB requests. Awaiting anything else, such as `fetch` or a timer, lets the transaction commit early ([ADR 005](ADR%20005%20-%20Event-Driven%20Execution%20No%20Async%20Await.md)). JavaScript cannot forbid this, so the typed API surfaces it in three ways:
   - A request on a transaction that already finished fails with the driver's `TRANSACTION_INACTIVE` error.
   - Early commit breaks atomicity silently: a later throw cannot roll back writes that are already saved. When the callback throws, or an operation fails, after the transaction finished on its own, `db.transaction()` throws `IdbTransactionCommittedEarlyError`. Its message says the earlier writes were saved, and `cause` holds the original error.

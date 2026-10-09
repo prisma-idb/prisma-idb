@@ -187,9 +187,9 @@ export function createSyncIdbClient<TContract extends IdbContract>(
     contract: options.contract as Record<string, unknown>,
   });
 
+  const syncConfig = { contract: options.contract, trackedModels };
   const syncExecutor = new SyncInterceptorExecutor(runtime, {
-    contract: options.contract,
-    trackedModels,
+    ...syncConfig,
     onOutboxWrite: (entries) => emit("outboxwrite", entries),
   });
 
@@ -215,8 +215,21 @@ export function createSyncIdbClient<TContract extends IdbContract>(
   const client: SyncIdbClient<TContract> = {
     contract: options.contract,
     orm: syncOrm,
-    transaction: (rootKeys, fn) =>
-      runOrmTransaction({ contract: options.contract, executor: syncExecutor }, rootKeys, fn),
+    transaction: async (rootKeys, fn) => {
+      // The executor notifies once per write; collect the entries instead so
+      // listeners hear about the whole transaction in a single call.
+      const written: OutboxWriteEntry[] = [];
+      const executor = new SyncInterceptorExecutor(runtime, {
+        ...syncConfig,
+        onOutboxWrite: (entries) => written.push(...entries),
+      });
+      try {
+        return await runOrmTransaction({ contract: options.contract, executor }, rootKeys, fn);
+      } finally {
+        // Entries arrive only when the transaction commits, so a rollback emits nothing.
+        if (written.length > 0) emit("outboxwrite", written);
+      }
+    },
     withoutTracking: <T>(fn: (rawOrm: IdbOrmClient<TContract>) => Promise<T>) => fn(rawOrm),
     withTransaction,
     createSyncWorker: (opts) => createSyncWorker({ ...opts, syncClient: client }),

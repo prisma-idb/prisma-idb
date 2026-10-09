@@ -80,7 +80,12 @@ export class OpenTransaction implements IdbQueryExecutorWithTransaction, IdbTran
 
   async transaction(storeNames: string[]): Promise<IdbTransactionScope> {
     this.#assertNotEnded();
-    this.#assertStoresListed(storeNames);
+    try {
+      this.#assertStoresListed(storeNames);
+    } catch (error) {
+      this.#recordFailure(error);
+      throw error;
+    }
     return this;
   }
 
@@ -101,6 +106,31 @@ export class OpenTransaction implements IdbQueryExecutorWithTransaction, IdbTran
 
   rollback(): void {
     this.#recordFailure(undefined);
+  }
+
+  /**
+   * Wrap an ORM accessor so that any call that rejects aborts the transaction.
+   *
+   * Some failures, such as enum validation, are thrown before an operation
+   * reaches this executor. Without this wrapper the callback could catch them
+   * and commit the writes made before. Objects the accessor returns, such as
+   * `where()` builders, are wrapped too.
+   */
+  abortOnFailure<T extends object>(target: T): T {
+    return new Proxy(target, {
+      get: (object, property) => {
+        const value: unknown = Reflect.get(object, property, object);
+        if (typeof value !== "function") return value;
+        return (...args: unknown[]): unknown => {
+          const result: unknown = value.apply(object, args);
+          if (result instanceof Promise) {
+            result.catch((error: unknown) => this.#recordFailure(error));
+            return result;
+          }
+          return typeof result === "object" && result !== null ? this.abortOnFailure(result) : result;
+        };
+      },
+    });
   }
 
   #assertNotEnded(): void {

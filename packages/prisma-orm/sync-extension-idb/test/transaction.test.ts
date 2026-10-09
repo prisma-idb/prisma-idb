@@ -29,7 +29,7 @@ describe("SyncIdbClient.transaction()", () => {
     });
 
     expect(emittedInsideCallback).toBe(0);
-    expect(emitted.length).toBeGreaterThan(0);
+    expect(emitted).toEqual([2]);
     const outbox = await scanAll(client, "_idb_sync_outbox");
     expect(outbox.map((row) => row["entityType"]).sort()).toEqual(["Post", "User"]);
   });

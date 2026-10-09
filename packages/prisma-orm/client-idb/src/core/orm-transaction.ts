@@ -8,7 +8,12 @@
 import type { IdbContract } from "./types";
 import { idbOrm } from "./idb-orm";
 import type { IdbOrmClient } from "./idb-orm";
-import { collectDeleteStoreNames, collectRelatedStoreNames, makePlanMeta } from "./mutation-executor";
+import {
+  collectDeleteStoreNames,
+  collectOnUpdateClosureStoreNames,
+  collectRelatedStoreNames,
+  makePlanMeta,
+} from "./mutation-executor";
 import { OpenTransaction } from "./open-transaction";
 import type { IdbQueryExecutorWithTransaction } from "./mutation-scope";
 
@@ -71,7 +76,7 @@ export async function runOrmTransaction<
 
   let result: T;
   try {
-    result = await fn(pickRoots(idbOrm({ contract, executor: open }), rootKeys));
+    result = await fn(pickRoots(idbOrm({ contract, executor: open }), rootKeys, open));
   } catch (error) {
     open.end();
     const committedEarly = await open.hasAutoCommitted();
@@ -85,14 +90,19 @@ export async function runOrmTransaction<
 }
 
 function storeNamesNeededBy(contract: IdbContract, modelName: string): string[] {
-  return [...collectRelatedStoreNames(contract, modelName), ...collectDeleteStoreNames(contract, modelName)];
+  return [
+    ...collectRelatedStoreNames(contract, modelName),
+    ...collectDeleteStoreNames(contract, modelName),
+    ...collectOnUpdateClosureStoreNames(contract, modelName),
+  ];
 }
 
 function pickRoots<TContract extends IdbContract, TRootKey extends string & keyof TContract["roots"]>(
   orm: IdbOrmClient<TContract>,
-  rootKeys: readonly TRootKey[]
+  rootKeys: readonly TRootKey[],
+  open: OpenTransaction
 ): IdbOrmTransaction<TContract, TRootKey> {
   const picked = {} as IdbOrmTransaction<TContract, TRootKey>;
-  for (const key of rootKeys) picked[key] = orm[key];
+  for (const key of rootKeys) picked[key] = open.abortOnFailure(orm[key]);
   return picked;
 }
