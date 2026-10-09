@@ -55,7 +55,15 @@ test("two tabs racing SyncWorker.forceSync() against the same outbox — documen
     const w = window as unknown as {
       __syncHarness: { syncClient: { orm: Record<string, { create: (data: unknown) => Promise<unknown> }> } };
     };
-    await w.__syncHarness.syncClient.orm["user"]!.create({ id: "u1", name: "Alice" });
+    await w.__syncHarness.syncClient.orm["user"]!.create({
+      id: "u1",
+      name: "Alice",
+      email: "alice@example.com",
+      emailVerified: false,
+      image: null,
+      isAnonymous: false,
+      updatedAt: new Date(),
+    });
   });
 
   // A generous delay widens the race window so the outcome isn't flaky —

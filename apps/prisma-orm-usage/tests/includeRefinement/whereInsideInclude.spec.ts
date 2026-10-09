@@ -33,7 +33,7 @@ test.describe("include refinement", () => {
     ];
     for (const [id, authorId, views, published] of posts) {
       await runner.run(
-        `orm.posts.create({ id: "${id}", authorId: "${authorId}", title: "${id}", content: null, views: ${views}, published: ${published}, publishedAt: null })`
+        `orm.posts.create({ id: "${id}", authorId: "${authorId}", title: "${id}", content: null, views: ${views}, published: ${published}, createdAt: new Date() })`
       );
     }
   });

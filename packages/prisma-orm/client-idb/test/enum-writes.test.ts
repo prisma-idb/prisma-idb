@@ -106,7 +106,7 @@ afterEach(() => db.close());
 
 describe("enum writes — valid values", () => {
   it("applies enum defaults, including a mapped stored value", async () => {
-    await members.create({ id: "m1", previousRoles: [] });
+    await members.create({ id: "m1", invitedAs: null, previousRoles: [] });
     expect(await members.findUnique("m1")).toMatchObject({ role: "USER", status: "active" });
   });
 
@@ -145,7 +145,7 @@ describe("enum writes — invalid values are rejected before storage", () => {
     await expect(
       members
         .createAll([
-          { id: "m1", previousRoles: [] },
+          { id: "m1", invitedAs: null, previousRoles: [] },
           { id: "m2", role: "OWNER", previousRoles: [] },
         ])
         .toArray()
@@ -154,7 +154,7 @@ describe("enum writes — invalid values are rejected before storage", () => {
   });
 
   it("update() and updateAll()", async () => {
-    await members.create({ id: "m1", previousRoles: [] });
+    await members.create({ id: "m1", invitedAs: null, previousRoles: [] });
     await expect(members.where({ id: "m1" }).update({ role: "OWNER" })).rejects.toThrow(INVALID);
     await expect(members.where({ id: "m1" }).updateAll({ role: "OWNER" }).toArray()).rejects.toThrow(INVALID);
     expect((await storedRows())[0]).toMatchObject({ role: "USER" });
@@ -166,9 +166,13 @@ describe("enum writes — invalid values are rejected before storage", () => {
     ).rejects.toThrow(INVALID);
     expect(await storedRows()).toEqual([]);
 
-    await members.create({ id: "m1", previousRoles: [] });
+    await members.create({ id: "m1", invitedAs: null, previousRoles: [] });
     await expect(
-      members.upsert({ where: { id: "m1" }, create: { id: "m1", previousRoles: [] }, update: { role: "OWNER" } })
+      members.upsert({
+        where: { id: "m1" },
+        create: { id: "m1", invitedAs: null, previousRoles: [] },
+        update: { role: "OWNER" },
+      })
     ).rejects.toThrow(INVALID);
     expect((await storedRows())[0]).toMatchObject({ role: "USER" });
   });

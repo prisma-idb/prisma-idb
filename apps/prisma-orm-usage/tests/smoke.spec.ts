@@ -72,10 +72,10 @@ test.describe("smoke", () => {
       `orm.users.create({ id: "u1", name: "Alice", email: "a@x.com", bio: null, score: 1, active: true, joinedAt: new Date() })`
     );
     await runner.run(
-      `orm.posts.create({ id: "p1", authorId: "u1", title: "Hi", content: null, views: 0, published: true, publishedAt: null })`
+      `orm.posts.create({ id: "p1", authorId: "u1", title: "Hi", content: null, views: 0, published: true, createdAt: new Date() })`
     );
     await runner.run(
-      `orm.posts.create({ id: "p2", authorId: "u1", title: "Hello", content: null, views: 5, published: true, publishedAt: null })`
+      `orm.posts.create({ id: "p2", authorId: "u1", title: "Hello", content: null, views: 5, published: true, createdAt: new Date() })`
     );
     // The contract declares the relation on Post (author N:1 User), so we
     // need to test include from the post side. Re-use the same db.

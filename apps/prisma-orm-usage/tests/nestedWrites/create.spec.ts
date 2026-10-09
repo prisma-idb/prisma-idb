@@ -20,8 +20,8 @@ test.describe("nestedWrites / create", () => {
         active: true,
         joinedAt: new Date("2026-01-01T00:00:00Z"),
         posts: (rel) => rel.create([
-          { id: "p1", title: "Post 1", content: null, views: 0, published: false, publishedAt: null, authorId: "u1" },
-          { id: "p2", title: "Post 2", content: null, views: 0, published: false, publishedAt: null, authorId: "u1" },
+          { id: "p1", title: "Post 1", content: null, views: 0, published: false, createdAt: new Date(), authorId: "u1" },
+          { id: "p2", title: "Post 2", content: null, views: 0, published: false, createdAt: new Date(), authorId: "u1" },
         ]),
       })
     `);
@@ -47,7 +47,7 @@ test.describe("nestedWrites / create", () => {
         active: true,
         joinedAt: new Date("2026-01-01T00:00:00Z"),
         posts: (rel) => rel.create([
-          { id: "p1", title: "Post 1", content: null, views: 0, published: false, publishedAt: null, authorId: "WRONG" },
+          { id: "p1", title: "Post 1", content: null, views: 0, published: false, createdAt: new Date(), authorId: "WRONG" },
         ]),
       })
     `);
@@ -64,7 +64,7 @@ test.describe("nestedWrites / create", () => {
         content: null,
         views: 0,
         published: false,
-        publishedAt: null,
+        createdAt: new Date(),
         author: (rel) => rel.create({
           id: "u1",
           name: "Bob",
@@ -90,7 +90,7 @@ test.describe("nestedWrites / create", () => {
         content: null,
         views: 0,
         published: false,
-        publishedAt: null,
+        createdAt: new Date(),
         author: (rel) => rel.create({
           id: "u-real",
           name: "Carol",
