@@ -44,6 +44,12 @@ const contract = defineContract({
         byOrgRank: { keyPath: ["orgId", "rank"], unique: false },
       },
     },
+    ActivityPreference: {
+      store: "activityPreferences",
+      key: "id",
+      fields: { id: "String", userId: "String", effectiveFrom: "DateTime" },
+      indexes: { byUserEffective: { keyPath: ["userId", "effectiveFrom"], unique: true } },
+    },
     Author: {
       store: "authors",
       key: "id",
@@ -91,6 +97,11 @@ function seedRows(n: number): Record<string, Record<string, unknown>[]> {
       status: i % 2 === 0 ? "open" : "closed",
       orgId: `o${i % 5}`,
       rank: i,
+    })),
+    activityPreferences: Array.from({ length: n }, (_, i) => ({
+      id: `preference-${pad(i)}`,
+      userId: `u${i % 5}`,
+      effectiveFrom: new Date(Math.floor(i / 5)),
     })),
     authors: Array.from({ length: authors }, (_, i) => ({ id: `a${pad(i)}`, name: `Author ${i}` })),
     publishers: [
@@ -248,6 +259,23 @@ const SCENARIOS: readonly Scenario[] = [
         .all()
         .toArray(),
   },
+  {
+    name: "findFirst: descending compound suffix",
+    run: (o) => o["items"].where({ orgId: "o1" }).orderBy({ rank: "desc" }).first(),
+  },
+  {
+    name: "findMany: compound suffix page with residual filter",
+    run: (o) =>
+      o["items"].where({ orgId: "o1", status: "closed" }).orderBy({ rank: "desc" }).skip(1).take(2).all().toArray(),
+  },
+  {
+    name: "findFirst: descending Date history suffix",
+    run: (o, n) =>
+      o["activityPreferences"]
+        .where(() => and(fieldFilter("userId", "eq", "u1"), fieldFilter("effectiveFrom", "lt", new Date(n / 10))))
+        .orderBy({ effectiveFrom: "desc" })
+        .first(),
+  },
   { name: "findFirst: eq on indexed field", run: (o) => o["items"].where({ category: "c3" }).first() },
   { name: "count: no filter", run: (o) => o["items"].count() },
   { name: "count: eq on indexed field", run: (o) => o["items"].where({ category: "c3" }).count() },
@@ -361,6 +389,21 @@ const EXPECTED: Record<string, Measurement> = {
     values: [4, 4],
     keys: [0, 0],
     requests: ["openCursor items.byCategory range x2"],
+  },
+  "findFirst: descending compound suffix": {
+    values: [1, 1],
+    keys: [0, 0],
+    requests: ["openCursor items.byOrgRank range"],
+  },
+  "findMany: compound suffix page with residual filter": {
+    values: [6, 6],
+    keys: [0, 0],
+    requests: ["openCursor items.byOrgRank range"],
+  },
+  "findFirst: descending Date history suffix": {
+    values: [1, 1],
+    keys: [0, 0],
+    requests: ["openCursor activityPreferences.byUserEffective range"],
   },
   "findFirst: eq on indexed field": { values: [1, 1], keys: [0, 0], requests: ["openCursor items.byCategory range"] },
   "count: no filter": { values: [0, 0], keys: [0, 0], requests: ["count items"] },

@@ -65,6 +65,15 @@ for (const { codec, invalid, lower, middle, upper } of cases) {
         exact: false,
       });
     });
+    it("orders a compound suffix only with a non-key-rejecting bound", () => {
+      const compound = catalog([source(["b", "a"], "ba")], { a: field(codec) });
+      const request = { orderBy: { a: "desc" } as const, take: 1 };
+      const strict = andExpr([f("b", "eq", "group"), f("a", "lt", upper)]);
+      expect(planQuery(compound, { ...request, where: strict })).toMatchObject({ direction: "prev" });
+      expect(compareWithFullScan(strict, request, compound)).toMatchObject({ index: "ba", direction: "prev" });
+      const inclusive = andExpr([f("b", "eq", "group"), f("a", "lte", upper)]);
+      expect(compareWithFullScan(inclusive, request, compound)).toEqual({ access: "full", exact: false });
+    });
     it("allows a trailing key-partial member only when its residual predicate rejects non-keys", () => {
       const compound = catalog([source(["b", "c", "a"], "bca")], { a: field(codec) });
       const where = andExpr([f("b", "eq", "group"), f("a", "gt", lower)]);

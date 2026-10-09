@@ -322,3 +322,58 @@ it("does not emit reversed compound bounds for key literals outside the stored s
   const plan = planQuery(catalog([source(["a", "b"], "ab")]), { where: f("a", "gt", ["array-key"]) });
   expect(explain(plan)).toBe('{"access":"full","exact":false}');
 });
+
+describe("compound source ordering", () => {
+  it.each(["asc", "desc"] as const)("orders a suffix %s after one or several fixed fields", (order) => {
+    for (const [path, where, ordered] of [
+      [["a", "n"], f("a", "eq", "x"), "n"],
+      [["a", "b", "n", "c"], andExpr([f("a", "eq", "x"), f("b", "eq", "y"), f("n", "gt", 0)]), "n"],
+      [["n", "a"], f("n", "gt", 0), "n"],
+    ] as const) {
+      const plan = planQuery(catalog([source(path, "compound")]), { where, orderBy: { [ordered]: order }, take: 2 });
+      expect(plan.access).toMatchObject({ kind: "ranges", source: { indexName: "compound" } });
+      expect(plan.direction).toBe(order === "asc" ? "next" : "prev");
+    }
+  });
+  it.each([
+    f("a", "in", ["x"]),
+    f("a", "in", ["x", "x"]),
+    andExpr([f("a", "in", ["x", "y"]), f("a", "eq", "y")]),
+    andExpr([f("a", "in", ["w", "x", "y"]), f("a", "gte", "x"), f("a", "lte", "x")]),
+  ])("uses normalized singleton prefix points", (where) => {
+    expect(planQuery(catalog([source(["a", "n"], "an")]), { where, orderBy: { n: "desc" }, take: 1 }).direction).toBe(
+      "prev"
+    );
+  });
+  it.each([
+    f("n", "gt", 0),
+    f("a", "gt", "x"),
+    andExpr([f("a", "gte", "x"), f("a", "lte", "x")]),
+    f("a", "in", ["x", "y"]),
+    f("a", "eq", null),
+  ])("keeps sorting when the prefix has no single valid point", (where) => {
+    expect(
+      planQuery(catalog([source(["a", "n"], "an")]), { where, orderBy: { n: "desc" }, take: 1 }).direction
+    ).toBeUndefined();
+  });
+  it("keeps limits, source selection, residual filters and coverage rules", () => {
+    const where = andExpr([f("a", "eq", "x"), f("c", "contains", "match")]);
+    const c = catalog([source(["a", "n"], "an")]);
+    expect(planQuery(c, { where, orderBy: { n: "desc" }, take: 1 })).toMatchObject({ direction: "prev", exact: false });
+    expect(planQuery(c, { where, orderBy: { n: "desc" } }).direction).toBeUndefined();
+    expect(planQuery(c, { where, orderBy: { n: "desc", a: "asc" }, take: 1 }).access.kind).toBe("full");
+    const selected = planQuery(catalog([source("a", "a"), source(["a", "n"], "an")]), {
+      where,
+      orderBy: { n: "desc" },
+      take: 1,
+    });
+    expect(selected.access).toMatchObject({ source: { indexName: "a" } });
+    expect(selected.direction).toBeUndefined();
+    for (const unsafe of [
+      catalog([source(["a", "n"], "an", false, true)]),
+      catalog([source(["a", "n", "b"], "anb")], { b: field("idb/string@1", true) }),
+      catalog([source(["a", "n", "b"], "anb")], { b: field("idb/date@1") }),
+    ])
+      expect(planQuery(unsafe, { where, orderBy: { n: "desc" }, take: 1 }).access.kind).toBe("full");
+  });
+});

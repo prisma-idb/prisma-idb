@@ -214,8 +214,13 @@ async function compareExists(
 }
 
 /** Check pagination without assuming primary-key order for unordered rows or ties. */
-async function compareWithTies(db: IDBDatabase, driver: IdbRuntimeDriverInstance, query: Query) {
-  const actual = (await applyQuery(accessor(driver), query).all().toArray()) as Row[];
+async function compareWithTies(
+  db: IDBDatabase,
+  driver: IdbRuntimeDriverInstance,
+  query: Query,
+  testContract: IdbContract = contract
+) {
+  const actual = (await applyQuery(accessor(driver, testContract), query).all().toArray()) as Row[];
   const matching = await oracle(db, query.where === undefined ? {} : { where: query.where });
   const expected = await oracle(db, query);
   expect(actual).toHaveLength(expected.length);
@@ -663,4 +668,116 @@ it("upsert's unique-index lookup matches full scan on both branches", async () =
       expect(actualStore).toEqual(await oracle(db, {}));
     }
   });
+});
+
+const historyContract = defineContract({
+  family: idbFamilyPack,
+  target: idbTargetPack,
+  models: {
+    Preference: {
+      store: "items",
+      key: "id",
+      fields: { id: "String", userId: "String", effectiveFrom: "DateTime", status: "String", rank: "Int" },
+      indexes: { byUserEffective: { keyPath: ["userId", "effectiveFrom"], unique: true } },
+    },
+  },
+});
+
+it("matches full scans for Date history boundaries, pages, residuals and invalid dates", async () => {
+  const date = (n: number) => new Date(Date.UTC(2026, 0, n + 1));
+  await withDatabase(async (db, driver) => {
+    await seed(db, [
+      ...Array.from({ length: 12 }, (_, i) => ({
+        id: `p-${i}`,
+        userId: "u1",
+        effectiveFrom: date(i),
+        status: i % 2 ? "closed" : "open",
+        rank: i,
+      })),
+      { id: "other", userId: "u2", effectiveFrom: date(5), status: "open", rank: 5 },
+      { id: "invalid", userId: "u1", effectiveFrom: new Date(NaN), status: "open", rank: 0 },
+    ]);
+    const user = f("userId", "eq", "u1");
+    for (const bound of [
+      f("effectiveFrom", "lt", date(6)),
+      andExpr([f("effectiveFrom", "gte", date(2)), f("effectiveFrom", "lt", date(6))]),
+      andExpr([f("effectiveFrom", "gt", date(2)), f("effectiveFrom", "lte", date(6))]),
+      f("effectiveFrom", "lte", date(6)),
+      f("effectiveFrom", "eq", date(6)),
+      f("effectiveFrom", "in", [date(2), date(6)]),
+      f("effectiveFrom", "lt", date(0)),
+    ]) {
+      for (const order of ["asc", "desc"] as const) {
+        for (const [skip, take] of [
+          [0, 1],
+          [1, 3],
+          [20, 2],
+        ] as const) {
+          await compare(
+            db,
+            driver,
+            { where: andExpr([user, bound]), orderBy: { effectiveFrom: order }, skip, take },
+            historyContract
+          );
+        }
+      }
+    }
+    await compare(
+      db,
+      driver,
+      {
+        where: andExpr([user, f("effectiveFrom", "lt", date(6)), f("status", "eq", "open")]),
+        orderBy: { effectiveFrom: "desc" },
+        skip: 1,
+        take: 2,
+      },
+      historyContract
+    );
+    await compareWithTies(
+      db,
+      driver,
+      {
+        where: andExpr([f("userId", "in", ["u1", "u2"]), f("effectiveFrom", "lt", date(6))]),
+        orderBy: { effectiveFrom: "desc" },
+        take: 3,
+      },
+      historyContract
+    );
+    const history = accessor(driver, historyContract);
+    expect(
+      await history
+        .where(() => andExpr([user, f("effectiveFrom", "lt", date(6))]))
+        .orderBy({ effectiveFrom: "desc" })
+        .first()
+    ).toMatchObject({ id: "p-5" });
+    expect(
+      await history
+        .where(() => andExpr([user, f("effectiveFrom", "lt", date(0))]))
+        .orderBy({ effectiveFrom: "desc" })
+        .first()
+    ).toBeNull();
+  }, historyContract);
+});
+
+it("preserves ordered values and page membership when trailing compound fields break ties", async () => {
+  await withDatabase(async (db, driver) => {
+    await seed(
+      db,
+      Array.from({ length: 12 }, (_, i) => ({
+        id: `i-${i}`,
+        category: "a",
+        rank: Math.floor(i / 3),
+        label: `label-${i}`,
+      }))
+    );
+    for (const order of ["asc", "desc"] as const) {
+      for (const skip of [0, 1, 3])
+        await compareWithTies(
+          db,
+          driver,
+          { where: f("category", "eq", "a"), orderBy: { rank: order }, skip, take: 4 },
+          compoundContract
+        );
+    }
+  }, compoundContract);
 });
