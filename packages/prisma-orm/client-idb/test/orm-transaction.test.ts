@@ -84,17 +84,43 @@ function createStores(name: string): Promise<void> {
   });
 }
 
-const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+/**
+ * Records every IndexedDB transaction opened while installed, so a test can wait for the
+ * auto-commit itself. A timer cannot do this: it races fake-indexeddb's setImmediate-based
+ * auto-commit and loses when the event loop is slow.
+ */
+function trackTransactions() {
+  const finished: Promise<void>[] = [];
+  const open = IDBDatabase.prototype.transaction;
+  const spy = vi.spyOn(IDBDatabase.prototype, "transaction").mockImplementation(function (this: IDBDatabase, ...args) {
+    const tx = open.apply(this, args);
+    finished.push(
+      new Promise<void>((resolve) => {
+        for (const event of ["complete", "abort", "error"]) tx.addEventListener(event, () => resolve());
+      })
+    );
+    return tx;
+  });
+  return {
+    untilAutoCommitted: () => Promise.all(finished).then(() => undefined),
+    stop: () => spy.mockRestore(),
+  };
+}
 
 describe("db.transaction()", () => {
   let db: LooseClient;
+  let transactions: ReturnType<typeof trackTransactions>;
 
   beforeEach(async () => {
     const name = `orm-transaction-test-${++dbCounter}`;
     await createStores(name);
+    transactions = trackTransactions();
     db = createIdbClient({ contract, dbName: name }) as unknown as LooseClient;
   });
-  afterEach(() => db.close());
+  afterEach(() => {
+    transactions.stop();
+    db.close();
+  });
 
   const userIds = async () => (await db.orm.users.all().toArray()).map((u) => u["id"]);
   const postIds = async () => (await db.orm.posts.all().toArray()).map((p) => p["id"]);
@@ -212,7 +238,7 @@ describe("db.transaction()", () => {
       const failure = await db
         .transaction(["users", "tags"], async (tx) => {
           await tx.users.create({ id: "u1", name: "Alice" });
-          await sleep(20);
+          await transactions.untilAutoCommitted();
           await tx.tags.create({ id: "t1", label: "late" });
         })
         .catch((error: unknown) => error);
@@ -230,7 +256,7 @@ describe("db.transaction()", () => {
       const failure = await db
         .transaction(["users"], async (tx) => {
           await tx.users.create({ id: "u1", name: "Alice" });
-          await sleep(20);
+          await transactions.untilAutoCommitted();
           throw original;
         })
         .catch((error: unknown) => error);
@@ -244,7 +270,7 @@ describe("db.transaction()", () => {
       const failure = await db
         .transaction(["users"], async (tx) => {
           await tx.users.create({ id: "u1", name: "Alice" });
-          await sleep(20);
+          await transactions.untilAutoCommitted();
         })
         .catch((error: unknown) => error);
 

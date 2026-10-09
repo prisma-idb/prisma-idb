@@ -14,7 +14,7 @@
  *   unknown store      — execute with unknown storeName rejects with IdbExecuteError
  */
 import "fake-indexeddb/auto";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { IdbExecuteError } from "../src/core/execute/error";
 import { createTransactionScope } from "../src/core/transaction-scope";
 import type { IdbKeyGetPlan, IdbPutPlan } from "../src/core/plan-body";
@@ -273,9 +273,14 @@ describe("transaction inactive", () => {
   const get: IdbKeyGetPlan = { meta: META, kind: "key-get", storeName: "users", key: "u1" };
 
   it("wraps a request issued after a non-IDB await as TRANSACTION_INACTIVE", async () => {
+    // Wait on the transaction's own `complete` event. A timer races fake-indexeddb's
+    // setImmediate-based auto-commit and loses when the event loop is slow.
+    const opened = vi.spyOn(db, "transaction");
     const scope = createTransactionScope(db, ["users"], "readonly");
+    const tx = opened.mock.results[0]!.value as IDBTransaction;
+    const autoCommitted = new Promise<void>((resolve) => tx.addEventListener("complete", () => resolve()));
     await scope.execute(get);
-    await new Promise((r) => setTimeout(r, 0)); // tx auto-commits
+    await autoCommitted;
     const err = await scope.execute(get).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(IdbExecuteError);
     expect((err as IdbExecuteError).code).toBe("TRANSACTION_INACTIVE");
