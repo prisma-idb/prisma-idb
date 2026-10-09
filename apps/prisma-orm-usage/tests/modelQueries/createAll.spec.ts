@@ -52,9 +52,9 @@ test.describe("createAll()", () => {
     `);
     const rows = (await runner.run(`
       orm.posts.createAll([
-        { id: "p1", authorId: "u1", title: "A", content: null, views: 0, published: true,  publishedAt: null },
-        { id: "p2", authorId: "u1", title: "B", content: null, views: 1, published: false, publishedAt: null },
-        { id: "p3", authorId: "u2", title: "C", content: null, views: 2, published: true,  publishedAt: null },
+        { id: "p1", authorId: "u1", title: "A", content: null, views: 0, published: true,  createdAt: new Date() },
+        { id: "p2", authorId: "u1", title: "B", content: null, views: 1, published: false, createdAt: new Date() },
+        { id: "p3", authorId: "u2", title: "C", content: null, views: 2, published: true,  createdAt: new Date() },
       ])
     `)) as unknown[];
     expect(rows).toHaveLength(3);

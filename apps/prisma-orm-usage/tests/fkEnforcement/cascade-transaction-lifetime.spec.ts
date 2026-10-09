@@ -13,7 +13,7 @@ import { expect, test } from "../helpers";
 const user = (id: string) =>
   `{ id: "${id}", name: "U ${id}", email: "${id}@x.com", bio: null, score: 0, active: true, joinedAt: new Date() }`;
 const post = (id: string, authorId: string) =>
-  `{ id: "${id}", title: "Post ${id}", content: null, views: 0, published: false, publishedAt: null, authorId: "${authorId}" }`;
+  `{ id: "${id}", title: "Post ${id}", content: null, views: 0, published: false, createdAt: new Date(), authorId: "${authorId}" }`;
 const META = `{ target: "idb", storageHash: "", lane: "test", annotations: { groupingKey: "g1" } }`;
 const tag = (id: string, postId: string) => `{ id: "${id}", name: "t${id}", postId: "${postId}" }`;
 
@@ -48,7 +48,7 @@ test.describe("cascade transaction lifetime", () => {
     await runner.run(`
       (async () => {
         for (let i = 0; i < 40; i++) {
-          await orm.posts.create({ id: "p" + i, title: "P", content: null, views: 0, published: false, publishedAt: null, authorId: "u1" });
+          await orm.posts.create({ id: "p" + i, title: "P", content: null, views: 0, published: false, createdAt: new Date(), authorId: "u1" });
           for (let j = 0; j < 3; j++) await orm.tags.create({ id: "t" + i + "_" + j, name: "n", postId: "p" + i });
         }
       })()

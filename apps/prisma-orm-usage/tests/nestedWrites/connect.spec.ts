@@ -12,7 +12,7 @@ import { expect, test } from "../helpers";
 const alice = `{ id: "u1", name: "Alice", email: "alice@x.com", bio: null, score: 0, active: true, joinedAt: new Date() }`;
 const bob = `{ id: "u2", name: "Bob", email: "bob@x.com", bio: null, score: 0, active: true, joinedAt: new Date() }`;
 const post = (id: string, authorId: string) =>
-  `{ id: "${id}", title: "Post ${id}", content: null, views: 0, published: false, publishedAt: null, authorId: "${authorId}" }`;
+  `{ id: "${id}", title: "Post ${id}", content: null, views: 0, published: false, createdAt: new Date(), authorId: "${authorId}" }`;
 
 test.describe("nestedWrites / connect", () => {
   test("N:1 — post.create() with author connect links the existing user", async ({ runner }) => {
@@ -24,7 +24,7 @@ test.describe("nestedWrites / connect", () => {
         content: null,
         views: 0,
         published: false,
-        publishedAt: null,
+        createdAt: new Date(),
         author: (rel) => rel.connect({ id: "u1" }),
       })
     `);
@@ -69,7 +69,7 @@ test.describe("nestedWrites / connect", () => {
           content: null,
           views: 0,
           published: false,
-          publishedAt: null,
+          createdAt: new Date(),
           author: (rel) => rel.connect({ id: "nonexistent" }),
         })
       `,

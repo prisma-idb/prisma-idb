@@ -16,7 +16,7 @@ import { expect, test } from "../helpers";
 const alice = `{ id: "u1", name: "Alice", email: "alice@x.com", bio: null, score: 0, active: true, joinedAt: new Date() }`;
 const bob = `{ id: "u2", name: "Bob", email: "bob@x.com", bio: null, score: 0, active: true, joinedAt: new Date() }`;
 const post = (id: string, authorId: string) =>
-  `{ id: "${id}", title: "Post ${id}", content: null, views: 0, published: false, publishedAt: null, authorId: "${authorId}" }`;
+  `{ id: "${id}", title: "Post ${id}", content: null, views: 0, published: false, createdAt: new Date(), authorId: "${authorId}" }`;
 
 test.describe("fkEnforcement / cascade delete", () => {
   test("deleting a user cascades to their posts", async ({ runner }) => {

@@ -14,7 +14,7 @@ test.describe("select()", () => {
       `orm.users.create({ id: "u1", name: "Alice", email: "alice@test.com", bio: null, score: 1, active: true, joinedAt: new Date() })`
     );
     await runner.run(
-      `orm.posts.create({ id: "p1", authorId: "u1", title: "Hi", content: null, views: 3, published: true, publishedAt: null })`
+      `orm.posts.create({ id: "p1", authorId: "u1", title: "Hi", content: null, views: 3, published: true, createdAt: new Date() })`
     );
     const rows = (await runner.run(`orm.posts.select("id", "title").all()`)) as Array<Record<string, unknown>>;
     expect(rows).toHaveLength(1);
@@ -27,10 +27,10 @@ test.describe("select()", () => {
       `orm.users.create({ id: "u1", name: "Alice", email: "alice@test.com", bio: null, score: 1, active: true, joinedAt: new Date() })`
     );
     await runner.run(
-      `orm.posts.create({ id: "p1", authorId: "u1", title: "A", content: null, views: 1, published: true, publishedAt: null })`
+      `orm.posts.create({ id: "p1", authorId: "u1", title: "A", content: null, views: 1, published: true, createdAt: new Date() })`
     );
     await runner.run(
-      `orm.posts.create({ id: "p2", authorId: "u1", title: "B", content: null, views: 2, published: false, publishedAt: null })`
+      `orm.posts.create({ id: "p2", authorId: "u1", title: "B", content: null, views: 2, published: false, createdAt: new Date() })`
     );
     const rows = (await runner.run(`orm.posts.where({ published: true }).select("id").all()`)) as Array<
       Record<string, unknown>
@@ -43,10 +43,10 @@ test.describe("select()", () => {
       `orm.users.create({ id: "u1", name: "Alice", email: "a@x.com", bio: null, score: 1, active: true, joinedAt: new Date() })`
     );
     await runner.run(
-      `orm.posts.create({ id: "p1", authorId: "u1", title: "Hi", content: null, views: 0, published: true, publishedAt: null })`
+      `orm.posts.create({ id: "p1", authorId: "u1", title: "Hi", content: null, views: 0, published: true, createdAt: new Date() })`
     );
     await runner.run(
-      `orm.posts.create({ id: "p2", authorId: "u1", title: "Yo", content: null, views: 0, published: true, publishedAt: null })`
+      `orm.posts.create({ id: "p2", authorId: "u1", title: "Yo", content: null, views: 0, published: true, createdAt: new Date() })`
     );
     // select("name") drops the local FK ("id"), but include runs before
     // projection, so posts still resolve.
