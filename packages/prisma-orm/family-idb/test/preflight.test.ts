@@ -116,6 +116,59 @@ const indexOnMissingStore = {
 };
 
 describe("runPreflight", () => {
+  it("accepts a same-hash data migration after the baseline", async () => {
+    const head = await writeSnapshot({ users: { keyPath: "id" } });
+    await writePackage({ dirName: "0001_baseline", from: null, to: head, ops: [createMarker, createUsers] });
+    await writePackage({
+      dirName: "0002_transform",
+      from: head,
+      to: head,
+      ops: [transformRecordsOp("users", { fields: { status: coerce("int") } })],
+    });
+    const output: string[] = [];
+
+    expect(await runPreflight({ migrationsDir: join(cwd, "migrations"), out: (line) => output.push(line) })).toBe(0);
+    expect(output.join("")).toContain("0002_transform … ok");
+  });
+
+  it("applies multiple same-hash data migrations before the next structural migration", async () => {
+    const head = await writeSnapshot({ users: { keyPath: "id" }, posts: { keyPath: "id" } });
+    await writePackage({ dirName: "0001_baseline", from: null, to: "sha256:A", ops: [createMarker, createUsers] });
+    for (const dirName of ["0003_transform", "0002_transform"]) {
+      await writePackage({
+        dirName,
+        from: "sha256:A",
+        to: "sha256:A",
+        ops: [transformRecordsOp("users", { fields: { status: coerce("int") } })],
+      });
+    }
+    await writePackage({ dirName: "0004_addPosts", from: "sha256:A", to: head, ops: [createPosts] });
+    const output: string[] = [];
+
+    expect(await runPreflight({ migrationsDir: join(cwd, "migrations"), out: (line) => output.push(line) })).toBe(0);
+    expect(output.filter((line) => line.startsWith("  "))).toEqual([
+      "  0001_baseline … ",
+      "  0002_transform … ",
+      "  0003_transform … ",
+      "  0004_addPosts … ",
+    ]);
+  });
+
+  it("rejects an invalid same-hash transform instead of skipping it", async () => {
+    const head = await writeSnapshot({ users: { keyPath: "id" } });
+    await writePackage({ dirName: "0001_baseline", from: null, to: head, ops: [createMarker, createUsers] });
+    await writePackage({
+      dirName: "0002_transform",
+      from: head,
+      to: head,
+      ops: [transformRecordsOp("users", { fields: { id: coerce("int") } })],
+    });
+    const errors: string[] = [];
+
+    expect(await runPreflight({ migrationsDir: join(cwd, "migrations"), err: (line) => errors.push(line) })).toBe(1);
+    expect(errors.join("")).toContain('store "users" cannot change key field "id"');
+  });
+
   it("accepts a hand-authored transform followed by structural operations", async () => {
     const head = await writeSnapshot({ users: { keyPath: "id" }, posts: { keyPath: "id" } });
     await writePackage({
@@ -348,6 +401,34 @@ describe("runPreflight", () => {
     });
 
     await expect(runPreflight({ migrationsDir: join(cwd, "migrations") })).rejects.toThrow(/chain broken/i);
+  });
+
+  it.each([
+    {
+      name: "structural cycle",
+      edges: [
+        ["sha256:A", "sha256:B"],
+        ["sha256:B", "sha256:A"],
+      ],
+      error: /chain cycle/i,
+    },
+    {
+      name: "conflicting structural edges",
+      edges: [
+        ["sha256:A", "sha256:B"],
+        ["sha256:A", "sha256:C"],
+      ],
+      error: /chain conflict/i,
+    },
+    { name: "orphan same-hash package", edges: [["sha256:B", "sha256:B"]], error: /chain broken/i },
+  ])("rejects $name alongside a reachable same-hash package", async ({ edges, error }) => {
+    await writePackage({ dirName: "0001_baseline", from: null, to: "sha256:A", ops: [createMarker, createUsers] });
+    await writePackage({ dirName: "0002_transform", from: "sha256:A", to: "sha256:A", ops: [] });
+    for (const [i, [from, to]] of edges.entries()) {
+      await writePackage({ dirName: `000${i + 3}_migration`, from: from!, to: to!, ops: [] });
+    }
+
+    await expect(runPreflight({ migrationsDir: join(cwd, "migrations") })).rejects.toThrow(error);
   });
 
   it("throws when a migration package hash no longer matches its ops", async () => {
