@@ -86,3 +86,105 @@ describe("absentAsNull", () => {
     expect(() => absentAsNull(contract, "Missing")).toThrow('Unknown model "Missing"');
   });
 });
+
+const embeddedContract: ContractWithDomain = {
+  domain: {
+    namespaces: {
+      default: {
+        valueObjects: {
+          Profile: { fields: { label: field(false), nickname: field(true) } },
+          Other: { fields: { title: field(false), note: field(true) } },
+          Wrapper: {
+            fields: { profile: { type: { kind: "valueObject", name: "Profile" }, nullable: false } },
+          },
+        },
+        models: {
+          Item: {
+            fields: {
+              id: field(false),
+              profile: { type: { kind: "valueObject", name: "Profile" }, nullable: true },
+              profiles: { type: { kind: "valueObject", name: "Profile" }, nullable: true, many: true },
+              dictionary: { type: { kind: "valueObject", name: "Wrapper" }, nullable: false, dict: true },
+              choice: {
+                type: {
+                  kind: "union",
+                  members: [
+                    { kind: "scalar", codecId: "idb/string@1" },
+                    { kind: "valueObject", name: "Profile" },
+                    { kind: "valueObject", name: "Other" },
+                  ],
+                },
+                nullable: false,
+              },
+              json: { type: { kind: "scalar", codecId: "idb/json@1" }, nullable: false },
+            },
+            relations: {},
+            storage: { keyPath: "id" },
+          },
+        },
+      },
+    },
+  },
+};
+
+describe("embedded absentAsNull", () => {
+  const normalize = absentAsNull(embeddedContract, "Item");
+  const complete = {
+    id: "a",
+    profile: null,
+    profiles: null,
+    dictionary: {},
+    choice: "scalar",
+    json: { label: "raw" },
+  };
+
+  it("fills nested objects, list elements, dictionaries and the matching union member", () => {
+    const stored = {
+      ...complete,
+      profile: { label: "A" },
+      profiles: [{ label: "B" }, { label: "C", nickname: "known" }],
+      dictionary: { a: { profile: { label: "D" } } },
+      choice: { title: "other" },
+    };
+    const read = normalize(stored);
+    expect(read).toEqual({
+      ...stored,
+      profile: { label: "A", nickname: null },
+      profiles: [
+        { label: "B", nickname: null },
+        { label: "C", nickname: "known" },
+      ],
+      dictionary: { a: { profile: { label: "D", nickname: null } } },
+      choice: { title: "other", note: null },
+    });
+    expect(validateRecord(embeddedContract, "Item", read)).toEqual({ ok: true });
+    expect(validateRecord(embeddedContract, "Item", stored).ok).toBe(false);
+    expect(stored.profile).toEqual({ label: "A" });
+    expect(stored.profiles[0]).toEqual({ label: "B" });
+    expect(stored.dictionary.a.profile).toEqual({ label: "D" });
+    expect(read["json"]).toBe(stored.json);
+    expect((read["profiles"] as unknown[])[1]).toBe(stored.profiles[1]);
+  });
+
+  it("normalizes the value-object member of a union", () => {
+    expect(normalize({ ...complete, choice: { label: "A" } })["choice"]).toEqual({ label: "A", nickname: null });
+  });
+
+  it("preserves null containers, scalar union members and complete record identities", () => {
+    expect(normalize(complete)).toBe(complete);
+    const stored = { ...complete, profile: { label: "A", nickname: null }, profiles: [] };
+    expect(normalize(stored)).toBe(stored);
+    expect(normalize({ id: "a", dictionary: {}, choice: "scalar", json: null })).toEqual({ ...complete, json: null });
+  });
+
+  it("does not repair invalid required fields, containers, or null elements", () => {
+    for (const patch of [
+      { profile: {} },
+      { profiles: [null] },
+      { profiles: "wrong" },
+      { choice: { unexpected: true } },
+    ]) {
+      expect(validateRecord(embeddedContract, "Item", normalize({ ...complete, ...patch })).ok).toBe(false);
+    }
+  });
+});

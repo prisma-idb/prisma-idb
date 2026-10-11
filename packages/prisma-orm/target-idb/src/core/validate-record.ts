@@ -59,6 +59,11 @@ function buildType(contract: ContractWithDomain, fieldType: ContractFieldType, l
   return members.slice(1).reduce((validator, member) => validator.or(member), members[0]!);
 }
 
+/** Builds a native value validator for selecting a union member during stored-record normalization. */
+export function buildFieldTypeValidator(contract: ContractWithDomain, fieldType: ContractFieldType): Type {
+  return buildType(contract, fieldType, idbCodecLookup);
+}
+
 function buildField(contract: ContractWithDomain, field: ContractField, lookup: ValidationCodecLookup): Type {
   let validator = buildType(contract, field.type, lookup);
   const ref = field.valueSet;

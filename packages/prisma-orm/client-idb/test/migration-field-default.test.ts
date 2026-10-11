@@ -1,3 +1,5 @@
+import { computeStorageHash } from "@prisma/orm-framework/contract/hashing";
+import type { ContractField } from "@prisma/orm-framework/contract/types";
 import { validateRecord } from "@prisma-idb/target-idb/runtime";
 import { buildSymbolTable } from "@prisma/orm-framework/psl-parser";
 import { parse } from "@prisma/orm-framework/psl-parser/syntax";
@@ -131,6 +133,105 @@ it.each([0, -12.5, 123.45])("backfills Decimal default %j as a valid stored stri
       expect(rows).toEqual([{ id: "missing", amount: String(value) }]);
       expect(validateRecord(v2, "User", rows[0])).toEqual({ ok: true });
       expect(validateRecord(v2, "User", { id: "missing", amount: 0 }).ok).toBe(false);
+    } finally {
+      await client.close();
+    }
+  }
+});
+
+it("reads nullable embedded additions as null after an operation-free migration", async () => {
+  globalThis.indexedDB = new IDBFactory();
+  const dbName = "migration-embedded-nullable";
+  // The authoring DSLs currently expose only scalars; construct supported domain value objects directly.
+  const embeddedContract = (nickname: boolean) => {
+    const base = contract('model User {\n id String @id\n profile Json\n profiles Json\n @@map("users")\n}');
+    const string = { type: { kind: "scalar", codecId: "idb/string@1" }, nullable: false } satisfies ContractField;
+    const profileFields = { label: string, ...(nickname ? { nickname: { ...string, nullable: true } } : {}) };
+    const namespaceId = Object.keys(base.domain.namespaces)[0]!;
+    const namespace = base.domain.namespaces[namespaceId]!;
+    const model = namespace.models["User"]!;
+    const domain = {
+      namespaces: {
+        [namespaceId]: {
+          ...namespace,
+          valueObjects: {
+            Profile: { fields: profileFields },
+          },
+          models: {
+            User: {
+              ...model,
+              fields: {
+                ...model.fields,
+                profile: { type: { kind: "valueObject" as const, name: "Profile" }, nullable: false },
+                profiles: {
+                  type: { kind: "valueObject" as const, name: "Profile" },
+                  nullable: false,
+                  many: true as const,
+                },
+              },
+            },
+          },
+        },
+      },
+    };
+    const storage = {
+      namespaces: base.storage.namespaces,
+      stores: {
+        users: {
+          ...base.storage.stores["users"]!,
+          record: {
+            model: "User",
+            fields: {
+              id: string,
+              profile: {
+                type: { kind: "valueObject" as const, name: "Profile", fields: profileFields },
+                nullable: false,
+              },
+              profiles: {
+                type: { kind: "valueObject" as const, name: "Profile", fields: profileFields },
+                nullable: false,
+                many: true as const,
+              },
+            },
+          },
+        },
+      },
+    };
+    return {
+      ...base,
+      domain,
+      storage: {
+        ...storage,
+        storageHash: computeStorageHash({ target: base.target, targetFamily: base.targetFamily, storage }),
+      },
+    };
+  };
+  const v1 = embeddedContract(false);
+  const v2 = embeddedContract(true);
+  expect(v2.storage.storageHash).not.toBe(v1.storage.storageHash);
+  const initial = await createAutoMigratingIdbClient({ dbName, contractSpace: buildContractSpaceFixture([v1]) });
+  const users = (initial.orm as Record<string, IdbStoreAccessor<never, never>>)["users"]!;
+  await users.create({ id: "old", profile: { label: "A" }, profiles: [{ label: "B" }] });
+  await initial.close();
+
+  const contractSpace = buildContractSpaceFixture([v1, v2]);
+  expect(contractSpace.migrations[1]!.ops).toEqual([]);
+  for (let open = 0; open < 2; open++) {
+    const client = await createAutoMigratingIdbClient({ dbName, contractSpace });
+    try {
+      const records = (client.orm as Record<string, IdbStoreAccessor<never, never>>)["users"]!;
+      const row = await records.findUnique("old");
+      expect(row).toEqual({
+        id: "old",
+        profile: { label: "A", nickname: null },
+        profiles: [{ label: "B", nickname: null }],
+      });
+      expect(validateRecord(v2, "User", row)).toEqual({ ok: true });
+      if (open === 0) {
+        await records.create({ ...row, id: "copy" });
+        expect(await records.findUnique("copy")).toEqual({ ...row, id: "copy" });
+      }
+      expect(await client.verifyMarker()).toBe(true);
     } finally {
       await client.close();
     }
