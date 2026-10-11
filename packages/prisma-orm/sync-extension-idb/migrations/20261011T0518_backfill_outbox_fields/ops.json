@@ -1,0 +1,19 @@
+[
+  {
+    "kind": "transformRecords",
+    "id": "object-store._idb_sync_outbox.transform-records",
+    "label": "Transform records in \"_idb_sync_outbox\"",
+    "operationClass": "data",
+    "storeName": "_idb_sync_outbox",
+    "fields": {
+      "migrationError": {
+        "kind": "defaultIfMissing",
+        "value": null
+      },
+      "versionMetaId": {
+        "kind": "defaultIfMissing",
+        "value": null
+      }
+    }
+  }
+]
