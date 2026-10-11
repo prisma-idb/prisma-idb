@@ -12,7 +12,7 @@ import type {
   StorageHashBase,
 } from "@prisma/orm-framework/contract/types";
 
-export type StorageHash = StorageHashBase<"fc8ba5682814d9f05d17d2e547a2e1f6d261bd40be8b43ae981e5880717c57ee">;
+export type StorageHash = StorageHashBase<"ba5e70fb3c7b0b9acd469fe1fe80d172e8b04319f53365c2107baac46ec41926">;
 export type ExecutionHash = ExecutionHashBase<string>;
 export type ProfileHash = ProfileHashBase<"40329830af4e39e0774683fbebcdc24dcf983a5da02c5fe6079a2a57579f861c">;
 
@@ -129,19 +129,114 @@ type ContractBase = Omit<
     readonly stores: {
       readonly posts: {
         readonly keyPath: "id";
+        readonly record: {
+          readonly fields: {
+            readonly authorId: {
+              readonly nullable: false;
+              readonly type: { readonly codecId: "idb/string@1"; readonly kind: "scalar" };
+            };
+            readonly content: {
+              readonly nullable: true;
+              readonly type: { readonly codecId: "idb/string@1"; readonly kind: "scalar" };
+            };
+            readonly createdAt: {
+              readonly nullable: false;
+              readonly type: { readonly codecId: "idb/date@1"; readonly kind: "scalar" };
+            };
+            readonly id: {
+              readonly nullable: false;
+              readonly type: { readonly codecId: "idb/string@1"; readonly kind: "scalar" };
+            };
+            readonly published: {
+              readonly nullable: false;
+              readonly type: { readonly codecId: "idb/bool@1"; readonly kind: "scalar" };
+            };
+            readonly title: {
+              readonly nullable: false;
+              readonly type: { readonly codecId: "idb/string@1"; readonly kind: "scalar" };
+            };
+            readonly views: {
+              readonly nullable: false;
+              readonly type: { readonly codecId: "idb/int32@1"; readonly kind: "scalar" };
+            };
+          };
+          readonly model: "Post";
+        };
         readonly indexes: {
           readonly byAuthorId: { readonly keyPath: "authorId"; readonly unique: false };
         };
       };
-      readonly random_store: { readonly keyPath: "id"; readonly indexes: Record<string, never> };
+      readonly random_store: {
+        readonly keyPath: "id";
+        readonly record: {
+          readonly fields: {
+            readonly id: {
+              readonly nullable: false;
+              readonly type: { readonly codecId: "idb/string@1"; readonly kind: "scalar" };
+            };
+          };
+          readonly model: "RandomStore";
+        };
+        readonly indexes: Record<string, never>;
+      };
       readonly tags: {
         readonly keyPath: "id";
+        readonly record: {
+          readonly fields: {
+            readonly id: {
+              readonly nullable: false;
+              readonly type: { readonly codecId: "idb/string@1"; readonly kind: "scalar" };
+            };
+            readonly name: {
+              readonly nullable: false;
+              readonly type: { readonly codecId: "idb/string@1"; readonly kind: "scalar" };
+            };
+            readonly postId: {
+              readonly nullable: false;
+              readonly type: { readonly codecId: "idb/string@1"; readonly kind: "scalar" };
+            };
+          };
+          readonly model: "Tag";
+        };
         readonly indexes: {
           readonly byPostId: { readonly keyPath: "postId"; readonly unique: false };
         };
       };
       readonly users: {
         readonly keyPath: "id";
+        readonly record: {
+          readonly fields: {
+            readonly active: {
+              readonly nullable: false;
+              readonly type: { readonly codecId: "idb/bool@1"; readonly kind: "scalar" };
+            };
+            readonly bio: {
+              readonly nullable: true;
+              readonly type: { readonly codecId: "idb/string@1"; readonly kind: "scalar" };
+            };
+            readonly email: {
+              readonly nullable: false;
+              readonly type: { readonly codecId: "idb/string@1"; readonly kind: "scalar" };
+            };
+            readonly id: {
+              readonly nullable: false;
+              readonly type: { readonly codecId: "idb/string@1"; readonly kind: "scalar" };
+            };
+            readonly joinedAt: {
+              readonly nullable: false;
+              readonly type: { readonly codecId: "idb/date@1"; readonly kind: "scalar" };
+            };
+            readonly name: {
+              readonly nullable: false;
+              readonly type: { readonly codecId: "idb/string@1"; readonly kind: "scalar" };
+            };
+            readonly score: {
+              readonly nullable: false;
+              readonly type: { readonly codecId: "idb/int32@1"; readonly kind: "scalar" };
+            };
+          };
+          readonly model: "User";
+        };
         readonly indexes: {
           readonly byEmail: { readonly keyPath: "email"; readonly unique: true };
           readonly byScore: { readonly keyPath: "score"; readonly unique: false };

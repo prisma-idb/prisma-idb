@@ -5,8 +5,8 @@ import type { ContractWithDomain } from "@prisma/orm-framework/contract/types";
  * fields, value objects and enums. Storage layout (stores, indexes) is
  * excluded, so an index change does not count as skew.
  *
- * `storage.storageHash` is no substitute: for IDB it covers only stores and
- * indexes, so adding a non-indexed field or an enum member leaves it unchanged.
+ * IDB storage hashes also cover stored record shapes. This digest remains
+ * available until sync callers migrate to the storage hash.
  *
  * Client and server compare these digests (ADR 015): the server refuses any
  * request whose digest differs from its own.

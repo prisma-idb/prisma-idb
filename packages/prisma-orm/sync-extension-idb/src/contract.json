@@ -158,7 +158,7 @@
         "id": "__unbound__"
       }
     },
-    "storageHash": "c2c485fabf1d79f78fdaf74a1c4dd94fe4e3981493233534e003c613f643945d",
+    "storageHash": "20005ac86953ae2786743ec34740cfeae4a653c80c9d7ad7f387bc81c73b87cf",
     "stores": {
       "_idb_sync_outbox": {
         "indexes": {
@@ -166,10 +166,132 @@
             "keyPath": "createdAt"
           }
         },
-        "keyPath": "id"
+        "keyPath": "id",
+        "record": {
+          "fields": {
+            "createdAt": {
+              "nullable": false,
+              "type": {
+                "codecId": "idb/date@1",
+                "kind": "scalar"
+              }
+            },
+            "entityType": {
+              "nullable": false,
+              "type": {
+                "codecId": "idb/string@1",
+                "kind": "scalar"
+              }
+            },
+            "id": {
+              "nullable": false,
+              "type": {
+                "codecId": "idb/string@1",
+                "kind": "scalar"
+              }
+            },
+            "lastAttemptedAt": {
+              "nullable": true,
+              "type": {
+                "codecId": "idb/date@1",
+                "kind": "scalar"
+              }
+            },
+            "lastError": {
+              "nullable": true,
+              "type": {
+                "codecId": "idb/string@1",
+                "kind": "scalar"
+              }
+            },
+            "operation": {
+              "nullable": false,
+              "type": {
+                "codecId": "idb/string@1",
+                "kind": "scalar"
+              }
+            },
+            "payload": {
+              "nullable": false,
+              "type": {
+                "codecId": "idb/json@1",
+                "kind": "scalar"
+              }
+            },
+            "retryable": {
+              "nullable": false,
+              "type": {
+                "codecId": "idb/bool@1",
+                "kind": "scalar"
+              }
+            },
+            "synced": {
+              "nullable": false,
+              "type": {
+                "codecId": "idb/bool@1",
+                "kind": "scalar"
+              }
+            },
+            "syncedAt": {
+              "nullable": true,
+              "type": {
+                "codecId": "idb/date@1",
+                "kind": "scalar"
+              }
+            },
+            "tries": {
+              "nullable": false,
+              "type": {
+                "codecId": "idb/int32@1",
+                "kind": "scalar"
+              }
+            }
+          },
+          "model": "OutboxEvent"
+        }
       },
       "_idb_sync_version_meta": {
-        "keyPath": "id"
+        "keyPath": "id",
+        "record": {
+          "fields": {
+            "id": {
+              "nullable": false,
+              "type": {
+                "codecId": "idb/string@1",
+                "kind": "scalar"
+              }
+            },
+            "key": {
+              "nullable": false,
+              "type": {
+                "codecId": "idb/json@1",
+                "kind": "scalar"
+              }
+            },
+            "lastAppliedChangeId": {
+              "nullable": true,
+              "type": {
+                "codecId": "idb/string@1",
+                "kind": "scalar"
+              }
+            },
+            "localChangePending": {
+              "nullable": false,
+              "type": {
+                "codecId": "idb/bool@1",
+                "kind": "scalar"
+              }
+            },
+            "model": {
+              "nullable": false,
+              "type": {
+                "codecId": "idb/string@1",
+                "kind": "scalar"
+              }
+            }
+          },
+          "model": "VersionMeta"
+        }
       }
     }
   },

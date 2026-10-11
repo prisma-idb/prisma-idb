@@ -61,6 +61,40 @@ const v3 = defineContract({
 });
 
 describe("auto-migrate across contract evolution", () => {
+  it("refuses a field-only contract change without a migration, then accepts a no-op rehash", async () => {
+    const name = dbName();
+    const original = buildContractSpaceFixture([v1]);
+    const initial = await createAutoMigratingIdbClient({ contractSpace: original, dbName: name });
+    await asRecord(initial.orm)["users"]!.create({ id: "u1", email: "alice@example.com" });
+    await initial.close();
+
+    const changed = defineContract({
+      family: idbFamilyPack,
+      target: idbTargetPack,
+      models: { User: { store: "users", key: "id", fields: { id: "String", email: "String", name: "String?" } } },
+    });
+    await expect(
+      createAutoMigratingIdbClient({
+        contractSpace: {
+          ...original,
+          contractJson: changed,
+          headRef: { hash: changed.storage.storageHash, invariants: [] },
+        },
+        dbName: name,
+      })
+    ).rejects.toThrow(/migration/i);
+
+    const migrated = buildContractSpaceFixture([v1, changed]);
+    expect(migrated.migrations[1]!.ops).toEqual([]);
+    const client = await createAutoMigratingIdbClient({ contractSpace: migrated, dbName: name });
+    try {
+      expect(await client.verifyMarker()).toBe(true);
+      expect(await asRecord(client.orm)["users"]!.findUnique("u1")).toMatchObject({ email: "alice@example.com" });
+    } finally {
+      await client.close();
+    }
+  });
+
   beforeEach(async () => {
     const fake: { IDBFactory: new () => IDBFactory } = await import("fake-indexeddb");
     (globalThis as unknown as { indexedDB: IDBFactory }).indexedDB = new fake.IDBFactory();

@@ -1,4 +1,4 @@
-import type { StorageBase } from "@prisma/orm-framework/contract/types";
+import type { ContractEnum, ScalarFieldType, StorageBase } from "@prisma/orm-framework/contract/types";
 
 /**
  * Full storage shape for an IDB contract.
@@ -73,7 +73,30 @@ export type IdbStoreDefinition = {
   readonly keyPath: IdbKeyPath;
   readonly autoIncrement?: boolean;
   readonly indexes?: Record<string, IdbIndexDefinition>;
+  /** Stored record metadata. Absent in DDL-only definitions and legacy contracts. */
+  readonly record?: IdbRecordShape;
 };
+
+/** Stored fields of a named model. Defaults and documentation do not affect stored bytes. */
+export type IdbRecordShape = {
+  readonly model: string;
+  readonly fields: Record<string, IdbRecordField>;
+};
+
+/** Field decoding shape, including resolved enum members and nested value objects. */
+export type IdbRecordField = {
+  readonly type: IdbRecordFieldType;
+  readonly nullable: boolean;
+  readonly many?: true;
+  readonly dict?: true;
+  readonly valueSet?: ContractEnum & { readonly name: string };
+};
+
+/** Scalar codecs and recursively embedded value-object shapes used by stored fields. */
+export type IdbRecordFieldType =
+  | ScalarFieldType
+  | { readonly kind: "valueObject"; readonly name: string; readonly fields: Record<string, IdbRecordField> }
+  | { readonly kind: "union"; readonly members: readonly IdbRecordFieldType[] };
 
 /**
  * Configuration for a single secondary index on an object store.

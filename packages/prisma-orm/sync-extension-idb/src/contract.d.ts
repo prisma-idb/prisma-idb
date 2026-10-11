@@ -12,7 +12,7 @@ import type {
   StorageHashBase,
 } from "@prisma/orm-framework/contract/types";
 
-export type StorageHash = StorageHashBase<"c2c485fabf1d79f78fdaf74a1c4dd94fe4e3981493233534e003c613f643945d">;
+export type StorageHash = StorageHashBase<"20005ac86953ae2786743ec34740cfeae4a653c80c9d7ad7f387bc81c73b87cf">;
 export type ExecutionHash = ExecutionHashBase<string>;
 export type ProfileHash = ProfileHashBase<"40329830af4e39e0774683fbebcdc24dcf983a5da02c5fe6079a2a57579f861c">;
 
@@ -107,12 +107,86 @@ type ContractBase = Omit<
     readonly stores: {
       readonly _idb_sync_outbox: {
         readonly keyPath: "id";
+        readonly record: {
+          readonly fields: {
+            readonly createdAt: {
+              readonly nullable: false;
+              readonly type: { readonly codecId: "idb/date@1"; readonly kind: "scalar" };
+            };
+            readonly entityType: {
+              readonly nullable: false;
+              readonly type: { readonly codecId: "idb/string@1"; readonly kind: "scalar" };
+            };
+            readonly id: {
+              readonly nullable: false;
+              readonly type: { readonly codecId: "idb/string@1"; readonly kind: "scalar" };
+            };
+            readonly lastAttemptedAt: {
+              readonly nullable: true;
+              readonly type: { readonly codecId: "idb/date@1"; readonly kind: "scalar" };
+            };
+            readonly lastError: {
+              readonly nullable: true;
+              readonly type: { readonly codecId: "idb/string@1"; readonly kind: "scalar" };
+            };
+            readonly operation: {
+              readonly nullable: false;
+              readonly type: { readonly codecId: "idb/string@1"; readonly kind: "scalar" };
+            };
+            readonly payload: {
+              readonly nullable: false;
+              readonly type: { readonly codecId: "idb/json@1"; readonly kind: "scalar" };
+            };
+            readonly retryable: {
+              readonly nullable: false;
+              readonly type: { readonly codecId: "idb/bool@1"; readonly kind: "scalar" };
+            };
+            readonly synced: {
+              readonly nullable: false;
+              readonly type: { readonly codecId: "idb/bool@1"; readonly kind: "scalar" };
+            };
+            readonly syncedAt: {
+              readonly nullable: true;
+              readonly type: { readonly codecId: "idb/date@1"; readonly kind: "scalar" };
+            };
+            readonly tries: {
+              readonly nullable: false;
+              readonly type: { readonly codecId: "idb/int32@1"; readonly kind: "scalar" };
+            };
+          };
+          readonly model: "OutboxEvent";
+        };
         readonly indexes: {
-          readonly byCreatedAt: { readonly keyPath: "createdAt"; readonly unique: undefined };
+          readonly byCreatedAt: { readonly keyPath: "createdAt"; readonly unique: false };
         };
       };
       readonly _idb_sync_version_meta: {
         readonly keyPath: "id";
+        readonly record: {
+          readonly fields: {
+            readonly id: {
+              readonly nullable: false;
+              readonly type: { readonly codecId: "idb/string@1"; readonly kind: "scalar" };
+            };
+            readonly key: {
+              readonly nullable: false;
+              readonly type: { readonly codecId: "idb/json@1"; readonly kind: "scalar" };
+            };
+            readonly lastAppliedChangeId: {
+              readonly nullable: true;
+              readonly type: { readonly codecId: "idb/string@1"; readonly kind: "scalar" };
+            };
+            readonly localChangePending: {
+              readonly nullable: false;
+              readonly type: { readonly codecId: "idb/bool@1"; readonly kind: "scalar" };
+            };
+            readonly model: {
+              readonly nullable: false;
+              readonly type: { readonly codecId: "idb/string@1"; readonly kind: "scalar" };
+            };
+          };
+          readonly model: "VersionMeta";
+        };
         readonly indexes: Record<string, never>;
       };
     };

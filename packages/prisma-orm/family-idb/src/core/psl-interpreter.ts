@@ -1,5 +1,6 @@
 import type { ContractSourceDiagnostic, ContractSourceDiagnostics } from "@prisma/orm-framework/config/config-types";
 import { computeExecutionHash, computeProfileHash, computeStorageHash } from "@prisma/orm-framework/contract/hashing";
+import { buildRecordShape } from "./record-shape";
 import type {
   ApplicationDomain,
   Contract,
@@ -1166,6 +1167,7 @@ export function interpretPslDocumentToIdbContract(
 
   for (const [modelName, interp] of interpretedByName) {
     stores[interp.storeName] = {
+      record: buildRecordShape(modelName, interp.fields, { enum: enums }),
       keyPath: interp.keyPath,
       ...(interp.autoIncrement ? { autoIncrement: true } : {}),
       ...(Object.keys(interp.indexes).length > 0 ? { indexes: interp.indexes } : {}),

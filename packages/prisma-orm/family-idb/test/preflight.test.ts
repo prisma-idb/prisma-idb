@@ -13,6 +13,9 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { transformRecordsOp, coerce } from "@prisma-idb/target-idb/migration";
 import { runPreflight } from "../src/core/preflight";
 import { createRawIdbContract } from "./_raw-contract";
+import { defineContract } from "../src/core/contract-builder";
+import idbFamily from "../src/exports/pack";
+import idbTarget from "@prisma-idb/target-idb/pack";
 
 let cwd: string;
 let originalStdout: typeof process.stdout.write;
@@ -166,6 +169,22 @@ describe("runPreflight", () => {
 
     const code = await runPreflight({ migrationsDir: join(cwd, "migrations") });
     expect(code).toBe(0);
+  });
+
+  it("replays a no-op rehash with record shape and verifies only DDL", async () => {
+    const oldHash = await writeSnapshot({ users: { keyPath: "id" } });
+    const contract = defineContract({
+      family: idbFamily,
+      target: idbTarget,
+      models: { User: { store: "users", key: "id", fields: { id: "String", name: "String?" } } },
+    });
+    const newHash = contract.storage.storageHash;
+    expect(newHash).not.toBe(oldHash);
+    await writeSnapshotFile(newHash, contract);
+    await writePackage({ dirName: "0001_baseline", from: null, to: oldHash, ops: [createMarker, createUsers] });
+    await writePackage({ dirName: "0002_rehash", from: oldHash, to: newHash, ops: [] });
+
+    expect(await runPreflight({ migrationsDir: join(cwd, "migrations") })).toBe(0);
   });
 
   it("fails with a readable diff when a valid package omits a required store", async () => {
