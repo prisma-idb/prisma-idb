@@ -41,6 +41,9 @@ function enumField(members: string[]): IdbRecordField {
     valueSet: { name: "Role", codecId: "idb/string@1", members: members.map((name) => ({ name, value: name })) },
   };
 }
+function profile(fields: Record<string, IdbRecordField>): IdbRecordField {
+  return { type: { kind: "valueObject", name: "Profile", fields }, nullable: false };
+}
 
 describe("record shape migration planning", () => {
   it.each(["member", 0, false, 'quoted"\\\nvalue'])("backfills a required literal default: %j", (value) => {
@@ -142,6 +145,62 @@ describe("record shape migration planning", () => {
     expect(deletedDataWarning(result.operations)).toBeUndefined();
     expect(result.renderTypeScript(keepInternalSpecifiers)).toContain("No record or schema operations are needed");
     expect(result.renderTypeScript(keepInternalSpecifiers)).not.toContain("Add IDB DDL");
+  });
+
+  it.each([
+    ["added nullable field", profile({}), profile({ nickname: { ...string, nullable: true } })],
+    ["required to nullable", profile({ nickname: string }), profile({ nickname: { ...string, nullable: true } })],
+    ["new enum member", profile({ role: enumField(["USER"]) }), profile({ role: enumField(["USER", "ADMIN"]) })],
+    [
+      "deeper nullable addition",
+      profile({ details: profile({}) }),
+      profile({ details: profile({ nickname: { ...string, nullable: true } }) }),
+    ],
+    [
+      "field order change",
+      profile({ nickname: string, role: enumField(["USER"]) }),
+      profile({ role: enumField(["USER"]), nickname: string }),
+    ],
+  ])("emits no operations for nested %s", (_name, from, to) => {
+    // Compatibility must recurse through containers and union members too.
+    for (const wrap of [
+      (field: IdbRecordField) => field,
+      (field: IdbRecordField) => ({ ...field, many: true as const }),
+      (field: IdbRecordField) => ({ ...field, dict: true as const }),
+      (field: IdbRecordField): IdbRecordField => ({
+        type: { kind: "union", members: [string.type, field.type] },
+        nullable: false,
+      }),
+    ]) {
+      const result = plan(contract({ profile: wrap(from) }), contract({ profile: wrap(to) }));
+      expect(result.operations).toEqual([]);
+      expect(deletedDataWarning(result.operations)).toBeUndefined();
+      expect(result.renderTypeScript(keepInternalSpecifiers)).toContain("No record or schema operations are needed");
+    }
+  });
+
+  it.each([
+    ["required addition", profile({}), profile({ nickname: string })],
+    ["field removal", profile({ nickname: string }), profile({})],
+    ["nullable to required", profile({ nickname: { ...string, nullable: true } }), profile({ nickname: string })],
+    [
+      "codec change",
+      profile({ nickname: string }),
+      profile({ nickname: { type: { kind: "scalar", codecId: "idb/int32@1" }, nullable: false } }),
+    ],
+    ["enum removal", profile({ role: enumField(["USER", "ADMIN"]) }), profile({ role: enumField(["USER"]) })],
+    ["list shape change", profile({ nickname: string }), profile({ nickname: { ...string, many: true } })],
+    ["dict shape change", profile({ nickname: string }), profile({ nickname: { ...string, dict: true } })],
+    [
+      "deeper required addition",
+      profile({ details: profile({}) }),
+      profile({ details: profile({ nickname: string }) }),
+    ],
+    ["type kind change", profile({}), string],
+  ])("names the unhandled field for nested %s", (_name, from, to) => {
+    expect(() => plan(contract({ profile: from }), contract({ profile: to }))).toThrow(
+      /users\.profile.*authored record transform/
+    );
   });
 
   it.each([

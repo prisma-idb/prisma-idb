@@ -7,7 +7,7 @@ import type {
   MigrationPlannerResult,
   MigrationScaffoldContext,
 } from "@prisma/orm-framework/components/control";
-import type { IdbIndexDefinition, IdbRecordField, IdbStoreDefinition } from "./idb-contract-types";
+import type { IdbIndexDefinition, IdbRecordField, IdbRecordFieldType, IdbStoreDefinition } from "./idb-contract-types";
 import {
   defaultIfMissing,
   transformRecordsOp,
@@ -218,12 +218,30 @@ function renderOpCall(op: IdbDdlOp): string {
   }
 }
 
+/** Whether a nested type change can preserve existing values without a transform. */
+function typeAcceptsExistingValues(from: IdbRecordFieldType, to: IdbRecordFieldType): boolean {
+  if (from.kind === "valueObject" && to.kind === "valueObject") {
+    if (from.name !== to.name) return false;
+    // Removed embedded fields need an authored transform; the record DSL only removes top-level fields.
+    if (Object.keys(from.fields).some((name) => !Object.hasOwn(to.fields, name))) return false;
+    return Object.entries(to.fields).every(([name, field]) =>
+      Object.hasOwn(from.fields, name) ? fieldAcceptsExistingValues(from.fields[name]!, field) : field.nullable
+    );
+  }
+  if (from.kind === "union" && to.kind === "union") {
+    return (
+      from.members.length === to.members.length &&
+      from.members.every((member, index) => typeAcceptsExistingValues(member, to.members[index]!))
+    );
+  }
+  return JSON.stringify(from) === JSON.stringify(to);
+}
+
 /** Whether existing values remain valid in the destination field. */
 function fieldAcceptsExistingValues(from: IdbRecordField, to: IdbRecordField): boolean {
   if (from.nullable && !to.nullable) return false;
   if (from.many !== to.many || from.dict !== to.dict) return false;
-  // Nested shape changes need an authored transform to preserve embedded values.
-  if (JSON.stringify(from.type) !== JSON.stringify(to.type)) return false;
+  if (!typeAcceptsExistingValues(from.type, to.type)) return false;
   if (from.valueSet === undefined) return to.valueSet === undefined;
   if (to.valueSet === undefined) return true;
   const destinationEnum = to.valueSet;
