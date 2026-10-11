@@ -239,6 +239,31 @@ describe("migrationPlan — record field changes", () => {
     expect(await readMeta(cwd, dirName)).toEqual(metadata);
   });
 
+  it.each([0, -12.5, 123.45])("self-emits identical Decimal default operations and hashes for %j", async (value) => {
+    await writeContract(cwd, psl(""));
+    expect(await migrationPlan(defaultPaths(cwd))).toBe(0);
+    await writeContract(cwd, psl(`amount Decimal @default(${value})`));
+    expect(await migrationPlan({ ...defaultPaths(cwd), name: "add_decimal" })).toBe(0);
+    const dirName = (await listMigrationDirs(cwd)).find((dir) => dir.endsWith("_add_decimal"))!;
+    const ops = await readOps(cwd, dirName);
+    const metadata = await readMeta(cwd, dirName);
+    expect(ops).toEqual([
+      expect.objectContaining({
+        kind: "transformRecords",
+        fields: { amount: { kind: "defaultIfMissing", value: String(value) } },
+      }),
+    ]);
+    await symlink(fileURLToPath(new URL("../node_modules", import.meta.url)), join(cwd, "node_modules"), "dir");
+    await writeFile(join(cwd, "package.json"), JSON.stringify({ type: "module" }));
+    await promisify(execFile)(process.execPath, [
+      "--import",
+      import.meta.resolve("tsx"),
+      join(cwd, "migrations", "app", dirName, "migration.ts"),
+    ]);
+    expect(await readOps(cwd, dirName)).toEqual(ops);
+    expect(await readMeta(cwd, dirName)).toEqual(metadata);
+  });
+
   it("writes an explicit no-operation migration for an added nullable field", async () => {
     await writeContract(cwd, psl(""));
     expect(await migrationPlan(defaultPaths(cwd))).toBe(0);

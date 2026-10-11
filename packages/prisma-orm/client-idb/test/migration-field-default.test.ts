@@ -1,3 +1,4 @@
+import { validateRecord } from "@prisma-idb/target-idb/runtime";
 import { buildSymbolTable } from "@prisma/orm-framework/psl-parser";
 import { parse } from "@prisma/orm-framework/psl-parser/syntax";
 import { interpretPslDocumentToIdbContract } from "@prisma-idb/family-idb/contract-psl";
@@ -15,6 +16,26 @@ function contract(schema: string) {
   return result.value;
 }
 
+async function seedRecord(dbName: string, record: Record<string, unknown>) {
+  const seed = indexedDB.open(dbName);
+  await new Promise<void>((resolve, reject) => {
+    seed.onerror = () => reject(seed.error);
+    seed.onsuccess = () => {
+      const db = seed.result;
+      const tx = db.transaction("users", "readwrite");
+      tx.objectStore("users").put(record);
+      tx.oncomplete = () => {
+        db.close();
+        resolve();
+      };
+      tx.onabort = () => {
+        db.close();
+        reject(tx.error);
+      };
+    };
+  });
+}
+
 it("backfills a literal default on open, indexes it, and preserves existing values across reopen", async () => {
   globalThis.indexedDB = new IDBFactory();
   const dbName = "migration-field-default";
@@ -26,23 +47,7 @@ it("backfills a literal default on open, indexes it, and preserves existing valu
   const users = (initial.orm as Record<string, IdbStoreAccessor<never, never>>)["users"]!;
   await users.create({ id: "missing" });
   // A row may already carry the field from an earlier manual write or deployment.
-  const seed = indexedDB.open(dbName);
-  await new Promise<void>((resolve, reject) => {
-    seed.onerror = () => reject(seed.error);
-    seed.onsuccess = () => {
-      const db = seed.result;
-      const tx = db.transaction("users", "readwrite");
-      tx.objectStore("users").put({ id: "existing", role: "admin" });
-      tx.oncomplete = () => {
-        db.close();
-        resolve();
-      };
-      tx.onabort = () => {
-        db.close();
-        reject(tx.error);
-      };
-    };
-  });
+  await seedRecord(dbName, { id: "existing", role: "admin" });
   await initial.close();
 
   const contractSpace = buildContractSpaceFixture([v1, v2]);
@@ -75,5 +80,59 @@ it("backfills a literal default on open, indexes it, and preserves existing valu
       };
     });
     expect(indexedRows).toEqual([{ id: "missing", role: "member" }]);
+  }
+});
+
+it.each([0, -12.5, 123.45])("backfills Decimal default %j as a valid stored string across reopen", async (value) => {
+  globalThis.indexedDB = new IDBFactory();
+  const dbName = "migration-decimal-default";
+  const v1 = contract('model User {\n id String @id\n @@map("users")\n}');
+  const v2 = contract(
+    `model User {\n id String @id\n amount Decimal @default(${JSON.stringify(value)})\n @@index([amount], map: "byAmount")\n @@map("users")\n}`
+  );
+  const initial = await createAutoMigratingIdbClient({ dbName, contractSpace: buildContractSpaceFixture([v1]) });
+  const users = (initial.orm as Record<string, IdbStoreAccessor<never, never>>)["users"]!;
+  await users.create({ id: "missing" });
+  await seedRecord(dbName, { id: "existing", amount: "9.99" });
+  await initial.close();
+
+  const contractSpace = buildContractSpaceFixture([v1, v2]);
+  const migration = contractSpace.migrations[1]!;
+  expect(migration.ops).toContainEqual(
+    expect.objectContaining({
+      kind: "transformRecords",
+      fields: { amount: { kind: "defaultIfMissing", value: String(value) } },
+    })
+  );
+  for (let open = 0; open < 2; open++) {
+    const client = await createAutoMigratingIdbClient({ dbName, contractSpace });
+    try {
+      expect(await client.verifyMarker()).toBe(true);
+      const request = indexedDB.open(dbName);
+      const { rows, existingRow } = await new Promise<{ rows: unknown[]; existingRow: unknown }>((resolve, reject) => {
+        request.onerror = () => reject(request.error);
+        request.onsuccess = () => {
+          const db = request.result;
+          const tx = db.transaction("users", "readonly");
+          const existing = tx.objectStore("users").get("existing");
+          const query = tx.objectStore("users").index("byAmount").getAll(String(value));
+          tx.oncomplete = () => {
+            db.close();
+            resolve({ rows: query.result, existingRow: existing.result });
+          };
+          tx.onabort = () => {
+            db.close();
+            reject(tx.error);
+          };
+        };
+      });
+      expect(existingRow).toEqual({ id: "existing", amount: "9.99" });
+      expect(validateRecord(v2, "User", existingRow)).toEqual({ ok: true });
+      expect(rows).toEqual([{ id: "missing", amount: String(value) }]);
+      expect(validateRecord(v2, "User", rows[0])).toEqual({ ok: true });
+      expect(validateRecord(v2, "User", { id: "missing", amount: 0 }).ok).toBe(false);
+    } finally {
+      await client.close();
+    }
   }
 });

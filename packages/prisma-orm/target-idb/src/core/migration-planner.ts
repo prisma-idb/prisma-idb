@@ -235,6 +235,47 @@ function fieldAcceptsExistingValues(from: IdbRecordField, to: IdbRecordField): b
   );
 }
 
+/** Resolve literal defaults to the native value written by the record-transform runner. */
+function storedLiteralDefault(
+  field: IdbRecordField,
+  value: string | number | boolean
+): string | number | boolean | undefined {
+  if (field.type.kind !== "scalar") return undefined;
+  let stored: string | number | boolean;
+  switch (field.type.codecId) {
+    case "idb/decimal@1":
+      // PSL supplies numbers for Decimal defaults; IDB's Decimal codec stores strings.
+      if (typeof value !== "number" && typeof value !== "string") return undefined;
+      stored = String(value);
+      break;
+    case "idb/string@1":
+      if (typeof value !== "string") return undefined;
+      stored = value;
+      break;
+    case "idb/bool@1":
+      if (typeof value !== "boolean") return undefined;
+      stored = value;
+      break;
+    case "idb/int32@1":
+      if (typeof value !== "number" || !Number.isInteger(value) || value < -2147483648 || value > 2147483647)
+        return undefined;
+      stored = value;
+      break;
+    case "idb/double@1":
+      if (typeof value !== "number") return undefined;
+      stored = value;
+      break;
+    case "idb/json@1":
+      stored = value;
+      break;
+    default:
+      // Date, bigint, bytes and unknown codecs cannot be expressed by this JSON-literal operation.
+      return undefined;
+  }
+  if (field.valueSet && !field.valueSet.members.some((member) => Object.is(member.value, stored))) return undefined;
+  return stored;
+}
+
 function diffRecordShapes(from: IdbSchemaDiffInput | null, to: IdbSchemaDiffInput, contract: Contract): IdbDdlOp[] {
   const ops: IdbDdlOp[] = [];
   for (const [storeName, store] of Object.entries(to.stores)) {
@@ -270,7 +311,13 @@ function diffRecordShapes(from: IdbSchemaDiffInput | null, to: IdbSchemaDiffInpu
           `IDB: added required field "${storeName}.${name}" needs a literal default or an authored record transform.`
         );
       }
-      fields[name] = defaultIfMissing(value);
+      const stored = storedLiteralDefault(field, value);
+      if (stored === undefined) {
+        throw new Error(
+          `IDB: added required field "${storeName}.${name}" has a literal default incompatible with codec "${field.type.codecId}"; needs an authored record transform.`
+        );
+      }
+      fields[name] = defaultIfMissing(stored);
     }
     if (Object.keys(fields).length > 0 || removeFields.length > 0) {
       ops.push(

@@ -6,7 +6,7 @@ import { deletedDataWarning } from "../src/core/migration-factories";
 import { IdbMigrationPlanner } from "../src/core/migration-planner";
 import { transformRecord } from "../src/core/transform-records";
 
-const string: IdbRecordField = { type: { kind: "scalar", codecId: "String" }, nullable: false };
+const string: IdbRecordField = { type: { kind: "scalar", codecId: "idb/string@1" }, nullable: false };
 function contract(fields: Record<string, IdbRecordField>, defaults: Record<string, unknown> = {}) {
   return {
     storage: {
@@ -38,13 +38,14 @@ function plan(from: ReturnType<typeof contract>, to: ReturnType<typeof contract>
 function enumField(members: string[]): IdbRecordField {
   return {
     ...string,
-    valueSet: { name: "Role", codecId: "String", members: members.map((name) => ({ name, value: name })) },
+    valueSet: { name: "Role", codecId: "idb/string@1", members: members.map((name) => ({ name, value: name })) },
   };
 }
 
 describe("record shape migration planning", () => {
   it.each(["member", 0, false, 'quoted"\\\nvalue'])("backfills a required literal default: %j", (value) => {
-    const codecId = typeof value === "number" ? "Int" : typeof value === "boolean" ? "Boolean" : "String";
+    const codecId =
+      typeof value === "number" ? "idb/int32@1" : typeof value === "boolean" ? "idb/bool@1" : "idb/string@1";
     const result = plan(
       contract({}),
       contract({ role: { type: { kind: "scalar", codecId }, nullable: false } }, { role: value })
@@ -60,6 +61,45 @@ describe("record shape migration planning", () => {
     const source = result.renderTypeScript(keepInternalSpecifiers);
     expect(source).toContain("transformRecordsOp");
     expect(source).toContain(`defaultIfMissing(${JSON.stringify(value)})`);
+  });
+
+  it.each([0, -12.5, "123.450"])("normalizes Decimal literal %j to stored text", (value) => {
+    const result = plan(
+      contract({}),
+      contract({ amount: { type: { kind: "scalar", codecId: "idb/decimal@1" }, nullable: false } }, { amount: value })
+    );
+    expect(result.operations).toEqual([
+      expect.objectContaining({ fields: { amount: { kind: "defaultIfMissing", value: String(value) } } }),
+    ]);
+    expect(result.renderTypeScript(keepInternalSpecifiers)).toContain(
+      `defaultIfMissing(${JSON.stringify(String(value))})`
+    );
+  });
+
+  it.each([
+    ["idb/string@1", 0],
+    ["idb/bool@1", "false"],
+    ["idb/int32@1", 1.5],
+    ["idb/int32@1", 2147483648],
+    ["idb/int32@1", -2147483649],
+    ["idb/double@1", "1.5"],
+    ["idb/decimal@1", false],
+    ["idb/date@1", "2026-01-01T00:00:00Z"],
+    ["idb/bigint@1", 1],
+    ["idb/bytes@1", "aGVsbG8="],
+    ["unknown/custom@1", "value"],
+  ])("rejects an incompatible literal for %s: %j", (codecId, value) => {
+    const to = contract(
+      { role: { type: { kind: "scalar", codecId: codecId as string }, nullable: false } },
+      { role: value }
+    );
+    expect(() => plan(contract({}), to)).toThrow(/users\.role.*incompatible with codec.*authored record transform/);
+  });
+
+  it("rejects literal defaults outside the enum's stored values", () => {
+    expect(() => plan(contract({}), contract({ role: enumField(["USER"]) }, { role: "ADMIN" }))).toThrow(
+      /users\.role.*authored record transform/
+    );
   });
 
   it("removes fields and reports each data-loss entry without reporting dropped indexes", () => {
@@ -110,7 +150,7 @@ describe("record shape migration planning", () => {
     [
       "unsafe codec change",
       contract({ role: string }),
-      contract({ role: { type: { kind: "scalar", codecId: "Int" }, nullable: false } }),
+      contract({ role: { type: { kind: "scalar", codecId: "idb/int32@1" }, nullable: false } }),
     ],
     [
       "nullable to required",
