@@ -20,7 +20,7 @@ const worker = db.createSyncWorker({
       method: "POST",
       headers: {
         "content-type": "application/json",
-        "x-contract-fingerprint": await context.contractFingerprint(),
+        "x-storage-hash": context.storageHash,
       },
       body: JSON.stringify({ events }),
       signal,
@@ -30,7 +30,7 @@ const worker = db.createSyncWorker({
   },
   pullHandler: async (since, signal, context) => {
     const response = await fetch(`/api/sync/pull?since=${since ?? ""}`, {
-      headers: { "x-contract-fingerprint": await context.contractFingerprint() },
+      headers: { "x-storage-hash": context.storageHash },
       signal,
     });
     if (response.status === 409) throw new ContractMismatchError();
@@ -40,7 +40,7 @@ const worker = db.createSyncWorker({
 worker.start();
 ```
 
-Each handler also receives `context.contractFingerprint()`. Send it to the server, which refuses a client on a different contract; throw `ContractMismatchError` from the handler on HTTP 409. See [Contract fingerprint](https://prisma-idb.dev/docs/prisma-8/sync/server#contract-fingerprint).
+Each handler also receives `context.storageHash`, the emitted client contract's `storage.storageHash`. Send it to the server, which refuses a client on a different contract; throw `ContractMismatchError` from the handler on HTTP 409. See [Contract check](https://prisma-idb.dev/docs/prisma-8/sync/server#contract-check).
 
 `trackedModels` defaults to `"*"`; pass model names to keep other writes local. Tracked models need keys that are unique across devices, such as `uuid()` or `cuid()`. Auto-incremented keys are rejected for tracked stores.
 

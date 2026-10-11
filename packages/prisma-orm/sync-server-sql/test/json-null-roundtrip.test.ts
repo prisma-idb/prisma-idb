@@ -7,7 +7,7 @@ import { seed, testContract, testDb, testSyncServer } from "./helpers";
 const adapter = createSqlSyncAdapter({
   contract: testContract,
   syncServer: testSyncServer,
-  contractFingerprintCheck: "off",
+  contractCheck: "off",
 });
 
 describe("required JSON null", () => {

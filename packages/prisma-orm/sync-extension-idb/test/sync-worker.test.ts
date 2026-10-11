@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { IdbContract } from "@prisma-idb/client-idb/orm";
-import { contractFingerprint } from "@prisma-idb/target-idb/runtime";
 import { ContractMismatchError } from "../src/core/contract-mismatch-error";
 import { createSyncWorker } from "../src/core/sync-worker";
 import type { ContractMismatchEvent, PullCompletedEvent, PushCompletedEvent } from "../src/core/sync-worker";
@@ -22,7 +21,7 @@ const emptyScope = {
 
 function makeStubSyncClient(): SyncIdbClient<never> {
   return {
-    contract: { domain: { namespaces: {} } } as never,
+    contract: { domain: { namespaces: {} }, storage: { storageHash: "stub" } } as never,
     orm: {} as never,
     transaction: (async (_rootKeys: string[], fn: (tx: unknown) => unknown) => fn({})) as never,
     withoutTracking: (async (fn: (rawOrm: unknown) => unknown) => fn({})) as never,
@@ -576,27 +575,27 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
     expect(pullCompleted).toEqual({ applied: 1, skipped: 0, validationFailed: 0, halted: false });
     expect(await scanAll(client, "users")).toEqual([{ id: "u1", name: "Remote" }]);
   });
-  describe("contract fingerprint", () => {
-    it("passes the client contract's fingerprint to both handlers", async () => {
+  describe("contract check", () => {
+    it("passes the client contract's storage hash to both handlers", async () => {
       const { client } = await createTestSyncClient();
       await asAccessors(client.orm)["users"]!.create({ id: "u1", name: "Alice" });
-      const fingerprints: Promise<string>[] = [];
+      const storageHashes: string[] = [];
       const worker = trackedWorker({
         syncClient: client,
         pushHandler: async (events, _signal, context) => {
-          fingerprints.push(context.contractFingerprint());
+          storageHashes.push(context.storageHash);
           return events.map((event) => ({ id: event.id, success: true }));
         },
         pullHandler: async (_from, _signal, context) => {
-          fingerprints.push(context.contractFingerprint());
+          storageHashes.push(context.storageHash);
           return [];
         },
       });
 
       await worker.forceSync();
 
-      const expected = await contractFingerprint(client.contract);
-      expect(await Promise.all(fingerprints)).toEqual([expected, expected]);
+      const expected = client.contract.storage.storageHash;
+      expect(storageHashes).toEqual([expected, expected]);
     });
 
     it("leaves the cursor untouched and reports the mismatch when a pull is refused", async () => {

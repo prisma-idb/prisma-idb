@@ -45,7 +45,7 @@ describe("wire-form SQL keys", () => {
       const adapter = createSqlSyncAdapter({
         contract: testContract,
         syncServer: testBigSyncServer,
-        contractFingerprintCheck: "off",
+        contractCheck: "off",
       });
       await seed(db, {
         Changelog: [{ model: "BigItem", keyPath: "invalid-bigint", operation, scopeKey: "1", outboxEventId: "bad" }],
@@ -89,7 +89,7 @@ describe("wire-form SQL keys", () => {
     const adapter = createSqlSyncAdapter({
       contract: testContract,
       syncServer: testBigSyncServer,
-      contractFingerprintCheck: "off",
+      contractCheck: "off",
     });
     for (const id of [1n, 2n]) await ormRootFor(db, "BigUser").select("id").create({ id, name: "owner" });
     await ormRootFor(db, "BigItem").select("id").create({ id: 11n, ownerId: 2n, name: "reassigned" });
@@ -130,7 +130,7 @@ describe("wire-form SQL keys", () => {
     const adapter = createSqlSyncAdapter({
       contract: testContract,
       syncServer: testBigSyncServer,
-      contractFingerprintCheck: "off",
+      contractCheck: "off",
     });
     for (const id of [1n, 2n]) await ormRootFor(db, "BigUser").select("id").create({ id, name: "owner" });
     await ormRootFor(db, "BigItem").select("id").create({ id: 11n, ownerId: 1n, name: "first" });
@@ -178,7 +178,7 @@ describe("wire-form SQL keys", () => {
     const adapter = createSqlSyncAdapter({
       contract: testContract,
       syncServer: testBigSyncServer,
-      contractFingerprintCheck: "off",
+      contractCheck: "off",
     });
     const scopeKey = "9007199254740993";
     const itemKey = "9007199254740995";

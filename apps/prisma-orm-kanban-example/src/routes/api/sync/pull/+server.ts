@@ -3,7 +3,7 @@ import type { RequestHandler } from "./$types";
 import { auth } from "$lib/server/auth";
 import { getPostgres } from "$lib/server/db";
 import { sqlSyncAdapter } from "$lib/server/sync";
-import { CONTRACT_FINGERPRINT_HEADER } from "$lib/prisma/sync";
+import { STORAGE_HASH_HEADER } from "$lib/prisma/sync";
 
 /**
  * ADR 014's pull endpoint: `sqlSyncAdapter.pull` (built once in `sync.ts`)
@@ -24,7 +24,7 @@ export const GET: RequestHandler = async ({ url, request }) => {
   const outcome = await sqlSyncAdapter.pull(await getPostgres(), {
     scopeKey: session.user.id,
     lastChangelogId: url.searchParams.get("since") || null,
-    clientContractFingerprint: request.headers.get(CONTRACT_FINGERPRINT_HEADER),
+    clientStorageHash: request.headers.get(STORAGE_HASH_HEADER),
   });
   if (!outcome.ok) {
     switch (outcome.reason) {

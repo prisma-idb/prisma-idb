@@ -52,22 +52,22 @@ The pull wire contract is defined once by `sync-extension-idb/schemas`'s `logWit
 
 The returned `lastChangelogId` is the highest applied **or validation-failed** id. A corrupt final row, or a wholly corrupt batch, therefore advances the transport cursor and its existing persistence hook. IDs retain the server's lexicographic UUID v7 ordering. Per-record version metadata advances only on successful writes. Other skip reasons retain their existing cursor behavior. A transaction failure does not itself advance the cursor, but the maximum applied or validation-failed id can pass an earlier failed row in the same batch. This pre-existing behavior is unchanged; failed rows are not guaranteed to be retried.
 
-### Contract skew: the fingerprint handshake
+### Contract skew: the storage hash handshake
 
 Strict decoding means a client on an older contract rejects a row that carries a field or enum member it does not know. A rejected pull row is consumed: the cursor moves past it, and the client never sees it again. Reconciling a rejected push (ADR 022) has the same hole, because it decodes the server's `record` against the client contract.
 
 The server therefore refuses to serve a client whose contract it does not recognise, before it reads or writes anything.
 
-- **Fingerprint.** `contractFingerprint(contract)` (`target-idb/runtime`) is the SHA-256 of the contract's models' fields, value objects and enums. It ignores stores and indexes. `storage.storageHash` cannot serve here, because for IDB it covers only stores and indexes: a new non-indexed field or enum member leaves it unchanged.
-- **Which side.** The server is authoritative, because it knows what it emits. `SyncServer.contractFingerprint()` fingerprints `clientContract` (ADR 012), which is the contract the browser ships. The client sends the fingerprint of its own contract with every push and pull.
-- **Strict equality, on by default.** `pull` and `applyPush` return `{ ok: false, reason: "contract-mismatch", expected }` when the fingerprint is missing or different. The route answers HTTP 409. An app opts out explicitly with `contractFingerprintCheck: "off"`.
+- **Storage hash.** `storage.storageHash` is the emitted IDB contract's identity. It covers stores, indexes, and stored record shapes: fields, value objects, and enum values. A non-indexed field or enum-value change moves the hash. No runtime hashing is needed.
+- **Which side.** `SyncServer.clientStorageHash` reads `clientContract.storage.storageHash` (ADR 012). Both sides load the same emitted client `contract.json`, including any extension stores it contains. The server must not use its SQL contract's hash. The client sends `context.storageHash` with every push and pull.
+- **Strict equality, on by default.** `pull` and `applyPush` return `{ ok: false, reason: "contract-mismatch", expected }` when the storage hash is missing or different. The route answers HTTP 409. An app opts out explicitly with `contractCheck: "off"`.
 - **Client reaction.** The handler throws `ContractMismatchError` on 409. The worker leaves the cursor unchanged, preserves queued edits and their payloads, emits `contractmismatch`, and retries with backoff. A refused push keeps its events pending and retryable, so unsent edits survive until the app updates.
 
-Rollout order: ship clients that send the fingerprint before, or together with, a server that requires it. A server that requires it refuses every client that does not send it.
+Rollout order: ship clients that send the storage hash before, or together with, a server that requires it. A server that requires it refuses every client that does not send it.
 
 This amendment does not:
 
-- repair clients that consumed rows before they sent a fingerprint. A cursor rebootstrap would replay the whole log over a client that may hold unsent edits, and a consumed row cannot be told apart from an applied one;
+- repair clients that consumed rows before they sent a storage hash. A cursor rebootstrap would replay the whole log over a client that may hold unsent edits, and a consumed row cannot be told apart from an applied one;
 - rewrite queued outbox payloads when a migration renames or retypes a field. Otherwise a payload in the old shape passes the gate after the upgrade, fails validation, and ADR 022 replaces the unsent edit with the server row. That is the job of record transforms (ADR 016), tracked separately.
 
 ### Why arktype
@@ -76,7 +76,7 @@ The framework already uses arktype for codec schemas. Runtime derivation avoids 
 
 ## Consequences
 
-- Extra fields and enum values unknown to an older client are rejected. A rejected pull row is reported and consumed, so the contract fingerprint handshake keeps an older client from pulling or pushing at all. It waits, with its edits queued, until it updates.
+- Extra fields and enum values unknown to an older client are rejected. A rejected pull row is reported and consumed, so the contract check handshake keeps an older client from pulling or pushing at all. It waits, with its edits queued, until it updates.
 - Public push consumers must handle `validation-failure` before executing ownership checks. SQL adapter consumers receive the two codes as non-retryable event errors.
 - Native values are validated after decoding. Raw ISO strings, bigint strings and base64 strings are not valid native records.
 - Record validation checks shape, not relational integrity or permission. Ownership checks and database constraints remain necessary after validation.

@@ -90,8 +90,8 @@ describe("migrated outbox push", () => {
     const adapter = createSqlSyncAdapter({
       contract: testContract,
       syncServer: testSyncServer,
-      // This fixture tests migrated outbox delivery, not contract fingerprint negotiation.
-      contractFingerprintCheck: "off",
+      // This fixture tests migrated outbox delivery, not contract check negotiation.
+      contractCheck: "off",
     });
     const client = await createAutoMigratingSyncIdbClient({
       ...options,

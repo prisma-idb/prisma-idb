@@ -7,7 +7,7 @@ import { seed, testContract, testDb, testSyncServer } from "./helpers";
 const adapter = createSqlSyncAdapter({
   contract: testContract,
   syncServer: testSyncServer,
-  contractFingerprintCheck: "off",
+  contractCheck: "off",
 });
 
 const createBoard = (eventId: string, boardId: string, ownerId: string) => ({
