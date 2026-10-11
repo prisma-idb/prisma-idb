@@ -150,13 +150,15 @@ transformRecordsOp("posts", { fields: { commentCountCache: setLiteral(0) } });
 
 1. In `src/contract.ts`, change `synced: "Boolean"` to `synced: "Int"`.
 2. Run `pnpm --filter @prisma-idb/sync-extension-idb contract:emit`.
-3. Run `prisma-idb migration plan --space idb-sync --name synced_to_int`. This writes a migration with an empty `ops.json`, since nothing structural changed. The step still matters: it moves the contract hash forward and creates `migration.ts` and `migration.json` with the right `from` and `to`.
-4. Edit the new `migration.ts` and add the `transformRecordsOp(...)` call to `operations`.
+3. Run `prisma-idb migration plan --space idb-sync --name synced_to_int`. If the storage hash changed, this creates the migration scaffold. If the storage hash is unchanged, the planner reports nothing to do. Create a migration directory and `migration.ts` by hand in that case, with `from` and `to` both set to the current storage hash.
+4. Add the `transformRecordsOp(...)` call to the migration's `operations`.
 5. Run `node migrations/<dir>/migration.ts`. This regenerates `ops.json` and `migration.json` from the edited file, with a new hash.
-6. Add the new migration to the `migrations` array in `src/exports/control.ts`. This is already a manual step for every migration in this package, and `migration plan` prints a reminder.
+6. Add the new migration to the `migrations` array in `src/exports/control.ts`. This is a manual step for every migration in this package. Keep migrations in execution order.
 7. Run `prisma-idb migration preflight` to check that the whole chain, including the new operation, applies cleanly.
 
 Because step 5 always regenerates `ops.json` from `migration.ts`, the two files can't drift apart ([ADR 008](ADR%20008%20-%20Two%20Migration%20Paths.md)).
+
+The browser runner tracks same-hash packages that contain `transformRecords` separately from physical storage identity. It records their `migrationHash` values in the space marker's `meta.appliedDataMigrations` array. It applies pending packages in bundle order before moving to the next storage hash, including when the current hash is already the head. Records and progress commit in one upgrade transaction. An aborted upgrade retries the transforms. Fresh installs record them even when the store is empty, so later rows are not rewritten on reopen. Markers without the progress field start with no applied data migrations. Same-hash packages without `transformRecords` still skip when the marker is at the head.
 
 ### How it runs: a cursor walk inside `upgradeneeded`, without `await`
 

@@ -57,8 +57,8 @@ export interface AutoMigrateClientOptions<TContract extends IdbContract> {
  *
  * 1. Open the database at the current local version, read the marker from
  *    `_prisma_next_marker`. (Null for a fresh database)
- * 2. If the marker hash equals `contractSpace.headRef.hash`, the database
- *    is already at the target — return the client immediately.
+ * 2. If the marker hash equals `contractSpace.headRef.hash` and all same-hash
+ *    data migrations are recorded in marker metadata, return immediately.
  * 3. Otherwise, walk `contractSpace.migrations` from the marker hash (or
  *    `null` for fresh) to `headRef.hash`, collecting each pending
  *    package's `ops` in chain order.
@@ -144,27 +144,36 @@ export async function autoMigrate(input: {
 
   // Collect pending work per space without applying yet, so a broken chain in
   // any space fails before the database is touched.
-  const pendingPerSpace: Array<{ spaceId: string; ops: IdbDdlOp[]; storageHash: string }> = [];
+  const pendingPerSpace: Array<{
+    spaceId: string;
+    ops: IdbDdlOp[];
+    storageHash: string;
+    meta: Record<string, unknown>;
+  }> = [];
 
   for (const space of spaces) {
     const targetHash = space.contractSpace.headRef.hash;
-    const { markerHash } = await openAndReadMarker(dbName, factory, space.spaceId);
-    if (markerHash === targetHash) continue;
-
-    const pendingOps = await walkChain({
+    const { markerHash, meta } = await openAndReadMarker(dbName, factory, space.spaceId);
+    const recorded = meta["appliedDataMigrations"];
+    const appliedDataMigrations = Array.isArray(recorded)
+      ? recorded.filter((hash): hash is string => typeof hash === "string")
+      : [];
+    const pending = await walkChain({
       markerHash,
       headHash: targetHash,
       migrations: space.contractSpace.migrations,
+      appliedDataMigrations,
     });
-    // Push whenever the marker is behind `targetHash` — even if every package
-    // walked had zero ops (a hash-only "bridge" migration, e.g. re-emitting
-    // the contract under a new hashing algorithm with no structural change).
-    // Gating on `pendingOps.length > 0` here would skip the marker write
-    // below for that space, and since nothing ever changes on a later
-    // retry either, the marker gets stuck at the old hash forever — the
-    // space never converges to `targetHash`, even though there was never
-    // any actual work to do.
-    pendingPerSpace.push({ spaceId: space.spaceId, ops: pendingOps, storageHash: targetHash });
+    if (markerHash === targetHash && pending.ops.length === 0) continue;
+    // A hash-only bridge still needs a marker write even when it has no ops;
+    // otherwise the space stays at the old hash on every retry.
+    pendingPerSpace.push({
+      spaceId: space.spaceId,
+      ops: pending.ops,
+      storageHash: targetHash,
+      // Progress commits with the transforms, so an aborted upgrade retries them.
+      meta: { ...meta, appliedDataMigrations: pending.appliedDataMigrations },
+    });
   }
 
   if (pendingPerSpace.length === 0) return;
@@ -190,7 +199,11 @@ export async function autoMigrate(input: {
     dbName,
     targetVersion: initialVersion + 1,
     ops: orderedPending.flatMap((space) => space.ops),
-    markers: orderedPending.map((space) => ({ space: space.spaceId, storageHash: space.storageHash })),
+    markers: orderedPending.map((space) => ({
+      space: space.spaceId,
+      storageHash: space.storageHash,
+      meta: space.meta,
+    })),
     onTransformRecords: createTransformRecordsCallback(input.contractSpace.contractJson, input.extensions ?? []),
   });
 }
@@ -290,17 +303,56 @@ async function walkChain(input: {
   readonly markerHash: string | null;
   readonly headHash: string;
   readonly migrations: readonly MigrationPackage[];
-}): Promise<IdbDdlOp[]> {
+  readonly appliedDataMigrations: readonly string[];
+}): Promise<{ ops: IdbDdlOp[]; appliedDataMigrations: string[] }> {
   const byFrom = new Map<string | null, MigrationPackage>();
+  const dataByFrom = new Map<string | null, MigrationPackage[]>();
   for (const pkg of input.migrations) {
-    byFrom.set(pkg.metadata.from, pkg);
+    if (
+      pkg.metadata.from === pkg.metadata.to &&
+      pkg.ops.some((op) => isIdbDdlOp(op) && op.kind === "transformRecords")
+    ) {
+      const packages = dataByFrom.get(pkg.metadata.from) ?? [];
+      packages.push(pkg);
+      dataByFrom.set(pkg.metadata.from, packages);
+    } else {
+      byFrom.set(pkg.metadata.from, pkg);
+    }
   }
 
   const pendingOps: IdbDdlOp[] = [];
+  const applied = new Set(input.appliedDataMigrations);
   let cursor: string | null = input.markerHash;
   const visited = new Set<string | null>();
 
-  while (cursor !== input.headHash) {
+  async function appendOps(pkg: MigrationPackage): Promise<void> {
+    const computedHash = await computeMigrationHash(pkg.metadata, pkg.ops);
+    if (computedHash !== pkg.metadata.migrationHash) {
+      throw new Error(
+        `Migration package "${pkg.dirName}" failed integrity check: ` +
+          `stored migrationHash ${pkg.metadata.migrationHash} does not match ` +
+          `computed hash ${computedHash}. ` +
+          "The ops may have been edited after the package was generated. " +
+          "Re-run `prisma-idb migration plan` to regenerate the package."
+      );
+    }
+    for (const op of pkg.ops) {
+      if (!isIdbDdlOp(op)) {
+        throw new Error(`Non-IDB operation found in migration package ${pkg.dirName}: ${JSON.stringify(op)}`);
+      }
+      pendingOps.push(op);
+    }
+  }
+
+  while (true) {
+    // Data-only packages do not advance the storage cursor. Apply them in bundle
+    // order before leaving this schema, including when it is already the head.
+    for (const pkg of dataByFrom.get(cursor) ?? []) {
+      if (applied.has(pkg.metadata.migrationHash)) continue;
+      await appendOps(pkg);
+      applied.add(pkg.metadata.migrationHash);
+    }
+    if (cursor === input.headHash) break;
     if (visited.has(cursor)) {
       throw new Error(
         `Auto-migration chain contains a cycle at hash ${JSON.stringify(cursor)}. ` +
@@ -316,26 +368,11 @@ async function walkChain(input: {
           "`prisma-idb migration contract-space`."
       );
     }
-    const computedHash = await computeMigrationHash(next.metadata, next.ops);
-    if (computedHash !== next.metadata.migrationHash) {
-      throw new Error(
-        `Migration package "${next.dirName}" failed integrity check: ` +
-          `stored migrationHash ${next.metadata.migrationHash} does not match ` +
-          `computed hash ${computedHash}. ` +
-          "The ops may have been edited after the package was generated. " +
-          "Re-run `prisma-idb migration plan` to regenerate the package."
-      );
-    }
-    for (const op of next.ops) {
-      if (!isIdbDdlOp(op)) {
-        throw new Error(`Non-IDB operation found in migration package ${next.dirName}: ${JSON.stringify(op)}`);
-      }
-      pendingOps.push(op);
-    }
+    await appendOps(next);
     cursor = next.metadata.to;
   }
 
-  return pendingOps;
+  return { ops: pendingOps, appliedDataMigrations: [...applied] };
 }
 
 /**
@@ -347,7 +384,7 @@ function openAndReadMarker(
   dbName: string,
   factory: IDBFactory,
   spaceId: string
-): Promise<{ currentVersion: number; markerHash: string | null }> {
+): Promise<{ currentVersion: number; markerHash: string | null; meta: Record<string, unknown> }> {
   return new Promise((resolve, reject) => {
     let req: IDBOpenDBRequest;
     try {
@@ -363,7 +400,7 @@ function openAndReadMarker(
       void (async () => {
         try {
           const record = await readMarker(db, spaceId);
-          resolve({ currentVersion, markerHash: record?.storageHash ?? null });
+          resolve({ currentVersion, markerHash: record?.storageHash ?? null, meta: record?.meta ?? {} });
         } catch (err) {
           reject(err);
         } finally {
