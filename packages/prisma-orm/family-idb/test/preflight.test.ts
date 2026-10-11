@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { computeMigrationHash } from "@prisma/orm-toolchain/migration-tools/hash";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { transformRecordsOp, coerce } from "@prisma-idb/target-idb/migration";
+import { transformRecordsOp, coerce, defaultIfMissing, pipe, placeholder } from "@prisma-idb/target-idb/migration";
 import { runPreflight } from "../src/core/preflight";
 import { createRawIdbContract } from "./_raw-contract";
 import { defineContract } from "../src/core/contract-builder";
@@ -119,6 +119,37 @@ const indexOnMissingStore = {
 };
 
 describe("runPreflight", () => {
+  it("names all serialized unfilled slots even when the store is empty", async () => {
+    await writePackage({
+      dirName: "001_init",
+      from: null,
+      to: "head",
+      ops: [
+        createUsers,
+        transformRecordsOp("users", {
+          fields: {
+            role: placeholder("User.role"),
+            enabled: pipe(defaultIfMissing(false), placeholder("User.enabled")),
+          },
+        }),
+      ],
+    });
+    const errors: string[] = [];
+    expect(await runPreflight({ migrationsDir: join(cwd, "migrations"), err: (line) => errors.push(line) })).toBe(1);
+    expect(errors.join("")).toMatch(/PN-MIG-2001[\s\S]*User.role[\s\S]*User.enabled/);
+  });
+
+  it("accepts a filled backfill slot", async () => {
+    const head = await writeSnapshot({ users: { keyPath: "id" } });
+    await writePackage({
+      dirName: "001_init",
+      from: null,
+      to: head,
+      ops: [createMarker, createUsers, transformRecordsOp("users", { fields: { role: defaultIfMissing("member") } })],
+    });
+    expect(await runPreflight({ migrationsDir: join(cwd, "migrations") })).toBe(0);
+  });
+
   it("accepts a hand-authored transform followed by structural operations", async () => {
     const head = await writeSnapshot({ users: { keyPath: "id" }, posts: { keyPath: "id" } });
     await writePackage({

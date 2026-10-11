@@ -54,6 +54,7 @@ export type IdbJsonLiteral = string | number | boolean | null;
 
 /** Declarative steps applied to one field's value. */
 export type IdbValueTransform =
+  | { readonly kind: "placeholder"; readonly slot: string }
   | { readonly kind: "coerce"; readonly to: "int" | "string" | "boolean" | "isoDateString" }
   | { readonly kind: "defaultIfMissing"; readonly value: IdbJsonLiteral }
   | { readonly kind: "setLiteral"; readonly value: IdbJsonLiteral }
@@ -182,7 +183,7 @@ export function deletedDataWarning(ops: readonly unknown[]): string | undefined 
   );
 }
 
-/** Create a record rewrite. The planner emits defaults and removals; other rewrites are authored by hand. */
+/** Create a record rewrite. The planner emits defaults, removals, and unfilled slots; other rewrites are authored by hand. */
 export function transformRecordsOp(
   storeName: string,
   options: Pick<TransformRecordsOp, "fields" | "renameFields" | "removeFields">
@@ -215,4 +216,29 @@ export function setLiteral(value: IdbJsonLiteral): IdbValueTransform {
 /** Apply field transforms in the supplied order. */
 export function pipe(...steps: readonly IdbValueTransform[]): IdbValueTransform {
   return { kind: "pipe", steps };
+}
+
+/** Mark a scaffolded field transform that the migration author must fill before emitting. */
+export function placeholder(slot: string): IdbValueTransform {
+  return { kind: "placeholder", slot };
+}
+
+/** Reject all unfilled slots, including those nested in pipes, before emitting or applying ops. */
+export function assertNoMigrationPlaceholders(ops: readonly IdbDdlOp[]): void {
+  const slots = new Set<string>();
+  function collect(transform: IdbValueTransform): void {
+    if (transform.kind === "placeholder") slots.add(transform.slot);
+    if (transform.kind === "pipe") transform.steps.forEach(collect);
+  }
+  for (const op of ops) {
+    if (op.kind === "transformRecords") Object.values(op.fields ?? {}).forEach(collect);
+  }
+  if (slots.size > 0) {
+    throw new Error(
+      "PN-MIG-2001 Unfilled migration placeholder\n" +
+        "The migration contains placeholders that have not been filled in:\n" +
+        [...slots].map((slot) => `  - ${slot}\n`).join("") +
+        "Fix: Open migration.ts and replace each placeholder(...) call with an actual field transform, then run migration emit."
+    );
+  }
 }

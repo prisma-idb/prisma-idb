@@ -15,12 +15,22 @@
  */
 
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { IDBFactory } from "fake-indexeddb";
+import { openAndUpgrade } from "../src/core/apply-ddl-op";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { IdbMigration } from "../src/core/idb-migration";
-import { createObjectStoreOp, dropObjectStoreOp, type IdbDdlOp } from "../src/core/migration-factories";
+import {
+  defaultIfMissing,
+  pipe,
+  placeholder,
+  transformRecordsOp,
+  createObjectStoreOp,
+  dropObjectStoreOp,
+  type IdbDdlOp,
+} from "../src/core/migration-factories";
 
 vi.mock("@prisma/orm-toolchain/migration-tools/migration", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@prisma/orm-toolchain/migration-tools/migration")>();
@@ -82,6 +92,90 @@ afterEach(() => {
 });
 
 describe("MigrationCLI", () => {
+  it.each([{ args: [] }, { args: ["--dry-run"] }])(
+    "rejects all unfilled slots without overwriting artifacts: %j",
+    async ({ args }) => {
+      class UnfilledMigration extends BaselineMigration {
+        override get operations() {
+          return [
+            transformRecordsOp("users", {
+              fields: {
+                role: placeholder("User.role"),
+                enabled: pipe(defaultIfMissing(false), placeholder("User.enabled")),
+              },
+            }),
+          ];
+        }
+      }
+      writeFileSync(join(tmpDir, "ops.json"), "previous ops");
+      writeFileSync(join(tmpDir, "migration.json"), "previous metadata");
+      process.argv = ["node", "migration.ts", ...args];
+      await expect(MigrationCLI.run(migrationFileUrl, UnfilledMigration)).rejects.toThrow(
+        /PN-MIG-2001[\s\S]*User.role[\s\S]*User.enabled[\s\S]*replace each placeholder/
+      );
+      expect(readFileSync(join(tmpDir, "ops.json"), "utf-8")).toBe("previous ops");
+      expect(readFileSync(join(tmpDir, "migration.json"), "utf-8")).toBe("previous metadata");
+    }
+  );
+
+  it("checks resolved promised operations before writing artifacts", async () => {
+    class PromisedMigration extends IdbMigration {
+      override describe() {
+        return { from: null, to: "sha256:test-to-hash" };
+      }
+      override get operations() {
+        return [Promise.resolve(transformRecordsOp("users", { fields: { role: placeholder("User.role") } }))];
+      }
+    }
+    process.argv = ["node", "migration.ts"];
+    await expect(MigrationCLI.run(migrationFileUrl, PromisedMigration)).rejects.toThrow(/PN-MIG-2001[\s\S]*User.role/);
+    expect(existsSync(join(tmpDir, "ops.json"))).toBe(false);
+    expect(existsSync(join(tmpDir, "migration.json"))).toBe(false);
+  });
+
+  it("emits a filled slot and applies its transform on database open", async () => {
+    class FilledMigration extends BaselineMigration {
+      override get operations() {
+        return [transformRecordsOp("users", { fields: { role: defaultIfMissing("member") } })];
+      }
+    }
+    process.argv = ["node", "migration.ts"];
+    expect(await MigrationCLI.run(migrationFileUrl, FilledMigration)).toBe(0);
+    const ops = JSON.parse(readFileSync(join(tmpDir, "ops.json"), "utf-8")) as IdbDdlOp[];
+    const factory = new IDBFactory();
+    await openAndUpgrade({
+      factory,
+      dbName: "filled",
+      targetVersion: 1,
+      ops: [createObjectStoreOp("users", { keyPath: "id" })],
+    });
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = factory.open("filled");
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction("users", "readwrite");
+      tx.objectStore("users").put({ id: "u1" });
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+    db.close();
+    await openAndUpgrade({ factory, dbName: "filled", targetVersion: 2, ops });
+    const upgraded = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = factory.open("filled");
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    const row = await new Promise<unknown>((resolve, reject) => {
+      const request = upgraded.transaction("users").objectStore("users").get("u1");
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    upgraded.close();
+    expect(row).toEqual({ id: "u1", role: "member" });
+  });
+
   it("returns 0 without side effects when isDirectEntrypoint returns false", async () => {
     vi.mocked(isDirectEntrypoint).mockReturnValueOnce(false);
     process.argv = ["node", "/some/other/file.ts"];

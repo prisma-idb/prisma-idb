@@ -10,6 +10,7 @@ import {
   transformRecordsOp,
   coerce,
   pipe,
+  placeholder,
   defaultIfMissing,
   setLiteral,
   type IdbDdlOp,
@@ -67,6 +68,15 @@ const upgrade = (factory: IDBFactory, ops: readonly IdbDdlOp[]) =>
   });
 
 describe("transformRecords upgrades", () => {
+  it("rejects unfilled slots before opening an empty database or advancing its version", async () => {
+    const factory = new IDBFactory();
+    const openSpy = vi.spyOn(factory, "open");
+    await expect(
+      upgrade(factory, [transformRecordsOp("users", { fields: { role: placeholder("User.role") } })])
+    ).rejects.toThrow(/PN-MIG-2001[\s\S]*User.role/);
+    expect(openSpy).not.toHaveBeenCalled();
+  });
+
   it("renames, retypes, backfills and removes records before writing the marker", async () => {
     const factory = await seed();
     await upgrade(factory, [

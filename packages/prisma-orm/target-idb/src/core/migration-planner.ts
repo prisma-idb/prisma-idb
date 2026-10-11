@@ -10,6 +10,7 @@ import type {
 import type { IdbIndexDefinition, IdbRecordField, IdbRecordFieldType, IdbStoreDefinition } from "./idb-contract-types";
 import {
   defaultIfMissing,
+  placeholder,
   transformRecordsOp,
   createMarkerStoreOp,
   IDB_MARKER_STORE,
@@ -118,7 +119,7 @@ function collectFactoryImports(ops: readonly IdbDdlOp[]): string[] {
     switch (op.kind) {
       case "transformRecords":
         names.add("transformRecordsOp");
-        if (Object.keys(op.fields ?? {}).length > 0) names.add("defaultIfMissing");
+        for (const transform of Object.values(op.fields ?? {})) names.add(transform.kind);
         break;
       case "createObjectStore":
         names.add(
@@ -173,6 +174,8 @@ function renderOpCall(op: IdbDdlOp): string {
       const parts: string[] = [];
       if (op.fields !== undefined) {
         const fields = Object.entries(op.fields).map(([name, transform]) => {
+          if (transform.kind === "placeholder")
+            return `[${JSON.stringify(name)}]: placeholder(${JSON.stringify(transform.slot)})`;
           if (transform.kind !== "defaultIfMissing") {
             throw new Error("IDB: custom transforms must be authored by hand in migration.ts");
           }
@@ -307,7 +310,7 @@ function diffRecordShapes(from: IdbSchemaDiffInput | null, to: IdbSchemaDiffInpu
       const oldField = Object.hasOwn(oldRecord.fields, name) ? oldRecord.fields[name] : undefined;
       if (oldField !== undefined) {
         if (!fieldAcceptsExistingValues(oldField, field)) {
-          throw new Error(`IDB: field "${storeName}.${name}" needs an authored record transform for its shape change.`);
+          fields[name] = placeholder(`${newRecord.model}.${name}`);
         }
         continue;
       }
@@ -325,15 +328,13 @@ function diffRecordShapes(from: IdbSchemaDiffInput | null, to: IdbSchemaDiffInpu
         field.dict ||
         field.type.kind !== "scalar"
       ) {
-        throw new Error(
-          `IDB: added required field "${storeName}.${name}" needs a literal default or an authored record transform.`
-        );
+        fields[name] = placeholder(`${newRecord.model}.${name}`);
+        continue;
       }
       const stored = storedLiteralDefault(field, value);
       if (stored === undefined) {
-        throw new Error(
-          `IDB: added required field "${storeName}.${name}" has a literal default incompatible with codec "${field.type.codecId}"; needs an authored record transform.`
-        );
+        fields[name] = placeholder(`${newRecord.model}.${name}`);
+        continue;
       }
       fields[name] = defaultIfMissing(stored);
     }

@@ -45,6 +45,17 @@ function profile(fields: Record<string, IdbRecordField>): IdbRecordField {
   return { type: { kind: "valueObject", name: "Profile", fields }, nullable: false };
 }
 
+function expectSlot(result: ReturnType<typeof plan>, field: string) {
+  expect(result.operations).toEqual([
+    expect.objectContaining({
+      kind: "transformRecords",
+      operationClass: "data",
+      fields: { [field]: { kind: "placeholder", slot: `User.${field}` } },
+    }),
+  ]);
+  expect(result.renderTypeScript(keepInternalSpecifiers)).toContain(`placeholder("User.${field}")`);
+}
+
 describe("record shape migration planning", () => {
   it.each(["member", 0, false, 'quoted"\\\nvalue'])("backfills a required literal default: %j", (value) => {
     const codecId =
@@ -91,18 +102,16 @@ describe("record shape migration planning", () => {
     ["idb/bigint@1", 1],
     ["idb/bytes@1", "aGVsbG8="],
     ["unknown/custom@1", "value"],
-  ])("rejects an incompatible literal for %s: %j", (codecId, value) => {
+  ])("scaffolds an incompatible literal for %s: %j", (codecId, value) => {
     const to = contract(
       { role: { type: { kind: "scalar", codecId: codecId as string }, nullable: false } },
       { role: value }
     );
-    expect(() => plan(contract({}), to)).toThrow(/users\.role.*incompatible with codec.*authored record transform/);
+    expectSlot(plan(contract({}), to), "role");
   });
 
-  it("rejects literal defaults outside the enum's stored values", () => {
-    expect(() => plan(contract({}), contract({ role: enumField(["USER"]) }, { role: "ADMIN" }))).toThrow(
-      /users\.role.*authored record transform/
-    );
+  it("scaffolds literal defaults outside the enum's stored values", () => {
+    expectSlot(plan(contract({}), contract({ role: enumField(["USER"]) }, { role: "ADMIN" })), "role");
   });
 
   it("removes fields and reports each data-loss entry without reporting dropped indexes", () => {
@@ -197,10 +206,8 @@ describe("record shape migration planning", () => {
       profile({ details: profile({ nickname: string }) }),
     ],
     ["type kind change", profile({}), string],
-  ])("names the unhandled field for nested %s", (_name, from, to) => {
-    expect(() => plan(contract({ profile: from }), contract({ profile: to }))).toThrow(
-      /users\.profile.*authored record transform/
-    );
+  ])("scaffolds a slot for nested %s", (_name, from, to) => {
+    expectSlot(plan(contract({ profile: from }), contract({ profile: to })), "profile");
   });
 
   it.each([
@@ -218,17 +225,37 @@ describe("record shape migration planning", () => {
     ],
     ["removed enum value", contract({ role: enumField(["USER", "ADMIN"]) }), contract({ role: enumField(["USER"]) })],
     ["list shape change", contract({ role: string }), contract({ role: { ...string, many: true } })],
-  ])("names the unhandled field for %s", (_name, from, to) => {
-    expect(() => plan(from, to)).toThrow(/users\.role.*authored record transform/);
+  ])("scaffolds a slot for %s", (_name, from, to) => {
+    expectSlot(plan(from, to), "role");
   });
 
-  it("does not treat generated defaults as literal backfills", () => {
+  it.each(["cuid", "now", "uuidv4"])("scaffolds generated %s defaults instead of literal backfills", (id) => {
     const to = contract({ role: string });
     to.execution.mutations.defaults.push({
       ref: { namespace: "default", table: "users", column: "role" },
-      onCreate: { kind: "generator", id: "uuidv4", params: { value: "not a literal" } },
+      onCreate: { kind: "generator", id, params: { value: "not a literal" } },
     });
-    expect(() => plan(contract({}), to)).toThrow(/users\.role/);
+    expectSlot(plan(contract({}), to), "role");
+  });
+
+  it("renders every slot alongside inferred backfills and removals", () => {
+    const result = plan(
+      contract({ old: string }),
+      contract(
+        {
+          role: string,
+          'quoted"field': string,
+          enabled: { type: { kind: "scalar", codecId: "idb/bool@1" }, nullable: false },
+        },
+        { enabled: false }
+      )
+    );
+    const source = result.renderTypeScript(keepInternalSpecifiers);
+    expect(source).toContain('placeholder("User.role")');
+    expect(source).toContain(`placeholder(${JSON.stringify('User.quoted"field')})`);
+    expect(source).toContain("defaultIfMissing(false)");
+    expect(source).toContain('removeFields: ["old"]');
+    expect(source).toContain("defaultIfMissing, placeholder, transformRecordsOp");
   });
 
   it("preserves existing values and is idempotent", () => {
