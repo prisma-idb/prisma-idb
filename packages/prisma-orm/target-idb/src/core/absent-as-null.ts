@@ -31,7 +31,8 @@ export function absentAsNull(contract: ContractWithDomain, modelName: string): A
   const normalize: AbsentAsNull = (record) => {
     let filled: Record<string, unknown> | undefined;
     for (const name of nullableFields) {
-      if (record[name] === undefined) (filled ??= { ...record })[name] = null;
+      // `hasOwn` keeps a field named like an `Object.prototype` member, such as `toString`, from reading as stored.
+      if (!Object.hasOwn(record, name) || record[name] === undefined) (filled ??= { ...record })[name] = null;
     }
     return filled ?? record;
   };

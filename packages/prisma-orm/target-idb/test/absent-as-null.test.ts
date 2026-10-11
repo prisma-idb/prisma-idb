@@ -59,6 +59,25 @@ describe("absentAsNull", () => {
     expect(validateRecord(contract, "Item", normalize({ id: "a", name: "A" }))).toEqual({ ok: true });
   });
 
+  it("fills a nullable field named like an Object.prototype member", () => {
+    const protoContract: ContractWithDomain = {
+      domain: {
+        namespaces: {
+          default: {
+            models: {
+              Item: {
+                fields: { id: field(false), toString: field(true) },
+                relations: {},
+                storage: { keyPath: "id" },
+              },
+            },
+          },
+        },
+      },
+    };
+    expect(absentAsNull(protoContract, "Item")({ id: "a" })).toEqual({ id: "a", toString: null });
+  });
+
   it("builds one normalizer per model", () => {
     expect(absentAsNull(contract, "Item")).toBe(normalize);
   });

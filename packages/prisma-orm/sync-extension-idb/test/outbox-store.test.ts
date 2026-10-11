@@ -5,6 +5,7 @@ import {
   markFailed,
   markSynced,
   pruneSyncedEvents,
+  readForPush,
 } from "../src/core/outbox-store";
 import type { OutboxEvent, VersionMetaRecord } from "../src/types";
 import { createTestSyncClient, keyGet, scanAll } from "./helpers";
@@ -539,5 +540,19 @@ describe("pruneSyncedEvents", () => {
     } finally {
       spy.mockRestore();
     }
+  });
+});
+
+describe("readForPush", () => {
+  it.each([null, "not a record", ["array"]])("sends a create with payload %j unchanged", async (payload) => {
+    const { contract } = await createTestSyncClient();
+    const event = outboxEvent({ id: "e1", payload: payload as never });
+    expect(readForPush(contract, event)).toBe(event);
+  });
+
+  it("sends a create for a model the contract no longer has unchanged", async () => {
+    const { contract } = await createTestSyncClient();
+    const event = outboxEvent({ id: "e1", entityType: "Dropped", payload: { id: "x" } });
+    expect(readForPush(contract, event)).toBe(event);
   });
 });

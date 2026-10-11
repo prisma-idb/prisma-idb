@@ -93,14 +93,20 @@ export async function getNextBatch<TContract extends IdbContract>(
  * Only a create carries a whole record. An update carries the fields it sets, and a delete only its key.
  */
 export function readForPush(contract: IdbContract, event: OutboxEvent): OutboxEvent {
-  // A model dropped since the event was queued has no fields to fill. The server decides what to do with it.
+  // A model dropped since the event was queued has no fields to fill, and a payload that is not a record
+  // has none to fill. Both go to the server unchanged, and the server decides what to do with them.
   if (
     event.operation !== "create" ||
-    !Object.hasOwn(domainModelsAtDefaultNamespace(contract.domain), event.entityType)
+    !Object.hasOwn(domainModelsAtDefaultNamespace(contract.domain), event.entityType) ||
+    !isRecord(event.payload)
   ) {
     return event;
   }
-  return { ...event, payload: absentAsNull(contract, event.entityType)(event.payload as Record<string, unknown>) };
+  return { ...event, payload: absentAsNull(contract, event.entityType)(event.payload) };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 /** The oldest event the next push may still send, or `null` if the outbox has none. */
