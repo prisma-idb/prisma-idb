@@ -29,6 +29,7 @@ export function catalog(
     primaryKey: source("id", undefined, true),
     indexes,
     fields: { id: field(), a: field(), b: field(), c: field(), n: field("idb/int32@1"), ...fields },
+    absentAsNull: (row) => row,
   };
 }
 

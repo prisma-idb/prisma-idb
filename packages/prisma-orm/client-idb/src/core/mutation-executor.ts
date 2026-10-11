@@ -40,6 +40,7 @@ import {
   createMutationDefaultsCache,
   type MutationDefaultsCache,
 } from "./mutation-defaults";
+import { absentAsNull } from "@prisma-idb/target-idb/runtime";
 import { buildCatalog } from "./planner/catalog";
 import { lowerExists, lowerRows, lowerWrite, type WriteRequest } from "./planner/lower";
 import { planQuery } from "./planner/plan";
@@ -321,7 +322,7 @@ async function updateFirstGraph(
     await applyReferentialActionsForRowOnUpdate(scope, contract, modelName, existingRow, patch);
     const rows = await scope.execute({ meta, kind: "update", storeName, key, patch });
     const updated = rows[0];
-    if (updated) parentRow = updated;
+    if (updated) parentRow = absentAsNull(contract, modelName)(updated);
   }
 
   for (const item of childOwned) {
@@ -1306,7 +1307,7 @@ async function executeScalarUpdates(options: ScalarUpdateOptions, take?: 1): Pro
   assertValidRecord(contract, modelName, "update", patch);
   const { storeNames, enforcesOnUpdate } = collectUpdateStoreNames(contract, modelName, patch);
   const needsRowForFks = fkCheckNeedsExistingRow(contract, modelName, patch);
-  return withMutationScope(executor, storeNames, async (scope) => {
+  const updatedRows = await withMutationScope(executor, storeNames, async (scope) => {
     if (!needsRowForFks) await validateScalarFks(scope, contract, modelName, patch);
     const meta = makePlanMeta(contract);
     const where = filters.length === 0 ? undefined : andExpr(filters);
@@ -1334,6 +1335,8 @@ async function executeScalarUpdates(options: ScalarUpdateOptions, take?: 1): Pro
     }
     return results;
   });
+  // The rows come straight from the store, so a field added after they were written is absent.
+  return updatedRows.map(absentAsNull(contract, modelName));
 }
 
 // ── Delete referential action enforcement ─────────────────────────────────────

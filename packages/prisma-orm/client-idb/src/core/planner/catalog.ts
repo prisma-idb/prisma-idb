@@ -1,5 +1,6 @@
 import { domainModelsAtDefaultNamespace } from "@prisma/orm-framework/contract/types";
 import type { IdbKeyPath } from "@prisma-idb/target-idb/pack";
+import { absentAsNull, type AbsentAsNull } from "@prisma-idb/target-idb/runtime";
 import type { IdbContract } from "../types";
 
 /** Storage metadata needed to decide whether an index contains every matching row. */
@@ -24,6 +25,8 @@ export interface QueryCatalog {
   readonly primaryKey: CatalogSource;
   readonly indexes: readonly CatalogSource[];
   readonly fields: Readonly<Record<string, CatalogField>>;
+  /** Reads a stored row as the contract describes it: an absent nullable field is `null`. */
+  readonly absentAsNull: AbsentAsNull;
 }
 
 const catalogs = new WeakMap<IdbContract, Map<string, QueryCatalog>>();
@@ -35,8 +38,11 @@ export function buildCatalog(contract: IdbContract, storeName: string): QueryCat
   const store = contract.storage.stores[storeName];
   if (!store) throw new Error(`Store "${storeName}" is not in the contract`);
   const fields: Record<string, CatalogField> = {};
-  for (const model of Object.values(domainModelsAtDefaultNamespace(contract.domain))) {
+  // A store with no app model, such as an extension's own store, has nothing to fill.
+  let normalize: AbsentAsNull = (row) => row;
+  for (const [name, model] of Object.entries(domainModelsAtDefaultNamespace(contract.domain))) {
     if ((model.storage as { storeName?: string }).storeName !== storeName) continue;
+    normalize = absentAsNull(contract, name);
     for (const [name, field] of Object.entries(model.fields)) {
       fields[name] = Object.freeze({
         codecId: field.type.kind === "scalar" ? field.type.codecId : undefined,
@@ -54,6 +60,7 @@ export function buildCatalog(contract: IdbContract, storeName: string): QueryCat
       )
     ),
     fields: Object.freeze(fields),
+    absentAsNull: normalize,
   });
   let byStore = catalogs.get(contract);
   if (!byStore) {

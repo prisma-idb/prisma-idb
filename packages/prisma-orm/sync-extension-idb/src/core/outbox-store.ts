@@ -6,9 +6,11 @@
  * through the ORM so as not to trigger the sync interceptor.
  */
 
+import { domainModelsAtDefaultNamespace } from "@prisma/orm-framework/contract/types";
 import type { IdbTransactionScope } from "@prisma-idb/driver-idb/runtime";
 import type { IdbClient } from "@prisma-idb/client-idb/client";
 import type { IdbContract } from "@prisma-idb/client-idb/orm";
+import { absentAsNull } from "@prisma-idb/target-idb/runtime";
 import type { OutboxEvent } from "../types";
 import { deleteRecord, getRecord, putRecord, scanStore } from "./raw-store";
 import { VERSION_META_STORE } from "./version-meta";
@@ -81,6 +83,24 @@ export async function getNextBatch<TContract extends IdbContract>(
   });
 
   return batch;
+}
+
+/**
+ * The event as the push should send it. The server validates a pushed record strictly: a nullable
+ * field is `null`, never missing. A create payload queued before a nullable field existed lacks
+ * that key, so it is read as `null` here. The stored event is not changed.
+ *
+ * Only a create carries a whole record. An update carries the fields it sets, and a delete only its key.
+ */
+export function readForPush(contract: IdbContract, event: OutboxEvent): OutboxEvent {
+  // A model dropped since the event was queued has no fields to fill. The server decides what to do with it.
+  if (
+    event.operation !== "create" ||
+    !Object.hasOwn(domainModelsAtDefaultNamespace(contract.domain), event.entityType)
+  ) {
+    return event;
+  }
+  return { ...event, payload: absentAsNull(contract, event.entityType)(event.payload as Record<string, unknown>) };
 }
 
 /** The oldest event the next push may still send, or `null` if the outbox has none. */

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { validateRecord } from "@prisma-idb/target-idb/runtime";
 import type { IdbContract } from "@prisma-idb/client-idb/orm";
 import { ContractMismatchError } from "../src/core/contract-mismatch-error";
 import { createSyncWorker } from "../src/core/sync-worker";
@@ -6,6 +7,11 @@ import type { ContractMismatchEvent, PullCompletedEvent, PushCompletedEvent } fr
 import type { SyncIdbClient } from "../src/exports/client";
 import type { LogWithRecord, OutboxEvent } from "../src/types";
 import { asAccessors, changelogId, createTestSyncClient, scanAll } from "./helpers";
+import { createSyncIdbClient } from "../src/exports/client";
+import { defineContract } from "@prisma-idb/family-idb/contract-ts";
+import idbFamilyPack from "@prisma-idb/family-idb/pack";
+import idbTargetPack from "@prisma-idb/target-idb/pack";
+import { OUTBOX_STORE, USERS_STORE, VERSION_META_STORE, openTestDb, testDbName } from "./helpers";
 
 // ── Stub client — for state-machine tests where push/pull correctness is
 // irrelevant and only the worker's own timing/status logic is under test.
@@ -452,6 +458,54 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
 
     const outbox = await scanAll(client, "_idb_sync_outbox");
     expect((outbox[0] as { synced: boolean }).synced).toBe(true);
+  });
+
+  it("pushes a create queued before a nullable field existed with that field as null", async () => {
+    // The contract has gained `nickname` since the event was queued.
+    const contract = defineContract({
+      family: idbFamilyPack,
+      target: idbTargetPack,
+      models: { User: { store: "users", key: "id", fields: { id: "String", name: "String", nickname: "String?" } } },
+    }) as unknown as IdbContract;
+    const name = testDbName();
+    (await openTestDb(name, [USERS_STORE, OUTBOX_STORE, VERSION_META_STORE])).close();
+    const client = createSyncIdbClient({ contract, dbName: name, trackedModels: "*" });
+    const queued: OutboxEvent = {
+      id: "queued-before-nickname",
+      entityType: "User",
+      operation: "create",
+      payload: { id: "u1", name: "Alice" },
+      createdAt: new Date(),
+      synced: false,
+      syncedAt: null,
+      lastAttemptedAt: null,
+      tries: 0,
+      lastError: null,
+      retryable: true,
+      versionMetaId: null,
+    };
+    await client.withTransaction(["_idb_sync_outbox"], async (scope) => {
+      await scope.execute({ kind: "add", storeName: "_idb_sync_outbox", record: queued } as never);
+    });
+    expect(validateRecord(contract, "User", queued.payload).ok).toBe(false);
+
+    const pushed: OutboxEvent[] = [];
+    const worker = trackedWorker({
+      syncClient: client,
+      pushHandler: async (events) => {
+        pushed.push(...events);
+        return events.map((e) => ({ id: e.id, success: true }));
+      },
+      pullHandler: async () => [],
+    });
+    await worker.forceSync();
+
+    expect(pushed.map((event) => event.payload)).toEqual([{ id: "u1", name: "Alice", nickname: null }]);
+    expect(validateRecord(contract, "User", pushed[0]!.payload)).toEqual({ ok: true });
+    // The stored event keeps the payload it was queued with.
+    const stored = (await scanAll(client, "_idb_sync_outbox")).find((event) => event["id"] === queued.id);
+    expect(stored?.["payload"]).toEqual({ id: "u1", name: "Alice" });
+    await client.close();
   });
 
   it("marks a failed push event non-fatally (retryable) and emits the failure count", async () => {

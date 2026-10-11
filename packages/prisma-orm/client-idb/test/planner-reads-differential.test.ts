@@ -93,6 +93,8 @@ type Row = Record<string, unknown>;
 type Order = Record<string, "asc" | "desc">;
 type Query = { where?: IdbFilterExpr; orderBy?: Order; skip?: number; take?: number };
 let dbCounter = 0;
+/** Reads a stored row the way the ORM does: an absent nullable field is `null`. Follows the contract under test. */
+let readStored = (row: Row): Row => row;
 
 async function withDatabase(
   run: (db: IDBDatabase, driver: IdbRuntimeDriverInstance) => Promise<void>,
@@ -138,7 +140,7 @@ function seed(db: IDBDatabase, rows: Row[]): Promise<void> {
 async function oracle(db: IDBDatabase, query: Query): Promise<Row[]> {
   const rows = await new Promise<Row[]>((resolve, reject) => {
     const request = db.transaction("items").objectStore("items").getAll();
-    request.onsuccess = () => resolve(request.result as Row[]);
+    request.onsuccess = () => resolve((request.result as Row[]).map(readStored));
     request.onerror = () => reject(request.error);
   });
   const filtered = rows.filter((row) => query.where === undefined || evaluateFilter(query.where, row));
@@ -158,6 +160,7 @@ function accessor(
   driver: IdbRuntimeDriverInstance,
   testContract: IdbContract = contract
 ): IdbStoreAccessor<never, never> {
+  readStored = buildCatalog(testContract, "items").absentAsNull;
   const orm = idbOrm({ contract: testContract, executor: new TestExecutor(driver) });
   return (orm as unknown as Record<string, IdbStoreAccessor<never, never>>)["items"]!;
 }
@@ -532,7 +535,7 @@ function oracleWrite(db: IDBDatabase, where: IdbFilterExpr | undefined, patch?: 
         const result = patch === undefined ? row : { ...row, ...patch };
         if (patch === undefined) store.delete(row["id"] as string);
         else store.put(result);
-        results.push(result);
+        results.push(readStored(result));
       }
     };
     tx.oncomplete = () => resolve(results);

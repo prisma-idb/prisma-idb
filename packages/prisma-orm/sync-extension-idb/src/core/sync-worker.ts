@@ -8,6 +8,7 @@ import type { OutboxEvent } from "./outbox-store";
 import {
   getNextBatch,
   getOldestPendingEvent,
+  readForPush,
   markSynced,
   markFailed,
   pruneSyncedEvents,
@@ -253,7 +254,12 @@ export function createSyncWorker<TContract extends IdbContract>(options: SyncWor
   async function sendBatch(events: OutboxEvent[]): Promise<PushResult[]> {
     try {
       return await withTimeout(
-        (signal) => pushHandler(events, signal, requestContext),
+        (signal) =>
+          pushHandler(
+            events.map((event) => readForPush(syncClient.contract, event)),
+            signal,
+            requestContext
+          ),
         requestTimeoutMs,
         "pushHandler"
       );
