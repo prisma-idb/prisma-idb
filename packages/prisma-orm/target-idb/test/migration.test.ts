@@ -365,7 +365,7 @@ describe("IdbMigrationPlanner", () => {
     // - `byEmail` (posts): explicit `unique: true`.
     // - `byTag` (posts): `multiEntry: true`.
     // - `posts`'s own createObjectStore def carries `indexes` (embedded by
-    //   `diffIdbSchema`, which passes the whole store definition through)
+    //   `diffIdbSchema`, which projects the store's DDL properties)
     //   — this must survive rendering even though it's inert at apply time.
     const contract = {
       storage: {
@@ -394,7 +394,7 @@ describe("IdbMigrationPlanner", () => {
     const src = result.plan.renderTypeScript(keepInternalSpecifiers);
     expect(src).toMatchInlineSnapshot(`
       "#!/usr/bin/env -S npx tsx
-      import { Migration, MigrationCLI, createIndexOp, createObjectStoreOp } from "@prisma-idb/target-idb/migration";
+      import { Migration, MigrationCLI, createIndexOp, createMarkerStoreOp, createObjectStoreOp } from "@prisma-idb/target-idb/migration";
 
       export default class M extends Migration {
         override describe() {
@@ -406,7 +406,7 @@ describe("IdbMigrationPlanner", () => {
 
         override get operations() {
           return [
-            createObjectStoreOp("_prisma_next_marker", { keyPath: "space" }),
+            createMarkerStoreOp(),
             createObjectStoreOp("posts", { keyPath: "id", indexes: { "byAuthorId": { keyPath: "authorId" }, "byEmail": { keyPath: "email", unique: true }, "byTag": { keyPath: "tags", multiEntry: true } } }),
             createIndexOp("posts", "byAuthorId", { keyPath: "authorId" }),
             createIndexOp("posts", "byEmail", { keyPath: "email", unique: true }),

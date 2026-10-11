@@ -15,7 +15,13 @@
  * - spaceId (extension-space, ADR 212) behavior for both modes.
  */
 
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
+import idbTarget from "@prisma-idb/target-idb/pack";
+import { defineContract } from "../src/core/contract-builder";
+import idbFamily from "../src/exports/pack";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -93,6 +99,56 @@ function defaultPaths(base: string): { migrationsDir: string; contractPath: stri
 async function writeContract(base: string, contract: unknown): Promise<void> {
   await writeFile(join(base, "src", "lib", "prisma", "contract.json"), JSON.stringify(contract, null, 2), "utf-8");
 }
+
+// Exercise the emitted migration entrypoint, including its self-emit CLI, with
+// actual contract record shapes rather than hand-built DDL-only fixtures.
+describe("migrationPlan — record shape round trips", () => {
+  it.each(["baseline", "added store"])("preserves operations and migration hash for %s", async (mode) => {
+    const user = { store: "users", key: "id", fields: { id: "String" as const } };
+    if (mode === "added store") {
+      await writeContract(cwd, defineContract({ family: idbFamily, target: idbTarget, models: { User: user } }));
+      expect(await migrationPlan(defaultPaths(cwd))).toBe(0);
+    }
+    const contract = defineContract({
+      family: idbFamily,
+      target: idbTarget,
+      models: {
+        User: user,
+        Post: {
+          store: "posts",
+          key: "id",
+          fields: { id: "String", title: "String?" },
+          indexes: { byTitle: { keyPath: "title" } },
+        },
+      },
+    });
+    expect(contract.storage.stores["posts"]!.record).toBeDefined();
+    await writeContract(cwd, contract);
+    expect(await migrationPlan({ ...defaultPaths(cwd), name: "create_posts" })).toBe(0);
+
+    const dirName = (await listMigrationDirs(cwd)).find((dir) => dir.endsWith("_create_posts"))!;
+    const originalOps = await readOps(cwd, dirName);
+    const originalMeta = await readMeta(cwd, dirName);
+    // Let the temporary project resolve the public target package used by
+    // the generated file, just as an installed consumer project would.
+    await symlink(fileURLToPath(new URL("../node_modules", import.meta.url)), join(cwd, "node_modules"), "dir");
+    await writeFile(join(cwd, "package.json"), JSON.stringify({ type: "module" }));
+    try {
+      await promisify(execFile)(process.execPath, [
+        "--import",
+        import.meta.resolve("tsx"),
+        join(cwd, "migrations", "app", dirName, "migration.ts"),
+      ]);
+      expect(await readOps(cwd, dirName)).toEqual(originalOps);
+      expect((await readMeta(cwd, dirName)).migrationHash).toBe(originalMeta.migrationHash);
+      for (const op of originalOps) {
+        if (op.kind === "createObjectStore") expect(op).not.toHaveProperty("def.record");
+      }
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+});
 
 // ── Auto-detection ───────────────────────────────────────────────────────────
 

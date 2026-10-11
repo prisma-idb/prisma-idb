@@ -32,6 +32,7 @@
 
 export {
   createObjectStoreOp,
+  createMarkerStoreOp,
   dropObjectStoreOp,
   createIndexOp,
   dropIndexOp,

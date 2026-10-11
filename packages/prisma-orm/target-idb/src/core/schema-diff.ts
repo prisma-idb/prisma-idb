@@ -88,7 +88,14 @@ export function diffIdbSchema(from: IdbSchemaDiffInput | null, to: IdbSchemaDiff
   // 1 + 2. New stores and their indexes (additive)
   for (const [storeName, toDef] of Object.entries(toStores)) {
     if (storeName in fromStores) continue;
-    ops.push(createObjectStoreOp(storeName, toDef));
+    // Record shape belongs to contract identity, not DDL. Keep only the
+    // properties that the migration authoring surface can round-trip.
+    const ddlDef: IdbStoreDefinition = {
+      keyPath: toDef.keyPath,
+      ...(toDef.autoIncrement !== undefined ? { autoIncrement: toDef.autoIncrement } : {}),
+      ...(toDef.indexes !== undefined ? { indexes: toDef.indexes } : {}),
+    };
+    ops.push(createObjectStoreOp(storeName, ddlDef));
     for (const [indexName, indexDef] of Object.entries(toDef.indexes ?? {})) {
       ops.push(createIndexOp(storeName, indexName, indexDef));
     }

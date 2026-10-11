@@ -8,7 +8,7 @@ import type {
   MigrationScaffoldContext,
 } from "@prisma/orm-framework/components/control";
 import type { IdbIndexDefinition, IdbStoreDefinition } from "./idb-contract-types";
-import { createMarkerStoreOp, type IdbDdlOp } from "./migration-factories";
+import { createMarkerStoreOp, IDB_MARKER_STORE, type IdbDdlOp } from "./migration-factories";
 import type { IdbSchemaDiffInput } from "./schema-diff";
 import { diffIdbSchema } from "./schema-diff";
 
@@ -114,7 +114,11 @@ function collectFactoryImports(ops: readonly IdbDdlOp[]): string[] {
   for (const op of ops) {
     switch (op.kind) {
       case "createObjectStore":
-        names.add("createObjectStoreOp");
+        names.add(
+          op.storeName === IDB_MARKER_STORE && op.label === createMarkerStoreOp().label
+            ? "createMarkerStoreOp"
+            : "createObjectStoreOp"
+        );
         break;
       case "dropObjectStore":
         names.add("dropObjectStoreOp");
@@ -161,13 +165,17 @@ function renderOpCall(op: IdbDdlOp): string {
     case "transformRecords":
       throw new Error("IDB: transformRecords must be authored by hand in migration.ts");
     case "createObjectStore": {
+      // Preserve the internal marker's label as well as its DDL properties.
+      if (op.storeName === IDB_MARKER_STORE && op.label === createMarkerStoreOp().label) {
+        return "createMarkerStoreOp()";
+      }
       const optsParts = [`keyPath: ${JSON.stringify(op.def.keyPath)}`];
       if (op.def.autoIncrement !== undefined) {
         optsParts.push(`autoIncrement: ${op.def.autoIncrement}`);
       }
-      // `diffIdbSchema` passes the full contract store definition (indexes
-      // included) into `createObjectStoreOp`'s `def` for a freshly-created
-      // store. `applyOneDdlOp` never reads `def.indexes` (the separate
+      // `diffIdbSchema` keeps DDL properties (including indexes) in a
+      // freshly-created store's `def`, omitting contract record metadata.
+      // `applyOneDdlOp` never reads `def.indexes` (the separate
       // `createIndexOp`s do the work), so this is inert metadata. It is
       // still rendered: the planner's `ops.json` has it, and a re-emit that
       // dropped it would produce different hashes (see `renderIndexDefLiteral`).
