@@ -238,7 +238,7 @@ export function assertNoMigrationPlaceholders(ops: readonly IdbDdlOp[]): void {
       "PN-MIG-2001 Unfilled migration placeholder\n" +
         "The migration contains placeholders that have not been filled in:\n" +
         [...slots].map((slot) => `  - ${slot}\n`).join("") +
-        "Fix: Open migration.ts and replace each placeholder(...) call with an actual field transform, then run migration emit."
+        "Fix: Open migration.ts and replace each placeholder(...) call with an actual field transform, then re-run node migration.ts."
     );
   }
 }
