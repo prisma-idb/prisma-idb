@@ -2,4 +2,4 @@
 "@prisma-idb/sync-extension-idb": minor
 ---
 
-Mark rejected outbox events with `migrationError` when a migration cannot convert their payload. Preserve the payload and server rejection reason for recovery. Plan the nullable `migrationError` and `versionMetaId` fields as an empty storage-hash migration; old rows read missing nullable fields as `null` without a backfill.
+Mark rejected outbox events with `migrationError` when a migration cannot convert their payload. Preserve the payload and server rejection reason for recovery. Plan the nullable `migrationError` and `versionMetaId` fields as an empty storage-hash migration; old rows read missing nullable fields as `null` without a backfill. Declare `migrationError` as required and nullable, and derive missing nullable outbox fields from the emitted contract when reading pending events.

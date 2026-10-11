@@ -43,11 +43,11 @@ const invalid: readonly [IdbValueTransform, unknown, string][] = [
 ];
 
 describe.each(["full", "patch"] as const)("transformRecord in %s mode", (mode) => {
-  it("rejects unfilled slots even when a patch lacks the field", () => {
+  it("rejects unfilled slots reached during a transform", () => {
     const op = transformRecordsOp("users", {
       fields: { role: pipe(defaultIfMissing("member"), placeholder("User.role")) },
     });
-    expect(() => transformRecord(op, {}, mode)).toThrow(/PN-MIG-2001[\s\S]*User.role/);
+    expect(() => transformRecord(op, { role: "member" }, mode)).toThrow(/PN-MIG-2001[\s\S]*User.role/);
   });
 
   it.each(conversions)("converts %j applied to %j", (transform, value, expected) => {

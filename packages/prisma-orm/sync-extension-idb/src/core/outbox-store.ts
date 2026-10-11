@@ -11,6 +11,7 @@ import type { IdbTransactionScope } from "@prisma-idb/driver-idb/runtime";
 import type { IdbClient } from "@prisma-idb/client-idb/client";
 import type { IdbContract } from "@prisma-idb/client-idb/orm";
 import { absentAsNull } from "@prisma-idb/target-idb/runtime";
+import syncContract from "../contract.json" with { type: "json" };
 import type { OutboxEvent } from "../types";
 import { deleteRecord, getRecord, putRecord, scanStore } from "./raw-store";
 import { VERSION_META_STORE } from "./version-meta";
@@ -56,14 +57,12 @@ function isInBackoff(event: OutboxEvent, backoff: RetryBackoff, now: Date): bool
 async function readPendingEvents(scope: IdbTransactionScope): Promise<OutboxEvent[]> {
   const at = (d: Date | null) => (d instanceof Date ? d.getTime() : 0);
   return (
-    (await scanStore<OutboxEvent>(scope, OUTBOX_STORE))
+    (await scanStore(scope, OUTBOX_STORE))
+      // Older outbox rows may lack nullable fields. Normalize reads without a backfill.
+      .map(
+        (event) => absentAsNull(syncContract as unknown as IdbContract, "OutboxEvent")(event) as unknown as OutboxEvent
+      )
       .filter(isPending)
-      // Older outbox rows lack these nullable fields. Normalize reads without a backfill.
-      .map((event) => ({
-        ...event,
-        migrationError: event.migrationError ?? null,
-        versionMetaId: event.versionMetaId ?? null,
-      }))
       .sort((a, b) => at(a.createdAt) - at(b.createdAt))
   );
 }

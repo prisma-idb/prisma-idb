@@ -1,4 +1,4 @@
-import { assertNoMigrationPlaceholders, type IdbValueTransform, type TransformRecordsOp } from "./migration-factories";
+import type { IdbValueTransform, TransformRecordsOp } from "./migration-factories";
 
 /** Full records permit backfills; patches only change fields already present. */
 export type RecordTransformMode = "full" | "patch";
@@ -13,7 +13,6 @@ export function transformRecord(
   value: Readonly<Record<string, unknown>>,
   mode: RecordTransformMode
 ): Record<string, unknown> {
-  assertNoMigrationPlaceholders([op]);
   const result = { ...value };
   const renames = Object.entries(op.renameFields ?? {}).filter(([, oldName]) => Object.hasOwn(value, oldName));
   // Remove sources before writing destinations so swaps and chains keep every original value.

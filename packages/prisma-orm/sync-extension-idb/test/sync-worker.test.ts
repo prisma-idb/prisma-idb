@@ -288,6 +288,7 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
           lastAttemptedAt: null,
           tries: 0,
           lastError: null,
+          migrationError: null,
           retryable: true,
           versionMetaId: null,
         };
@@ -481,6 +482,7 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
       lastAttemptedAt: null,
       tries: 0,
       lastError: null,
+      migrationError: null,
       retryable: true,
       versionMetaId: null,
     };
