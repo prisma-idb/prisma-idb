@@ -328,7 +328,7 @@ async function planIncremental(ctx: SharedCtx, existingDirs: readonly string[]):
   return 0;
 }
 
-/** Warns on stderr when the migration drops a store; see {@link deletedDataWarning}. */
+/** Warns on stderr when the migration drops a store or removes fields; see {@link deletedDataWarning}. */
 function warnAboutDeletedData(ctx: SharedCtx, ops: readonly unknown[]): void {
   const warning = deletedDataWarning(ops);
   if (warning !== undefined) ctx.err(warning);

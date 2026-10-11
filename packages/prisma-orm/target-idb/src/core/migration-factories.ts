@@ -59,7 +59,7 @@ export type IdbValueTransform =
   | { readonly kind: "setLiteral"; readonly value: IdbJsonLiteral }
   | { readonly kind: "pipe"; readonly steps: readonly IdbValueTransform[] };
 
-/** Rewrites records in one store. Always `data`; authored by hand. */
+/** Rewrites records in one store. Always `data`. */
 export type TransformRecordsOp = MigrationPlanOperation & {
   readonly kind: "transformRecords";
   readonly storeName: string;
@@ -153,8 +153,8 @@ export function createMarkerStoreOp(): CreateObjectStoreOp {
 }
 
 /**
- * The warning to show when a migration drops object stores, or `undefined`
- * when it drops none. The browser applies every planned op without asking,
+ * The warning to show when a migration drops stores or removes fields.
+ * Returns `undefined` when it deletes no data. The browser applies every planned op without asking,
  * so planning or re-emitting a migration is where the developer hears that
  * it deletes data. Dropping an index loses nothing that can't be rebuilt, so
  * indexes aren't listed.
@@ -163,15 +163,26 @@ export function deletedDataWarning(ops: readonly unknown[]): string | undefined 
   const droppedStores = ops
     .filter((op): op is DropObjectStoreOp => (op as { kind?: unknown }).kind === "dropObjectStore")
     .map((op) => op.storeName);
-  if (droppedStores.length === 0) return undefined;
+  const removedFields = ops
+    .filter((op): op is TransformRecordsOp => (op as { kind?: unknown }).kind === "transformRecords")
+    .flatMap((op) => (op.removeFields ?? []).map((field) => `${op.storeName}.${field}`));
+  if (droppedStores.length === 0 && removedFields.length === 0) return undefined;
   return (
-    "\nWarning: this migration deletes data. When it runs in a user's browser, every record in these stores is deleted:\n" +
-    droppedStores.map((store) => `  - ${store}\n`).join("") +
+    "\nWarning: this migration deletes data.\n" +
+    (droppedStores.length > 0
+      ? "When it runs in a user's browser, every record in these stores is deleted:\n" +
+        droppedStores.map((store) => `  - ${store}\n`).join("")
+      : "") +
+    (removedFields.length > 0
+      ? "These fields are removed from every record:\n" +
+        removedFields.map((field) => `  - ${field}\n`).join("") +
+        "For a rename, replace the removal and addition with renameFields to preserve the values.\n"
+      : "") +
     "Check that this is intended before shipping it.\n"
   );
 }
 
-/** Create a record rewrite. The schema differ never emits this operation. */
+/** Create a record rewrite. The planner emits defaults and removals; other rewrites are authored by hand. */
 export function transformRecordsOp(
   storeName: string,
   options: Pick<TransformRecordsOp, "fields" | "renameFields" | "removeFields">

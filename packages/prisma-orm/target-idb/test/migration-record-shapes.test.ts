@@ -1,0 +1,166 @@
+import type { Contract } from "@prisma/orm-framework/contract/types";
+import { keepInternalSpecifiers } from "@prisma/orm-framework/components/emission";
+import { describe, expect, it } from "vitest";
+import type { IdbRecordField } from "../src/core/idb-contract-types";
+import { deletedDataWarning } from "../src/core/migration-factories";
+import { IdbMigrationPlanner } from "../src/core/migration-planner";
+import { transformRecord } from "../src/core/transform-records";
+
+const string: IdbRecordField = { type: { kind: "scalar", codecId: "String" }, nullable: false };
+function contract(fields: Record<string, IdbRecordField>, defaults: Record<string, unknown> = {}) {
+  return {
+    storage: {
+      storageHash: "hash",
+      stores: { users: { keyPath: "id", record: { model: "User", fields: { id: string, ...fields } } } },
+    },
+    execution: {
+      mutations: {
+        defaults: Object.entries(defaults).map(([column, value]) => ({
+          ref: { namespace: "default", table: "users", column },
+          onCreate: { kind: "generator", id: "literal", params: { value } },
+        })),
+      },
+    },
+  };
+}
+function plan(from: ReturnType<typeof contract>, to: ReturnType<typeof contract>) {
+  const result = new IdbMigrationPlanner().plan({
+    fromContract: from as unknown as Contract,
+    contract: to,
+    schema: null,
+    frameworkComponents: [],
+    spaceId: "app",
+    policy: { allowedOperationClasses: ["additive", "data", "destructive", "widening"] },
+  });
+  if (result.kind !== "success") throw new Error(JSON.stringify(result.conflicts));
+  return result.plan;
+}
+function enumField(members: string[]): IdbRecordField {
+  return {
+    ...string,
+    valueSet: { name: "Role", codecId: "String", members: members.map((name) => ({ name, value: name })) },
+  };
+}
+
+describe("record shape migration planning", () => {
+  it.each(["member", 0, false, 'quoted"\\\nvalue'])("backfills a required literal default: %j", (value) => {
+    const codecId = typeof value === "number" ? "Int" : typeof value === "boolean" ? "Boolean" : "String";
+    const result = plan(
+      contract({}),
+      contract({ role: { type: { kind: "scalar", codecId }, nullable: false } }, { role: value })
+    );
+    expect(result.operations).toEqual([
+      expect.objectContaining({
+        kind: "transformRecords",
+        operationClass: "data",
+        fields: { role: { kind: "defaultIfMissing", value } },
+      }),
+    ]);
+    expect(deletedDataWarning(result.operations)).toBeUndefined();
+    const source = result.renderTypeScript(keepInternalSpecifiers);
+    expect(source).toContain("transformRecordsOp");
+    expect(source).toContain(`defaultIfMissing(${JSON.stringify(value)})`);
+  });
+
+  it("removes fields and reports each data-loss entry without reporting dropped indexes", () => {
+    const result = plan(contract({ role: string, old: string }), contract({}));
+    expect(result.operations).toEqual([expect.objectContaining({ removeFields: ["role", "old"] })]);
+    const warning = deletedDataWarning(result.operations)!;
+    expect(warning).toContain("Warning: this migration deletes data.");
+    expect(warning).toContain("users.role");
+    expect(warning).toContain("users.old");
+    expect(result.renderTypeScript(keepInternalSpecifiers)).toContain('removeFields: ["role","old"]');
+    expect(deletedDataWarning([{ kind: "dropIndex", storeName: "users", indexName: "byRole" }])).toBeUndefined();
+  });
+
+  it("plans removal and addition without guessing a rename", () => {
+    const result = plan(contract({ old: string }), contract({ role: string }, { role: "member" }));
+    expect(result.operations).toEqual([
+      expect.objectContaining({
+        fields: { role: { kind: "defaultIfMissing", value: "member" } },
+        removeFields: ["old"],
+      }),
+    ]);
+    expect(result.operations[0]).not.toHaveProperty("renameFields");
+    expect(deletedDataWarning(result.operations)).toContain("users.old");
+    expect(deletedDataWarning(result.operations)).toContain("renameFields");
+  });
+
+  it.each([
+    ["added nullable field", contract({}), contract({ role: { ...string, nullable: true } })],
+    ["required to nullable", contract({ role: string }), contract({ role: { ...string, nullable: true } })],
+    ["new enum member", contract({ role: enumField(["USER"]) }), contract({ role: enumField(["USER", "ADMIN"]) })],
+    ["default change", contract({ role: string }, { role: "USER" }), contract({ role: string }, { role: "ADMIN" })],
+    [
+      "documentation change",
+      contract({ role: string }),
+      { ...contract({ role: string }), docs: { summary: "Updated docs" } },
+    ],
+  ])("emits no operations for %s", (_name, from, to) => {
+    const result = plan(from, to);
+    expect(result.operations).toEqual([]);
+    expect(deletedDataWarning(result.operations)).toBeUndefined();
+    expect(result.renderTypeScript(keepInternalSpecifiers)).toContain("No record or schema operations are needed");
+    expect(result.renderTypeScript(keepInternalSpecifiers)).not.toContain("Add IDB DDL");
+  });
+
+  it.each([
+    ["required addition without default", contract({}), contract({ role: string })],
+    ["null default", contract({}), contract({ role: string }, { role: null })],
+    [
+      "unsafe codec change",
+      contract({ role: string }),
+      contract({ role: { type: { kind: "scalar", codecId: "Int" }, nullable: false } }),
+    ],
+    [
+      "nullable to required",
+      contract({ role: { ...string, nullable: true } }),
+      contract({ role: string }, { role: "member" }),
+    ],
+    ["removed enum value", contract({ role: enumField(["USER", "ADMIN"]) }), contract({ role: enumField(["USER"]) })],
+    ["list shape change", contract({ role: string }), contract({ role: { ...string, many: true } })],
+  ])("names the unhandled field for %s", (_name, from, to) => {
+    expect(() => plan(from, to)).toThrow(/users\.role.*authored record transform/);
+  });
+
+  it("does not treat generated defaults as literal backfills", () => {
+    const to = contract({ role: string });
+    to.execution.mutations.defaults.push({
+      ref: { namespace: "default", table: "users", column: "role" },
+      onCreate: { kind: "generator", id: "uuidv4", params: { value: "not a literal" } },
+    });
+    expect(() => plan(contract({}), to)).toThrow(/users\.role/);
+  });
+
+  it("preserves existing values and is idempotent", () => {
+    const result = plan(contract({ old: string }), contract({ role: string }, { role: "member" }));
+    const op = result.operations[0];
+    if (!op || !("kind" in op) || op.kind !== "transformRecords") throw new Error("Expected record transform");
+    const migrated = transformRecord(
+      op as Parameters<typeof transformRecord>[0],
+      { id: "u1", old: "value", role: "admin" },
+      "full"
+    );
+    expect(migrated).toEqual({ id: "u1", role: "admin" });
+    expect(transformRecord(op as Parameters<typeof transformRecord>[0], migrated, "full")).toEqual(migrated);
+  });
+
+  it("skips new stores and legacy DDL-only definitions", () => {
+    const to = contract({ role: string });
+    const legacy = { storage: { stores: { users: { keyPath: "id" } } } };
+    const planner = new IdbMigrationPlanner();
+    for (const fromContract of [null, legacy]) {
+      const result = planner.plan({
+        contract: to,
+        fromContract: fromContract as Contract | null,
+        schema: null,
+        frameworkComponents: [],
+        spaceId: "app",
+        policy: { allowedOperationClasses: ["additive"] },
+      });
+      expect(result.kind).toBe("success");
+      if (result.kind === "success")
+        expect(result.plan.operations).not.toContainEqual(expect.objectContaining({ kind: "transformRecords" }));
+    }
+  });
+});

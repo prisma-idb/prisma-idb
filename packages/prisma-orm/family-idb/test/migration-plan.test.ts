@@ -26,6 +26,9 @@ import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { buildSymbolTable } from "@prisma/orm-framework/psl-parser";
+import { parse } from "@prisma/orm-framework/psl-parser/syntax";
+import { interpretPslDocumentToIdbContract } from "../src/core/psl-interpreter";
 import { migrationPlan } from "../src/core/migration-plan";
 import { generateContractSpace } from "../src/core/contract-space-codegen";
 
@@ -196,6 +199,55 @@ describe("migrationPlan — auto-detection", () => {
     const newDir = dirs.find((d) => d.endsWith("_add_version_meta"))!;
     const meta = await readMeta(cwd, newDir);
     expect(meta.from).not.toBeNull();
+  });
+});
+
+describe("migrationPlan — record field changes", () => {
+  function psl(fields: string) {
+    const { document, sources } = parse(`model User {\n id String @id\n ${fields}\n @@map("users")\n}`, "test.prisma");
+    const { symbolTable } = buildSymbolTable({ documents: [document], sources, pslBlockDescriptors: {} });
+    const result = interpretPslDocumentToIdbContract(symbolTable, "test.prisma");
+    if (!result.ok) throw new Error(JSON.stringify(result));
+    return result.value;
+  }
+
+  it("warns about field loss and self-emits identical record operations and hashes", async () => {
+    await writeContract(cwd, psl("old String"));
+    expect(await migrationPlan(defaultPaths(cwd))).toBe(0);
+    await writeContract(cwd, psl('role String @default("member")'));
+    expect(await migrationPlan({ ...defaultPaths(cwd), name: "replace_field" })).toBe(0);
+    const dirName = (await listMigrationDirs(cwd)).find((dir) => dir.endsWith("_replace_field"))!;
+    const ops = await readOps(cwd, dirName);
+    const metadata = await readMeta(cwd, dirName);
+    expect(ops).toEqual([
+      expect.objectContaining({
+        kind: "transformRecords",
+        removeFields: ["old"],
+        fields: { role: { kind: "defaultIfMissing", value: "member" } },
+      }),
+    ]);
+    expect(capturedStderr).toContain("Warning: this migration deletes data.");
+    expect(capturedStderr).toContain("users.old");
+    await symlink(fileURLToPath(new URL("../node_modules", import.meta.url)), join(cwd, "node_modules"), "dir");
+    await writeFile(join(cwd, "package.json"), JSON.stringify({ type: "module" }));
+    await promisify(execFile)(process.execPath, [
+      "--import",
+      import.meta.resolve("tsx"),
+      join(cwd, "migrations", "app", dirName, "migration.ts"),
+    ]);
+    expect(await readOps(cwd, dirName)).toEqual(ops);
+    expect(await readMeta(cwd, dirName)).toEqual(metadata);
+  });
+
+  it("writes an explicit no-operation migration for an added nullable field", async () => {
+    await writeContract(cwd, psl(""));
+    expect(await migrationPlan(defaultPaths(cwd))).toBe(0);
+    await writeContract(cwd, psl("role String?"));
+    expect(await migrationPlan({ ...defaultPaths(cwd), name: "optional_role" })).toBe(0);
+    const dirName = (await listMigrationDirs(cwd)).find((dir) => dir.endsWith("_optional_role"))!;
+    expect(await readOps(cwd, dirName)).toEqual([]);
+    expect(await readMigrationTs(cwd, dirName)).toContain("No record or schema operations are needed");
+    expect(capturedStderr).not.toContain("deletes data");
   });
 });
 

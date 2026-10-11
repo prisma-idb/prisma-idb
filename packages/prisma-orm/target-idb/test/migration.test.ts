@@ -428,7 +428,7 @@ describe("IdbMigrationPlanner", () => {
     expect(plan.operations).toHaveLength(0);
     const src = plan.renderTypeScript(keepInternalSpecifiers);
     expect(src).toContain("export default class M extends Migration");
-    expect(src).toContain("Add IDB DDL operations here");
+    expect(src).toContain("No record or schema operations are needed");
     expect(src).toContain("MigrationCLI.run(import.meta.url, M)");
   });
 
