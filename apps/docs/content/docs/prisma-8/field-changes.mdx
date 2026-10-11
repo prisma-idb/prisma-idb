@@ -93,7 +93,9 @@ transformRecordsOp("Todo", {
 
 Keep the generated transform if the value is right for old records. It fills an absent field and preserves existing values, including `null`. It also rewrites queued full sync records; queued update patches keep absent fields absent.
 
-The planner supports literal defaults it can represent in the field's stored codec. A default such as `now()` or `uuid()` needs an authored transform instead. Follow the next section if the planner writes a placeholder.
+The planner supports literal defaults it can represent in the field's stored codec. The transform DSL accepts only string, number, boolean, and `null` literals. It cannot backfill `Date`, `BigInt`, `Bytes`, list, or object values. It also cannot generate a value per record for defaults such as `now()` or `uuid()`. These cases produce placeholders that the current DSL cannot fill. [WHY-200](/WHY/issues/WHY-200) tracks support for them.
+
+Add the field as nullable instead. For example, use `createdAt DateTime? @default(now())` instead of `createdAt DateTime @default(now())`. A new nullable field needs no backfill. Follow [Add a nullable field](#add-a-nullable-field) to plan and ship its migration. Old records read as `null`; the default applies to new records.
 
 Regenerate the contract space, run preflight, and commit the files together. Test the upgrade against representative old records before shipping.
 
@@ -117,7 +119,9 @@ transformRecordsOp("Todo", {
 });
 ```
 
-For a type conversion, use an appropriate `coerce(...)` transform. Use `setLiteral(...)` only when you intend to overwrite every old value. `defaultIfMissing(...)` preserves `null`, so it does not fill null values when changing a nullable field to required.
+For a supported type conversion, use `coerce(...)`. Its targets are `int`, `string`, `boolean`, and `isoDateString`. Use `setLiteral(...)` only when you intend to overwrite every old value with a supported primitive literal. Neither transform can write `Date`, `BigInt`, `Bytes`, list, or object values, or generate a value per record.
+
+The DSL also has no transform that fills only `null`. `defaultIfMissing(...)` preserves `null`. Changing a nullable field to required therefore has no supported transform that fills null values while preserving other values. Keep the field nullable when existing records can contain `null`. For an unsupported required-field addition, add the field as nullable so it needs no backfill, as shown above. [WHY-200](/WHY/issues/WHY-200) tracks these DSL gaps.
 
 Add the needed imports to the generated file and remove unused ones. Keep its `describe()` hashes and unrelated operations. Regenerate the package, then bundle and check it:
 
