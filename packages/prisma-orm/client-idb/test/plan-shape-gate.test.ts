@@ -336,7 +336,12 @@ const SCENARIOS: readonly Scenario[] = [
   },
   {
     name: "upsert: indexed existing-row lookup",
-    run: (o) => o["items"].upsert({ where: { category: "c3" }, create: { id: "new" }, update: { status: "archived" } }),
+    run: (o) =>
+      o["items"].upsert({
+        where: { category: "c3" },
+        create: { id: "new", category: "new", score: 0, status: "active", orgId: "o1", rank: 0 },
+        update: { status: "archived" },
+      }),
   },
   {
     name: "deleteAll: eq on indexed field",

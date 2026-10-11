@@ -22,7 +22,7 @@ test.describe("aggregate()", () => {
     ];
     for (const [id, views, published] of posts) {
       await runner.run(
-        `orm.posts.create({ id: "${id}", authorId: "u1", title: "${id}", content: null, views: ${views}, published: ${published}, publishedAt: null })`
+        `orm.posts.create({ id: "${id}", authorId: "u1", title: "${id}", content: null, views: ${views}, published: ${published}, createdAt: new Date() })`
       );
     }
   });

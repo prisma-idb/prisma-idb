@@ -15,7 +15,7 @@ import { interpretPslDocumentToIdbContract } from "@prisma-idb/family-idb/contra
 import idbFamilyPack from "@prisma-idb/family-idb/pack";
 import idbTargetPack from "@prisma-idb/target-idb/pack";
 import { createIdbClient } from "../src/exports/client";
-import type { IdbContract } from "../src/exports/orm";
+import { IdbRecordValidationError, type IdbContract } from "../src/exports/orm";
 
 type Row = Record<string, unknown>;
 type LooseAccessor = {
@@ -23,6 +23,11 @@ type LooseAccessor = {
   where(filter: Row): { update(patch: Row): Promise<Row | null>; all(): { toArray(): Promise<Row[]> } };
   all(): { toArray(): Promise<Row[]> };
   createAll(data: Row[]): PromiseLike<Row[]>;
+  createCount(data: Row[]): Promise<number>;
+  update(patch: Row): Promise<Row | null>;
+  updateAll(patch: Row): PromiseLike<Row[]>;
+  updateCount(patch: Row): Promise<number>;
+  upsert(args: { where: Row; create: Row; update: Row }): Promise<Row>;
   include(relation: string, refine: (related: { count(): unknown }) => unknown): unknown;
 };
 type LooseClient = {
@@ -67,6 +72,53 @@ describe("db.transaction() — validation failures the callback catches", () => 
   const result = interpretPslDocumentToIdbContract(symbolTable, "s.prisma");
   if (!result.ok) throw new Error(JSON.stringify(result.failure.diagnostics));
   const enumContract = result.value as IdbContract;
+
+  it.each(["create", "createAll", "createCount", "update", "updateAll", "updateCount", "upsert"] as const)(
+    "aborts when the callback catches scalar validation in %s",
+    async (method) => {
+      const db = await openClient(enumContract, ["member"]);
+      await db.orm["member"]!.create({ id: "existing", role: "USER" });
+      let caught: unknown;
+      await expect(
+        db.transaction(["member"], async (tx) => {
+          await tx["member"]!.create({ id: "earlier", role: "USER" });
+          try {
+            const members = tx["member"]!;
+            switch (method) {
+              case "create":
+                await members.create({ id: 3, role: "USER" });
+                break;
+              case "createAll":
+                await members.createAll([
+                  { id: "valid", role: "USER" },
+                  { id: 3, role: "USER" },
+                ]);
+                break;
+              case "createCount":
+                await members.createCount([{ id: 3, role: "USER" }]);
+                break;
+              case "update":
+                await members.update({ role: undefined });
+                break;
+              case "updateAll":
+                await members.updateAll({ role: undefined });
+                break;
+              case "updateCount":
+                await members.updateCount({ role: undefined });
+                break;
+              case "upsert":
+                await members.upsert({ where: { id: "existing" }, create: { id: 3, role: "USER" }, update: {} });
+                break;
+            }
+          } catch (error) {
+            caught = error;
+          }
+        })
+      ).rejects.toThrow();
+      expect(caught).toBeInstanceOf(IdbRecordValidationError);
+      expect(await db.orm["member"]!.all().toArray()).toEqual([{ id: "existing", role: "USER" }]);
+    }
+  );
 
   it("aborts when a create is rejected by enum validation and the callback catches it", async () => {
     const db = await openClient(enumContract, ["member"]);

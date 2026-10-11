@@ -109,6 +109,7 @@ function makeTestContract(
     {
       storeName: string;
       keyPath: string;
+      fields?: Record<string, FieldSpec>;
       relations?: Record<
         string,
         { to: string; cardinality: "1:1" | "1:N" | "N:1"; on: { localFields: string[]; targetFields: string[] } }
@@ -140,7 +141,7 @@ function makeTestContract(
     defModels[name] = {
       store: spec.storeName,
       key: spec.keyPath,
-      fields: { [spec.keyPath]: "String" },
+      fields: { [spec.keyPath]: "String", ...spec.fields },
       ...(Object.keys(relations).length > 0 ? { relations } : {}),
     };
   }
@@ -156,6 +157,7 @@ const POSTS_STORE: StoreSpec = {
   indexes: [{ name: "byAuthorId", keyPath: "authorId" }],
 };
 
+const USER_FIELDS = { name: "String", email: "String" } as const;
 const ALICE = { id: "u1", name: "Alice", email: "alice@example.com" };
 const BOB = { id: "u2", name: "Bob", email: "bob@example.com" };
 const POST_A = { id: "p1", title: "Hello", authorId: "u1" };
@@ -206,7 +208,10 @@ describe("IdbStoreAccessor — create / read", () => {
   });
 
   function makeClient() {
-    const contract = makeTestContract({ users: "User" }, { User: { storeName: "users", keyPath: "id" } });
+    const contract = makeTestContract(
+      { users: "User" },
+      { User: { storeName: "users", keyPath: "id", fields: USER_FIELDS } }
+    );
     return asRecord(idbOrm({ contract, executor }));
   }
 
@@ -236,7 +241,10 @@ describe("IdbStoreAccessor — create / read", () => {
 
     const d = createIDBRuntimeDriver(name, 1).create();
     const e = new TestExecutor(d);
-    const contract = makeTestContract({ users: "User" }, { User: { storeName: "users", keyPath: "id" } });
+    const contract = makeTestContract(
+      { users: "User" },
+      { User: { storeName: "users", keyPath: "id", fields: USER_FIELDS } }
+    );
     const client = asRecord(idbOrm({ contract, executor: e }));
 
     const rows = await client["users"]!.all().toArray();
@@ -837,7 +845,10 @@ describe("IdbStoreAccessor — update", () => {
   });
 
   function makeClient() {
-    const contract = makeTestContract({ users: "User" }, { User: { storeName: "users", keyPath: "id" } });
+    const contract = makeTestContract(
+      { users: "User" },
+      { User: { storeName: "users", keyPath: "id", fields: USER_FIELDS } }
+    );
     return asRecord(idbOrm({ contract, executor }));
   }
 
@@ -887,7 +898,10 @@ describe("IdbStoreAccessor — updateAll / updateCount", () => {
   });
 
   function makeClient() {
-    const contract = makeTestContract({ users: "User" }, { User: { storeName: "users", keyPath: "id" } });
+    const contract = makeTestContract(
+      { users: "User" },
+      { User: { storeName: "users", keyPath: "id", fields: USER_FIELDS } }
+    );
     return asRecord(idbOrm({ contract, executor }));
   }
 
@@ -942,7 +956,10 @@ describe("IdbStoreAccessor — upsert", () => {
   });
 
   function makeClient() {
-    const contract = makeTestContract({ users: "User" }, { User: { storeName: "users", keyPath: "id" } });
+    const contract = makeTestContract(
+      { users: "User" },
+      { User: { storeName: "users", keyPath: "id", fields: USER_FIELDS } }
+    );
     return asRecord(idbOrm({ contract, executor }));
   }
 
@@ -996,7 +1013,10 @@ describe("IdbStoreAccessor — createAll / createCount", () => {
   });
 
   function makeClient() {
-    const contract = makeTestContract({ users: "User" }, { User: { storeName: "users", keyPath: "id" } });
+    const contract = makeTestContract(
+      { users: "User" },
+      { User: { storeName: "users", keyPath: "id", fields: USER_FIELDS } }
+    );
     return asRecord(idbOrm({ contract, executor }));
   }
 

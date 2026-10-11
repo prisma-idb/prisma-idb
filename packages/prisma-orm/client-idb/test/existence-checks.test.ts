@@ -16,7 +16,7 @@ import idbTargetPack from "@prisma-idb/target-idb/pack";
 import { createIDBRuntimeDriver } from "@prisma-idb/driver-idb/runtime";
 import type { IdbRuntimeDriverInstance, IdbTransactionScope } from "@prisma-idb/driver-idb/runtime";
 import type { IdbQueryPlan } from "@prisma-idb/adapter-idb/runtime";
-import { idbOrm } from "../src/exports/orm";
+import { idbOrm, IdbRecordValidationError } from "../src/exports/orm";
 import type { IdbQueryExecutor, IdbQueryExecutorWithTransaction } from "../src/exports/orm";
 
 // ── Executor ──────────────────────────────────────────────────────────────────
@@ -94,7 +94,7 @@ const userPostContract = defineContract({
     Post: {
       store: "posts",
       key: "id",
-      fields: { id: "String", authorId: "String", title: "String" },
+      fields: { id: "String", authorId: "String?", title: "String" },
       relations: { author: { to: "User", cardinality: "N:1", on: { local: ["authorId"], target: ["id"] } } },
     },
   },
@@ -238,7 +238,7 @@ describe("FK validation — target isn't exactly the parent's primary key", () =
     db.close();
   });
 
-  it("value is not a valid IDB key (NaN) — no DataError, plain FK violation", async () => {
+  it("rejects NaN before the FK lookup without an IndexedDB DataError", async () => {
     const contract = defineContract({
       family: idbFamilyPack,
       target: idbTargetPack,
@@ -259,7 +259,7 @@ describe("FK validation — target isn't exactly the parent's primary key", () =
     });
     const { db, orm } = await setup(contract, { teams: "id", members: "id" });
     await orm["teams"]!.create({ id: 1 });
-    await expect(orm["members"]!.create({ id: "m1", teamId: Number.NaN })).rejects.toThrow(/FK violation/);
+    await expect(orm["members"]!.create({ id: "m1", teamId: Number.NaN })).rejects.toThrow(IdbRecordValidationError);
     await orm["members"]!.create({ id: "m2", teamId: 1 });
     db.close();
   });
@@ -419,7 +419,7 @@ describe("restrict — null in the parent's referenced fields", () => {
       Org: {
         store: "orgs",
         key: "id",
-        fields: { id: "String", orgId: "String", handle: "String" },
+        fields: { id: "String", orgId: "String?", handle: "String?" },
         relations: {
           members: {
             to: "Member",
@@ -433,7 +433,7 @@ describe("restrict — null in the parent's referenced fields", () => {
       Member: {
         store: "members",
         key: "id",
-        fields: { id: "String", memberOrgId: "String", memberHandle: "String" },
+        fields: { id: "String", memberOrgId: "String?", memberHandle: "String?" },
       },
     },
   });

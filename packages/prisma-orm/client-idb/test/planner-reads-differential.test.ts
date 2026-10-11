@@ -30,7 +30,7 @@ const contract = defineContract({
       fields: {
         id: "String",
         serial: "Int",
-        category: "String",
+        category: "String?",
         rank: "Int",
         label: "String",
         flag: "Boolean",
@@ -652,7 +652,22 @@ it("upsert's unique-index lookup matches full scan on both branches", async () =
     const rows = [{ id: "i1", serial: 1, category: "a", rank: 1, label: "old" }];
     for (const serial of [1, 99]) {
       await seed(db, rows);
-      const create = { id: "new", serial: 99, category: "b", rank: 9, label: "new" };
+      const create = {
+        id: "new",
+        serial: 99,
+        category: "b",
+        rank: 9,
+        label: "new",
+        flag: true,
+        big: 1n,
+        json: null,
+        optional: null,
+        float: 1.5,
+        date: new Date("2026-01-01"),
+        bytes: new Uint8Array([1]),
+        decimal: "1.25",
+        tags: [],
+      };
       const patch = { category: "b", label: "updated" };
       const actual = await accessor(driver).upsert({
         where: { serial } as never,

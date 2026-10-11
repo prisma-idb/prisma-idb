@@ -32,7 +32,7 @@ test.describe("scalar include — count()", () => {
     ];
     for (const [id, authorId, published] of posts) {
       await runner.run(
-        `orm.posts.create({ id: "${id}", authorId: "${authorId}", title: "${id}", content: null, views: 0, published: ${published}, publishedAt: null })`
+        `orm.posts.create({ id: "${id}", authorId: "${authorId}", title: "${id}", content: null, views: 0, published: ${published}, createdAt: new Date() })`
       );
     }
   });
@@ -53,7 +53,7 @@ test.describe("scalar include — count()", () => {
 
   test("count() on a to-one relation is rejected", async ({ runner }) => {
     await runner.run(
-      `orm.posts.create({ id: "p9", authorId: "u1", title: "x", content: null, views: 0, published: true, publishedAt: null })`
+      `orm.posts.create({ id: "p9", authorId: "u1", title: "x", content: null, views: 0, published: true, createdAt: new Date() })`
     );
     await expect(runner.run(`orm.posts.include("author", a => a.count()).all()`)).rejects.toThrow(/to-many/);
   });

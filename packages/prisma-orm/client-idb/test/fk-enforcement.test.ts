@@ -464,7 +464,7 @@ const compoundFkContract = defineContract({
     Post: {
       store: "posts",
       key: "id",
-      fields: { id: "String", postOrgId: "String", authorId: "String", title: "String" },
+      fields: { id: "String", postOrgId: "String?", authorId: "String", title: "String" },
       relations: {
         author: {
           to: "User",
@@ -1728,31 +1728,44 @@ describe("scalar FK validation — values from defaults and nested writes", () =
   afterEach(() => db.close());
 
   it("create: checks a foreign key filled in by a default", async () => {
-    await expect(orm["posts"]!.create({ id: "p1" })).rejects.toThrow(/FK violation on relation 'author'.*id='system'/);
+    await expect(orm["posts"]!.create({ id: "p1", editorId: null, title: null })).rejects.toThrow(
+      /FK violation on relation 'author'.*id='system'/
+    );
     await orm["users"]!.create({ id: "system" });
-    await orm["posts"]!.create({ id: "p1" });
+    await orm["posts"]!.create({ id: "p1", editorId: null, title: null });
     expect((await getAllRows(db, "posts"))[0]?.["authorId"]).toBe("system");
   });
 
   it("createAll: checks a foreign key filled in by a default", async () => {
-    await expect(orm["posts"]!.createAll([{ id: "p1", authorId: "u1" }, { id: "p2" }]).toArray()).rejects.toThrow(
-      /FK violation on relation 'author'/
-    );
+    await expect(
+      orm["posts"]!.createAll([
+        { id: "p1", authorId: "u1", editorId: null, title: null },
+        { id: "p2", editorId: null, title: null },
+      ]).toArray()
+    ).rejects.toThrow(/FK violation on relation 'author'/);
     expect(await getAllRows(db, "posts")).toHaveLength(0);
   });
 
   it("upsert: checks a foreign key filled in by a default on either branch", async () => {
-    await expect(orm["posts"]!.upsert({ where: { id: "p1" }, create: { id: "p1" }, update: {} })).rejects.toThrow(
-      /FK violation on relation 'author'/
-    );
-    await orm["posts"]!.create({ id: "p1", authorId: "u1" });
     await expect(
-      orm["posts"]!.upsert({ where: { id: "p1" }, create: { id: "p1", authorId: "u1" }, update: { title: "t" } })
+      orm["posts"]!.upsert({
+        where: { id: "p1" },
+        create: { id: "p1", editorId: null, title: null },
+        update: {},
+      })
+    ).rejects.toThrow(/FK violation on relation 'author'/);
+    await orm["posts"]!.create({ id: "p1", authorId: "u1", editorId: null, title: null });
+    await expect(
+      orm["posts"]!.upsert({
+        where: { id: "p1" },
+        create: { id: "p1", authorId: "u1", editorId: null, title: null },
+        update: { title: "t" },
+      })
     ).rejects.toThrow(/FK violation on relation 'editor'/);
   });
 
   it("update and updateAll: check a foreign key filled in by an onUpdate default", async () => {
-    await orm["posts"]!.create({ id: "p1", authorId: "u1" });
+    await orm["posts"]!.create({ id: "p1", authorId: "u1", editorId: null, title: null });
     await expect(orm["posts"]!.where({ id: "p1" }).update({ title: "t" })).rejects.toThrow(
       /FK violation on relation 'editor'/
     );
@@ -1769,6 +1782,8 @@ describe("scalar FK validation — values from defaults and nested writes", () =
       orm["posts"]!.create({
         id: "p1",
         authorId: "ghost",
+        editorId: null,
+        title: null,
         comments: (c: Mutator) => c.create([{ id: "c1" }]),
       })
     ).rejects.toThrow(/FK violation on relation 'author'/);
@@ -1778,7 +1793,7 @@ describe("scalar FK validation — values from defaults and nested writes", () =
 
   it("nested update: checks foreign keys in the patch", async () => {
     await orm["users"]!.create({ id: "system" });
-    await orm["posts"]!.create({ id: "p1", authorId: "u1" });
+    await orm["posts"]!.create({ id: "p1", authorId: "u1", editorId: null, title: null });
     await expect(
       orm["posts"]!.where({ id: "p1" }).update({
         authorId: "ghost",
@@ -1791,7 +1806,7 @@ describe("scalar FK validation — values from defaults and nested writes", () =
 
   it("nested update: applies onUpdate referential actions", async () => {
     await orm["users"]!.create({ id: "system" });
-    await orm["posts"]!.create({ id: "p1", authorId: "u1" });
+    await orm["posts"]!.create({ id: "p1", authorId: "u1", editorId: null, title: null });
     await orm["comments"]!.create({ id: "c1", postId: "p1" });
     // Comment.post has no onUpdate, so it defaults to restrict.
     await expect(

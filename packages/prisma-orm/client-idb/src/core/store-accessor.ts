@@ -55,6 +55,7 @@ import {
 import { type IdbGroupedAccessor, createGroupedAccessor } from "./grouped-accessor";
 import type { IdbQueryExecutor } from "./executor";
 import { assertEnumValues } from "./enum-validation";
+import { assertValidRecord } from "./record-validation";
 import { applyCreateDefaults, applyUpdateDefaults, createMutationDefaultsCache } from "./mutation-defaults";
 import { loadRelation } from "./relation-loader";
 import {
@@ -560,6 +561,7 @@ export class IdbStoreAccessorImpl<
       createMutationDefaultsCache()
     );
     assertEnumValues(this.#contract, this.#modelName, withDefaults);
+    assertValidRecord(this.#contract, this.#modelName, "create", withDefaults);
     if (hasScalarFkFields(this.#contract, this.#modelName, withDefaults)) {
       const row = await executeScalarCreateWithFkValidation({
         executor: requireTransactionExecutor(this.#executor),
@@ -742,6 +744,8 @@ export class IdbStoreAccessorImpl<
     );
     assertEnumValues(this.#contract, this.#modelName, effectivePatch);
     assertEnumValues(this.#contract, this.#modelName, createWithDefaults);
+    assertValidRecord(this.#contract, this.#modelName, "update", effectivePatch);
+    assertValidRecord(this.#contract, this.#modelName, "create", createWithDefaults);
     const { storeNames: onUpdateStoreNames } = collectOnUpdateEnforcementStoreNames(
       this.#contract,
       this.#modelName,
@@ -814,7 +818,10 @@ export class IdbStoreAccessorImpl<
     return new AsyncIterableResult(
       (async function* (): AsyncGenerator<DefaultModelRow<TContract, ModelName>, void, unknown> {
         // The foreign-key path above checks enums per row in `insertSingleRow`.
-        for (const record of records) assertEnumValues(contract, modelName, record);
+        for (const record of records) {
+          assertEnumValues(contract, modelName, record);
+          assertValidRecord(contract, modelName, "create", record);
+        }
         for await (const row of executorQuery(plan)) {
           yield row as DefaultModelRow<TContract, ModelName>;
         }
