@@ -178,4 +178,9 @@ describe("rows stored without a nullable field", () => {
     } as never);
     expect(upserted).toEqual({ id: "u1", name: "Ally", nickname: null });
   });
+
+  it("reads the field as null in the rows deleteAll returns", async () => {
+    const deleted = (await posts.where({ id: "p1" }).deleteAll().toArray()) as Row[];
+    expect(deleted).toEqual([{ id: "p1", authorId: "u1", title: "Hello", subtitle: null }]);
+  });
 });

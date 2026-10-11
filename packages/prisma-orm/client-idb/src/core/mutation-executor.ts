@@ -1513,10 +1513,11 @@ export async function executeDeleteAllWithReferentialActions(options: {
     const meta = makePlanMeta(contract);
     const keyPath = getKeyPath(contract, modelName);
     if (!hasEnforceableChildRelations(contract, modelName)) {
-      return writeMutationRows(scope, contract, modelName, {
+      const deleted = await writeMutationRows(scope, contract, modelName, {
         write: "delete",
         ...(where === undefined ? {} : { where }),
       });
+      return deleted.map(absentAsNull(contract, modelName));
     }
     const rows = await readMutationRows(scope, contract, modelName, where);
     for (const row of rows) {
