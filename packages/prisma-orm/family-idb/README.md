@@ -10,11 +10,11 @@ npm install --save-dev @prisma-idb/family-idb
 
 IndexedDB only exists in the browser, so three migration jobs need their own commands:
 
-| Command                               | Does                                                                            |
-| ------------------------------------- | ------------------------------------------------------------------------------- |
-| `prisma-idb migration plan`           | Plans the next migration from the newest one on disk. Warns if it deletes data. |
-| `prisma-idb migration contract-space` | Bundles the migrations into a module the browser imports.                       |
-| `prisma-idb migration preflight`      | Replays migrations in memory and verifies the schema against the head snapshot. |
+| Command                               | Does                                                                                                                           |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `prisma-idb migration plan`           | Plans the next migration from the newest one on disk. Warns if it deletes data.                                                |
+| `prisma-idb migration contract-space` | Bundles the migrations into a module the browser imports.                                                                      |
+| `prisma-idb migration preflight`      | Replays migrations in memory, verifies the schema against the head snapshot, and checks that the emitted contract is the head. |
 
 All three read `prisma.config.ts`. See [Migrations](https://prisma-idb.dev/docs/prisma-8/migrations).
 

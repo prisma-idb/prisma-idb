@@ -150,6 +150,22 @@ describe("runPreflight", () => {
     expect(await runPreflight({ migrationsDir: join(cwd, "migrations") })).toBe(0);
   });
 
+  it("fails when the emitted contract is not the head's target, and passes once it is", async () => {
+    const head = await writeSnapshot({ users: { keyPath: "id" } });
+    await writePackage({ dirName: "001_init", from: null, to: head, ops: [createMarker, createUsers] });
+    const contractPath = join(cwd, "contract.json");
+    const migrationsDir = join(cwd, "migrations");
+
+    await writeFile(contractPath, JSON.stringify({ storage: { storageHash: "emitted-after-field-change" } }), "utf-8");
+    const errors: string[] = [];
+    expect(await runPreflight({ migrationsDir, contractPath, err: (line) => errors.push(line) })).toBe(1);
+    expect(errors.join("")).toContain(`ends at ${head}`);
+    expect(errors.join("")).toContain("migration plan");
+
+    await writeFile(contractPath, JSON.stringify({ storage: { storageHash: head } }), "utf-8");
+    expect(await runPreflight({ migrationsDir, contractPath })).toBe(0);
+  });
+
   it("accepts a hand-authored transform followed by structural operations", async () => {
     const head = await writeSnapshot({ users: { keyPath: "id" }, posts: { keyPath: "id" } });
     await writePackage({
