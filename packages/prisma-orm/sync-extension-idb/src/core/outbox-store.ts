@@ -55,9 +55,17 @@ function isInBackoff(event: OutboxEvent, backoff: RetryBackoff, now: Date): bool
  */
 async function readPendingEvents(scope: IdbTransactionScope): Promise<OutboxEvent[]> {
   const at = (d: Date | null) => (d instanceof Date ? d.getTime() : 0);
-  return (await scanStore<OutboxEvent>(scope, OUTBOX_STORE))
-    .filter(isPending)
-    .sort((a, b) => at(a.createdAt) - at(b.createdAt));
+  return (
+    (await scanStore<OutboxEvent>(scope, OUTBOX_STORE))
+      .filter(isPending)
+      // Older outbox rows lack these nullable fields. Normalize reads without a backfill.
+      .map((event) => ({
+        ...event,
+        migrationError: event.migrationError ?? null,
+        versionMetaId: event.versionMetaId ?? null,
+      }))
+      .sort((a, b) => at(a.createdAt) - at(b.createdAt))
+  );
 }
 
 /**
@@ -176,7 +184,7 @@ export async function markSynced(scope: IdbTransactionScope, id: string): Promis
   const existing = await getRecord<OutboxEvent>(scope, OUTBOX_STORE, id);
   if (!existing) return;
   await putRecord(scope, OUTBOX_STORE, { ...existing, synced: true, syncedAt: new Date() });
-  await clearLocalChangePending(scope, existing.versionMetaId);
+  await clearLocalChangePending(scope, existing.versionMetaId ?? null);
 }
 
 /**
@@ -210,5 +218,5 @@ export async function markFailed(
     lastAttemptedAt: new Date(),
     retryable,
   });
-  if (!retryable) await clearLocalChangePending(scope, existing.versionMetaId);
+  if (!retryable) await clearLocalChangePending(scope, existing.versionMetaId ?? null);
 }

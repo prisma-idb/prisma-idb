@@ -164,34 +164,51 @@ describe("pending outbox migrations", () => {
     }
   });
 
-  it("rewrites rejected events like pending ones and keeps one it cannot convert", async () => {
-    const factory = new IDBFactory();
-    const before = await seed(factory);
-    const client = await createAutoMigratingSyncIdbClient({
-      ...options(factory),
-      contractSpace: buildContractSpaceFixture(v1),
-    });
-    const create = before.find((event) => event["operation"] === "create")!;
-    const rejected = { ...create, id: "rejected", retryable: false, tries: 3, lastError: "unique violation" };
-    const invalid = { ...rejected, id: "invalid", payload: { id: "bad", enabled: "invalid" } };
-    await client.withTransaction(["_idb_sync_outbox"], async (scope) => {
-      for (const record of [rejected, invalid]) {
-        await scope.execute({ kind: "put", storeName: "_idb_sync_outbox", record } as never);
-      }
-    });
-    await client.close();
-    const migrated = await createAutoMigratingSyncIdbClient({ ...options(factory), contractSpace: evolvedSpace() });
-    try {
-      const events = await scanAll(migrated, "_idb_sync_outbox");
-      expect(events.find((row) => row["id"] === "rejected")).toStrictEqual({
-        ...rejected,
-        payload: { id: "create", label: "Create", count: 1, role: "member" },
+  it.each(["create", "update"])(
+    "marks a rejected %s it cannot convert while preserving the rejection reason",
+    async (operation) => {
+      const factory = new IDBFactory();
+      const before = await seed(factory);
+      const client = await createAutoMigratingSyncIdbClient({
+        ...options(factory),
+        contractSpace: buildContractSpaceFixture(v1),
       });
-      expect(events.find((row) => row["id"] === "invalid")).toStrictEqual(invalid);
-    } finally {
-      await migrated.close();
+      const create = before.find((event) => event["operation"] === "create")!;
+      const rejected = { ...create, id: "rejected", retryable: false, tries: 3, lastError: "unique violation" };
+      const invalid = {
+        ...rejected,
+        id: "invalid",
+        operation,
+        payload:
+          operation === "create" ? { id: "bad", enabled: "invalid" } : { key: "update", patch: { enabled: "invalid" } },
+      };
+      const previouslyMarked = { ...rejected, id: "previously-marked", migrationError: "earlier transform failed" };
+      await client.withTransaction(["_idb_sync_outbox"], async (scope) => {
+        for (const record of [rejected, invalid, previouslyMarked]) {
+          await scope.execute({ kind: "put", storeName: "_idb_sync_outbox", record } as never);
+        }
+      });
+      await client.close();
+      const migrated = await createAutoMigratingSyncIdbClient({ ...options(factory), contractSpace: evolvedSpace() });
+      try {
+        const events = await scanAll(migrated, "_idb_sync_outbox");
+        expect(events.find((row) => row["id"] === "rejected")).toStrictEqual({
+          ...rejected,
+          payload: { id: "create", label: "Create", count: 1, role: "member" },
+        });
+        expect(events.find((row) => row["id"] === "previously-marked")).toStrictEqual({
+          ...previouslyMarked,
+          payload: { id: "create", label: "Create", count: 1, role: "member" },
+        });
+        expect(events.find((row) => row["id"] === "invalid")).toStrictEqual({
+          ...invalid,
+          migrationError: "IDB: cannot coerce invalid to int",
+        });
+      } finally {
+        await migrated.close();
+      }
     }
-  });
+  );
 
   it("rolls back app records, rewritten outbox events, markers and the database version on a bad queued value", async () => {
     const factory = new IDBFactory();
@@ -207,6 +224,19 @@ describe("pending outbox migrations", () => {
         record: {
           ...events.find((event) => event["operation"] === "create"),
           id: "zz-invalid",
+          payload: { id: "bad", enabled: "invalid" },
+        },
+      } as never)
+    );
+    await client.withTransaction(["_idb_sync_outbox"], (scope) =>
+      scope.execute({
+        kind: "put",
+        storeName: "_idb_sync_outbox",
+        record: {
+          ...events.find((event) => event["operation"] === "create"),
+          id: "aa-rejected",
+          retryable: false,
+          lastError: "unique violation",
           payload: { id: "bad", enabled: "invalid" },
         },
       } as never)

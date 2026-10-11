@@ -32,6 +32,8 @@ export interface OutboxEvent {
   lastAttemptedAt: Date | null;
   tries: number;
   lastError: string | null;
+  /** A failed migration left the payload in an older shape. Later transforms keep this warning. */
+  migrationError?: string | null;
   retryable: boolean;
   /**
    * The `_idb_sync_version_meta` record id this event's mutation was keyed

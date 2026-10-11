@@ -30,8 +30,9 @@ export const transformOutbox: NonNullable<IdbExtensionSpace["onTransformRecords"
           payload = rewrittenPayload(op, event);
         } catch (error) {
           // A pending event will still be pushed, so a value that cannot be converted aborts the upgrade.
-          // A rejected event never will be, so it stays as written instead of blocking the upgrade.
+          // Keep a rejected payload for recovery, with a warning that it is still in an older shape.
           if (event.retryable) throw error;
+          cursor.update({ ...event, migrationError: error instanceof Error ? error.message : String(error) });
         }
         if (payload !== undefined) cursor.update({ ...event, payload });
       }
