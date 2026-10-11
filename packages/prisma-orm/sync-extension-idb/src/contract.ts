@@ -20,7 +20,9 @@ export const syncContract = defineContract({
         lastAttemptedAt: "DateTime?",
         tries: "Int",
         lastError: "String?",
+        migrationError: "String?",
         retryable: "Boolean",
+        versionMetaId: "String?",
       },
       indexes: {
         byCreatedAt: { keyPath: "createdAt", unique: false },

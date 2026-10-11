@@ -54,6 +54,13 @@
                   "kind": "scalar"
                 }
               },
+              "migrationError": {
+                "nullable": true,
+                "type": {
+                  "codecId": "idb/string@1",
+                  "kind": "scalar"
+                }
+              },
               "operation": {
                 "nullable": false,
                 "type": {
@@ -93,6 +100,13 @@
                 "nullable": false,
                 "type": {
                   "codecId": "idb/int32@1",
+                  "kind": "scalar"
+                }
+              },
+              "versionMetaId": {
+                "nullable": true,
+                "type": {
+                  "codecId": "idb/string@1",
                   "kind": "scalar"
                 }
               }
