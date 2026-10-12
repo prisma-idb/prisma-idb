@@ -1,17 +1,21 @@
 import type { Contract } from "@prisma/orm-framework/contract/types";
 import { keepInternalSpecifiers } from "@prisma/orm-framework/components/emission";
 import { describe, expect, it } from "vitest";
-import type { IdbRecordField } from "../src/core/idb-contract-types";
+import type { IdbKeyPath, IdbRecordField } from "../src/core/idb-contract-types";
 import { deletedDataWarning } from "../src/core/migration-factories";
 import { IdbMigrationPlanner } from "../src/core/migration-planner";
 import { transformRecord } from "../src/core/transform-records";
 
 const string: IdbRecordField = { type: { kind: "scalar", codecId: "idb/string@1" }, nullable: false };
-function contract(fields: Record<string, IdbRecordField>, defaults: Record<string, unknown> = {}) {
+function contract(
+  fields: Record<string, IdbRecordField>,
+  defaults: Record<string, unknown> = {},
+  keyPath: IdbKeyPath = "id"
+) {
   return {
     storage: {
       storageHash: "hash",
-      stores: { users: { keyPath: "id", record: { model: "User", fields: { id: string, ...fields } } } },
+      stores: { users: { keyPath, record: { model: "User", fields: { id: string, ...fields } } } },
     },
     execution: {
       mutations: {
@@ -23,8 +27,8 @@ function contract(fields: Record<string, IdbRecordField>, defaults: Record<strin
     },
   };
 }
-function plan(from: ReturnType<typeof contract>, to: ReturnType<typeof contract>) {
-  const result = new IdbMigrationPlanner().plan({
+function planResult(from: ReturnType<typeof contract>, to: ReturnType<typeof contract>) {
+  return new IdbMigrationPlanner().plan({
     fromContract: from as unknown as Contract,
     contract: to,
     schema: null,
@@ -32,6 +36,9 @@ function plan(from: ReturnType<typeof contract>, to: ReturnType<typeof contract>
     spaceId: "app",
     policy: { allowedOperationClasses: ["additive", "data", "destructive", "widening"] },
   });
+}
+function plan(from: ReturnType<typeof contract>, to: ReturnType<typeof contract>) {
+  const result = planResult(from, to);
   if (result.kind !== "success") throw new Error(JSON.stringify(result.conflicts));
   return result.plan;
 }
@@ -57,6 +64,31 @@ function expectSlot(result: ReturnType<typeof plan>, field: string) {
 }
 
 describe("record shape migration planning", () => {
+  it.each<[IdbKeyPath, string]>([
+    ["id", "id"],
+    [["id", "role"], "id"],
+    [["id", "role"], "role"],
+  ])("returns a planning conflict when key path %j has a codec change on %s", (keyPath, field) => {
+    const result = planResult(
+      contract({ role: string }, {}, keyPath),
+      contract(
+        { role: string, [field]: { type: { kind: "scalar", codecId: "idb/int32@1" }, nullable: false } },
+        {},
+        keyPath
+      )
+    );
+    expect(result).toEqual({
+      kind: "failure",
+      conflicts: [
+        expect.objectContaining({
+          kind: "keyFieldTransform",
+          summary: expect.stringContaining('store "users"'),
+          why: expect.stringContaining(`key field "${field}"`),
+        }),
+      ],
+    });
+  });
+
   it.each(["member", 0, false, 'quoted"\\\nvalue'])("backfills a required literal default: %j", (value) => {
     const codecId =
       typeof value === "number" ? "idb/int32@1" : typeof value === "boolean" ? "idb/bool@1" : "idb/string@1";
