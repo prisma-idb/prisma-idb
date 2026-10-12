@@ -21,7 +21,7 @@ const contract = defineContract({
 
 describe("buildCatalog", () => {
   it("records storage paths, index flags, codecs, and nullability", () => {
-    const c = buildCatalog(contract, "items");
+    const c = buildCatalog(contract, "items", "Item");
     expect(c.primaryKey).toEqual({ keyPath: "id", fields: ["id"], unique: true, multiEntry: false });
     expect(c.indexes).toEqual([
       { indexName: "ab", keyPath: ["a", "b"], fields: ["a", "b"], unique: true, multiEntry: false },
@@ -36,14 +36,41 @@ describe("buildCatalog", () => {
   });
   it("caches by contract identity and store without mutating the contract", () => {
     const before = structuredClone(contract);
-    expect(buildCatalog(contract, "items")).toBe(buildCatalog(contract, "items"));
-    expect(buildCatalog(structuredClone(contract), "items")).not.toBe(buildCatalog(contract, "items"));
-    expect(buildCatalog(contract, "pairs").primaryKey.keyPath).toEqual(["a", "b"]);
+    expect(buildCatalog(contract, "items", "Item")).toBe(buildCatalog(contract, "items", "Item"));
+    expect(buildCatalog(structuredClone(contract), "items", "Item")).not.toBe(buildCatalog(contract, "items", "Item"));
+    expect(buildCatalog(contract, "pairs", "Pair").primaryKey.keyPath).toEqual(["a", "b"]);
     expect(contract).toEqual(before);
-    expect(Object.isFrozen(buildCatalog(contract, "items").indexes)).toBe(true);
-    expect(Object.isFrozen(buildCatalog(contract, "items").fields["a"])).toBe(true);
+    expect(Object.isFrozen(buildCatalog(contract, "items", "Item").indexes)).toBe(true);
+    expect(Object.isFrozen(buildCatalog(contract, "items", "Item").fields["a"])).toBe(true);
   });
-  it("reports an unknown store", () => {
+  describe("models that share a store", () => {
+    const shared = defineContract({
+      family,
+      target,
+      models: {
+        Plain: { store: "shared", key: "id", fields: { id: "String" } },
+        Nullable: { store: "shared", key: "id", fields: { id: "String", note: "String?" } },
+      },
+    });
+
+    it("reads the rows of each model, not of the last model that maps to the store", () => {
+      const row = { id: "1" };
+      expect(buildCatalog(shared, "shared", "Plain").absentAsNull(row)).toEqual({ id: "1" });
+      expect(buildCatalog(shared, "shared", "Nullable").absentAsNull(row)).toEqual({ id: "1", note: null });
+    });
+    it("caches one catalog per model", () => {
+      expect(buildCatalog(shared, "shared", "Plain")).toBe(buildCatalog(shared, "shared", "Plain"));
+      expect(buildCatalog(shared, "shared", "Plain")).not.toBe(buildCatalog(shared, "shared", "Nullable"));
+    });
+  });
+  it("reports an unknown store, an unknown model and a model of another store", () => {
     expect(() => buildCatalog(contract, "missing")).toThrow('Store "missing" is not in the contract');
+    expect(() => buildCatalog(contract, "items", "Nope")).toThrow('Model "Nope" is not in the contract');
+    expect(() => buildCatalog(contract, "items", "Pair")).toThrow('Model "Pair" is not stored in "items"');
+  });
+  it("gives a store without a model no fields to fill", () => {
+    const c = buildCatalog(contract, "items");
+    expect(c.fields).toEqual({});
+    expect(c.absentAsNull({ id: "1" })).toEqual({ id: "1" });
   });
 });

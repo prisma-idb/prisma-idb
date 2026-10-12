@@ -890,7 +890,7 @@ export class IdbStoreAccessorImpl<
       ...(take === undefined ? {} : { take }),
     };
     const meta = this.#planMeta(this.#newGroupingKey());
-    const catalog = buildCatalog(this.#contract, this.#storeName);
+    const catalog = buildCatalog(this.#contract, this.#storeName, this.#modelName);
     const lowered = lowerCount(catalog, planQuery(catalog, request), meta, request);
     // Middleware sees a `count` AST, not the plan that answers it.
     const ast: IdbCountAst = {
@@ -957,7 +957,7 @@ export class IdbStoreAccessorImpl<
   }
 
   #lowerRows(meta: PlanMeta, request: RowsRequest): LoweredRows {
-    const catalog = buildCatalog(this.#contract, this.#storeName);
+    const catalog = buildCatalog(this.#contract, this.#storeName, this.#modelName);
     return lowerRows(catalog, planQuery(catalog, request), meta, request);
   }
 

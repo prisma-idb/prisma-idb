@@ -1,5 +1,6 @@
 import { expect, it } from "vitest";
 import fc from "fast-check";
+import { domainModelsAtDefaultNamespace } from "@prisma/orm-framework/contract/types";
 import { AsyncIterableResult } from "@prisma/orm-framework/components/runtime";
 import {
   andExpr,
@@ -156,11 +157,17 @@ async function oracle(db: IDBDatabase, query: Query): Promise<Row[]> {
   return filtered.slice(skip, query.take === undefined ? undefined : skip + query.take);
 }
 
+/** Each test contract maps exactly one model to the `items` store. */
+function itemsCatalog(testContract: IdbContract) {
+  const [modelName] = Object.keys(domainModelsAtDefaultNamespace(testContract.domain));
+  return buildCatalog(testContract, "items", modelName);
+}
+
 function accessor(
   driver: IdbRuntimeDriverInstance,
   testContract: IdbContract = contract
 ): IdbStoreAccessor<never, never> {
-  readStored = buildCatalog(testContract, "items").absentAsNull;
+  readStored = itemsCatalog(testContract).absentAsNull;
   const orm = idbOrm({ contract: testContract, executor: new TestExecutor(driver) });
   return (orm as unknown as Record<string, IdbStoreAccessor<never, never>>)["items"]!;
 }
@@ -202,7 +209,7 @@ async function compareExists(
   where: IdbFilterExpr | undefined,
   testContract: IdbContract = contract
 ) {
-  const catalog = buildCatalog(testContract, "items");
+  const catalog = itemsCatalog(testContract);
   const request = where === undefined ? {} : { where };
   const meta = { target: "idb", storageHash: "test", lane: "idb-orm" } as const;
   const matching = await oracle(db, request);

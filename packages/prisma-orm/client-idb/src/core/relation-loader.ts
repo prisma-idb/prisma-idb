@@ -114,7 +114,7 @@ export async function loadRelation(
   );
   const where = refinedWhere === undefined ? joinWhere : andExpr([joinWhere, refinedWhere]);
   const request = { ...(refinedWhere === undefined ? {} : { where: refinedWhere }) };
-  const catalog = buildCatalog(contract, relatedStoreName);
+  const catalog = buildCatalog(contract, relatedStoreName, relatedModelName);
   const lowered = lowerRows(catalog, planQuery(catalog, { where }), planMeta, request, (row) => {
     const token = tupleToken(row, targetFields);
     return token !== null && localTuples.has(token);
