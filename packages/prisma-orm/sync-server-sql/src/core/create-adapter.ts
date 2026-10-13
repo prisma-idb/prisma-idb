@@ -86,7 +86,7 @@ export function createSqlSyncAdapter(options: CreateSqlSyncAdapterOptions): SqlS
     toSyncPushPayload,
     applyPushEvent: (db, event, model, check, scopeKey) =>
       applyPushEventImpl(db, contract, getKeyField, event, model, check, scopeKey),
-    resolvePullRecord: (db, model, check, keyPath, operation) =>
+    resolvePullRecord: async (db, model, check, keyPath, operation) =>
       resolvePullRecordImpl(
         db,
         requireSyncServer("resolvePullRecord"),

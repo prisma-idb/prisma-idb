@@ -87,10 +87,10 @@ describe("client field projection", () => {
     expect(await adapter.resolvePullRecord(db, "PrivateNote", noteCheck("u2"), "n1", "update")).toBeNull();
   });
 
-  it("requires syncServer even when the check would return no record", () => {
+  it("rejects without syncServer even when the check would return no record", async () => {
     const withoutServer = createSqlSyncAdapter({ contract: testContract });
-    expect(() => withoutServer.resolvePullRecord({}, "PrivateNote", { kind: "unknown-model" }, "n1", "update")).toThrow(
-      "createSqlSyncAdapter: resolvePullRecord needs the `syncServer` option."
-    );
+    await expect(
+      withoutServer.resolvePullRecord({}, "PrivateNote", { kind: "unknown-model" }, "n1", "update")
+    ).rejects.toThrow("createSqlSyncAdapter: resolvePullRecord needs the `syncServer` option.");
   });
 });
