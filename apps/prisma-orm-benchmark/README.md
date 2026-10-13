@@ -46,10 +46,10 @@ five queries per sample. Divide the reported times by five for milliseconds
 per query. `find-compound-suffix-first` is the numeric control on the existing
 `[orgId, rank]` index.
 
-This Date query matches MyFit's activity-preferences query semantics in the
-new client. MyFit still uses the legacy generated client, so these timings
-do not measure the current MyFit build. An inclusive-only Date bound keeps
-the full-scan fallback because it can match invalid Dates omitted by an index.
+This Date query models MyFit's activity-preferences query in `client-idb`.
+The timings measure queries against the benchmark fixture. An inclusive-only
+Date bound keeps the full-scan fallback because it can match invalid Dates
+omitted by an index.
 
 ## Running it
 
