@@ -59,7 +59,7 @@ export class KanbanStore {
   todos = $derived(this.boards.flatMap((b) => b.todos));
   completedTodos = $derived(this.todos.filter((t) => t.isCompleted).length);
 
-  /** Stores a user-visible database or sync error and releases the busy state. */
+  /** Sets the workspace’s error status, stores its message, and releases the busy state. */
   showError = (error: unknown) => {
     this.status = "error";
     this.errorMessage = error instanceof Error ? error.message : "Something went wrong.";
