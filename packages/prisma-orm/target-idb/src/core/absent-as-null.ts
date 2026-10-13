@@ -3,7 +3,6 @@ import {
   domainModelsAtDefaultNamespace,
   domainValueObjectsAtDefaultNamespace,
 } from "@prisma/orm-framework/contract/types";
-import { buildFieldTypeValidator } from "./validate-record";
 
 /** Fills the nullable fields a stored record lacks with `null`. Returns the record itself when none is missing. */
 export type AbsentAsNull = (record: Record<string, unknown>) => Record<string, unknown>;
@@ -22,31 +21,25 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   );
 }
 
-function buildTypeNormalizer(contract: ContractWithDomain, fieldType: ContractFieldType): NormalizeValue {
+/** Builds a normalizer for supported native values and embedded objects. */
+function buildTypeNormalizer(
+  contract: ContractWithDomain,
+  fieldType: ContractFieldType,
+  fieldLabel: string
+): NormalizeValue {
   if (fieldType.kind === "scalar") return unchanged;
   if (fieldType.kind === "valueObject") {
     const fields = domainValueObjectsAtDefaultNamespace(contract.domain)?.[fieldType.name]?.fields;
     if (!fields) throw new Error(`Unknown value object "${fieldType.name}"`);
-    const normalize = buildShapeNormalizer(contract, fields);
+    const normalize = buildShapeNormalizer(contract, fields, `Value object "${fieldType.name}"`);
     return (value) => (isRecord(value) ? normalize(value) : value);
   }
-  const members = fieldType.members.map((member) => ({
-    normalize: buildTypeNormalizer(contract, member),
-    validator: buildFieldTypeValidator(contract, member),
-  }));
-  return (value) => {
-    // A value already valid for a member needs no additions from another member.
-    if (members.some(({ validator }) => validator.allows(value))) return value;
-    for (const { normalize, validator } of members) {
-      const candidate = normalize(value);
-      if (validator.allows(candidate)) return candidate;
-    }
-    return value;
-  };
+  throw new Error(`${fieldLabel} uses a union type, which prisma-idb does not support`);
 }
 
-function buildFieldNormalizer(contract: ContractWithDomain, field: ContractField): NormalizeValue {
-  let normalize = buildTypeNormalizer(contract, field.type);
+/** Builds the container normalizer and fills missing nullable fields. */
+function buildFieldNormalizer(contract: ContractWithDomain, field: ContractField, fieldLabel: string): NormalizeValue {
+  let normalize = buildTypeNormalizer(contract, field.type, fieldLabel);
   if (field.many && normalize !== unchanged) {
     const element = normalize;
     normalize = (value) => {
@@ -75,9 +68,14 @@ function buildFieldNormalizer(contract: ContractWithDomain, field: ContractField
   return field.nullable ? (value) => (value === undefined ? null : container(value)) : container;
 }
 
-function buildShapeNormalizer(contract: ContractWithDomain, fields: Record<string, ContractField>): AbsentAsNull {
+/** Builds a copy-on-change normalizer for a model or value object's fields. */
+function buildShapeNormalizer(
+  contract: ContractWithDomain,
+  fields: Record<string, ContractField>,
+  owner: string
+): AbsentAsNull {
   const normalizers = Object.entries(fields)
-    .map(([name, field]) => ({ name, normalize: buildFieldNormalizer(contract, field) }))
+    .map(([name, field]) => ({ name, normalize: buildFieldNormalizer(contract, field, `${owner} field "${name}"`) }))
     .filter(({ normalize }) => normalize !== unchanged);
   return (record) => {
     let filled: Record<string, unknown> | undefined;
@@ -93,7 +91,7 @@ function buildShapeNormalizer(contract: ContractWithDomain, fields: Record<strin
 
 /**
  * Reads a stored record as the contract describes it: a nullable field the record lacks is `null`.
- * This applies inside value objects, containers and union members as well as at the model's root.
+ * This applies inside value objects and containers as well as at the model's root.
  * A field added after the record was written is the usual cause. Reading it as `null` means adding
  * a nullable field needs no walk over the stored records, and `validateRecord` stays strict.
  *
@@ -110,7 +108,7 @@ export function absentAsNull(contract: ContractWithDomain, modelName: string): A
 
   const model = domainModelsAtDefaultNamespace(contract.domain)[modelName];
   if (!model) throw new Error(`Unknown model "${modelName}"`);
-  const normalize = buildShapeNormalizer(contract, model.fields);
+  const normalize = buildShapeNormalizer(contract, model.fields, `Model "${modelName}"`);
   byModel.set(modelName, normalize);
   return normalize;
 }

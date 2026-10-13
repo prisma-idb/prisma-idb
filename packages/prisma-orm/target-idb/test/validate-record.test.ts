@@ -130,30 +130,45 @@ describe("validateRecord", () => {
     expect(validateRecord(schema, "Item", { id: "a", status: "OPEN", statuses: [] }).ok).toBe(false);
     expect(validateRecord(schema, "Item", { id: "a", status: "open", statuses: ["other"] }).ok).toBe(false);
   });
-  it("validates value objects, dictionaries and unions", () => {
+  it("validates value objects and dictionaries", () => {
     const schema = contract(
       {
         details: { nullable: false, type: { kind: "valueObject", name: "Details" } },
         labels: field("idb/string@1", { dict: true }),
-        union: {
-          nullable: false,
-          type: {
-            kind: "union",
-            members: [
-              { kind: "scalar", codecId: "idb/string@1" },
-              { kind: "scalar", codecId: "idb/bool@1" },
-            ],
-          },
-        },
       },
       "id",
       { valueObjects: { Details: { fields: { count: field("idb/int32@1") } } } }
     );
-    const valid = { id: "a", details: { count: 1 }, labels: { a: "A" }, union: true };
+    const valid = { id: "a", details: { count: 1 }, labels: { a: "A" } };
     expect(validateRecord(schema, "Item", valid).ok).toBe(true);
     expect(validateRecord(schema, "Item", { ...valid, details: { count: "bad" } }).ok).toBe(false);
     expect(validateRecord(schema, "Item", { ...valid, labels: { a: 1 } }).ok).toBe(false);
-    expect(validateRecord(schema, "Item", { ...valid, union: 1 }).ok).toBe(false);
+  });
+  it("fails closed for union fields, including omitted updates and nullable values", () => {
+    const union: ContractField = {
+      nullable: true,
+      type: {
+        kind: "union",
+        members: [
+          { kind: "scalar", codecId: "idb/string@1" },
+          { kind: "scalar", codecId: "idb/bool@1" },
+        ],
+      },
+    };
+    const schema = contract({ choice: union });
+    const message = 'Model "Item" field "choice" uses a union type, which prisma-idb does not support';
+    for (const choice of ["text", true, null]) {
+      expect(validateRecord(schema, "Item", { id: "a", choice })).toEqual({ ok: false, issues: [message] });
+    }
+    expect(validateRecord(schema, "Item", { id: "a" }, { partial: true })).toEqual({ ok: false, issues: [message] });
+    expect(() => assertRecordValidator(schema, "Item")).toThrow(message);
+    const nested = contract({ details: { nullable: false, type: { kind: "valueObject", name: "Details" } } }, "id", {
+      valueObjects: { Details: { fields: { choice: union } } },
+    });
+    expect(validateRecord(nested, "Item", { id: "a", details: { choice: true } })).toEqual({
+      ok: false,
+      issues: ['Value object "Details" field "choice" uses a union type, which prisma-idb does not support'],
+    });
   });
   it("validates partial updates while keeping full records strict", () => {
     expect(validateRecord(schema, "Item", { name: "ok" }, { partial: true }).ok).toBe(true);

@@ -233,12 +233,6 @@ function typeAcceptsExistingValues(from: IdbRecordFieldType, to: IdbRecordFieldT
       Object.hasOwn(from.fields, name) ? fieldAcceptsExistingValues(from.fields[name]!, field) : field.nullable
     );
   }
-  if (from.kind === "union" && to.kind === "union") {
-    return (
-      from.members.length === to.members.length &&
-      from.members.every((member, index) => typeAcceptsExistingValues(member, to.members[index]!))
-    );
-  }
   return JSON.stringify(from) === JSON.stringify(to);
 }
 
@@ -299,11 +293,29 @@ function storedLiteralDefault(
   return stored;
 }
 
+/** Rejects unsupported types in stored metadata, including legacy source contracts. */
+function assertSupportedRecordFields(fields: Record<string, IdbRecordField>, owner: string): void {
+  for (const [name, field] of Object.entries(fields)) {
+    if (field.type.kind === "union") {
+      throw new Error(`${owner} field "${name}" uses a union type, which prisma-idb does not support`);
+    }
+    if (field.type.kind === "valueObject") {
+      assertSupportedRecordFields(field.type.fields, `Value object "${field.type.name}"`);
+    }
+  }
+}
+
+/** Plans stored-record transformations after rejecting unsupported metadata. */
 function diffRecordShapes(
   from: IdbSchemaDiffInput | null,
   to: IdbSchemaDiffInput,
   contract: Contract
 ): { ops: IdbDdlOp[]; conflicts: MigrationPlannerConflict[] } {
+  for (const schema of [from, to]) {
+    for (const store of Object.values(schema?.stores ?? {})) {
+      if (store.record) assertSupportedRecordFields(store.record.fields, `Model "${store.record.model}"`);
+    }
+  }
   const ops: IdbDdlOp[] = [];
   const conflicts: MigrationPlannerConflict[] = [];
   for (const [storeName, store] of Object.entries(to.stores)) {

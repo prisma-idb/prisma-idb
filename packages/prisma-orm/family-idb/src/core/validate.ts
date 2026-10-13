@@ -71,10 +71,31 @@ function validateIdbStorage(contract: Contract): void {
   }
 }
 
+/** Rejects field types that the IDB authoring surfaces and codecs do not support. */
+function validateSupportedFieldTypes(contract: Contract): void {
+  for (const namespace of Object.values(contract.domain.namespaces)) {
+    for (const [owner, entities] of [
+      ["Model", namespace.models],
+      ["Value object", namespace.valueObjects ?? {}],
+    ] as const) {
+      for (const [name, entity] of Object.entries(entities)) {
+        for (const [fieldName, field] of Object.entries(entity.fields)) {
+          if (field.type.kind === "union") {
+            throw new ContractValidationError(
+              `${owner} "${name}" field "${fieldName}" uses a union type, which prisma-idb does not support`,
+              "domain"
+            );
+          }
+        }
+      }
+    }
+  }
+}
+
 /**
  * Parses and validates a raw contract value against the IDB contract schema.
  *
- * Runs two validation passes: framework domain validation then IDB-specific
+ * Runs framework domain validation, IDB field-type validation and IDB-specific
  * storage validation. Throws a {@link ContractValidationError} describing the
  * first failure found.
  *
@@ -87,6 +108,7 @@ export function validateContract(value: unknown): IdbContract {
   // valueObjects, and relations.
   const contract = value as Contract;
   validateContractDomain(contract);
+  validateSupportedFieldTypes(contract);
   validateIdbStorage(contract);
   return contract as IdbContract;
 }
