@@ -28,7 +28,7 @@ Union fields are unsupported and fail closed. Contract validation rejects model 
 
 A required JSON scalar (`idb/json@1`, `pg/json@1` or `pg/jsonb@1`) accepts JSON `null`, while still requiring the field and rejecting `undefined`. JSON null is a value, independent of database NULL; this corresponds to [Prisma's `JsonNull` distinction](https://www.prisma.io/docs/orm/v7/prisma-client/special-fields-and-types/working-with-json-fields#using-null-values). Sync carries the JSON value itself, not Prisma Client's null sentinel objects. Non-nullable list/dictionary containers still reject `null`.
 
-Local ORM writes reuse these validators after applying defaults and resolving relation fields. Creates validate complete native records, so nullable fields without a default must be supplied as `null`. This keeps the stored row complete in IndexedDB, which has no SQL column defaults. Upstream SQL create inputs allow omitted nullable columns; the database supplies their nulls. Updates validate only supplied fields and require complete value-object replacements.
+Local ORM writes reuse these validators after applying defaults and resolving relation fields. Creates validate complete native records, except that an auto-increment key may be omitted when IndexedDB generates it. Nullable fields without a default must still be supplied as `null`. This keeps the stored row complete in IndexedDB, which has no SQL column defaults. Upstream SQL create inputs allow omitted nullable columns; the database supplies their nulls. Updates validate only supplied fields and require complete value-object replacements.
 
 ### Shared implementation, server contract
 
