@@ -29,7 +29,8 @@ export interface IdbClient<TContract extends IdbContract> {
    * operation on it takes part in the transaction, including foreign-key
    * checks, referential actions and `include`. The transaction commits when
    * `fn` resolves and rolls back when it throws. A failed operation aborts the
-   * whole transaction, even if `fn` catches the error.
+   * whole transaction, even if `fn` catches the error. The callback may return
+   * an ORM query result directly, without an `async` wrapper.
    *
    * Await only `tx` operations inside `fn`. IndexedDB commits a transaction
    * once it has no pending request, so awaiting a timer or a network call ends
@@ -48,7 +49,7 @@ export interface IdbClient<TContract extends IdbContract> {
    */
   transaction<TRootKey extends string & keyof TContract["roots"], T>(
     rootKeys: readonly TRootKey[],
-    fn: (tx: IdbOrmTransaction<TContract, TRootKey>) => Promise<T>
+    fn: (tx: IdbOrmTransaction<TContract, TRootKey>) => PromiseLike<T>
   ): Promise<T>;
   /**
    * Run `fn` inside a single multi-store readwrite IDB transaction.

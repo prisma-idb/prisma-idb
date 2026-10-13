@@ -55,14 +55,14 @@ type LooseAccessor = {
   create(data: Row): Promise<Row>;
   findUnique(key: string): Promise<Row | null>;
   delete(key: string): Promise<void>;
-  all(): { toArray(): Promise<Row[]> };
+  all(): PromiseLike<Row[]> & { toArray(): Promise<Row[]> };
   where(filter: Row): { all(): { toArray(): Promise<Row[]> } };
   include(relation: string): { all(): { toArray(): Promise<Row[]> } };
 };
 type LooseTx = Record<"users" | "posts" | "tags", LooseAccessor>;
 type LooseClient = {
   orm: LooseTx;
-  transaction<T>(rootKeys: string[], fn: (tx: LooseTx) => Promise<T>): Promise<T>;
+  transaction<T>(rootKeys: string[], fn: (tx: LooseTx) => PromiseLike<T>): Promise<T>;
   close(): Promise<void>;
 };
 
@@ -126,6 +126,16 @@ describe("db.transaction()", () => {
   const postIds = async () => (await db.orm.posts.all().toArray()).map((p) => p["id"]);
 
   describe("commit and rollback", () => {
+    it("accepts an ORM query result returned directly from the callback", async () => {
+      const user = { id: "u1", name: "Alice" };
+      await db.orm.users.create(user);
+
+      const result = await db.transaction(["users"], (tx) => tx.users.all());
+
+      expect(result).toEqual([user]);
+      expect(await db.orm.users.all().toArray()).toEqual([user]);
+    });
+
     it("writes every model in one transaction and returns the callback result", async () => {
       const result = await db.transaction(["users", "posts"], async (tx) => {
         const user = await tx.users.create({ id: "u1", name: "Alice" });

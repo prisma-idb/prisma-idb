@@ -49,6 +49,12 @@ describe("db.transaction() types", () => {
     expectTypeOf<ReturnType<typeof run>>().resolves.toEqualTypeOf<number>();
   });
 
+  it("accepts an ORM query result directly and infers its rows", () => {
+    const run = () => db.transaction(["users"], (tx) => tx.users.all());
+    void run;
+    expectTypeOf<ReturnType<typeof run>>().resolves.toMatchTypeOf<Rows["User"][]>();
+  });
+
   it("rejects a key that is not a root of the contract", () => {
     // @ts-expect-error "nope" is not a root of the contract.
     const unknown = () => db.transaction(["nope"], async () => undefined);

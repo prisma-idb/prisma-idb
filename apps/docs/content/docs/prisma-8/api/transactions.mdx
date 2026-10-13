@@ -28,6 +28,12 @@ const user = await db.transaction(["user", "todo"], async (tx) => {
 });
 ```
 
+You can also return an ORM query result directly. An `async` wrapper is optional:
+
+```ts
+const users = await db.transaction(["user"], (tx) => tx.user.all());
+```
+
 The transaction commits when the callback returns. It rolls back, and `transaction()` rethrows the error, when the callback throws.
 
 Every ORM method works on `tx`, with the same foreign-key checks and `onDelete`/`onUpdate` actions as on `db.orm`. Reads see the writes made earlier in the same transaction.

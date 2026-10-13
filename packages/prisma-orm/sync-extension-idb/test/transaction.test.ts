@@ -37,6 +37,53 @@ function untilNextTransactionFinishes(): () => Promise<void> {
 }
 
 describe("SyncIdbClient.transaction()", () => {
+  it("commits tracked writes when the callback returns an ORM result directly", async () => {
+    const { client } = await createTestSyncClient();
+    const emitted: number[] = [];
+    client.on("outboxwrite", (entries) => emitted.push(entries.length));
+    const user = { id: "u1", name: "Alice" };
+
+    const rows = await client.transaction(["users"], (tx) => tx["users"]!.createAll([user]));
+
+    expect(rows).toEqual([user]);
+    expect(await scanAll(client, "users")).toEqual([user]);
+    expect(await scanAll(client, "_idb_sync_outbox")).toHaveLength(1);
+    expect(emitted).toEqual([1]);
+  });
+
+  it("rolls back tracked writes when a directly returned ORM result rejects", async () => {
+    const { client } = await createTestSyncClient();
+    const emitted: number[] = [];
+    client.on("outboxwrite", (entries) => emitted.push(entries.length));
+
+    await expect(
+      client.transaction(["users"], (tx) =>
+        tx["users"]!.createAll([
+          { id: "u1", name: "Alice" },
+          { id: "u2", name: 3 },
+        ])
+      )
+    ).rejects.toThrow(IdbRecordValidationError);
+
+    expect(await scanAll(client, "users")).toEqual([]);
+    expect(await scanAll(client, "_idb_sync_outbox")).toEqual([]);
+    expect(emitted).toEqual([]);
+  });
+
+  it("accepts a direct ORM result on the untracked transaction API", async () => {
+    const { client } = await createTestSyncClient();
+    const emitted: number[] = [];
+    client.on("outboxwrite", (entries) => emitted.push(entries.length));
+    const user = { id: "u1", name: "Alice" };
+
+    const rows = await client.rawClient.transaction(["users"], (tx) => tx["users"]!.createAll([user]));
+
+    expect(rows).toEqual([user]);
+    expect(await scanAll(client, "users")).toEqual([user]);
+    expect(await scanAll(client, "_idb_sync_outbox")).toEqual([]);
+    expect(emitted).toEqual([]);
+  });
+
   it.each([false, true])("rolls back scalar failures, outbox rows and notifications (caught: %s)", async (caught) => {
     const { client } = await createTestSyncClient();
     const emitted: number[] = [];

@@ -57,6 +57,8 @@ The first argument lists root keys. `tx` is typed as the ORM client restricted t
 - An operation that opens its own mutation scope, such as an FK-checked create or a cascade delete, receives a view of the open transaction. `commit()` on the view does nothing, so only the outer call commits. `rollback()` aborts the whole transaction.
 - A failed operation aborts the whole transaction, even if the callback catches the error. A half-applied write cannot be told apart from a clean validation failure, so the transaction does not continue. This includes failures that occur before the operation reaches IndexedDB, such as enum validation, and a request for a store that the transaction did not open.
 
+The callback may return a promise-like ORM query result directly, as in `db.transaction(["users"], (tx) => tx.users.all())`. This follows the upstream SQL transaction callback's `PromiseLike` result type. An `async` wrapper is optional.
+
 The caller lists models, not stores. The transaction also opens the stores those models need: related models for FK checks and `include`, the cascade graph for deletes (`collectDeleteStoreNames`), and the `onUpdate` cascade graph (`collectOnUpdateClosureStoreNames`). An operation that needs any other store fails with an error that names it.
 
 Sync tracking needs no extra code. The sync client builds the transaction on its sync executor, so the scope is the `SyncInterceptingTransactionScope`. It records an outbox event for each tracked write in the same transaction, and notifies `outboxwrite` listeners once after the commit. `SyncIdbClient.withTransaction()` runs on the raw runtime and records nothing.
