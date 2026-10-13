@@ -8,13 +8,13 @@
 
 ### Minor Changes
 
-- [#277](https://github.com/prisma-idb/prisma-idb/pull/277) [`3dcdef1`](https://github.com/prisma-idb/prisma-idb/commit/3dcdef142b02d5e246542b2cae2c7db04fefa0cb) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Remove `IdbMigrationControlDriver`, `IdbMigrationControlDriverDescriptor`, and `extractMigrationDriver` from `/control` and `/migration`. Use the stub driver from `@prisma-idb/driver-idb/control` in CLI configuration; migrations apply in the browser through the client factories.
+- [#277](https://github.com/prisma-idb/prisma-idb/pull/277) [`3dcdef1`](https://github.com/prisma-idb/prisma-idb/commit/3dcdef142b02d5e246542b2cae2c7db04fefa0cb) - Remove `IdbMigrationControlDriver`, `IdbMigrationControlDriverDescriptor`, and `extractMigrationDriver` from `/control` and `/migration`. Use the stub driver from `@prisma-idb/driver-idb/control` in CLI configuration; migrations apply in the browser through the client factories.
 
 ## 0.9.1
 
 ### Patch Changes
 
-- [#259](https://github.com/prisma-idb/prisma-idb/pull/259) [`27fdc4f`](https://github.com/prisma-idb/prisma-idb/commit/27fdc4fd8a206326d7011b8ece8a04e2de7c8375) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Tidy codecs and migration planning. No behavior change.
+- [#259](https://github.com/prisma-idb/prisma-idb/pull/259) [`27fdc4f`](https://github.com/prisma-idb/prisma-idb/commit/27fdc4fd8a206326d7011b8ece8a04e2de7c8375) - Tidy codecs and migration planning. No behavior change.
 
   - Move the `idb/bytes@1` base64 code into named helpers that build their lookup table once.
   - Share one contract `storage` lookup between `contractToIdbSchema` and the storage hash extraction.

@@ -16,7 +16,7 @@
 
 ### Patch Changes
 
-- [#281](https://github.com/prisma-idb/prisma-idb/pull/281) [`79e3121`](https://github.com/prisma-idb/prisma-idb/commit/79e3121ed740224b9e1a5b2d721654e83cfa966c) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Follow the `driver-idb` rename of the `index-get` plan to `get-all`.
+- [#281](https://github.com/prisma-idb/prisma-idb/pull/281) [`79e3121`](https://github.com/prisma-idb/prisma-idb/commit/79e3121ed740224b9e1a5b2d721654e83cfa966c) - Follow the `driver-idb` rename of the `index-get` plan to `get-all`.
 
 - Updated dependencies [[`c184161`](https://github.com/prisma-idb/prisma-idb/commit/c1841610c7a6c98cd1d3eec565f54bbc9a414d26), [`e4344ea`](https://github.com/prisma-idb/prisma-idb/commit/e4344ea2092b86e3dd4e0f0f1214575fbda5eee3), [`a3f0591`](https://github.com/prisma-idb/prisma-idb/commit/a3f05913180cfd7f54555d1d369192e0135d34e1), [`79e3121`](https://github.com/prisma-idb/prisma-idb/commit/79e3121ed740224b9e1a5b2d721654e83cfa966c)]:
   - @prisma-idb/client-idb@0.11.0
@@ -30,11 +30,11 @@
 
 ### Patch Changes
 
-- [#273](https://github.com/prisma-idb/prisma-idb/pull/273) [`9edee99`](https://github.com/prisma-idb/prisma-idb/commit/9edee9972fe801922f406e4acc93a81454e1a0b1) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Clarify tracked-model selection, key requirements and outbox notification timing in the README.
+- [#273](https://github.com/prisma-idb/prisma-idb/pull/273) [`9edee99`](https://github.com/prisma-idb/prisma-idb/commit/9edee9972fe801922f406e4acc93a81454e1a0b1) - Clarify tracked-model selection, key requirements and outbox notification timing in the README.
 
-- [#277](https://github.com/prisma-idb/prisma-idb/pull/277) [`003b273`](https://github.com/prisma-idb/prisma-idb/commit/003b273e820c9c1e035f48b03e1f43ffd1a64934) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Throw an error for hand-built `update`, `updateAll` and `deleteAll` plans on a synced model. These plans were saved locally but never synced. The ORM's own methods are unaffected.
+- [#277](https://github.com/prisma-idb/prisma-idb/pull/277) [`003b273`](https://github.com/prisma-idb/prisma-idb/commit/003b273e820c9c1e035f48b03e1f43ffd1a64934) - Throw an error for hand-built `update`, `updateAll` and `deleteAll` plans on a synced model. These plans were saved locally but never synced. The ORM's own methods are unaffected.
 
-- [#277](https://github.com/prisma-idb/prisma-idb/pull/277) [`36e524d`](https://github.com/prisma-idb/prisma-idb/commit/36e524d41c0f4dbdda5a1e280e5c071dfe0a66f6) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Import shared referential-action helpers from the client's internal subpath. Pull deletes keep the same cascade behavior.
+- [#277](https://github.com/prisma-idb/prisma-idb/pull/277) [`36e524d`](https://github.com/prisma-idb/prisma-idb/commit/36e524d41c0f4dbdda5a1e280e5c071dfe0a66f6) - Import shared referential-action helpers from the client's internal subpath. Pull deletes keep the same cascade behavior.
 
 - Updated dependencies [[`f062370`](https://github.com/prisma-idb/prisma-idb/commit/f062370dbc0a87a54f1c80e2b2a6e7b5b1472a51), [`a4fd04b`](https://github.com/prisma-idb/prisma-idb/commit/a4fd04b06cae21eee2ad2d2d02dcb98793725839), [`9a7139a`](https://github.com/prisma-idb/prisma-idb/commit/9a7139a1764b414ebbee44f230fb7e6e7b94ab16), [`3dcdef1`](https://github.com/prisma-idb/prisma-idb/commit/3dcdef142b02d5e246542b2cae2c7db04fefa0cb), [`08ee7c5`](https://github.com/prisma-idb/prisma-idb/commit/08ee7c5bf75eaeb2f40fac8ee83fd4187d473d3e), [`3dcdef1`](https://github.com/prisma-idb/prisma-idb/commit/3dcdef142b02d5e246542b2cae2c7db04fefa0cb)]:
   - @prisma-idb/family-idb@0.10.0
@@ -48,7 +48,7 @@
 
 ### Patch Changes
 
-- [#259](https://github.com/prisma-idb/prisma-idb/pull/259) [`df2dc4b`](https://github.com/prisma-idb/prisma-idb/commit/df2dc4b8c41a97fce327d019a6d124781cdea2d4) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Internal cleanup with no behavior change: the outbox and version-meta store access goes through one raw-store module, the sync worker and client share one event emitter, and the executor builds outbox and version-meta writes in one place.
+- [#259](https://github.com/prisma-idb/prisma-idb/pull/259) [`df2dc4b`](https://github.com/prisma-idb/prisma-idb/commit/df2dc4b8c41a97fce327d019a6d124781cdea2d4) - Internal cleanup with no behavior change: the outbox and version-meta store access goes through one raw-store module, the sync worker and client share one event emitter, and the executor builds outbox and version-meta writes in one place.
 
 - Updated dependencies [[`8775088`](https://github.com/prisma-idb/prisma-idb/commit/877508838881c9f0e77222458628475d7ffd7a57), [`9ae224d`](https://github.com/prisma-idb/prisma-idb/commit/9ae224d3a576a273bbcccb4ba5bc13d922e8c91d), [`85ce498`](https://github.com/prisma-idb/prisma-idb/commit/85ce498e3be3261f3aec0d2294a94923bb823c15), [`8775088`](https://github.com/prisma-idb/prisma-idb/commit/877508838881c9f0e77222458628475d7ffd7a57), [`27fdc4f`](https://github.com/prisma-idb/prisma-idb/commit/27fdc4fd8a206326d7011b8ece8a04e2de7c8375), [`dc718d0`](https://github.com/prisma-idb/prisma-idb/commit/dc718d016a9659e8026950d04f6df1b513741521)]:
   - @prisma-idb/adapter-idb@0.9.1
