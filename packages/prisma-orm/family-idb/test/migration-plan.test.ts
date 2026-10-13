@@ -29,6 +29,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { buildSymbolTable } from "@prisma/orm-framework/psl-parser";
 import { parse } from "@prisma/orm-framework/psl-parser/syntax";
 import { interpretPslDocumentToIdbContract } from "../src/core/psl-interpreter";
+import { runPreflight } from "../src/core/preflight";
 import { migrationPlan } from "../src/core/migration-plan";
 import { generateContractSpace } from "../src/core/contract-space-codegen";
 
@@ -210,6 +211,45 @@ describe("migrationPlan — record field changes", () => {
     if (!result.ok) throw new Error(JSON.stringify(result));
     return result.value;
   }
+
+  it("scaffolds missing backfills, rejects unfilled emit and preflight, and accepts a filled scaffold", async () => {
+    await writeContract(cwd, psl(""));
+    expect(await migrationPlan(defaultPaths(cwd))).toBe(0);
+    await writeContract(cwd, psl("role String\n enabled Boolean"));
+    expect(await migrationPlan({ ...defaultPaths(cwd), name: "backfill" })).toBe(0);
+    const dirName = (await listMigrationDirs(cwd)).find((dir) => dir.endsWith("_backfill"))!;
+    const source = await readMigrationTs(cwd, dirName);
+    expect(source).toContain('placeholder("User.role")');
+    expect(source).toContain('placeholder("User.enabled")');
+    const ops = await readOps(cwd, dirName);
+    const metadata = await readMeta(cwd, dirName);
+    await symlink(fileURLToPath(new URL("../node_modules", import.meta.url)), join(cwd, "node_modules"), "dir");
+    await writeFile(join(cwd, "package.json"), JSON.stringify({ type: "module" }));
+    const migrationPath = join(cwd, "migrations", "app", dirName, "migration.ts");
+    const emit = () => promisify(execFile)(process.execPath, ["--import", import.meta.resolve("tsx"), migrationPath]);
+    await expect(emit()).rejects.toMatchObject({
+      stderr: expect.stringMatching(/PN-MIG-2001(?=[\s\S]*User.role)(?=[\s\S]*User.enabled)/),
+    });
+    expect(await readOps(cwd, dirName)).toEqual(ops);
+    expect(await readMeta(cwd, dirName)).toEqual(metadata);
+    expect(await runPreflight({ migrationsDir: defaultPaths(cwd).migrationsDir })).toBe(1);
+    expect(capturedStderr).toMatch(/PN-MIG-2001(?=[\s\S]*User.role)(?=[\s\S]*User.enabled)/);
+    const filled = source
+      .replace(", placeholder,", ", defaultIfMissing,")
+      .replace('placeholder("User.role")', 'defaultIfMissing("member")')
+      .replace('placeholder("User.enabled")', "defaultIfMissing(false)");
+    await writeFile(migrationPath, filled);
+    await emit();
+    expect(await readOps(cwd, dirName)).toEqual([
+      expect.objectContaining({
+        fields: {
+          role: { kind: "defaultIfMissing", value: "member" },
+          enabled: { kind: "defaultIfMissing", value: false },
+        },
+      }),
+    ]);
+    expect(await runPreflight({ migrationsDir: defaultPaths(cwd).migrationsDir })).toBe(0);
+  });
 
   it("warns about field loss and self-emits identical record operations and hashes", async () => {
     await writeContract(cwd, psl("old String"));

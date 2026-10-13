@@ -4,12 +4,15 @@ import type {
   MigrationOperationPolicy,
   MigrationPlanWithAuthoringSurface,
   MigrationPlanner,
+  MigrationPlannerConflict,
   MigrationPlannerResult,
   MigrationScaffoldContext,
 } from "@prisma/orm-framework/components/control";
 import type { IdbIndexDefinition, IdbRecordField, IdbRecordFieldType, IdbStoreDefinition } from "./idb-contract-types";
+import { keyPathFields } from "./idb-contract-types";
 import {
   defaultIfMissing,
+  placeholder,
   transformRecordsOp,
   createMarkerStoreOp,
   IDB_MARKER_STORE,
@@ -118,7 +121,7 @@ function collectFactoryImports(ops: readonly IdbDdlOp[]): string[] {
     switch (op.kind) {
       case "transformRecords":
         names.add("transformRecordsOp");
-        if (Object.keys(op.fields ?? {}).length > 0) names.add("defaultIfMissing");
+        for (const transform of Object.values(op.fields ?? {})) names.add(transform.kind);
         break;
       case "createObjectStore":
         names.add(
@@ -173,6 +176,8 @@ function renderOpCall(op: IdbDdlOp): string {
       const parts: string[] = [];
       if (op.fields !== undefined) {
         const fields = Object.entries(op.fields).map(([name, transform]) => {
+          if (transform.kind === "placeholder")
+            return `[${JSON.stringify(name)}]: placeholder(${JSON.stringify(transform.slot)})`;
           if (transform.kind !== "defaultIfMissing") {
             throw new Error("IDB: custom transforms must be authored by hand in migration.ts");
           }
@@ -294,8 +299,13 @@ function storedLiteralDefault(
   return stored;
 }
 
-function diffRecordShapes(from: IdbSchemaDiffInput | null, to: IdbSchemaDiffInput, contract: Contract): IdbDdlOp[] {
+function diffRecordShapes(
+  from: IdbSchemaDiffInput | null,
+  to: IdbSchemaDiffInput,
+  contract: Contract
+): { ops: IdbDdlOp[]; conflicts: MigrationPlannerConflict[] } {
   const ops: IdbDdlOp[] = [];
+  const conflicts: MigrationPlannerConflict[] = [];
   for (const [storeName, store] of Object.entries(to.stores)) {
     const oldRecord = from?.stores[storeName]?.record;
     const newRecord = store.record;
@@ -307,7 +317,18 @@ function diffRecordShapes(from: IdbSchemaDiffInput | null, to: IdbSchemaDiffInpu
       const oldField = Object.hasOwn(oldRecord.fields, name) ? oldRecord.fields[name] : undefined;
       if (oldField !== undefined) {
         if (!fieldAcceptsExistingValues(oldField, field)) {
-          throw new Error(`IDB: field "${storeName}.${name}" needs an authored record transform for its shape change.`);
+          // The runner rejects transforms that touch an existing primary key.
+          if (keyPathFields(store.keyPath).some((key) => key === name || key.startsWith(`${name}.`))) {
+            conflicts.push({
+              kind: "keyFieldTransform",
+              summary: `Cannot migrate incompatible key field "${name}" in store "${storeName}".`,
+              why:
+                `transformRecords cannot change key field "${name}". ` +
+                "Author a manual migration that drops and re-creates the store with the desired data flow.",
+            });
+          } else {
+            fields[name] = placeholder(`${newRecord.model}.${name}`);
+          }
         }
         continue;
       }
@@ -325,15 +346,13 @@ function diffRecordShapes(from: IdbSchemaDiffInput | null, to: IdbSchemaDiffInpu
         field.dict ||
         field.type.kind !== "scalar"
       ) {
-        throw new Error(
-          `IDB: added required field "${storeName}.${name}" needs a literal default or an authored record transform.`
-        );
+        fields[name] = placeholder(`${newRecord.model}.${name}`);
+        continue;
       }
       const stored = storedLiteralDefault(field, value);
       if (stored === undefined) {
-        throw new Error(
-          `IDB: added required field "${storeName}.${name}" has a literal default incompatible with codec "${field.type.codecId}"; needs an authored record transform.`
-        );
+        fields[name] = placeholder(`${newRecord.model}.${name}`);
+        continue;
       }
       fields[name] = defaultIfMissing(stored);
     }
@@ -346,7 +365,7 @@ function diffRecordShapes(from: IdbSchemaDiffInput | null, to: IdbSchemaDiffInpu
       );
     }
   }
-  return ops;
+  return { ops, conflicts };
 }
 
 // ── Planner ───────────────────────────────────────────────────────────────────
@@ -402,10 +421,9 @@ export class IdbMigrationPlanner implements MigrationPlanner<"idb", "idb"> {
       };
     }
 
-    const ops = [
-      ...diffIdbSchema(fromSchema, toSchema),
-      ...diffRecordShapes(fromSchema, toSchema, contract as Contract),
-    ];
+    const recordDiff = diffRecordShapes(fromSchema, toSchema, contract as Contract);
+    if (recordDiff.conflicts.length > 0) return { kind: "failure", conflicts: recordDiff.conflicts };
+    const ops = [...diffIdbSchema(fromSchema, toSchema), ...recordDiff.ops];
 
     // On first migration (fresh database), create the internal
     // _prisma_next_marker store so the runtime can verify the

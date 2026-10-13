@@ -4,7 +4,12 @@ import type { MigrationMetadata } from "@prisma/orm-toolchain/migration-tools/me
 import { computeMigrationHash } from "@prisma/orm-toolchain/migration-tools/hash";
 import { computeStorageHash } from "@prisma/orm-framework/contract/hashing";
 import { chainOrderByMetadata, type ChainablePackage } from "./chain-order";
-import { applyOneDdlOp, isIdbDdlOp, type IdbDdlOp } from "@prisma-idb/target-idb/migration";
+import {
+  assertNoMigrationPlaceholders,
+  applyOneDdlOp,
+  isIdbDdlOp,
+  type IdbDdlOp,
+} from "@prisma-idb/target-idb/migration";
 import { join } from "pathe";
 import { verifyIdbSchema } from "./schema-verify";
 import type { IdbIndexIR, IdbSchemaIR } from "./schema-ir";
@@ -58,6 +63,7 @@ export async function runPreflight(opts: PreflightOptions): Promise<number> {
   for (const pkg of packages) {
     out(`  ${pkg.dirName} … `);
     try {
+      assertNoMigrationPlaceholders(pkg.ops);
       currentVersion += 1;
       await applyPackage({ factory, dbName, targetVersion: currentVersion, ops: pkg.ops });
       out("ok\n");

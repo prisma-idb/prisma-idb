@@ -4,6 +4,7 @@ import {
   coerce,
   defaultIfMissing,
   pipe,
+  placeholder,
   setLiteral,
   transformRecordsOp,
   type IdbValueTransform,
@@ -42,6 +43,13 @@ const invalid: readonly [IdbValueTransform, unknown, string][] = [
 ];
 
 describe.each(["full", "patch"] as const)("transformRecord in %s mode", (mode) => {
+  it("rejects unfilled slots even when a patch lacks the field", () => {
+    const op = transformRecordsOp("users", {
+      fields: { role: pipe(defaultIfMissing("member"), placeholder("User.role")) },
+    });
+    expect(() => transformRecord(op, {}, mode)).toThrow(/PN-MIG-2001[\s\S]*User.role/);
+  });
+
   it.each(conversions)("converts %j applied to %j", (transform, value, expected) => {
     const input = Object.freeze({ field: value, untouched: "keep" });
     expect(transformRecord(transformRecordsOp("users", { fields: { field: transform } }), input, mode)).toEqual({
