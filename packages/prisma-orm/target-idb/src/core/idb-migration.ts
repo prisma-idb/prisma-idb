@@ -11,7 +11,8 @@ import type { IdbDdlOp } from "./migration-factories";
  * redeclaring target-local identity.
  *
  * IDB DDL operations are pure data. Constructing a migration requires no
- * control stack or adapter materialization.
+ * control stack or adapter materialization. The inherited constructor still
+ * accepts an optional control stack for framework callers.
  */
 export abstract class IdbMigration extends Migration<IdbDdlOp, "idb", "idb"> {
   readonly targetId = "idb" as const;

@@ -2,4 +2,4 @@
 "@prisma-idb/sync-server": patch
 ---
 
-Document runtime helpers and public types. Clarify their validation, transaction, and sync responsibilities.
+Document ownership paths, contract validation, and server result types. Replace the obsolete changelog codec rationale.

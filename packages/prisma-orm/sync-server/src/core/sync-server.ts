@@ -164,9 +164,7 @@ export function validatePush(
   const clientModels = domainModelsAtDefaultNamespace(clientContract.domain);
   const codecLookup = options.codecLookup ?? defaultValidationCodecs;
 
-  // Shape checks run before the ownership walk (ADR 015), so a malformed
-  // event never reaches an ownership query.
-  /** Rejects unknown models and invalid fields before walking an event’s ownership paths. */
+  /** Rejects unknown models and invalid fields before walking an event’s ownership paths (ADR 015). */
   function checkEvent(event: SyncPushEvent): PushCheck {
     if (!dag.clientModels.has(event.model) || !models[event.model] || !clientModels[event.model]) {
       return { kind: "unknown-model" };

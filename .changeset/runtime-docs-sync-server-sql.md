@@ -2,4 +2,4 @@
 "@prisma-idb/sync-server-sql": patch
 ---
 
-Document runtime helpers and public types. Clarify their validation, transaction, and sync responsibilities.
+Document SQL adapter options, changelog ID helpers, scope locks, and push and pull result types.

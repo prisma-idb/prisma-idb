@@ -406,7 +406,7 @@ export class IdbMigrationPlanner implements MigrationPlanner<"idb", "idb"> {
     readonly policy: MigrationOperationPolicy;
     readonly fromContract: Contract | null;
     readonly frameworkComponents: ReadonlyArray<TargetBoundComponentDescriptor<"idb", "idb">>;
-    /** Required by the framework; each invocation plans one contract space. */
+    /** Accepted for framework interface conformance; the IDB planner does not use this value. */
     readonly spaceId: string;
   }): MigrationPlannerResult {
     const { contract, fromContract } = options;
