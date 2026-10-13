@@ -4,10 +4,17 @@ import { ServerCodeBlock } from "fumadocs-ui/components/codeblock.rsc";
 import Link from "next/link";
 import { ChevronRight } from "lucide-react";
 
-const schemaSnippet = `generator prismaIDB {
-  provider = "idb-client-generator"
-  output   = "./prisma-idb"
-}`;
+const installSnippet = `npm install @prisma-idb/client-idb @prisma/orm-toolchain
+npm install --save-dev prisma@latest @prisma/cli-engine @prisma/orm-framework \\
+  @prisma-idb/family-idb @prisma-idb/target-idb \\
+  @prisma-idb/adapter-idb @prisma-idb/driver-idb`;
+
+const migrateSnippet = `npx prisma@latest contract emit
+npx prisma-idb migration plan
+npx prisma-idb migration contract-space`;
+
+const openSnippet = `const db = await createAutoMigratingIdbClient({ contractSpace, dbName: "my-app" });
+await db.orm.todo.create({ id: crypto.randomUUID(), title: "Try Prisma 8 IDB", done: false, userId });`;
 
 export async function QuickInstall() {
   const badgeClass =
@@ -20,7 +27,7 @@ export async function QuickInstall() {
           Up and running in three steps
         </h2>
         <p className="text-fd-muted-foreground mx-auto mb-12 max-w-lg text-center text-base">
-          Add the generator to an existing Prisma project — no config files, no runtime dependencies.
+          Write a Prisma schema, create the first migration, and open the database in your browser app.
         </p>
 
         <div className="space-y-8">
@@ -30,7 +37,7 @@ export async function QuickInstall() {
             <div className="min-w-0 flex-1">
               <p className="text-fd-foreground mb-2 font-semibold">Install</p>
               <div className="[&_figure]:m-0!">
-                <ServerCodeBlock code="pnpm add idb @prisma-idb/idb-client-generator -D" lang="bash" />
+                <ServerCodeBlock code={installSnippet} lang="bash" />
               </div>
             </div>
           </div>
@@ -40,10 +47,11 @@ export async function QuickInstall() {
             <div className={badgeClass}>2</div>
             <div className="min-w-0 flex-1">
               <p className="text-fd-foreground mb-2 font-semibold">
-                Add the generator to your <code className={`${GeistMono.className} text-[13px]`}>schema.prisma</code>
+                Plan the first migration from your{" "}
+                <code className={`${GeistMono.className} text-[13px]`}>schema.prisma</code>
               </p>
               <div className="[&_figure]:m-0!">
-                <ServerCodeBlock code={schemaSnippet} lang="prisma" />
+                <ServerCodeBlock code={migrateSnippet} lang="bash" />
               </div>
             </div>
           </div>
@@ -52,9 +60,9 @@ export async function QuickInstall() {
           <div className="flex gap-5">
             <div className={badgeClass}>3</div>
             <div className="min-w-0 flex-1">
-              <p className="text-fd-foreground mb-2 font-semibold">Generate</p>
+              <p className="text-fd-foreground mb-2 font-semibold">Open the database and query it</p>
               <div className="[&_figure]:m-0!">
-                <ServerCodeBlock code="npx prisma generate" lang="bash" />
+                <ServerCodeBlock code={openSnippet} lang="ts" />
               </div>
             </div>
           </div>
@@ -62,7 +70,7 @@ export async function QuickInstall() {
 
         <div className="mt-10 text-center">
           <Link
-            href="/docs/quick-start"
+            href="/docs/prisma-8/getting-started"
             className="text-fd-accent inline-flex items-center gap-1 text-sm font-medium hover:underline"
           >
             Full quick-start guide

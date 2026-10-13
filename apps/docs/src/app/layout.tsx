@@ -6,27 +6,24 @@ import { siteName, siteUrl } from "@/lib/seo";
 
 export const metadata: Metadata = {
   title: {
-    default: "Prisma IDB — Type-safe IndexedDB with the Prisma API",
+    default: "Prisma IDB — Type-safe IndexedDB for Prisma 8",
     template: "%s | Prisma IDB",
   },
-  description:
-    "A Prisma generator that creates a type-safe IndexedDB client with the API you already know — plus optional bidirectional sync with conflict resolution.",
+  description: "A typed IndexedDB client for Prisma 8, with versioned migrations and optional bidirectional sync.",
   metadataBase: new URL(siteUrl),
   openGraph: {
     type: "website",
     locale: "en_US",
-    url: "/",
     siteName,
     title: "Prisma IDB — Type-safe IndexedDB with the Prisma API",
-    description:
-      "A Prisma generator that creates a type-safe IndexedDB client with the API you already know — plus optional bidirectional sync.",
+    url: siteUrl,
+    description: "A typed IndexedDB client for Prisma 8, with versioned migrations and optional bidirectional sync.",
     images: [{ url: "/og.png", width: 1200, height: 630, alt: "Prisma IDB" }],
   },
   twitter: {
     card: "summary_large_image",
-    title: "Prisma IDB — Type-safe IndexedDB with the Prisma API",
-    description:
-      "A Prisma generator that creates a type-safe IndexedDB client with the API you already know — plus optional bidirectional sync.",
+    title: "Prisma IDB — Type-safe IndexedDB for Prisma 8",
+    description: "A typed IndexedDB client for Prisma 8, with versioned migrations and optional bidirectional sync.",
     images: ["/og.png"],
   },
 };

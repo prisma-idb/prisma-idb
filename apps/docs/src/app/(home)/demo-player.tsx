@@ -30,7 +30,7 @@ function BrowserFrame({ children }: { children: React.ReactNode }) {
           <div className="h-2 w-2 rounded-full bg-zinc-700" />
         </div>
         <div className="mx-auto flex items-center rounded-md bg-zinc-800 px-3 py-0.5">
-          <span className="text-[11px] text-zinc-400">kanban.prisma-idb.dev</span>
+          <span className="text-[11px] text-zinc-400">next-kanban.prisma-idb.dev</span>
         </div>
       </div>
       {children}

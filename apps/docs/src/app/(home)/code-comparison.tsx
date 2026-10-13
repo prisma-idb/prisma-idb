@@ -22,31 +22,26 @@ result.sort(
 );
 // manual joins, no types, no filtering`;
 
-const prismaIdbCode = `const posts = await idb.post.findMany({
-  where: {
-    authorId: userId,
-    published: true,
-  },
-  include: {
-    comments: {
-      orderBy: { createdAt: "desc" },
-    },
-  },
-  orderBy: { createdAt: "desc" },
-});
+const prismaIdbCode = `const posts = await db.orm.post
+  .where({ authorId: userId, published: true })
+  .include("comments", (comments) =>
+    comments.orderBy({ createdAt: "desc" })
+  )
+  .orderBy({ createdAt: "desc" })
+  .all();
 
-// Typed. Relations included.
+// Typed from your contract. Relations included.
 // Filtering, sorting, nesting —
-// all generated from your schema.`;
+// all derived from your schema.`;
 
-const methods = ["findMany", "findFirst", "findUnique", "create", "update", "delete", "upsert"];
+const methods = ["where", "include", "orderBy", "all", "first", "findUnique", "create", "update", "delete"];
 
 export async function CodeComparison() {
   return (
     <section className="px-6 py-16 sm:py-24 lg:px-8">
       <div className="mx-auto max-w-5xl">
         <h2 className={`${GeistSans.className} text-fd-foreground mb-4 text-center text-3xl font-bold sm:text-4xl`}>
-          The same API. Zero learning curve.
+          Prisma's schema. A typed client.
         </h2>
         <p className="text-fd-muted-foreground mx-auto mb-4 max-w-xl text-center text-base">
           Even with the <code className={`${GeistMono.className} text-fd-muted-foreground text-[13px]`}>idb</code>{" "}

@@ -1,8 +1,68 @@
 {
   "redirects": [
     {
+      "source": "/docs",
+      "destination": "/docs/prisma-8",
+      "permanent": false
+    },
+    {
       "source": "/docs/prisma-next/:path*",
       "destination": "/docs/prisma-8/:path*",
+      "permanent": true
+    },
+    {
+      "source": "/docs/about",
+      "destination": "/docs/legacy/about",
+      "permanent": true
+    },
+    {
+      "source": "/docs/events",
+      "destination": "/docs/legacy/events",
+      "permanent": true
+    },
+    {
+      "source": "/docs/generated-output",
+      "destination": "/docs/legacy/generated-output",
+      "permanent": true
+    },
+    {
+      "source": "/docs/indexes",
+      "destination": "/docs/legacy/indexes",
+      "permanent": true
+    },
+    {
+      "source": "/docs/limitations",
+      "destination": "/docs/legacy/limitations",
+      "permanent": true
+    },
+    {
+      "source": "/docs/prisma-vs-idb",
+      "destination": "/docs/legacy/prisma-vs-idb",
+      "permanent": true
+    },
+    {
+      "source": "/docs/quick-start",
+      "destination": "/docs/legacy/quick-start",
+      "permanent": true
+    },
+    {
+      "source": "/docs/transactions",
+      "destination": "/docs/legacy/transactions",
+      "permanent": true
+    },
+    {
+      "source": "/docs/why-prisma-idb",
+      "destination": "/docs/legacy/why-prisma-idb",
+      "permanent": true
+    },
+    {
+      "source": "/docs/crud/:path*",
+      "destination": "/docs/legacy/crud/:path*",
+      "permanent": true
+    },
+    {
+      "source": "/docs/sync/:path*",
+      "destination": "/docs/legacy/sync/:path*",
       "permanent": true
     }
   ],
@@ -10,10 +70,22 @@
     {
       "source": "/(.*)",
       "headers": [
-        { "key": "X-Content-Type-Options", "value": "nosniff" },
-        { "key": "X-Frame-Options", "value": "DENY" },
-        { "key": "X-XSS-Protection", "value": "1; mode=block" },
-        { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" },
+        {
+          "key": "X-Content-Type-Options",
+          "value": "nosniff"
+        },
+        {
+          "key": "X-Frame-Options",
+          "value": "DENY"
+        },
+        {
+          "key": "X-XSS-Protection",
+          "value": "1; mode=block"
+        },
+        {
+          "key": "Referrer-Policy",
+          "value": "strict-origin-when-cross-origin"
+        },
         {
           "key": "Permissions-Policy",
           "value": "camera=(), microphone=(), geolocation=(), interest-cohort=()"

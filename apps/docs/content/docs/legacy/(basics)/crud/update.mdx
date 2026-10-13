@@ -176,7 +176,7 @@ try {
 }
 ```
 
-Use [`findUnique`](/docs/crud/find-unique) first to check existence:
+Use [`findUnique`](/docs/legacy/crud/find-unique) first to check existence:
 
 ```typescript
 const user = await client.user.findUnique({
@@ -195,6 +195,6 @@ if (!user) {
 
 ## See Also
 
-- [updateMany](/docs/crud/update-many) - Update multiple records
-- [upsert](/docs/crud/upsert) - Update or create
-- [Transactions](/docs/transactions) - Atomic updates
+- [updateMany](/docs/legacy/crud/update-many) - Update multiple records
+- [upsert](/docs/legacy/crud/upsert) - Update or create
+- [Transactions](/docs/legacy/transactions) - Atomic updates
