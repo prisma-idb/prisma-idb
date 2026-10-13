@@ -123,6 +123,7 @@ export async function runPreflight(opts: PreflightOptions): Promise<number> {
   return 0;
 }
 
+/** Reads `storage.storageHash` from the emitted `contract.json`; `undefined` if the file is unreadable. */
 async function readEmittedStorageHash(contractPath: string): Promise<string | undefined> {
   try {
     const contract = JSON.parse(await readFile(contractPath, "utf-8")) as { storage?: { storageHash?: string } };
