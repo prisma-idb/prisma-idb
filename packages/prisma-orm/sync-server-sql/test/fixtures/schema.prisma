@@ -122,3 +122,30 @@ model OwnerBridge {
   user    User        @relation(fields: [userId], references: [id])
   entries FoodEntry[]
 }
+
+// Native key casts in the raw locking lane must match the storage column.
+model UuidUser {
+  id    Uuid @id
+  name  String
+  items UuidItem[]
+}
+
+model UuidItem {
+  id      Uuid @id
+  ownerId Uuid
+  owner   UuidUser @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  name    String
+}
+
+model BytesUser {
+  id    Bytes @id
+  name  String
+  items BytesItem[]
+}
+
+model BytesItem {
+  id      Bytes @id
+  ownerId Bytes
+  owner   BytesUser @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  name    String
+}

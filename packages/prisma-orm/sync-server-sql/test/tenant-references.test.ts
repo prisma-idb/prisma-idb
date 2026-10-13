@@ -322,6 +322,9 @@ describe("tenant parent metadata", () => {
 describe("parent lookup failures", () => {
   it.each([
     { code: "08006", retryable: true },
+    { code: "40P01", retryable: true },
+    { code: "40001", retryable: true },
+    { code: "55P03", retryable: true },
     { code: "23503", retryable: false },
   ])("retains SQLSTATE classification for $code rather than reporting scope violation", async ({ code, retryable }) => {
     const db = await seedTenants();
@@ -332,6 +335,7 @@ describe("parent lookup failures", () => {
       transaction: (fn: (tx: unknown) => Promise<unknown>) =>
         db.transaction(async (tx) =>
           fn({
+            query: tx.query.bind(tx),
             orm: {
               public: new Proxy(tx.orm.public, {
                 get(target, property, receiver) {

@@ -92,7 +92,15 @@ For each outbox event, the server and adapter follow this sequence:
 Null optional tenant parents need no check. A populated foreign key that references a missing tenant parent fails.
 
 The adapter must run the authorization checks, record write and changelog write in one transaction.
-Otherwise, a concurrent ownership change could invalidate the checks before the write.
+On PostgreSQL, it locks an update or delete target with `FOR UPDATE` first.
+It then locks each ownership hop and populated tenant parent with `FOR SHARE`, from child to root.
+Updates also lock the candidate row's parents, including a new parent after reassignment.
+Each lock precedes a fresh ORM read at READ COMMITTED and stays held until commit.
+A missing row after a lock wait breaks the ownership chain and returns `SCOPE_VIOLATION`.
+The scope advisory lock comes last, before the changelog id is allocated.
+Shared parent locks let pushes to different children proceed together.
+Pull and rejected-record reads take no row locks.
+SQLite relies on its single writer; stale transactions fail with `SQLITE_BUSY`.
 `sync-server` describes the checks but cannot enforce the transaction because it never accesses the database.
 
 #### Example: Alice's FoodEntry

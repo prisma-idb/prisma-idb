@@ -39,7 +39,18 @@ const testClientContract = (() => {
           ...rest,
           models: Object.fromEntries(
             Object.entries(models).filter(
-              ([name]) => !["Changelog", "BigUser", "BigItem", "Lookup", "OwnerBridge"].includes(name)
+              ([name]) =>
+                ![
+                  "Changelog",
+                  "BigUser",
+                  "BigItem",
+                  "Lookup",
+                  "OwnerBridge",
+                  "UuidUser",
+                  "UuidItem",
+                  "BytesUser",
+                  "BytesItem",
+                ].includes(name)
             )
           ),
           enum: without(enums, "ChangeOperation"),
