@@ -11,14 +11,16 @@ function compareNames(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
 }
 
+/** Resolves supported nested field types and rejects unsupported union metadata. */
 function buildType(
   type: ContractFieldType,
   definitions: ShapeDefinitions,
-  ancestors: readonly string[]
+  ancestors: readonly string[],
+  fieldLabel: string
 ): IdbRecordFieldType {
   if (type.kind === "scalar") return { ...type };
   if (type.kind === "union") {
-    return { kind: "union", members: type.members.map((member) => buildType(member, definitions, ancestors)) };
+    throw new Error(`${fieldLabel} uses a union type, which prisma-idb does not support`);
   }
   const valueObject = definitions.valueObjects?.[type.name];
   if (!valueObject) throw new Error(`Unknown value object "${type.name}" in IDB record shape`);
@@ -26,14 +28,16 @@ function buildType(
   return {
     kind: "valueObject",
     name: type.name,
-    fields: buildFields(valueObject.fields, definitions, [...ancestors, type.name]),
+    fields: buildFields(valueObject.fields, definitions, [...ancestors, type.name], `Value object "${type.name}"`),
   };
 }
 
+/** Builds canonical stored fields with owner-specific validation errors. */
 function buildFields(
   fields: Record<string, ContractField>,
   definitions: ShapeDefinitions,
-  ancestors: readonly string[]
+  ancestors: readonly string[],
+  owner: string
 ): Record<string, IdbRecordField> {
   return Object.fromEntries(
     Object.entries(fields)
@@ -56,7 +60,7 @@ function buildFields(
         return [
           name,
           {
-            type: buildType(field.type, definitions, ancestors),
+            type: buildType(field.type, definitions, ancestors, `${owner} field "${name}"`),
             nullable: field.nullable,
             ...(field.many ? { many: true as const } : {}),
             ...(field.dict ? { dict: true as const } : {}),
@@ -69,7 +73,7 @@ function buildFields(
 
 /**
  * Resolves a model's decoding shape into storage metadata before hashing.
- * Field and enum member order is canonical; compound key and union order stays significant.
+ * Field and enum member order is canonical; compound key order stays significant.
  * Only referenced enums and value objects contribute to the stored shape.
  */
 export function buildRecordShape(
@@ -77,5 +81,5 @@ export function buildRecordShape(
   fields: Record<string, ContractField>,
   definitions: ShapeDefinitions
 ): IdbRecordShape {
-  return { model, fields: buildFields(fields, definitions, []) };
+  return { model, fields: buildFields(fields, definitions, [], `Model "${model}"`) };
 }

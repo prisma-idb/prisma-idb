@@ -109,7 +109,7 @@ describe("validator construction", () => {
     ).toBe("root");
   });
 
-  it("checks every member of a nullable union even if an update would omit it", () => {
+  it("rejects a nullable union before accepting pushes, even with supported member codecs", () => {
     const contract = kanbanContract();
     Object.values(contract.domain.namespaces)[0]!.models["User"]!.fields["name"] = {
       nullable: true,
@@ -117,7 +117,7 @@ describe("validator construction", () => {
         kind: "union",
         members: [
           { kind: "scalar", codecId: "pg/text@1" },
-          { kind: "scalar", codecId: "pg/interval@1" },
+          { kind: "scalar", codecId: "pg/bool@1" },
         ],
       },
     };
@@ -125,7 +125,9 @@ describe("validator construction", () => {
     Object.values(clientContract.domain.namespaces)[0]!.models["User"]!.fields["name"] = Object.values(
       contract.domain.namespaces
     )[0]!.models["User"]!.fields["name"]!;
-    expect(() => createSyncServer({ contract, clientContract, rootModel: "User" })).toThrow(/pg\/interval@1/);
+    expect(() => createSyncServer({ contract, clientContract, rootModel: "User" })).toThrow(
+      'Model "User" field "name" uses a union type, which prisma-idb does not support'
+    );
   });
 
   it("does not require validators for server-only fields on a synced model", () => {

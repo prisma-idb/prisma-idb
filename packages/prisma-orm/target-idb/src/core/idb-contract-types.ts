@@ -96,6 +96,7 @@ export type IdbRecordField = {
 export type IdbRecordFieldType =
   | ScalarFieldType
   | { readonly kind: "valueObject"; readonly name: string; readonly fields: Record<string, IdbRecordField> }
+  // Retained to identify and reject union metadata from legacy stored contracts.
   | { readonly kind: "union"; readonly members: readonly IdbRecordFieldType[] };
 
 /**

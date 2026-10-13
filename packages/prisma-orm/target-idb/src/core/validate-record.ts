@@ -35,7 +35,13 @@ const scalarTypes: Record<string, Type> = {
 // Contracts and lookup objects are immutable for the lifetime of a runtime.
 const validators = new WeakMap<ContractWithDomain, WeakMap<ValidationCodecLookup, Map<string, Type>>>();
 
-function buildType(contract: ContractWithDomain, fieldType: ContractFieldType, lookup: ValidationCodecLookup): Type {
+/** Builds a native validator and rejects unsupported types with their field's owner. */
+function buildType(
+  contract: ContractWithDomain,
+  fieldType: ContractFieldType,
+  lookup: ValidationCodecLookup,
+  fieldLabel: string
+): Type {
   if (fieldType.kind === "scalar") {
     const names = lookup.targetTypesFor(fieldType.codecId);
     const types = names?.map((name) => scalarTypes[name]);
@@ -52,20 +58,19 @@ function buildType(contract: ContractWithDomain, fieldType: ContractFieldType, l
   if (fieldType.kind === "valueObject") {
     const fields = domainValueObjectsAtDefaultNamespace(contract.domain)?.[fieldType.name]?.fields;
     if (!fields) throw new Error(`Unknown value object "${fieldType.name}"`);
-    return buildShape(contract, fields, lookup);
+    return buildShape(contract, fields, lookup, `Value object "${fieldType.name}"`);
   }
-  const members = fieldType.members.map((member) => buildType(contract, member, lookup));
-  if (!members.length) throw new Error("Cannot validate an empty union");
-  return members.slice(1).reduce((validator, member) => validator.or(member), members[0]!);
+  throw new Error(`${fieldLabel} uses a union type, which prisma-idb does not support`);
 }
 
-/** Builds a native value validator for selecting a union member during stored-record normalization. */
-export function buildFieldTypeValidator(contract: ContractWithDomain, fieldType: ContractFieldType): Type {
-  return buildType(contract, fieldType, idbCodecLookup);
-}
-
-function buildField(contract: ContractWithDomain, field: ContractField, lookup: ValidationCodecLookup): Type {
-  let validator = buildType(contract, field.type, lookup);
+/** Builds a field validator, including its container, enum and nullability constraints. */
+function buildField(
+  contract: ContractWithDomain,
+  field: ContractField,
+  lookup: ValidationCodecLookup,
+  fieldLabel: string
+): Type {
+  let validator = buildType(contract, field.type, lookup, fieldLabel);
   const ref = field.valueSet;
   if (ref) {
     if (ref.plane !== "domain" || ref.entityKind !== "enum" || ref.spaceId !== undefined) {
@@ -85,20 +90,23 @@ function buildField(contract: ContractWithDomain, field: ContractField, lookup: 
   return field.nullable ? validator.or("null") : validator.exclude("null | undefined");
 }
 
+/** Builds a strict shape for a model or value object. */
 function buildShape(
   contract: ContractWithDomain,
   fields: Record<string, ContractField>,
   lookup: ValidationCodecLookup,
+  owner: string,
   options: RecordValidationOptions = {}
 ): Type {
   const shape: Record<string, Type | "reject"> = { "+": "reject" };
   for (const [name, field] of Object.entries(fields)) {
     const optional = options.partial || options.optionalFields?.includes(name);
-    shape[optional ? `${name}?` : name] = buildField(contract, field, lookup);
+    shape[optional ? `${name}?` : name] = buildField(contract, field, lookup, `${owner} field "${name}"`);
   }
   return type(shape);
 }
 
+/** Reuses validators and converts construction errors into fail-closed validation issues. */
 function validate(
   contract: ContractWithDomain,
   cacheKey: string,
@@ -132,7 +140,7 @@ export function assertRecordValidator(
 ): void {
   const model = domainModelsAtDefaultNamespace(contract.domain)[modelName];
   if (!model) throw new Error(`Unknown model "${modelName}"`);
-  buildShape(contract, model.fields, options.codecLookup ?? idbCodecLookup, options);
+  buildShape(contract, model.fields, options.codecLookup ?? idbCodecLookup, `Model "${modelName}"`, options);
 }
 
 /** Validates native records without stripping extra fields or mutating the input. */
@@ -146,7 +154,7 @@ export function validateRecord(
   return validate(contract, cacheKey, record, options, (lookup) => {
     const model = domainModelsAtDefaultNamespace(contract.domain)[modelName];
     if (!model) throw new Error(`Unknown model "${modelName}"`);
-    return buildShape(contract, model.fields, lookup, options);
+    return buildShape(contract, model.fields, lookup, `Model "${modelName}"`, options);
   });
 }
 
@@ -169,7 +177,7 @@ export function validateKeyFields(
         return [name, { ...field, nullable: false }];
       })
     );
-    return buildShape(contract, fields, lookup);
+    return buildShape(contract, fields, lookup, `Model "${modelName}"`);
   });
 }
 

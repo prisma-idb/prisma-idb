@@ -20,7 +20,9 @@ Validate synced records using arktype validators derived from the contract at ru
 
 Validators are cached by contract identity, codec lookup identity, model and validation mode. Contracts and codec lookups must remain immutable during use. Separate contract instances cannot share a model's validator accidentally.
 
-Each field derives its native application type from codec metadata. All `idb/*` codecs are covered, including `Date`, `bigint` and `Uint8Array`. Dates must be valid, numbers finite, and `idb/int32@1` values integral and within int32 bounds. Enums use their declared member **values**, including mapped values, rather than member names. Value objects, unions and dictionaries also derive their shape from the domain. Unsupported codecs or value-set references fail closed with validation issues.
+Each field derives its native application type from codec metadata. All `idb/*` codecs are covered, including `Date`, `bigint` and `Uint8Array`. Dates must be valid, numbers finite, and `idb/int32@1` values integral and within int32 bounds. Enums use their declared member **values**, including mapped values, rather than member names. Value objects and dictionaries also derive their shape from the domain. Unsupported codecs or value-set references fail closed with validation issues.
+
+Union fields are unsupported and fail closed. Contract validation rejects model and value-object union fields. Runtime validator construction and JSON decoding reject them too. Upstream Prisma has no union authoring surface, and no discriminant selects a member codec for decoding. Revisit this decision when upstream Prisma ships union authoring.
 
 **Extra fields are rejected**, including in nested value objects and partial patches. Nothing is stripped silently. Full records require every declared field, including nullable fields: nullability permits `null`, not a missing field. List and dictionary containers are built from the scalar validator, then nullability is applied to the container; their elements do not become nullable. This follows the contract's field-level nullability.
 

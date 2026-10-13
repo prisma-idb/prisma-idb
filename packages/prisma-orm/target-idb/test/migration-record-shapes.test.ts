@@ -203,21 +203,27 @@ describe("record shape migration planning", () => {
       profile({ role: enumField(["USER"]), nickname: string }),
     ],
   ])("emits no operations for nested %s", (_name, from, to) => {
-    // Compatibility must recurse through containers and union members too.
+    // Compatibility must recurse through supported containers.
     for (const wrap of [
       (field: IdbRecordField) => field,
       (field: IdbRecordField) => ({ ...field, many: true as const }),
       (field: IdbRecordField) => ({ ...field, dict: true as const }),
-      (field: IdbRecordField): IdbRecordField => ({
-        type: { kind: "union", members: [string.type, field.type] },
-        nullable: false,
-      }),
     ]) {
       const result = plan(contract({ profile: wrap(from) }), contract({ profile: wrap(to) }));
       expect(result.operations).toEqual([]);
       expect(deletedDataWarning(result.operations)).toBeUndefined();
       expect(result.renderTypeScript(keepInternalSpecifiers)).toContain("No record or schema operations are needed");
     }
+  });
+
+  it("rejects legacy union metadata even when source and destination shapes match", () => {
+    const union: IdbRecordField = {
+      type: { kind: "union", members: [string.type] },
+      nullable: false,
+    };
+    expect(() => plan(contract({ choice: union }), contract({ choice: union }))).toThrow(
+      'Model "User" field "choice" uses a union type, which prisma-idb does not support'
+    );
   });
 
   it.each([
