@@ -9,8 +9,9 @@
  */
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const outDir = new URL("../out", import.meta.url).pathname;
+const outDir = fileURLToPath(new URL("../out", import.meta.url));
 const siteUrl = "https://prisma-idb.dev";
 
 /** Lists the HTML files for pages, skipping Next's internal `_`-prefixed output and error pages. */

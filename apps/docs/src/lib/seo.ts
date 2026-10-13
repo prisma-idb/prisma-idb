@@ -21,7 +21,8 @@ type DocsPage = InferPageType<typeof source>;
  * so its pages carry a suffix. Without it, two pages would share one title.
  */
 function pageTitle(page: DocsPage): string {
-  return page.slugs[0] === "prisma-8" ? `${page.data.title} (Prisma 8)` : page.data.title;
+  const isPrisma8 = page.slugs[0] === "prisma-8";
+  return isPrisma8 && !page.data.title.includes("Prisma 8") ? `${page.data.title} (Prisma 8)` : page.data.title;
 }
 
 /**
