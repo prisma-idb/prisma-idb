@@ -520,9 +520,15 @@ describe("scalar FK validation — create()", () => {
     expect(post).toMatchObject({ id: "p1", authorId: null });
   });
 
-  it("create without a declared nullable FK rejects the incomplete record", async () => {
+  it("create without a nullable FK stores it as null", async () => {
     const orm = idbOrm({ contract, executor });
-    await expect(orm["posts"]!.create({ id: "p1", title: "Hello" } as never)).rejects.toThrow(IdbRecordValidationError);
+    expect(await orm["posts"]!.create({ id: "p1", title: "Hello" })).toMatchObject({ id: "p1", authorId: null });
+    expect(await orm["posts"]!.findUnique("p1")).toMatchObject({ id: "p1", authorId: null });
+  });
+
+  it("create without a required field still rejects the incomplete record", async () => {
+    const orm = idbOrm({ contract, executor });
+    await expect(orm["posts"]!.create({ id: "p1" } as never)).rejects.toThrow(IdbRecordValidationError);
     expect(await orm["posts"]!.all()).toEqual([]);
   });
 });

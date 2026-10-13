@@ -98,7 +98,12 @@ type BaseContract = {
   };
 };
 
-type PostRow = { readonly id: string; readonly authorId: string; readonly title: string };
+type PostRow = {
+  readonly id: string;
+  readonly authorId: string;
+  readonly title: string;
+  readonly subtitle: string | null;
+};
 type MembershipRow = { readonly orgId: string; readonly userId: string; readonly role: string };
 type SessionRow = { readonly userId: string; readonly startedAt: Date; readonly device: string };
 type CounterRow = { readonly id: number; readonly label: string };
@@ -125,6 +130,15 @@ describe("CreateInput", () => {
   it("makes a field with an onCreate execution default optional", () => {
     const input: PostCreateInput = { id: "p1", authorId: "u1" };
     void input;
+  });
+
+  it("makes a nullable field optional, and still accepts null", () => {
+    const omitted: PostCreateInput = { id: "p1", authorId: "u1" };
+    const supplied: PostCreateInput = { id: "p1", authorId: "u1", subtitle: "Hi" };
+    const explicitNull: PostCreateInput = { id: "p1", authorId: "u1", subtitle: null };
+    void omitted;
+    void supplied;
+    void explicitNull;
   });
 
   it("still requires a field with no execution default", () => {

@@ -10,7 +10,7 @@ icon: Pencil
 const user = await db.orm.user.create({ id: crypto.randomUUID(), name: "Alice", email: null });
 ```
 
-`create()` inserts one row and returns it. Fields with a `@default` can be left out. It fails if a row with the same primary key exists; use [`upsert()`](#upsert) to update in that case.
+`create()` inserts one row and returns it. Fields with a `@default` can be left out, and so can nullable fields: an omitted nullable field is stored as `null`. Required fields must be set. `create()` fails if a row with the same primary key exists; use [`upsert()`](#upsert) to update in that case.
 
 `createAll()` inserts several rows in one transaction. If any row fails, none are written:
 

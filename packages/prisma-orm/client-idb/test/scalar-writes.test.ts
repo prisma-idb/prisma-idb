@@ -137,7 +137,6 @@ describe("local scalar writes", () => {
     { tags: [null] },
     { tags: [1] },
     { extra: true },
-    { note: undefined },
     { details: { label: "ok" } },
     { details: { label: "ok", quantity: 1, extra: true } },
   ];
@@ -149,11 +148,20 @@ describe("local scalar writes", () => {
     expect(await samples.all()).toEqual([]);
   });
 
-  it.each(["count", "note", "tags"])("requires declared create field %s", async (field) => {
+  it.each(["count", "tags"])("requires declared create field %s", async (field) => {
     const input = validRow();
     delete input[field];
     await expect(samples.create(input)).rejects.toThrow(IdbRecordValidationError);
     expect(await samples.all()).toEqual([]);
+  });
+
+  it("stores an omitted or undefined nullable field as null", async () => {
+    const input = validRow();
+    delete input["note"];
+    expect(await samples.create(input)).toEqual({ ...validRow(), note: null });
+    expect(await samples.create({ ...validRow("s2"), note: undefined })).toEqual({ ...validRow("s2"), note: null });
+    expect(await samples.findUnique("s1")).toEqual({ ...validRow(), note: null });
+    expect(input).not.toHaveProperty("note");
   });
 
   it("accepts complete native records and int32 boundaries without changing the input", async () => {
