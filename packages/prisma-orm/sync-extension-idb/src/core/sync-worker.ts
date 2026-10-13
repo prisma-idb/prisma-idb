@@ -25,6 +25,7 @@ import type { LogWithRecord, PushResult } from "../types";
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
+/** The worker’s observable cycle or lifecycle state. */
 export type SyncWorkerStatus = "idle" | "pushing" | "pulling" | "error" | "stopped";
 
 /** What the worker passes to a handler besides its data: the facts the server needs to vet the request. */
@@ -36,6 +37,7 @@ export interface SyncRequestContext {
   readonly storageHash: string;
 }
 
+/** Configures transport handlers, cursor persistence, batching, and retry timing. */
 export interface SyncWorkerOptions<TContract extends IdbContract> {
   readonly syncClient: SyncIdbClient<TContract>;
   /**
@@ -120,6 +122,7 @@ function withTimeout<T>(makePromise: (signal: AbortSignal) => Promise<T>, ms: nu
 /** Failed tries after which the oldest pending event is reported as stalled. */
 const STALLED_AFTER_TRIES = 10;
 
+/** Summarizes a push attempt and pending work that prevents pulling. */
 export interface PushCompletedEvent {
   synced: number;
   failed: number;
@@ -140,6 +143,7 @@ export interface PushCompletedEvent {
    */
   stalled?: { eventId: string; tries: number; lastError: string | null };
 }
+/** Summarizes records consumed from a pull page and whether application halted. */
 export interface PullCompletedEvent {
   applied: number;
   skipped: number;
@@ -148,11 +152,13 @@ export interface PullCompletedEvent {
   halted: boolean;
 }
 
+/** Identifies the request refused because client and server contracts differ. */
 export interface ContractMismatchEvent {
   /** The request the server refused. */
   during: "push" | "pull";
 }
 
+/** Payload types for lifecycle, push, pull, and contract-mismatch notifications. */
 type SyncEventMap = {
   statuschange: SyncWorkerStatus;
   pushcompleted: PushCompletedEvent;
@@ -161,6 +167,7 @@ type SyncEventMap = {
   contractmismatch: ContractMismatchEvent;
 };
 
+/** Controls one serialized push and pull loop and exposes its notifications. */
 export interface SyncWorker {
   /** Begin the push/pull loop. No-op if already running. */
   start(): void;
@@ -176,6 +183,7 @@ export interface SyncWorker {
 
 // ── Factory ───────────────────────────────────────────────────────────────────
 
+/** Creates a serialized push and pull worker with per-event and per-cycle backoff. */
 export function createSyncWorker<TContract extends IdbContract>(options: SyncWorkerOptions<TContract>): SyncWorker {
   const {
     syncClient,
@@ -201,6 +209,7 @@ export function createSyncWorker<TContract extends IdbContract>(options: SyncWor
 
   const { emit, on } = createEmitter<SyncEventMap>();
 
+  /** Publishes a status change only when the observable state changes. */
   function setStatus(next: SyncWorkerStatus): void {
     if (status === next) return;
     status = next;
@@ -211,6 +220,7 @@ export function createSyncWorker<TContract extends IdbContract>(options: SyncWor
     storageHash: syncClient.contract.storage.storageHash,
   };
 
+  /** Emits the contract-mismatch notification for a refused transport request. */
   function reportContractMismatch(error: unknown, during: ContractMismatchEvent["during"]): void {
     if (error instanceof ContractMismatchError) emit("contractmismatch", { during });
   }
@@ -330,6 +340,7 @@ export function createSyncWorker<TContract extends IdbContract>(options: SyncWor
     return { synced, failed, unreconciled, matched: matched.length, retryableFailure };
   }
 
+  /** Applies the next pull page and saves only the cursor position it consumed safely. */
   async function pullChanges(): Promise<void> {
     setStatus("pulling");
     await cursor.load();
@@ -378,6 +389,7 @@ export function createSyncWorker<TContract extends IdbContract>(options: SyncWor
     }, delay);
   }
 
+  /** Runs one scheduled cycle and reschedules according to its failure count. */
   async function tick(): Promise<void> {
     if (stopped) return;
     try {

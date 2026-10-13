@@ -7,6 +7,7 @@ import { WireValidationError } from "./wire-values";
 
 export const DEFAULT_PULL_LIMIT = 50;
 
+/** An authenticated scope and exclusive cursor for one bounded changelog page. */
 export interface PullInput {
   /** The authenticated caller's scope (e.g. the session's user id) — never taken from the request. */
   readonly scopeKey: string;

@@ -44,6 +44,7 @@ sqlApplicationTypes["pg/bytea@1"] = ["Uint8Array"];
 sqlApplicationTypes["pg/json@1"] = ["unknown"];
 sqlApplicationTypes["pg/jsonb@1"] = ["unknown"];
 
+/** Resolves native application types for the IDB and SQL codecs supported by sync validation. */
 export const defaultValidationCodecs: ValidationCodecLookup = {
   targetTypesFor: (id) => idbCodecLookup.targetTypesFor(id) ?? sqlApplicationTypes[id],
 };

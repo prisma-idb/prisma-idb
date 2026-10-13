@@ -118,6 +118,7 @@ export function prepareParentReferenceChecks(
   return parents;
 }
 
+/** Compares supplied parent descriptors with the checks derived from the contract. */
 function sameParentReferences(
   actual: readonly ParentReferenceCheck[],
   expected: readonly ParentReferenceCheck[]

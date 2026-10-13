@@ -23,6 +23,7 @@ export function resolveAuthorizationPaths(
   const models = domainModelsAtDefaultNamespace(contract.domain);
   const paths: string[][] = [];
 
+  /** Collects relation paths while excluding models already on the current path. */
   const dfs = (current: string, path: string[], visited: Set<string>): void => {
     const model = models[current];
     if (!model) return;

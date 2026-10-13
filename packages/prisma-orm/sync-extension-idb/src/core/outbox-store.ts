@@ -112,6 +112,7 @@ export function readForPush(contract: IdbContract, event: OutboxEvent): OutboxEv
   return { ...event, payload: absentAsNull(contract, event.entityType)(event.payload) };
 }
 
+/** Recognizes object payloads that can have missing nullable fields filled. */
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }

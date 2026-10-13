@@ -57,8 +57,10 @@ import { VERSION_META_STORE, versionMetaKey } from "./version-meta";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
+/** Mutation plans the sync executor must inspect before forwarding them. */
 type MutationAst = IdbCreateAst | IdbDeleteAst | IdbUpdateAst | IdbCreateAllAst | IdbDeleteAllAst | IdbUpdateAllAst;
 
+/** Narrows query plans to mutations that may require outbox tracking. */
 function isMutationAst(ast: IdbQueryAst): ast is MutationAst {
   return (
     ast.kind === "create" ||
@@ -90,12 +92,14 @@ function isMutationAst(ast: IdbQueryAst): ast is MutationAst {
  * last, regardless of wall-clock resolution.
  */
 let lastOutboxTimestampMs = 0;
+/** Advances the session’s outbox timestamp so dependent writes retain their order. */
 function nextOutboxTimestamp(): Date {
   const now = Date.now();
   lastOutboxTimestampMs = now > lastOutboxTimestampMs ? now : lastOutboxTimestampMs + 1;
   return new Date(lastOutboxTimestampMs);
 }
 
+/** Builds a new pending event linked to its version metadata when its key is known. */
 function buildOutboxRecord(
   modelName: string,
   operation: string,
@@ -119,6 +123,7 @@ function buildOutboxRecord(
   };
 }
 
+/** Builds the atomic driver operation that appends one tracked event. */
 function outboxAddOp(
   modelName: string,
   operation: string,
@@ -136,6 +141,7 @@ function outboxAddOp(
 
 // ── VersionMeta record builders ──────────────────────────────────────────────
 
+/** Marks a tracked row as locally pending until all its queued events are settled. */
 function versionMetaPutOp(modelName: string, key: unknown, meta: IdbQueryPlan<unknown>["meta"]): IdbPutPlan {
   const id = versionMetaKey(modelName, key);
   return {
@@ -269,6 +275,7 @@ async function* trackOutboxWrite<Row>(
 
 // ── SyncInterceptorExecutor ───────────────────────────────────────────────────
 
+/** Selects tracked models and the notification issued after their outbox writes commit. */
 export interface SyncInterceptorConfig {
   /** IDB contract — used to resolve store names and key paths. */
   readonly contract: IdbContract;
@@ -285,6 +292,7 @@ export interface SyncInterceptorConfig {
   readonly onOutboxWrite?: (entries: readonly OutboxWriteEntry[]) => void;
 }
 
+/** Matches the configured model names or store names against a mutation’s model. */
 function isTrackedModel(config: SyncInterceptorConfig, modelName: string): boolean {
   const { trackedModels } = config;
   if (trackedModels === "*") return true;
@@ -330,6 +338,7 @@ export class SyncInterceptorExecutor implements IdbQueryExecutorWithTransaction 
     this.#config = config;
   }
 
+  /** Extends tracked mutations atomically and notifies after successful result consumption. */
   query<Row>(plan: IdbQueryPlan<Row>): AsyncIterableResult<Row> {
     const ast = plan.ast;
     if (!ast || !isMutationAst(ast) || !isTrackedModel(this.#config, ast.modelName)) {
@@ -371,6 +380,7 @@ export class SyncInterceptorExecutor implements IdbQueryExecutorWithTransaction 
     return new SyncInterceptingTransactionScope(scope, this.#config);
   }
 
+  /** Builds per-row events for supported plans and rejects plans that cannot identify their rows. */
   #extendPlan<Row>(
     plan: IdbQueryPlan<Row>,
     ast: MutationAst
@@ -492,12 +502,14 @@ class SyncInterceptingTransactionScope implements IdbTransactionScope {
     this.#config = config;
   }
 
+  /** Executes a raw plan and records any tracked writes in the same transaction. */
   async execute(plan: IdbAtomicPlan): Promise<Record<string, unknown>[]> {
     const rows = await this.#inner.execute(plan);
     await this.#maybeTrack(plan, rows);
     return rows;
   }
 
+  /** Commits model and outbox writes before notifying subscribers. */
   async commit(): Promise<void> {
     await this.#inner.commit();
     const batches = this.#pendingBatches;
@@ -505,11 +517,13 @@ class SyncInterceptingTransactionScope implements IdbTransactionScope {
     for (const entries of batches) this.#config.onOutboxWrite?.(entries);
   }
 
+  /** Discards buffered notifications before rolling back model and outbox writes. */
   rollback(): void {
     this.#pendingBatches = [];
     this.#inner.rollback();
   }
 
+  /** Translates written rows into per-record outbox events for tracked stores. */
   async #maybeTrack(plan: IdbAtomicPlan, rows: Record<string, unknown>[]): Promise<void> {
     const { contract } = this.#config;
     const modelName = getModelNameForStore(contract, plan.storeName);

@@ -26,6 +26,7 @@ const MAX_TIMESTAMP = (1n << 48n) - 1n;
 
 const hex = (value: bigint, width: number) => value.toString(16).padStart(width, "0");
 
+/** Formats a UUID v7 timestamp and counter as lowercase sortable text. */
 function format(timestamp: bigint, counter: bigint): string {
   const randA = counter >> RAND_B_BITS;
   const variantAndRandB = hex((0b10n << RAND_B_BITS) | (counter & RAND_B_MASK), 16);
@@ -33,6 +34,7 @@ function format(timestamp: bigint, counter: bigint): string {
   return `${ts.slice(0, 8)}-${ts.slice(8)}-7${hex(randA, 3)}-${variantAndRandB.slice(0, 4)}-${variantAndRandB.slice(4)}`;
 }
 
+/** Extracts the timestamp and counter from a canonical UUID v7. */
 function parse(id: string): { timestamp: bigint; counter: bigint } | null {
   const match = ID_PATTERN.exec(id);
   if (!match) return null;
@@ -41,6 +43,7 @@ function parse(id: string): { timestamp: bigint; counter: bigint } | null {
   return { timestamp: BigInt(`0x${tsHigh}${tsLow}`), counter: (BigInt(`0x${randA}`) << RAND_B_BITS) | randB };
 }
 
+/** Draws random counter bits; the caller masks them to the UUID v7 width. */
 function randomCounter(): bigint {
   const bytes = globalThis.crypto.getRandomValues(new Uint8Array(10));
   return bytes.reduce((acc, byte) => (acc << 8n) | BigInt(byte), 0n);

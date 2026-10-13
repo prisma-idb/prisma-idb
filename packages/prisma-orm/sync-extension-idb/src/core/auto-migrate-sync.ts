@@ -16,6 +16,7 @@ import type { IdbContract } from "@prisma-idb/client-idb/orm";
 import { createSyncIdbClient } from "./sync-client";
 import type { SyncIdbClient, SyncIdbClientOptions } from "./sync-client";
 
+/** Combines migration settings with the models whose writes should enter the outbox. */
 export type AutoMigratingSyncIdbClientOptions<TContract extends IdbContract> = AutoMigrateClientOptions<TContract> &
   Pick<SyncIdbClientOptions<TContract>, "trackedModels">;
 

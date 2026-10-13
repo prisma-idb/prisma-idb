@@ -13,6 +13,7 @@ import { resolvePullRecord as resolvePullRecordImpl } from "./resolve-pull-recor
 import { applyPush as applyPushImpl } from "./apply-push";
 import { pull as pullImpl } from "./pull";
 
+/** Binds SQL execution to its contract, ownership server, and contract-check policy. */
 export interface CreateSqlSyncAdapterOptions {
   readonly contract: SyncServerContract;
   /** @default sqlGetKeyField */
@@ -32,6 +33,7 @@ export interface CreateSqlSyncAdapterOptions {
   readonly contractCheck?: ContractCheck;
 }
 
+/** SQL push and pull operations bound to one contract and ownership configuration. */
 export interface SqlSyncAdapter {
   getKeyField(model: string): string;
   toSyncPushPayload(operation: string, payload: unknown, keyField: string): Record<string, unknown>;
@@ -76,6 +78,7 @@ export function createSqlSyncAdapter(options: CreateSqlSyncAdapterOptions): SqlS
       assertNoParentDefaults(contract, model, resolveParentReferenceChecks(contract, getKeyField, model, paths));
     }
   }
+  /** Rejects methods that need ownership validation when no server was configured. */
   const requireSyncServer = (method: string): SyncServer => {
     if (!syncServer) throw new Error(`createSqlSyncAdapter: ${method} needs the \`syncServer\` option.`);
     return syncServer;

@@ -10,6 +10,7 @@ import postgresPackRef from "@prisma/orm-postgres/target/pack";
 import { postgresCreateNamespace } from "@prisma/orm-postgres/target/types";
 import { sqlContractWithSync } from "../core/sql-contract";
 
+/** Configures a shared PSL schema, emitted server contract, and Postgres connection. */
 export interface PostgresSyncConfigOptions {
   /** Path to the shared `schema.prisma` — the same file the browser/IDB config parses. */
   readonly schema: string;

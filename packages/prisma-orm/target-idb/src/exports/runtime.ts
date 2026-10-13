@@ -35,6 +35,7 @@ export type {
   DropIndexOp,
 } from "../core/migration-factories";
 
+/** The framework runtime identity of the IndexedDB target. */
 export type IdbRuntimeTargetInstance = RuntimeTargetInstance<"idb", "idb">;
 
 const idbRuntimeTargetDescriptor: RuntimeTargetDescriptor<"idb", "idb", IdbRuntimeTargetInstance> = {

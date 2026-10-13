@@ -18,12 +18,14 @@ export const pushEventSchema = z.object({
   operation: z.enum(["create", "update", "delete"]),
   payload: z.unknown(),
 });
+/** The validated wire shape of one pushed event. */
 export type PushEventBody = z.infer<typeof pushEventSchema>;
 
 /** A push endpoint's full request body, as sent by `SyncWorkerOptions.pushHandler` (`{ events }`). */
 export const pushRequestBodySchema = z.object({
   events: z.array(pushEventSchema),
 });
+/** The validated wire shape of a push batch. */
 export type PushRequestBody = z.infer<typeof pushRequestBodySchema>;
 
 /** Per-event push result — what a push endpoint must respond with. */
@@ -39,6 +41,7 @@ export const pushResultSchema = z.object({
    */
   record: z.record(z.string(), z.unknown()).nullable().optional(),
 });
+/** The validated wire result for one pushed event. */
 export type PushResultBody = z.infer<typeof pushResultSchema>;
 
 const pullLogIdentitySchema = z.object({
@@ -63,4 +66,5 @@ export const logWithRecordSchema = z.union([
     record: z.never().optional(),
   }),
 ]);
+/** A pulled record or an explicit key-validation failure from the server. */
 export type LogWithRecordBody = z.infer<typeof logWithRecordSchema>;

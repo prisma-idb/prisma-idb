@@ -69,6 +69,7 @@ export type OwnershipCheck =
       readonly paths: readonly (readonly string[])[];
     };
 
+/** An ownership check with candidate-parent integrity requirements, or a validation refusal. */
 export type PushCheck =
   | Exclude<OwnershipCheck, { kind: "scoped" }>
   | (Extract<OwnershipCheck, { kind: "scoped" }> & {
@@ -81,12 +82,14 @@ export type PushCheck =
       readonly issues: readonly string[];
     };
 
+/** Associates an event with its validation and ownership check. */
 export interface PushValidationResult {
   readonly eventId: string;
   readonly model: string;
   readonly check: PushCheck;
 }
 
+/** Associates a changelog row with the ownership check its reader must execute. */
 export interface PullScopeResult {
   readonly changelogId: string;
   readonly model: string;
@@ -125,6 +128,7 @@ export const defaultGetKeyField: GetKeyField = (contract, modelName) => {
   return keyPath;
 };
 
+/** Builds a root decision or the relation paths needed to authorize a scoped row. */
 function buildOwnershipCheck(
   dag: OwnershipDag,
   contract: SyncServerContract,
@@ -147,6 +151,7 @@ function buildOwnershipCheck(
   };
 }
 
+/** Validates native payloads and keys before deriving ownership and candidate-parent checks. */
 export function validatePush(
   dag: OwnershipDag,
   contract: SyncServerContract,
@@ -161,6 +166,7 @@ export function validatePush(
 
   // Shape checks run before the ownership walk (ADR 015), so a malformed
   // event never reaches an ownership query.
+  /** Rejects unknown models and invalid fields before walking an event’s ownership paths. */
   function checkEvent(event: SyncPushEvent): PushCheck {
     if (!dag.clientModels.has(event.model) || !models[event.model] || !clientModels[event.model]) {
       return { kind: "unknown-model" };
@@ -202,6 +208,7 @@ export function validatePush(
   return events.map((event) => ({ eventId: event.id, model: event.model, check: checkEvent(event) }));
 }
 
+/** Builds live ownership checks for the supplied changelog rows. */
 export function buildPullQueries(
   dag: OwnershipDag,
   contract: SyncServerContract,
@@ -221,6 +228,7 @@ export function buildPullQueries(
   });
 }
 
+/** Binds full and projected contracts to an authenticated ownership root. */
 export interface CreateSyncServerOptions {
   /** The full server-side contract (ADR 012) — includes client-excluded models. Any family. */
   readonly contract: SyncServerContract;
@@ -233,6 +241,7 @@ export interface CreateSyncServerOptions {
   readonly codecLookup?: ValidationCodecLookup;
 }
 
+/** Pure validation, ownership checks, and projection bound to one client contract. */
 export interface SyncServer {
   readonly rootModel: string;
   /** The storage hash of the emitted client contract, including extension stores (ADR 015). */

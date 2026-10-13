@@ -59,6 +59,7 @@ export function contractToIdbSchema(contract: unknown): IdbSchemaDiffInput | nul
   return { stores: stores as Record<string, IdbStoreDefinition> };
 }
 
+/** Reads the storage identity used by migration endpoints and marker checks. */
 function extractStorageHash(contract: unknown): string {
   const hash = contractStorage(contract)?.["storageHash"];
   return typeof hash === "string" ? hash : "unknown";
@@ -115,6 +116,7 @@ export function renderMigrationTs(input: {
   ].join("\n");
 }
 
+/** Collects the factory names needed by the rendered migration scaffold. */
 function collectFactoryImports(ops: readonly IdbDdlOp[]): string[] {
   const names = new Set<string>();
   for (const op of ops) {
@@ -170,6 +172,7 @@ function renderIndexDefLiteral(def: IdbIndexDefinition): string {
   return `{ ${optsParts.join(", ")} }`;
 }
 
+/** Renders a planned operation as a factory call, rejecting transforms that need manual authoring. */
 function renderOpCall(op: IdbDdlOp): string {
   switch (op.kind) {
     case "transformRecords": {
@@ -396,22 +399,14 @@ function diffRecordShapes(
  * auto-migrate path.
  */
 export class IdbMigrationPlanner implements MigrationPlanner<"idb", "idb"> {
+  /** Diffs schema and record shapes, returning conflicts or an editable migration plan. */
   plan(options: {
     readonly contract: unknown;
     readonly schema: unknown;
     readonly policy: MigrationOperationPolicy;
     readonly fromContract: Contract | null;
     readonly frameworkComponents: ReadonlyArray<TargetBoundComponentDescriptor<"idb", "idb">>;
-    /**
-     * Contract space this plan applies to.
-     *
-     * Stamped onto the produced plan so the runner keys the marker row
-     * by the right space. IDB only has a single space (`"app"`), but
-     * the parameter is required by the framework's
-     * {@link MigrationPlanner} interface (added for multi-space support
-     * in contract-spaces ADR 212). Ignored by the IDB planner — all
-     * IDB schemas are single-space.
-     */
+    /** Required by the framework; each invocation plans one contract space. */
     readonly spaceId: string;
   }): MigrationPlannerResult {
     const { contract, fromContract } = options;
@@ -463,6 +458,7 @@ export class IdbMigrationPlanner implements MigrationPlanner<"idb", "idb"> {
     return { kind: "success", plan };
   }
 
+  /** Creates an empty migration between the scaffold context’s storage identities. */
   emptyMigration(context: MigrationScaffoldContext, _spaceId: string): MigrationPlanWithAuthoringSurface {
     const { fromHash, toHash } = context;
     return {
