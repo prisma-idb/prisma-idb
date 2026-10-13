@@ -11,6 +11,7 @@
     "lint": "prettier --check . && eslint",
     "format": "prettier --write .",
     "seo:check": "node scripts/check-seo.mjs",
+    "seo:test": "node --test scripts/*.test.mjs",
     "lighthouse": "lhci autorun",
     "lighthouse:open": "lhci open"
   },

@@ -10,6 +10,7 @@
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
+import { decodeHtmlEntities } from "./decode-html-entities.mjs";
 
 const outDir = fileURLToPath(new URL("../out", import.meta.url));
 const siteUrl = "https://prisma-idb.dev";
@@ -33,7 +34,7 @@ function urlForFile(file) {
 /** Returns the first match of `pattern` in `html`, with HTML entities decoded, or `undefined`. */
 function extract(html, pattern) {
   const value = html.match(pattern)?.[1];
-  return value?.replaceAll("&amp;", "&").replaceAll("&quot;", '"').replaceAll("&#x27;", "'").trim();
+  return value === undefined ? undefined : decodeHtmlEntities(value).trim();
 }
 
 /** Reads the `content` of a `<meta>` tag found by its `name` or `property` attribute. */

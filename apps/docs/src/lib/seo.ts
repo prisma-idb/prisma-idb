@@ -12,6 +12,7 @@ export const siteUrl = "https://prisma-idb.dev";
 /** Name shown as the Open Graph site name and in the document title template. */
 export const siteName = "Prisma IDB";
 
+/** A page of the docs content tree, as returned by the Fumadocs source loader. */
 type DocsPage = InferPageType<typeof source>;
 
 /**
