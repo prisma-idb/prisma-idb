@@ -7,7 +7,7 @@ import { reviveWireValues } from "../src/core/wire-values";
 import { checkAuthorization, plainRowReader } from "../src/core/authorization";
 import { resolvePullRecord } from "../src/core/resolve-pull-record";
 import { createSqlSyncAdapter } from "../src/core/create-adapter";
-import { testContract, testDb, seed } from "./helpers";
+import { testContract, testDb, seed, testSyncServer } from "./helpers";
 
 describe("wire revival", () => {
   it.each(["pg/date@1", "pg/timestamp@1", "pg/timestamptz@1", "sql/timestamp@1"])(
@@ -311,7 +311,7 @@ describe("resolvePullRecord", () => {
     const db = await testDb();
     await seed(db, { User: [{ id: "u1", name: "Ann" }] });
     const check: OwnershipCheck = { kind: "root", keyField: "id", key: "u1", scopeKey: "u1", authorized: true };
-    const record = await resolvePullRecord(db, contract, getKeyField, "User", check, "u1", "update");
+    const record = await resolvePullRecord(db, testSyncServer, contract, getKeyField, "User", check, "u1", "update");
     expect(record).toEqual({ id: "u1", name: "Ann" });
   });
 
@@ -319,7 +319,7 @@ describe("resolvePullRecord", () => {
     const db = await testDb();
     await seed(db, { User: [{ id: "u1", name: "Ann" }] });
     const check: OwnershipCheck = { kind: "root", keyField: "id", key: "u1", scopeKey: "u1", authorized: true };
-    const record = await resolvePullRecord(db, contract, getKeyField, "User", check, "u1", "delete");
+    const record = await resolvePullRecord(db, testSyncServer, contract, getKeyField, "User", check, "u1", "delete");
     expect(record).toBeNull();
   });
 
@@ -337,7 +337,7 @@ describe("resolvePullRecord", () => {
       scopeKey: "u1",
       paths: [["owner"]],
     };
-    const record = await resolvePullRecord(db, contract, getKeyField, "Board", check, "b1", "update");
+    const record = await resolvePullRecord(db, testSyncServer, contract, getKeyField, "Board", check, "b1", "update");
     expect(record).toBeNull();
   });
 
@@ -355,14 +355,14 @@ describe("resolvePullRecord", () => {
       scopeKey: "u1",
       paths: [["owner"]],
     };
-    const record = await resolvePullRecord(db, contract, getKeyField, "Board", check, "b1", "update");
+    const record = await resolvePullRecord(db, testSyncServer, contract, getKeyField, "Board", check, "b1", "update");
     expect(record).toEqual({ id: "b1", ownerId: "u1" });
   });
 });
 
 describe("createSqlSyncAdapter", () => {
   it("wires getKeyField/toSyncPushPayload/applyPushEvent/resolvePullRecord against one contract", async () => {
-    const adapter = createSqlSyncAdapter({ contract: testContract });
+    const adapter = createSqlSyncAdapter({ contract: testContract, syncServer: testSyncServer });
     expect(adapter.getKeyField("User")).toBe("id");
 
     const db = await testDb();

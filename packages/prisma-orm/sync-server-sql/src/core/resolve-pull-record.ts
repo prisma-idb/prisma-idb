@@ -1,12 +1,12 @@
-import type { GetKeyField, OwnershipCheck, SyncServerContract } from "@prisma-idb/sync-server";
+import type { GetKeyField, OwnershipCheck, SyncServer, SyncServerContract } from "@prisma-idb/sync-server";
 import { reviveWireKey } from "./wire-values";
 import { ormRootFor } from "./orm-root";
 import { checkAuthorization, plainRowReader } from "./authorization";
 
 /**
  * Authorizes a pulled changelog row, then returns the record's *current*
- * state if allowed. `null` for unauthorized/deleted — sync-extension-idb's
- * `applyPull` treats a null record as a local delete.
+ * state projected to client-contract fields if allowed. Returns `null` for
+ * unauthorized or deleted records; `applyPull` treats it as a local delete.
  *
  * A `"scoped"` check already fetches the row (`startRow`) to walk its
  * ownership path — that row is reused as the result instead of re-querying,
@@ -17,6 +17,7 @@ import { checkAuthorization, plainRowReader } from "./authorization";
  */
 export async function resolvePullRecord(
   db: unknown,
+  syncServer: SyncServer,
   contract: SyncServerContract,
   getKeyField: GetKeyField,
   model: string,
@@ -40,6 +41,10 @@ export async function resolvePullRecord(
   );
   if (!authorized || operation === "delete") return null;
 
-  if (startRow && check.key === keyPath) return startRow;
-  return ormRootFor(db, model).first({ [keyField]: nativeKey(keyPath) });
+  // Authorization needs the full row, including server-only ownership fields.
+  const row =
+    startRow && check.key === keyPath
+      ? startRow
+      : await ormRootFor(db, model).first({ [keyField]: nativeKey(keyPath) });
+  return row === null ? null : syncServer.projectRecord(model, row);
 }

@@ -81,7 +81,9 @@ The second step matters because ownership can change after a push. Say Alice cre
 
 ## SQL adapter
 
-`createSqlSyncAdapter({ contract, syncServer, getKeyField?, contractCheck? })` from `@prisma-idb/sync-server-sql` binds the server contract and ownership graph once at startup. `getKeyField` defaults to `sqlGetKeyField`. The route helpers require `syncServer`; the other methods work without it. The package also exports `sqlGetKeyField`, `DEFAULT_MAX_PUSH_BATCH_SIZE` (1000) and `DEFAULT_PULL_LIMIT` (50), plus the adapter's option, input and result types.
+Returned pull and rejected-push records contain only top-level fields from the client contract. Authorization uses the full server row before projection, so server-only ownership foreign keys still work. Projection happens before wire encoding.
+
+`createSqlSyncAdapter({ contract, syncServer, getKeyField?, contractCheck? })` from `@prisma-idb/sync-server-sql` binds the server contract and ownership graph once at startup. `getKeyField` defaults to `sqlGetKeyField`. `applyPush`, `pull` and `resolvePullRecord` require `syncServer`. The other methods work without it. The package also exports `sqlGetKeyField`, `DEFAULT_MAX_PUSH_BATCH_SIZE` (1000) and `DEFAULT_PULL_LIMIT` (50), plus the adapter's option, input and result types.
 
 | Member                                                                   | Result                                                                                                                                                                                                               |
 | ------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -90,7 +92,7 @@ The second step matters because ownership can change after a push. Say Alice cre
 | `getKeyField(model)`                                                     | The model's primary-key field.                                                                                                                                                                                       |
 | `toSyncPushPayload(operation, payload, keyField)`                        | Maps a decoded payload to the shape `validatePush` expects.                                                                                                                                                          |
 | `applyPushEvent(db, event, model, check, scopeKey)`                      | Checks ownership, writes the record and inserts its `Changelog` row in one transaction. Repeated event ids do not apply twice.                                                                                       |
-| `resolvePullRecord(db, model, check, keyPath, operation)`                | Returns the current record if the user still owns it, or `null`.                                                                                                                                                     |
+| `resolvePullRecord(db, model, check, keyPath, operation)`                | Returns the current record with only client-contract fields if the user still owns it, or `null`. Needs `syncServer`.                                                                                                |
 
 `db` is your Prisma 8 SQL client. It must have `.transaction(fn)` and `.orm.public.<Model>`. Resolve `scopeKey` from the authenticated session, never the request body or query string.
 

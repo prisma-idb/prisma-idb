@@ -19,8 +19,8 @@ export interface CreateSqlSyncAdapterOptions {
   readonly getKeyField?: GetKeyField;
   /**
    * The `createSyncServer` result for the same contract. Required by the
-   * one-call `applyPush` / `pull` helpers, which run its ownership checks;
-   * the lower-level methods work without it.
+   * `applyPush`, `pull` and `resolvePullRecord` methods, which authorize
+   * records and project returned rows to client-contract fields.
    */
   readonly syncServer?: SyncServer;
   /**
@@ -42,6 +42,7 @@ export interface SqlSyncAdapter {
     check: PushCheck,
     scopeKey: string
   ): Promise<SqlPushResult>;
+  /** Returns the authorized row with only client-contract fields. Requires `syncServer`. */
   resolvePullRecord(
     db: unknown,
     model: string,
@@ -86,7 +87,16 @@ export function createSqlSyncAdapter(options: CreateSqlSyncAdapterOptions): SqlS
     applyPushEvent: (db, event, model, check, scopeKey) =>
       applyPushEventImpl(db, contract, getKeyField, event, model, check, scopeKey),
     resolvePullRecord: (db, model, check, keyPath, operation) =>
-      resolvePullRecordImpl(db, contract, getKeyField, model, check, keyPath, operation),
+      resolvePullRecordImpl(
+        db,
+        requireSyncServer("resolvePullRecord"),
+        contract,
+        getKeyField,
+        model,
+        check,
+        keyPath,
+        operation
+      ),
     applyPush: async (db, input) => {
       const server = requireSyncServer("applyPush");
       const mismatch = findContractMismatch(server, contractCheck, input.clientStorageHash);

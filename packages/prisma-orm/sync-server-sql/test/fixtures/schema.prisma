@@ -6,6 +6,7 @@
 model User {
   id               String            @id
   name             String
+  privateNotes     PrivateNote[]
   boards           Board[]
   jsonItems        JsonItem[]
   meals            Meal[]
@@ -148,4 +149,13 @@ model BytesItem {
   ownerId Bytes
   owner   BytesUser @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   name    String
+}
+
+// Authorization must read ownerId even though the client receives neither excluded field.
+model PrivateNote {
+  id      String @id
+  title   String
+  secret  String @idb.exclude
+  ownerId String @idb.exclude
+  owner   User   @relation(fields: [ownerId], references: [id])
 }

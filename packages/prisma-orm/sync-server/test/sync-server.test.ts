@@ -426,3 +426,42 @@ it("generates the same parent checks through standalone validatePush", () => {
     server().validatePush(events, { scopeKey: "user-1" })
   );
 });
+
+describe("projectRecord", () => {
+  it("copies only client fields, preserves native values and leaves the row unchanged", () => {
+    const contract = kanbanContract();
+    const clientContract = kanbanClientContract();
+    const models = clientContract.domain.namespaces[Object.keys(clientContract.domain.namespaces)[0]!]!.models;
+    delete models["User"]!.fields["name"];
+    const server = createSyncServer({ contract, clientContract, rootModel: "User" });
+    const id = new Uint8Array([1, 2]);
+    const row = { id, name: "server-only", extra: { secret: true } };
+    const projected = server.projectRecord("User", row);
+    expect(projected).toEqual({ id });
+    expect(projected).not.toBe(row);
+    expect(projected["id"]).toBe(id);
+    expect(row).toEqual({ id, name: "server-only", extra: { secret: true } });
+  });
+
+  it("preserves all present client fields without adding missing fields", () => {
+    const server = createSyncServer({
+      contract: kanbanContract(),
+      clientContract: kanbanClientContract(),
+      rootModel: "User",
+    });
+    expect(server.projectRecord("User", { id: "u1", name: "Ann", secret: "hidden" })).toEqual({
+      id: "u1",
+      name: "Ann",
+    });
+    expect(server.projectRecord("User", { id: "u1" })).toEqual({ id: "u1" });
+  });
+
+  it.each(["Unknown", "AuditLog", "toString"])("throws for a model absent from the client contract: %s", (model) => {
+    const server = createSyncServer({
+      contract: kanbanContract(),
+      clientContract: kanbanClientContract(),
+      rootModel: "User",
+    });
+    expect(() => server.projectRecord(model, {})).toThrow(`model "${model}" is not defined in the client contract`);
+  });
+});

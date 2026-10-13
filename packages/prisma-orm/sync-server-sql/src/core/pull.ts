@@ -77,7 +77,7 @@ export async function pull(
       const op = operation as SqlPullLog["operation"];
       let record: Record<string, unknown> | null;
       try {
-        record = await resolvePullRecord(db, contract, getKeyField, model, check, keyPath, op);
+        record = await resolvePullRecord(db, syncServer, contract, getKeyField, model, check, keyPath, op);
       } catch (error) {
         if (!(error instanceof WireValidationError) || error.code !== "KEYPATH_VALIDATION_FAILURE") throw error;
         // Preserve identity/cursor, but never signal a revoked-ownership delete.

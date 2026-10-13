@@ -69,6 +69,12 @@ The attributes use the namespaced-attribute syntax from upstream ADR 104. `idb` 
 
 The two contracts are different schemas with related but separate lifecycles, so each has its own migration history. `createAutoMigratingIdbClient` only ever sees the client's.
 
+### Sync record projection
+
+`createSyncServer` builds a field-name set for each model in the client contract. Its `projectRecord(model, row)` method copies only those top-level fields into a new object. It throws if the client contract does not define the model. Nested values remain unchanged.
+
+The SQL adapter authorizes each row using the full server record, then calls `projectRecord` before wire encoding. Pull responses, rejected-push reconciliation records and the lower-level `resolvePullRecord` all use this projection. Server-only fields, including ownership foreign keys, never appear in those records. `resolvePullRecord` requires the adapter's `syncServer` option.
+
 ### Relations to excluded models
 
 Excluding a model can leave relations on surviving models pointing at it. [ADR 013](ADR%20013%20-%20FK%20Projection%20on%20Excluded%20Models.md) covers what happens to them.
