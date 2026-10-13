@@ -10,6 +10,7 @@
     "postinstall": "fumadocs-mdx",
     "lint": "prettier --check . && eslint",
     "format": "prettier --write .",
+    "seo:check": "node scripts/check-seo.mjs",
     "lighthouse": "lhci autorun",
     "lighthouse:open": "lhci open"
   },
