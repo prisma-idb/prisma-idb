@@ -4,7 +4,7 @@ import type { ContractSpace, MigrationPackage } from "@prisma/orm-framework/comp
 import { APP_SPACE_ID } from "@prisma/orm-framework/components/control";
 import type { IdbExtensionSpace } from "@prisma-idb/family-idb/control";
 // Browser-safe (WebCrypto) hash — the framework's `@prisma/orm-toolchain/migration-tools/hash`
-// uses `node:crypto` and throws in the browser (PLAN Issue #23 regression).
+// uses `node:crypto`, which is unavailable in the browser.
 import { computeMigrationHash } from "./migration-hash";
 // Import from `./runtime` (not `./migration`) so `MigrationCLI` → `node:fs`
 // is not bundled into the browser client.
@@ -209,6 +209,7 @@ function createTransformRecordsCallback(contract: Contract, extensions: Readonly
       onDone();
       return;
     }
+    /** Run extension hooks in order inside the active upgrade transaction. */
     const runHook = (index: number): void => {
       const hook = hooks[index];
       if (!hook) {
@@ -216,6 +217,7 @@ function createTransformRecordsCallback(contract: Contract, extensions: Readonly
         return;
       }
       let completed = false;
+      /** Settle each hook once so a duplicate callback cannot advance the upgrade twice. */
       const next = (error?: unknown): void => {
         if (completed) return;
         completed = true;

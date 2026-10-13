@@ -32,6 +32,7 @@ export function createMutationDefaultsCache(): MutationDefaultsCache {
 /** Generator ids whose value is shared across an entire top-level call. Every other id always regenerates. */
 const CACHEABLE_GENERATOR_IDS: ReadonlySet<IdbMutationDefaultGeneratorId> = new Set(["timestampNow"]);
 
+/** Resolve one declared default with the same generator IDs as the SQL execution layer. */
 function computeGeneratedValue(spec: ExecutionMutationDefaultValue): unknown {
   const id = spec.id as IdbMutationDefaultGeneratorId;
   switch (id) {
@@ -50,6 +51,7 @@ function computeGeneratedValue(spec: ExecutionMutationDefaultValue): unknown {
   }
 }
 
+/** Share query-stable defaults across one mutation while generating fresh IDs for each field. */
 function resolveGeneratedValue(spec: ExecutionMutationDefaultValue, cache: MutationDefaultsCache): unknown {
   const id = spec.id as IdbMutationDefaultGeneratorId;
   if (!CACHEABLE_GENERATOR_IDS.has(id)) return computeGeneratedValue(spec);

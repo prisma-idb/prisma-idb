@@ -3,6 +3,7 @@ import { compareFieldValues, isValidIdbKey } from "@prisma-idb/target-idb/runtim
 import type { CatalogField, CatalogSource, QueryCatalog } from "../../src/core/planner/catalog";
 import type { LogicalPlan } from "../../src/core/planner/plan";
 
+/** Declare a primary or secondary source without opening IndexedDB. */
 export function source(
   keyPath: string | readonly string[],
   indexName?: string,
@@ -20,6 +21,7 @@ export function source(
 export function field(codecId = "idb/string@1", nullable = false, collection = false): CatalogField {
   return { codecId, nullable, collection };
 }
+/** Build a catalog whose codec metadata controls index-coverage decisions. */
 export function catalog(
   indexes: readonly CatalogSource[] = [],
   fields: Record<string, CatalogField> = {}
@@ -41,6 +43,7 @@ export function planContains(plan: LogicalPlan, row: Record<string, unknown>): b
   const key = typeof path === "string" ? row[path] : path.map((name) => row[name]);
   return isValidIdbKey(key) && plan.access.ranges.some((range) => contains(range, key));
 }
+/** Check range membership independently of the planner and driver lowering. */
 function contains(range: IdbKeyRangeDescriptor | undefined, key: IDBValidKey): boolean {
   if (!range) return true;
   switch (range.kind) {

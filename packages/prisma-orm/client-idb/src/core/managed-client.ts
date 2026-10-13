@@ -20,6 +20,7 @@ export interface ManagedIdbClientOptions {
   readonly idbFactory?: IDBFactory;
 }
 
+/** A shared client handle with coordinated opening and database reset. */
 export interface ManagedIdbClient<TClient> {
   /** Opens the client on first call and caches it; concurrent calls share one open. */
   get(): Promise<TClient>;
@@ -70,6 +71,7 @@ export function createManagedIdbClient<TClient extends { close(): Promise<void> 
   // either reads/writes it) so the two never interleave: see module doc comment.
   let resetPromise: Promise<void> | null = null;
 
+  /** Wait for a reset before sharing or opening the singleton client. */
   async function get(): Promise<TClient> {
     if (resetPromise) await resetPromise;
     if (client) return client;
@@ -85,6 +87,7 @@ export function createManagedIdbClient<TClient extends { close(): Promise<void> 
     return fresh;
   }
 
+  /** Release the cached connection so a later get can open it again. */
   async function close(): Promise<void> {
     if (!client) return;
     await client.close();
@@ -92,6 +95,7 @@ export function createManagedIdbClient<TClient extends { close(): Promise<void> 
     clientPromise = null;
   }
 
+  /** Wait for an in-flight open, then close and delete the database before allowing new opens. */
   async function reset(): Promise<void> {
     if (resetPromise) return resetPromise;
     resetPromise = (async () => {

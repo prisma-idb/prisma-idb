@@ -82,6 +82,7 @@ export function createGroupedAccessor<TContract, ModelName extends string, Field
   init: GroupedAccessorInit
 ): IdbGroupedAccessor<TContract, ModelName, Fields> {
   return {
+    /** Materialize matching rows, partition them by group key, and reduce each group. */
     async aggregate<Spec extends IdbAggregateSpec>(
       fn: (agg: IdbAggregateBuilder<TContract, ModelName>) => Spec
     ): Promise<Array<GroupedResultRow<TContract, ModelName, Fields, Spec>>> {

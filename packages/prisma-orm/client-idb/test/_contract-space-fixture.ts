@@ -85,8 +85,8 @@ export function buildContractSpaceFixture<TContract extends Contract>(
  * planner unconditionally prepends on `fromContract: null` — the marker
  * store belongs to the app space's own baseline; an extension space must
  * never try to recreate it. This is the same op-filtering
- * `generateBaseline`'s `spaceId` option performs for real extension packages
- * (`prisma-idb generate-baseline --space <id>`, see `family-idb/src/core/generate-baseline.ts`).
+ * `migration plan --space <id>` performs for real extension packages
+ * (see `family-idb/src/core/migration-plan.ts`).
  */
 export function buildExtensionContractSpaceFixture<TContract extends Contract>(
   spaceId: string,

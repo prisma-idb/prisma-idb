@@ -20,14 +20,13 @@ export type { IdbKeyPath };
 // Re-export for consumers who only import from client-idb
 export type { IdbStorage };
 
-// ── Model-map extraction (v0.12.0 domain plane) ───────────────────────────────
+// ── Model-map extraction from the domain plane ───────────────────────────────
 
 /**
  * Extract the model map from a contract by traversing the domain namespace.
  *
- * 0.14.0: `Contract` dropped the 2nd `TModels` type parameter; models are now
- * accessed via `domain.namespaces[ns].models`. For a single-namespace contract
- * (the only IDB case) this resolves to the typed model map; falls back to
+ * Models live under `domain.namespaces[ns].models`. For a single-namespace
+ * contract this resolves to the typed model map; falls back to
  * `Record<string, ContractModelBase>` for un-typed/multi-namespace inputs.
  */
 type ModelsOf<TContract> = TContract extends { readonly domain: { readonly namespaces: infer NS } }
@@ -64,6 +63,7 @@ export type IdbContract = Contract<IdbStorage>;
 // to get the flat model map, then look up ModelName.
 type NsFieldOutputTypes<TContract> = ExtractIdbFieldOutputTypes<TContract>[keyof ExtractIdbFieldOutputTypes<TContract>];
 
+/** Resolve a model output row when type maps bind it, or keep an untyped record. */
 type ResolvedOutputRow<TContract, ModelName extends string> = string extends keyof ExtractIdbFieldOutputTypes<TContract>
   ? Record<string, unknown>
   : NsFieldOutputTypes<TContract> extends Record<string, unknown>
@@ -80,6 +80,7 @@ type ResolvedOutputRow<TContract, ModelName extends string> = string extends key
  */
 type NsFieldInputTypes<TContract> = ExtractIdbFieldInputTypes<TContract>[keyof ExtractIdbFieldInputTypes<TContract>];
 
+/** Resolve a model input row from its bound input type map. */
 type ResolvedInputRow<TContract, ModelName extends string> = string extends keyof ExtractIdbFieldInputTypes<TContract>
   ? Record<string, unknown>
   : NsFieldInputTypes<TContract> extends Record<string, unknown>
@@ -110,7 +111,7 @@ export type WhereFilter<TContract, ModelName extends string> = {
 
 /**
  * The union of a model's `keyPath` field name(s), extracted from
- * `contract.models[ModelName].storage.keyPath`. For a single-field key this
+ * the domain model's `storage.keyPath`. For a single-field key this
  * is just that field name; for a compound key it's the union of every member
  * field name (NOT an ordered tuple — see {@link ModelKeyPathOrdered} for the
  * order-preserving form `KeyType` needs).
@@ -133,8 +134,8 @@ export type ModelKeyPath<TContract, ModelName extends string> = ModelName extend
  * normalized to a 1-tuple (`readonly ["id"]`) so `KeyType` below can branch
  * on tuple shape uniformly. Needed because `findUnique`/`delete` accept the
  * key as a positional array for compound-key models (mirroring the
- * `IDBValidKey` array form IDB itself expects — see ADR-tracked decision in
- * Phase 9.1), which requires order, unlike `ModelKeyPath`'s Omit/Pick usage.
+ * `IDBValidKey` array form IDB itself expects), which requires order, unlike
+ * `ModelKeyPath`'s Omit/Pick usage.
  */
 export type ModelKeyPathOrdered<TContract, ModelName extends string> = ModelName extends keyof ModelsOf<TContract>
   ? ModelsOf<TContract>[ModelName] extends { storage: { keyPath: infer P } }
@@ -169,11 +170,8 @@ type IsNever<T> = [T] extends [never] ? true : false;
 /**
  * TypeScript type of the primary key parameter for `findUnique()`/`delete()`.
  *
- * Single-field-key models keep today's scalar shape (e.g. `string`) — no
- * change for the common case, and untyped/loosely-typed contracts (no
- * emitted type maps — `ModelKeyPathOrdered` resolves to `never`) fall
- * through to the exact same `IDBValidKey` fallback `KeyType` always used
- * before compound keys existed. Compound-key models get an ordered tuple
+ * Single-field keys use the field's resolved output type, such as `string`.
+ * Compound-key models get an ordered tuple
  * type (e.g. `[string, Date]` for `@@id([orgId, effectiveFrom])`), matching
  * the `IDBValidKey` array IDB itself expects for a compound key-get — the
  * same value passes straight through to the driver with zero runtime
@@ -349,7 +347,7 @@ type RelationRowType<TContract, ModelName extends string, RelKey extends string>
  *
  * - `true` — the relation is loaded as rows (array for `1:N`, single/null
  *   otherwise), optionally refined by a `where`/`orderBy`/`take` callback.
- * - `"scalar"` — the relation is reduced to a `count()` (Phase 6.5), so the
+ * - `"scalar"` — the relation is reduced to a `count()`, so the
  *   row field becomes a `number` instead of related rows.
  */
 export type IncludeMarker = true | "scalar";
@@ -410,8 +408,10 @@ export type SelectedRow<
 
 // Patches shallow-merge fields, so a dotted key excludes its whole containing
 // field. Distribute over compound-key members to omit every containing field.
+/** The containing field replaced by a shallow patch of a dotted primary-key path. */
 type KeyPathRoot<Path extends string> = Path extends `${infer Field}.${string}` ? Field : Path;
 
+/** Model fields that a patch may change without replacing primary-key data. */
 type MutableModelRow<TContract, ModelName extends string> = Omit<
   DefaultModelRow<TContract, ModelName>,
   KeyPathRoot<ModelKeyPath<TContract, ModelName>>
@@ -419,6 +419,7 @@ type MutableModelRow<TContract, ModelName extends string> = Omit<
 
 // An empty object type accepts arbitrary fields. When no mutable fields remain,
 // allow empty patches while rejecting every supplied field, including keys.
+/** An optional patch that still rejects extra fields when the row has no mutable fields. */
 type PartialPatch<Row> = keyof Row extends never ? Record<string, never> : Partial<Row>;
 
 /**

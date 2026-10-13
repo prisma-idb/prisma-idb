@@ -18,7 +18,7 @@ async function sha256Hex(input: string): Promise<string> {
  *
  * The framework version hashes with Node's `node:crypto` `createHash`, which
  * does not exist in the browser — so importing it into the runtime auto-migrate
- * integrity check (PLAN Issue #23 / ADR 199) throws `createHash is not a
+ * integrity check throws `createHash is not a
  * function` on every client init and breaks the whole app. This version is
  * **byte-identical** to the framework's: it reuses the same `canonicalizeJson`
  * and the same nested SHA-256/hex scheme — strip `migrationHash` from the
@@ -35,8 +35,7 @@ export async function computeMigrationHash(
   metadata: MigrationPackage["metadata"],
   ops: MigrationPackage["ops"]
 ): Promise<string> {
-  // v0.12.0 strips only `migrationHash` before hashing (`hints`/`labels` were
-  // removed from the on-disk manifest schema entirely).
+  // Exclude the stored digest so it cannot become part of its own preimage.
   const stripped: Record<string, unknown> = { ...metadata };
   delete stripped["migrationHash"];
   const inner = await Promise.all([sha256Hex(canonicalizeJson(stripped)), sha256Hex(canonicalizeJson(ops))]);

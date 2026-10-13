@@ -113,6 +113,7 @@ export function lowerRows(
   }
   return {
     idbPlan,
+    /** Normalize returned rows and apply filtering and shaping not already handled by the driver. */
     finish(rows) {
       // Keep the full-filter safety boundary for every access path. Cursor
       // paths also filter before pagination, so their returned rows pass twice.
@@ -249,6 +250,7 @@ export function lowerWrite(
   };
 }
 
+/** The store, index, and range assigned to one lowered operation. */
 interface AccessTarget {
   readonly meta: PlanMeta;
   readonly storeName: string;

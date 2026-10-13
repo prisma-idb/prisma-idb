@@ -58,7 +58,7 @@ function reduceAggregate(
   for (const row of rows) {
     const raw = row[field];
     if (raw === null || raw === undefined) continue;
-    const n = typeof raw === "bigint" ? Number(raw) : Number(raw as number);
+    const n = Number(raw);
     if (!Number.isNaN(n)) values.push(n);
   }
 

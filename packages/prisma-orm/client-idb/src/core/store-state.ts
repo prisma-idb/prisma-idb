@@ -7,8 +7,8 @@ import type { IdbFilterExpr } from "@prisma-idb/adapter-idb/runtime";
  * - `collection`: load the related rows, applying the refined `state`
  *   (its `filters` / `orderBy` / `skip` / `take`) to the child scan.
  *   `state` is `emptyAccessorState()` for an unrefined `.include(rel)`.
- * - `scalar`: reduce the related rows to a single number (Phase 6.5 supports
- *   `count`). The `state.filters` still constrain which children are counted.
+ * - `scalar`: count the related rows. The `state.filters` still constrain
+ *   which children are counted.
  *
  * Mirrors the `IncludeExpr` / `IncludeScalar` split from
  * Prisma ORM's SQL client, collapsed to the two shapes IDB

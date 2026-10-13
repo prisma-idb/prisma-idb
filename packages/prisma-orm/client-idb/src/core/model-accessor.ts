@@ -102,6 +102,7 @@ export function createModelAccessor<TContract extends IdbContract, ModelName ext
   return new Proxy(
     {},
     {
+      /** Reuse the field accessor within one filter callback so repeated reads share its operator surface. */
       get(_target, prop: string | symbol) {
         if (typeof prop !== "string") return undefined;
         let acc = cache.get(prop);

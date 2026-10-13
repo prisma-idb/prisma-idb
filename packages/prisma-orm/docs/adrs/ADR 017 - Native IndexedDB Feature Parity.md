@@ -53,7 +53,7 @@ Lookups that need the row's values, such as `cascade`, `setNull` and references 
 
 The key-only path compares by IndexedDB key equality. This fixed a false "FK violation" for parents keyed by a `DateTime`, where two equal `Date` objects are never `===`. The joins that later follow those foreign keys, in referential actions and `include()`, now compare the same way ([ADR 009](ADR%20009%20-%20FK%20Validation%20and%20Referential%20Action%20Enforcement.md)).
 
-Nothing uses `getAllKeys` yet.
+The query planner now uses `getAllKeys` for exact range existence checks. See [ADR 021](ADR%20021%20-%20Query%20Planner.md).
 
 ### 4. Clear errors when a transaction is no longer active
 
@@ -65,6 +65,8 @@ Letting IndexedDB commit transactions automatically is still the right design ([
 - **Real-browser tests.** `apps/prisma-orm-usage/tests/fkEnforcement/cascade-transaction-lifetime.spec.ts` runs in Chromium and WebKit. It covers a three-level cascade, a wide fan-out, rollback after a chain of deletes across stores, and the `TRANSACTION_INACTIVE` error. The rollback test uses hand-built delete plans, because the demo contract has no operation that fails part-way through a cascade.
 
 ### Deliberately left out
+
+These were deferred when this decision was made. [ADR 021](ADR%20021%20-%20Query%20Planner.md) later added range and compound-index planning and key-only index lookups.
 
 | Feature                                                          | Why                                                                                                |
 | ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |

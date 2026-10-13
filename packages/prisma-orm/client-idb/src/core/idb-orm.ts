@@ -18,8 +18,7 @@ import { type IdbStoreAccessor, IdbStoreAccessorImpl } from "./store-accessor";
  * ```
  */
 export type IdbOrmClient<TContract extends Contract<IdbStorage>> = {
-  // v0.12.0: `roots` values are CrossReference `{ namespace, model }`, so the
-  // target model name is `roots[K].model` (was a bare model-name string).
+  // Roots carry CrossReference values; each accessor targets the referenced model.
   readonly [K in string & keyof TContract["roots"]]: TContract["roots"][K] extends {
     model: infer ModelName extends string;
   }
@@ -57,7 +56,7 @@ export interface IdbOrmOptions<TContract extends IdbContract> {
  * import { createIdbRuntime } from "@prisma-idb/runtime-idb/runtime";
  * import contract from "./prisma/idb-contract";
  *
- * const runtime = createIdbRuntime({ adapter, driver });
+ * const runtime = createIdbRuntime({ adapter, driver, contract });
  * const db = idbOrm({ contract, executor: runtime });
  *
  * // Typed query builder:
@@ -75,7 +74,6 @@ export function idbOrm<TContract extends IdbContract>(options: IdbOrmOptions<TCo
 
   const client: Record<string, IdbStoreAccessor<TContract, string>> = {};
   for (const [rootKey, ref] of Object.entries(contract.roots)) {
-    // v0.12.0: `roots` values are CrossReference `{ namespace, model }`.
     client[rootKey] = new IdbStoreAccessorImpl(contract, ref.model, executor, undefined, newGroupingKey);
   }
 

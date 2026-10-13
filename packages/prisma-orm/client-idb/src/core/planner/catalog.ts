@@ -82,6 +82,7 @@ export function buildCatalog(contract: IdbContract, storeName: string, modelName
   return catalog;
 }
 
+/** Freeze a key source and its field order for deterministic access selection. */
 function source(keyPath: IdbKeyPath, unique: boolean, multiEntry: boolean, indexName?: string): CatalogSource {
   const path = typeof keyPath === "string" ? keyPath : Object.freeze([...keyPath]);
   return Object.freeze({
