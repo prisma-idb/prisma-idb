@@ -15,6 +15,7 @@ import { deriveProvidedInvariants } from "@prisma/orm-toolchain/migration-tools/
 import { join, relative } from "pathe";
 import { chainOrderByMetadata } from "./chain-order";
 
+/** Input paths, naming, and output hooks for planning an on-disk migration. */
 export interface MigrationPlanOptions {
   readonly migrationsDir: string;
   readonly contractPath: string;
@@ -107,6 +108,7 @@ export async function migrationPlan(opts: MigrationPlanOptions): Promise<number>
   return planIncremental(ctx, existingDirs);
 }
 
+/** Resolved paths and output hooks shared by baseline and incremental planning. */
 interface SharedCtx extends MigrationPlanOptions {
   readonly out: (line: string) => void;
   readonly err: (line: string) => void;
@@ -116,6 +118,7 @@ interface SharedCtx extends MigrationPlanOptions {
   readonly dirLabel: string;
 }
 
+/** Plan a baseline for a fresh contract space and persist its migration package. */
 async function planGreenfield(ctx: SharedCtx): Promise<number> {
   const name = ctx.name ?? "baseline";
 
@@ -196,6 +199,7 @@ async function planGreenfield(ctx: SharedCtx): Promise<number> {
   return 0;
 }
 
+/** Resolve the chain head, compare its snapshot with the new contract, and persist the edge. */
 async function planIncremental(ctx: SharedCtx, existingDirs: readonly string[]): Promise<number> {
   if (ctx.name === undefined) {
     ctx.err("migration plan: --name <slug> is required when generating an incremental migration.\n");

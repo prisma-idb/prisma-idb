@@ -15,6 +15,7 @@ export const BIN_GROUPS = {
   },
 } as const;
 
+/** Create the companion CLI with the shared ORM config section and IDB migration commands. */
 export function createIdbCli(): Cli {
   return createCli({
     name: BIN_NAME,
@@ -67,6 +68,7 @@ export function runtimeFromProcess(proc: HostProcess): Runtime {
 
 const STARTUP_FAILURE_EXIT_CODE = 1;
 
+/** Normalize startup failures before writing the structured error and exit code. */
 function reportStartupFailure(proc: HostProcess, error: unknown): number {
   const normalized = CliStructuredError.is(error)
     ? error

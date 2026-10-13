@@ -16,6 +16,7 @@ import { verifyIdbSchema } from "./schema-verify";
 import type { IdbIndexIR, IdbSchemaIR } from "./schema-ir";
 import { validateContract, type IdbContract } from "./validate";
 
+/** Migration paths and output hooks for offline replay and schema verification. */
 export interface PreflightOptions {
   readonly migrationsDir: string;
   /**
@@ -140,11 +141,13 @@ async function readEmittedStorageHash(contractPath: string): Promise<string | un
   }
 }
 
+/** A parsed migration package whose operations and metadata were checked together. */
 interface LoadedPackage extends ChainablePackage {
   readonly metadata: MigrationMetadata;
   readonly ops: readonly IdbDdlOp[];
 }
 
+/** Validate package hashes and return the app migrations in chain order. */
 async function loadPackages(appDir: string): Promise<LoadedPackage[]> {
   let dirs: string[];
   try {
@@ -199,6 +202,7 @@ function assertSnapshotIsHead(contract: IdbContract, headHash: string): void {
   }
 }
 
+/** Replay one package through IDB events inside a version-change transaction. */
 function applyPackage(input: {
   readonly factory: IDBFactory;
   readonly dbName: string;
@@ -216,6 +220,7 @@ function applyPackage(input: {
         reject(new Error("upgradeneeded fired with null version-change transaction"));
         return;
       }
+      /** Issue the next DDL operation from the preceding operation callback to keep the upgrade active. */
       const runNext = (i: number): void => {
         try {
           const op = input.ops[i];
@@ -245,6 +250,7 @@ function applyPackage(input: {
   });
 }
 
+/** Read the replayed stores and indexes, excluding the runtime marker store. */
 function readSchema(factory: IDBFactory, dbName: string): Promise<IdbSchemaIR> {
   return new Promise((resolve, reject) => {
     const req = factory.open(dbName);

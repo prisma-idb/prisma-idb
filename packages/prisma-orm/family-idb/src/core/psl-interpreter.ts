@@ -93,6 +93,7 @@ function parseDefaultFunctionCall(raw: string): { readonly name: string; readonl
   return arg ? { name, arg } : { name };
 }
 
+/** A supported default generator or the reason its declaration was rejected. */
 type DefaultFunctionResolution =
   | { readonly ok: true; readonly generatorId: IdbMutationDefaultGeneratorId }
   | { readonly ok: false; readonly reason: "unknown-function" | "invalid-argument" };
@@ -196,6 +197,7 @@ export function warnDroppedRelation(modelName: string, relationName: string, tar
 
 // ── Attribute arg helpers ──────────────────────────────────────────────────────
 
+/** The raw positional or named argument supplied by a parsed PSL attribute. */
 type AttributeArg = { kind: string; name?: string; value: string };
 
 function findPositionalArg(args: readonly AttributeArg[]): string | undefined {
@@ -206,6 +208,7 @@ function findNamedArg(args: readonly AttributeArg[], name: string): string | und
   return (args.find((a) => a.kind === "named" && a.name === name) as AttributeArg | undefined)?.value;
 }
 
+/** Read a quoted string argument, leaving other argument forms unresolved. */
 function parseStringArg(raw: string | undefined): string | undefined {
   if (raw === undefined) return undefined;
   const t = raw.trim();
@@ -215,6 +218,7 @@ function parseStringArg(raw: string | undefined): string | undefined {
   return undefined;
 }
 
+/** Read an ordered field-name list from an attribute argument. */
 function parseFieldList(raw: string | undefined): string[] | undefined {
   if (raw === undefined) return undefined;
   const t = raw.trim();
@@ -253,6 +257,7 @@ type StringContractEnum = {
   readonly members: readonly { readonly name: string; readonly value: string }[];
 };
 
+/** Resolve declared string enum values and report invalid or duplicated members. */
 function interpretEnums(
   table: SymbolTable,
   sourceId: string,
@@ -319,6 +324,7 @@ function interpretEnums(
 
 // ── Per-model interpretation result ───────────────────────────────────────────
 
+/** One model interpretation before backrelations and contract hashes are assembled. */
 interface InterpretedModel {
   readonly modelName: string;
   readonly storeName: string;
@@ -348,6 +354,7 @@ interface InterpretedModel {
 
 // ── Core interpreter ───────────────────────────────────────────────────────────
 
+/** Resolve one model into IDB fields, indexes, defaults, and reference relations. */
 function interpretModel(
   model: ModelSymbol,
   modelNames: ReadonlySet<string>,
@@ -1030,6 +1037,7 @@ export interface InterpretPslOptions {
   readonly projection?: ContractProjection;
 }
 
+/** Interpret the supported PSL subset, pair backrelations, and hash the assembled contract. */
 export function interpretPslDocumentToIdbContract(
   table: SymbolTable,
   sourceId: string,

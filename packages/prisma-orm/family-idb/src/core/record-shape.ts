@@ -5,6 +5,7 @@ import type {
 } from "@prisma/orm-framework/contract/types";
 import type { IdbRecordField, IdbRecordFieldType, IdbRecordShape } from "@prisma-idb/target-idb/pack";
 
+/** Domain definitions needed to resolve enum and value-object record fields. */
 type ShapeDefinitions = Pick<ApplicationDomainNamespace, "enum" | "valueObjects">;
 
 function compareNames(a: string, b: string): number {

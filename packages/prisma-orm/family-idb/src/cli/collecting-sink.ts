@@ -34,6 +34,7 @@ export function createCollectingSink(): CollectingSink {
   const completedLines: string[] = [];
   let buffer = "";
 
+  /** Accumulate partial writes into complete lines for all presentation formats. */
   function push(text: string): void {
     buffer += text;
     const parts = buffer.split("\n");

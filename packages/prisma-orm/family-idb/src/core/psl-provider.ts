@@ -26,6 +26,7 @@ export function stripIdbExcludeAttributes(schema: string): string {
     .replace(/[ \t]*@idb\.exclude\b/g, ""); // field-level: drop just the token, keep the field
 }
 
+/** Place contract.json beside schema.prisma, or use the schema basename otherwise. */
 function defaultOutputFromSchemaPath(schemaPath: string): string {
   const ext = extname(schemaPath);
   if (ext.length === 0) return `${schemaPath}.json`;
@@ -36,6 +37,7 @@ function defaultOutputFromSchemaPath(schemaPath: string): string {
   return `${base}.json`;
 }
 
+/** Output, projection, and schema text hooks for the PSL contract provider. */
 export interface PrismaIdbContractOptions {
   readonly output?: string;
   /**

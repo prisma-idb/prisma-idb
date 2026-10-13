@@ -23,8 +23,10 @@ import { buildRecordShape } from "./record-shape";
 
 // ── Field type system ─────────────────────────────────────────────────────────
 
+/** Scalar names supported by the TypeScript IDB contract builder. */
 type PrismaScalarType = "String" | "Int" | "Float" | "Boolean" | "DateTime" | "BigInt" | "Decimal" | "Json" | "Bytes";
 
+/** A required or nullable scalar field declaration. */
 type PrismaScalarFieldSpec = PrismaScalarType | `${PrismaScalarType}?`;
 
 /**
@@ -37,6 +39,7 @@ export type FieldSpec<EnumName extends string = never> =
 /** A named enum's ordered string values. Each value is also its member name. */
 export type EnumDef = readonly string[];
 
+/** Named string enums available to model field declarations. */
 export type EnumDefs = Readonly<Record<string, EnumDef>>;
 
 const SCALAR_TO_CODEC_ID: Record<PrismaScalarType, string> = {
@@ -53,6 +56,7 @@ const SCALAR_TO_CODEC_ID: Record<PrismaScalarType, string> = {
 
 // ── Input types ───────────────────────────────────────────────────────────────
 
+/** A reference relation and its storage-level referential actions. */
 export type RelationDef = {
   readonly to: string;
   readonly cardinality: "1:1" | "1:N" | "N:1";
@@ -70,6 +74,7 @@ export type RelationDef = {
   readonly nullable?: boolean;
 };
 
+/** The key fields and flags of one secondary index. */
 export type IndexDef = {
   /** A single field name, or an ordered list of field names for a compound (multi-field) index. */
   readonly keyPath: IdbKeyPath;
@@ -77,6 +82,7 @@ export type IndexDef = {
   readonly multiEntry?: boolean;
 };
 
+/** The fields, storage layout, relations, and projection rules of one model. */
 export type ModelDef<EnumName extends string = never> = {
   readonly store: string;
   /** The primary key field, or an ordered list of fields for a compound primary key. */
@@ -104,6 +110,7 @@ export type ModelDef<EnumName extends string = never> = {
   readonly excludeFields?: readonly string[];
 };
 
+/** Family and target metadata together with the models and enums to build. */
 export type DefineContractInput<TEnums extends EnumDefs = Record<never, never>> = {
   /** Pass the default export of `@prisma-idb/family-idb/pack`. */
   readonly family: { readonly familyId: "idb"; readonly id: string };
@@ -113,6 +120,7 @@ export type DefineContractInput<TEnums extends EnumDefs = Record<never, never>> 
   readonly models: Record<string, ModelDef<Extract<keyof TEnums, string>>>;
 };
 
+/** Projection settings for the TypeScript contract builder. */
 export type DefineContractOptions = {
   /** @default "full" */
   readonly projection?: ContractProjection;
@@ -202,12 +210,14 @@ function projectModelsForClient(models: Record<string, ModelDef<string>>): Recor
 
 // ── Validate key/index field types against IDB's valid-key algorithm ──────────
 
+/** A field type name with its nullability and list shape. */
 type ParsedFieldSpec = {
   readonly typeName: string;
   readonly nullable: boolean;
   readonly many: boolean;
 };
 
+/** Separate the field type name from nullable and list suffixes. */
 function parseFieldSpec(spec: string): ParsedFieldSpec {
   const nullable = spec.endsWith("?");
   const withoutOptional = nullable ? spec.slice(0, -1) : spec;
@@ -219,6 +229,7 @@ function parseFieldSpec(spec: string): ParsedFieldSpec {
   };
 }
 
+/** Resolve scalar or enum field declarations to their stored codec. */
 function resolveFieldCodecId(def: ModelDef<string>, fieldName: string, enums: EnumDefs): string | undefined {
   const spec = def.fields[fieldName];
   if (spec === undefined) return undefined;
@@ -382,6 +393,7 @@ function validateNoConflictingRelationActions(models: Record<string, ModelDef<st
 
 // ── Helper: build ContractField entries from field specs ──────────────────────
 
+/** Translate supported field declarations into domain fields and enum references. */
 function buildFields(
   fields: Record<string, FieldSpec<string>>,
   enums: EnumDefs,
@@ -421,6 +433,7 @@ function buildFields(
   return result;
 }
 
+/** Validate named string enum members and construct their stored values. */
 function buildEnums(enums: EnumDefs): Record<string, ContractEnum> {
   const result: Record<string, ContractEnum> = {};
   for (const [name, values] of Object.entries(enums)) {
@@ -458,6 +471,7 @@ function keepReferencedEnums(
 
 // ── Helper: derive the `roots` map (storeName → model CrossReference) ─────────
 
+/** Expose each model under its declared object-store root. */
 function buildRoots(models: Record<string, ModelDef<string>>): Record<string, CrossReference> {
   const roots: Record<string, CrossReference> = {};
   for (const modelName of Object.keys(models)) {
@@ -471,6 +485,7 @@ function buildRoots(models: Record<string, ModelDef<string>>): Record<string, Cr
 
 // ── Helper: derive storage.stores from model definitions ─────────────────────
 
+/** Build store metadata and canonical record shapes before computing the storage hash. */
 function buildStores(
   models: Record<string, ModelDef<string>>,
   domainModels: Record<string, ContractModelEntry>,
@@ -497,6 +512,7 @@ function buildStores(
 
 // ── Helper: build the models section ─────────────────────────────────────────
 
+/** The domain fields, join metadata, and storage binding of a built model. */
 type ContractModelEntry = {
   readonly fields: Record<string, ContractField>;
   readonly relations: Record<
@@ -511,6 +527,7 @@ type ContractModelEntry = {
   readonly storage: IdbModelStorage;
 };
 
+/** Build domain relations and keep referential actions in IDB storage metadata. */
 function buildModels(
   models: Record<string, ModelDef<string>>,
   enums: EnumDefs,
@@ -522,7 +539,6 @@ function buildModels(
     const relationsStorage: Record<string, { onDelete?: IdbReferentialAction; onUpdate?: IdbReferentialAction }> = {};
     for (const [relName, rel] of Object.entries(def.relations ?? {})) {
       relations[relName] = {
-        // v0.12.0: relation `to` is a CrossReference, not a bare model-name string.
         to: crossRef(rel.to),
         cardinality: rel.cardinality,
         on: { localFields: rel.on.local, targetFields: rel.on.target },
@@ -610,7 +626,7 @@ export function defineContract<const TEnums extends EnumDefs = Record<never, nev
     },
   };
 
-  // v0.12.0 (ADR 221): both planes are namespace-keyed. IDB has no namespace
+  // Both planes are namespace-keyed. IDB has no namespace
   // concept, so everything lives under the single unbound namespace.
   const storageBlock = {
     stores,

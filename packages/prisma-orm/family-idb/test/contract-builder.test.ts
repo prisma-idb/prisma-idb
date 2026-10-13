@@ -597,7 +597,7 @@ describe("defineContract — IDB valid-key type validation (ADR 016)", () => {
   });
 });
 
-describe("defineContract — compound primary keys and indexes (Phase 9.1/9.2)", () => {
+describe("defineContract — compound primary keys and indexes", () => {
   it("accepts a compound key as an ordered array", () => {
     const contract = defineContract({
       family: idbFamilyPack,

@@ -3,6 +3,7 @@ import type { Contract } from "@prisma/orm-framework/contract/types";
 import { UNBOUND_DOMAIN_NAMESPACE_ID } from "@prisma/orm-framework/contract/types";
 import type { IdbStorage } from "@prisma-idb/target-idb/pack";
 
+/** Storage metadata used to build schema verification fixtures. */
 type RawStoreSpec = {
   keyPath: string | readonly string[];
   autoIncrement?: boolean;
@@ -10,11 +11,8 @@ type RawStoreSpec = {
 };
 
 /**
- * Build a raw 0.12.0-shape IDB contract with the given object stores and an
- * (optionally empty) model set. Replaces the removed
- * `@prisma/orm-framework/contract/testing#createContract` helper.
- *
- * v0.12.0 (ADR 221): models live under `domain.namespaces.<ns>.models` and the
+ * Build a raw IDB contract with the given object stores and an optionally
+ * empty model set. Models live under `domain.namespaces.<ns>.models` and the
  * storage block carries a symmetric `namespaces` map; IDB uses the single
  * unbound namespace.
  */

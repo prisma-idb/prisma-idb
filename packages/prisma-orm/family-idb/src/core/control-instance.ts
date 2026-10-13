@@ -46,11 +46,7 @@ function contractInfo(storageHash: string, profileHash: string | undefined) {
   return profileHash !== undefined ? ({ storageHash, profileHash } as const) : ({ storageHash } as const);
 }
 
-function verifyMeta(contractPath: string, configPath: string | undefined) {
-  return configPath !== undefined ? ({ contractPath, configPath } as const) : ({ contractPath } as const);
-}
-
-function signMeta(contractPath: string, configPath: string | undefined) {
+function actionMeta(contractPath: string, configPath: string | undefined) {
   return configPath !== undefined ? ({ contractPath, configPath } as const) : ({ contractPath } as const);
 }
 
@@ -88,6 +84,7 @@ export function createIdbFamilyInstance(_stack: ControlStack<"idb", string>): Id
 
     // ── verify (CLI refusal) ───────────────────────────────────────────────
 
+    /** Validate the contract and target, then explain why a Node CLI cannot verify browser storage. */
     async verify(options: {
       readonly driver: ControlDriverInstance<"idb", string>;
       readonly contract: unknown;
@@ -107,7 +104,7 @@ export function createIdbFamilyInstance(_stack: ControlStack<"idb", string>): Id
           summary: `Target mismatch: expected "idb", got "${options.expectedTargetId}"`,
           contract: contractInfo(storageHash, profileHash),
           target: { expected: options.expectedTargetId, actual: "idb" },
-          meta: verifyMeta(options.contractPath, options.configPath),
+          meta: actionMeta(options.contractPath, options.configPath),
           timings: { total: Date.now() - start },
         };
       }
@@ -118,13 +115,14 @@ export function createIdbFamilyInstance(_stack: ControlStack<"idb", string>): Id
         summary: refusalSummary("verified"),
         contract: contractInfo(storageHash, profileHash),
         target: { expected: "idb", actual: "idb" },
-        meta: verifyMeta(options.contractPath, options.configPath),
+        meta: actionMeta(options.contractPath, options.configPath),
         timings: { total: Date.now() - start },
       };
     },
 
     // ── verifySchema (active, pure) ────────────────────────────────────────
 
+    /** Compare a supplied schema with the validated IDB contract. */
     verifySchema(options: {
       readonly contract: unknown;
       readonly schema: IdbSchemaIR;
@@ -137,6 +135,7 @@ export function createIdbFamilyInstance(_stack: ControlStack<"idb", string>): Id
 
     // ── sign (CLI refusal) ──────────────────────────────────────────────────
 
+    /** Refuse live signing because a Node CLI cannot write the browser marker. */
     async sign(options: {
       readonly driver: ControlDriverInstance<"idb", string>;
       readonly contract: unknown;
@@ -156,7 +155,7 @@ export function createIdbFamilyInstance(_stack: ControlStack<"idb", string>): Id
         // `SignDatabaseResult.marker` is required; carry an "untouched"
         // record so callers don't crash on null-deref.
         marker: { created: false, updated: false },
-        meta: signMeta(options.contractPath, options.configPath),
+        meta: actionMeta(options.contractPath, options.configPath),
         timings: { total: Date.now() - start },
       };
     },
@@ -168,6 +167,7 @@ export function createIdbFamilyInstance(_stack: ControlStack<"idb", string>): Id
     // logic (e.g. db init's "create new marker" path) treats IDB as
     // perpetually empty rather than erroring out of band.
 
+    /** Return no marker because this control instance has no browser database. */
     async readMarker(_options: {
       readonly driver: ControlDriverInstance<"idb", string>;
       readonly space: string;
@@ -181,6 +181,7 @@ export function createIdbFamilyInstance(_stack: ControlStack<"idb", string>): Id
       return new Map<string, ContractMarkerRecord>();
     },
 
+    /** Return no ledger because no live browser connection exists in the control plane. */
     async readLedger(_options: {
       readonly driver: ControlDriverInstance<"idb", string>;
       readonly space?: string;
@@ -195,6 +196,7 @@ export function createIdbFamilyInstance(_stack: ControlStack<"idb", string>): Id
     // the user when running `db init` / `db update` / `db verify` against
     // an IDB project.
 
+    /** Return an empty schema because IndexedDB cannot be inspected from this Node driver. */
     async introspect(_options: {
       readonly driver: ControlDriverInstance<"idb", string>;
       readonly contract?: unknown;
