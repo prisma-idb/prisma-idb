@@ -1,3 +1,4 @@
+import { errorUnfilledPlaceholder } from "@prisma/orm-framework/errors/migration";
 import type { IdbValueTransform, TransformRecordsOp } from "./migration-factories";
 
 /** Full records permit backfills; patches only change fields already present. */
@@ -46,7 +47,7 @@ export function transformRecord(
 function transformValue(transform: IdbValueTransform, value: unknown, mode: RecordTransformMode): unknown {
   switch (transform.kind) {
     case "placeholder":
-      throw new Error(`PN-MIG-2001 Unfilled migration placeholder: ${transform.slot}`);
+      throw errorUnfilledPlaceholder(transform.slot);
     case "defaultIfMissing":
       return mode === "full" && value === undefined ? transform.value : value;
     case "setLiteral":

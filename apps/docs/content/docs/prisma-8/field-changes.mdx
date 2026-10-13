@@ -101,7 +101,7 @@ Regenerate the contract space, run preflight, and commit the files together. Tes
 
 ## Fill an unresolved transform
 
-When you add a required field without a supported literal default, or make an incompatible field change, planning writes a scaffold with unresolved placeholders. Emitting it unchanged reports `PN-MIG-2001`. For example, adding `status String` produces a field transform like this:
+When you add a required field without a supported literal default, or make an incompatible field change, planning writes a scaffold with unresolved placeholders. Emitting it unchanged reports `MIGRATION.UNFILLED_PLACEHOLDER`. The structured error lists all unfilled slots, including those nested in `pipe`. Replace each placeholder with a field transform, then emit the migration again. For example, adding `status String` produces a field transform like this:
 
 ```ts
 transformRecordsOp("Todo", {

@@ -73,7 +73,11 @@ describe("transformRecords upgrades", () => {
     const openSpy = vi.spyOn(factory, "open");
     await expect(
       upgrade(factory, [transformRecordsOp("users", { fields: { role: placeholder("User.role") } })])
-    ).rejects.toThrow(/PN-MIG-2001[\s\S]*User.role/);
+    ).rejects.toMatchObject({
+      name: "CliStructuredError",
+      code: "MIGRATION.UNFILLED_PLACEHOLDER",
+      meta: { slot: "User.role" },
+    });
     expect(openSpy).not.toHaveBeenCalled();
   });
 

@@ -101,18 +101,24 @@ describe("MigrationCLI", () => {
             transformRecordsOp("users", {
               fields: {
                 role: placeholder("User.role"),
-                enabled: pipe(defaultIfMissing(false), placeholder("User.enabled")),
+                enabled: pipe(defaultIfMissing(false), pipe(placeholder("User.enabled"))),
               },
             }),
+            transformRecordsOp("profiles", { fields: { role: placeholder("User.role") } }),
           ];
         }
       }
       writeFileSync(join(tmpDir, "ops.json"), "previous ops");
       writeFileSync(join(tmpDir, "migration.json"), "previous metadata");
       process.argv = ["node", "migration.ts", ...args];
-      await expect(MigrationCLI.run(migrationFileUrl, UnfilledMigration)).rejects.toThrow(
-        /PN-MIG-2001[\s\S]*User.role[\s\S]*User.enabled[\s\S]*replace each placeholder/
-      );
+      await expect(MigrationCLI.run(migrationFileUrl, UnfilledMigration)).rejects.toMatchObject({
+        name: "CliStructuredError",
+        code: "MIGRATION.UNFILLED_PLACEHOLDER",
+        message: "Unfilled migration placeholder",
+        why: "The migration contains a placeholder that has not been filled in: User.role, User.enabled",
+        fix: expect.stringContaining("placeholder(...)"),
+        meta: { slot: "User.role, User.enabled" },
+      });
       expect(readFileSync(join(tmpDir, "ops.json"), "utf-8")).toBe("previous ops");
       expect(readFileSync(join(tmpDir, "migration.json"), "utf-8")).toBe("previous metadata");
     }
@@ -128,7 +134,11 @@ describe("MigrationCLI", () => {
       }
     }
     process.argv = ["node", "migration.ts"];
-    await expect(MigrationCLI.run(migrationFileUrl, PromisedMigration)).rejects.toThrow(/PN-MIG-2001[\s\S]*User.role/);
+    await expect(MigrationCLI.run(migrationFileUrl, PromisedMigration)).rejects.toMatchObject({
+      name: "CliStructuredError",
+      code: "MIGRATION.UNFILLED_PLACEHOLDER",
+      meta: { slot: "User.role" },
+    });
     expect(existsSync(join(tmpDir, "ops.json"))).toBe(false);
     expect(existsSync(join(tmpDir, "migration.json"))).toBe(false);
   });

@@ -91,7 +91,7 @@ The executor rejects changes to key fields before opening the cursor. This inclu
 | `renameFields` entry | Moves a value to a new key and deletes the old one.                                   | `renameFields: { isSynced: "synced" }`  |
 | `removeFields` entry | Deletes a field.                                                                      | `removeFields: ["legacyPhoneNumber"]`   |
 
-`placeholder("Model.field")` marks an unresolved value transform. It is not an executable conversion. Package emission, preflight, and runtime application reject it with `PN-MIG-2001`, including inside `pipe`.
+`placeholder("Model.field")` marks an unresolved value transform. It is not an executable conversion. Package emission, preflight, and runtime application reject it with `MIGRATION.UNFILLED_PLACEHOLDER`, including inside `pipe`. Validation reports all distinct unfilled slots in one framework `CliStructuredError`. Its `why` and `meta.slot` contain the comma-separated slot names.
 
 ### What `coerce` does with each input
 
@@ -160,7 +160,7 @@ The planner writes `migration.ts`, `ops.json`, and `migration.json` with unresol
 
 1. Change `synced` to `Int` in the extension contract.
 2. Run `pnpm --filter @prisma-idb/sync-extension-idb contract:emit`.
-3. Run `npx prisma-idb migration plan --space idb-sync --name synced_to_int`. It scaffolds a `placeholder` for the incompatible field change. Emitting that scaffold unchanged fails with `PN-MIG-2001`.
+3. Run `npx prisma-idb migration plan --space idb-sync --name synced_to_int`. It scaffolds a `placeholder` for the incompatible field change. Emitting that scaffold unchanged fails with `MIGRATION.UNFILLED_PLACEHOLDER`.
 4. Replace the slot with `coerce("int")` in `migration.ts`. Add its import from `@prisma-idb/target-idb/migration`.
 5. Run `npx tsx migrations/<migration-folder>/migration.ts`. This regenerates `ops.json` and `migration.json` with a new package hash.
 6. Add the new migration to the extension's `migrations` array in `src/exports/control.ts`.
