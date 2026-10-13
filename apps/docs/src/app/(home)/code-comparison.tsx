@@ -41,7 +41,7 @@ export async function CodeComparison() {
     <section className="px-6 py-16 sm:py-24 lg:px-8">
       <div className="mx-auto max-w-5xl">
         <h2 className={`${GeistSans.className} text-fd-foreground mb-4 text-center text-3xl font-bold sm:text-4xl`}>
-          Prisma's schema. A typed client.
+          Prisma&apos;s schema. A typed client.
         </h2>
         <p className="text-fd-muted-foreground mx-auto mb-4 max-w-xl text-center text-base">
           Even with the <code className={`${GeistMono.className} text-fd-muted-foreground text-[13px]`}>idb</code>{" "}
