@@ -1,6 +1,6 @@
 # ADR 022: Rejected pushes reconcile to the server row
 
-- **Status:** Proposed (Accepted on merge)
+- **Status:** Accepted
 - **Date:** 2026-10-07
 - **Area:** Sync
 
