@@ -245,6 +245,8 @@ export async function applyPushEventDecoded(
         }
       }
 
+      // Bulk mutations work around the ORM's Bytes-key bug in update()/delete().
+      // Remove them once fixed upstream; the primary-key filter matches at most one row.
       const root = ormRootFor(tx, model);
       if (event.operation === "create") {
         await root.select(keyField).create(ormWriteValues(contract, model, event.payload));
@@ -252,9 +254,9 @@ export async function applyPushEventDecoded(
         await root
           .select(keyField)
           .where({ [keyField]: nativeKey })
-          .update(ormWriteValues(contract, model, patch));
+          .updateAll(ormWriteValues(contract, model, patch));
       } else if (event.operation === "delete") {
-        await root.where({ [keyField]: nativeKey }).delete();
+        await root.where({ [keyField]: nativeKey }).deleteAll();
       } else {
         throw new Error(`Unsupported operation "${event.operation}"`);
       }

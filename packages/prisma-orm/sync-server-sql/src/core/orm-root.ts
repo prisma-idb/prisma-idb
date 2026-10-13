@@ -11,10 +11,11 @@ export interface OrmRoot {
     create(data: Record<string, unknown>): Promise<unknown>;
     where(clause: Record<string, unknown>): {
       update(patch: Record<string, unknown>): Promise<unknown>;
+      updateAll(patch: Record<string, unknown>): PromiseLike<unknown>;
     };
   };
   where(clause: Record<string, unknown>): {
-    delete(): Promise<unknown>;
+    deleteAll(): PromiseLike<unknown>;
   };
 }
 
