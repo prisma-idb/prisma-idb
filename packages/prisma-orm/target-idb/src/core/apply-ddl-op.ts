@@ -1,7 +1,12 @@
 import type { ContractMarkerRecord } from "@prisma/orm-framework/contract/types";
 import { transformRecord } from "./transform-records";
 import type { IdbKeyPath } from "./idb-contract-types";
-import { IDB_MARKER_STORE, type IdbDdlOp, type TransformRecordsOp } from "./migration-factories";
+import {
+  assertNoMigrationPlaceholders,
+  IDB_MARKER_STORE,
+  type IdbDdlOp,
+  type TransformRecordsOp,
+} from "./migration-factories";
 
 /**
  * `lib.dom.d.ts` types `IDBObjectStoreParameters.keyPath` / `createIndex`'s
@@ -45,6 +50,7 @@ export function applyOneDdlOp(
   onDone: () => void,
   onError?: (error: unknown) => void
 ): void {
+  assertNoMigrationPlaceholders([op]);
   switch (op.kind) {
     case "createObjectStore": {
       if (!db.objectStoreNames.contains(op.storeName)) {
@@ -238,6 +244,7 @@ export function openAndUpgrade(input: {
   readonly onTransformRecords?: (tx: IDBTransaction, op: TransformRecordsOp, onDone: (error?: unknown) => void) => void;
 }): Promise<number> {
   return new Promise((resolve, reject) => {
+    assertNoMigrationPlaceholders(input.ops);
     const request = input.factory.open(input.dbName, input.targetVersion);
 
     // `onblocked` fires when another connection is open at an older version and

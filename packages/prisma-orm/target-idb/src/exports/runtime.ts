@@ -1,7 +1,8 @@
 import type { RuntimeTargetDescriptor, RuntimeTargetInstance } from "@prisma/orm-framework/components/execution";
 import { idbTargetDescriptorMeta } from "../core/descriptor-meta";
 export { idbCodecLookup } from "../core/codecs";
-export { contractFingerprint } from "../core/contract-fingerprint";
+export { absentAsNull } from "../core/absent-as-null";
+export type { AbsentAsNull } from "../core/absent-as-null";
 export { decodeJsonRecord } from "../core/decode-json-record";
 export { assertRecordValidator, validateRecord, validateKeyFields, validateKeyPath } from "../core/validate-record";
 export type { ValidationResult, ValidationCodecLookup, RecordValidationOptions } from "../core/validate-record";

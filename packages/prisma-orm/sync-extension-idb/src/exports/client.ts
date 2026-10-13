@@ -20,7 +20,7 @@ export type {
 export { ContractMismatchError } from "../core/contract-mismatch-error";
 
 export { applyPull } from "../core/apply-pull";
-export { getNextBatch, markSynced, markFailed } from "../core/outbox-store";
+export { getNextBatch, readForPush, markSynced, markFailed } from "../core/outbox-store";
 
 export type {
   OutboxEvent,

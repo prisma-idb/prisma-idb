@@ -15,11 +15,21 @@
  * - spaceId (extension-space, ADR 212) behavior for both modes.
  */
 
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
+import idbTarget from "@prisma-idb/target-idb/pack";
+import { defineContract } from "../src/core/contract-builder";
+import idbFamily from "../src/exports/pack";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { buildSymbolTable } from "@prisma/orm-framework/psl-parser";
+import { parse } from "@prisma/orm-framework/psl-parser/syntax";
+import { interpretPslDocumentToIdbContract } from "../src/core/psl-interpreter";
+import { runPreflight } from "../src/core/preflight";
 import { migrationPlan } from "../src/core/migration-plan";
 import { generateContractSpace } from "../src/core/contract-space-codegen";
 
@@ -94,6 +104,56 @@ async function writeContract(base: string, contract: unknown): Promise<void> {
   await writeFile(join(base, "src", "lib", "prisma", "contract.json"), JSON.stringify(contract, null, 2), "utf-8");
 }
 
+// Exercise the emitted migration entrypoint, including its self-emit CLI, with
+// actual contract record shapes rather than hand-built DDL-only fixtures.
+describe("migrationPlan — record shape round trips", () => {
+  it.each(["baseline", "added store"])("preserves operations and migration hash for %s", async (mode) => {
+    const user = { store: "users", key: "id", fields: { id: "String" as const } };
+    if (mode === "added store") {
+      await writeContract(cwd, defineContract({ family: idbFamily, target: idbTarget, models: { User: user } }));
+      expect(await migrationPlan(defaultPaths(cwd))).toBe(0);
+    }
+    const contract = defineContract({
+      family: idbFamily,
+      target: idbTarget,
+      models: {
+        User: user,
+        Post: {
+          store: "posts",
+          key: "id",
+          fields: { id: "String", title: "String?" },
+          indexes: { byTitle: { keyPath: "title" } },
+        },
+      },
+    });
+    expect(contract.storage.stores["posts"]!.record).toBeDefined();
+    await writeContract(cwd, contract);
+    expect(await migrationPlan({ ...defaultPaths(cwd), name: "create_posts" })).toBe(0);
+
+    const dirName = (await listMigrationDirs(cwd)).find((dir) => dir.endsWith("_create_posts"))!;
+    const originalOps = await readOps(cwd, dirName);
+    const originalMeta = await readMeta(cwd, dirName);
+    // Let the temporary project resolve the public target package used by
+    // the generated file, just as an installed consumer project would.
+    await symlink(fileURLToPath(new URL("../node_modules", import.meta.url)), join(cwd, "node_modules"), "dir");
+    await writeFile(join(cwd, "package.json"), JSON.stringify({ type: "module" }));
+    try {
+      await promisify(execFile)(process.execPath, [
+        "--import",
+        import.meta.resolve("tsx"),
+        join(cwd, "migrations", "app", dirName, "migration.ts"),
+      ]);
+      expect(await readOps(cwd, dirName)).toEqual(originalOps);
+      expect((await readMeta(cwd, dirName)).migrationHash).toBe(originalMeta.migrationHash);
+      for (const op of originalOps) {
+        if (op.kind === "createObjectStore") expect(op).not.toHaveProperty("def.record");
+      }
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+});
+
 // ── Auto-detection ───────────────────────────────────────────────────────────
 
 describe("migrationPlan — auto-detection", () => {
@@ -140,6 +200,119 @@ describe("migrationPlan — auto-detection", () => {
     const newDir = dirs.find((d) => d.endsWith("_add_version_meta"))!;
     const meta = await readMeta(cwd, newDir);
     expect(meta.from).not.toBeNull();
+  });
+});
+
+describe("migrationPlan — record field changes", () => {
+  function psl(fields: string) {
+    const { document, sources } = parse(`model User {\n id String @id\n ${fields}\n @@map("users")\n}`, "test.prisma");
+    const { symbolTable } = buildSymbolTable({ documents: [document], sources, pslBlockDescriptors: {} });
+    const result = interpretPslDocumentToIdbContract(symbolTable, "test.prisma");
+    if (!result.ok) throw new Error(JSON.stringify(result));
+    return result.value;
+  }
+
+  it("scaffolds missing backfills, rejects unfilled emit and preflight, and accepts a filled scaffold", async () => {
+    await writeContract(cwd, psl(""));
+    expect(await migrationPlan(defaultPaths(cwd))).toBe(0);
+    await writeContract(cwd, psl("role String\n enabled Boolean"));
+    expect(await migrationPlan({ ...defaultPaths(cwd), name: "backfill" })).toBe(0);
+    const dirName = (await listMigrationDirs(cwd)).find((dir) => dir.endsWith("_backfill"))!;
+    const source = await readMigrationTs(cwd, dirName);
+    expect(source).toContain('placeholder("User.role")');
+    expect(source).toContain('placeholder("User.enabled")');
+    const ops = await readOps(cwd, dirName);
+    const metadata = await readMeta(cwd, dirName);
+    await symlink(fileURLToPath(new URL("../node_modules", import.meta.url)), join(cwd, "node_modules"), "dir");
+    await writeFile(join(cwd, "package.json"), JSON.stringify({ type: "module" }));
+    const migrationPath = join(cwd, "migrations", "app", dirName, "migration.ts");
+    const emit = () => promisify(execFile)(process.execPath, ["--import", import.meta.resolve("tsx"), migrationPath]);
+    await expect(emit()).rejects.toMatchObject({
+      stderr: expect.stringMatching(/PN-MIG-2001(?=[\s\S]*User.role)(?=[\s\S]*User.enabled)/),
+    });
+    expect(await readOps(cwd, dirName)).toEqual(ops);
+    expect(await readMeta(cwd, dirName)).toEqual(metadata);
+    expect(await runPreflight({ migrationsDir: defaultPaths(cwd).migrationsDir })).toBe(1);
+    expect(capturedStderr).toMatch(/PN-MIG-2001(?=[\s\S]*User.role)(?=[\s\S]*User.enabled)/);
+    const filled = source
+      .replace(", placeholder,", ", defaultIfMissing,")
+      .replace('placeholder("User.role")', 'defaultIfMissing("member")')
+      .replace('placeholder("User.enabled")', "defaultIfMissing(false)");
+    await writeFile(migrationPath, filled);
+    await emit();
+    expect(await readOps(cwd, dirName)).toEqual([
+      expect.objectContaining({
+        fields: {
+          role: { kind: "defaultIfMissing", value: "member" },
+          enabled: { kind: "defaultIfMissing", value: false },
+        },
+      }),
+    ]);
+    expect(await runPreflight({ migrationsDir: defaultPaths(cwd).migrationsDir })).toBe(0);
+  });
+
+  it("warns about field loss and self-emits identical record operations and hashes", async () => {
+    await writeContract(cwd, psl("old String"));
+    expect(await migrationPlan(defaultPaths(cwd))).toBe(0);
+    await writeContract(cwd, psl('role String @default("member")'));
+    expect(await migrationPlan({ ...defaultPaths(cwd), name: "replace_field" })).toBe(0);
+    const dirName = (await listMigrationDirs(cwd)).find((dir) => dir.endsWith("_replace_field"))!;
+    const ops = await readOps(cwd, dirName);
+    const metadata = await readMeta(cwd, dirName);
+    expect(ops).toEqual([
+      expect.objectContaining({
+        kind: "transformRecords",
+        removeFields: ["old"],
+        fields: { role: { kind: "defaultIfMissing", value: "member" } },
+      }),
+    ]);
+    expect(capturedStderr).toContain("Warning: this migration deletes data.");
+    expect(capturedStderr).toContain("users.old");
+    await symlink(fileURLToPath(new URL("../node_modules", import.meta.url)), join(cwd, "node_modules"), "dir");
+    await writeFile(join(cwd, "package.json"), JSON.stringify({ type: "module" }));
+    await promisify(execFile)(process.execPath, [
+      "--import",
+      import.meta.resolve("tsx"),
+      join(cwd, "migrations", "app", dirName, "migration.ts"),
+    ]);
+    expect(await readOps(cwd, dirName)).toEqual(ops);
+    expect(await readMeta(cwd, dirName)).toEqual(metadata);
+  });
+
+  it.each([0, -12.5, 123.45])("self-emits identical Decimal default operations and hashes for %j", async (value) => {
+    await writeContract(cwd, psl(""));
+    expect(await migrationPlan(defaultPaths(cwd))).toBe(0);
+    await writeContract(cwd, psl(`amount Decimal @default(${value})`));
+    expect(await migrationPlan({ ...defaultPaths(cwd), name: "add_decimal" })).toBe(0);
+    const dirName = (await listMigrationDirs(cwd)).find((dir) => dir.endsWith("_add_decimal"))!;
+    const ops = await readOps(cwd, dirName);
+    const metadata = await readMeta(cwd, dirName);
+    expect(ops).toEqual([
+      expect.objectContaining({
+        kind: "transformRecords",
+        fields: { amount: { kind: "defaultIfMissing", value: String(value) } },
+      }),
+    ]);
+    await symlink(fileURLToPath(new URL("../node_modules", import.meta.url)), join(cwd, "node_modules"), "dir");
+    await writeFile(join(cwd, "package.json"), JSON.stringify({ type: "module" }));
+    await promisify(execFile)(process.execPath, [
+      "--import",
+      import.meta.resolve("tsx"),
+      join(cwd, "migrations", "app", dirName, "migration.ts"),
+    ]);
+    expect(await readOps(cwd, dirName)).toEqual(ops);
+    expect(await readMeta(cwd, dirName)).toEqual(metadata);
+  });
+
+  it("writes an explicit no-operation migration for an added nullable field", async () => {
+    await writeContract(cwd, psl(""));
+    expect(await migrationPlan(defaultPaths(cwd))).toBe(0);
+    await writeContract(cwd, psl("role String?"));
+    expect(await migrationPlan({ ...defaultPaths(cwd), name: "optional_role" })).toBe(0);
+    const dirName = (await listMigrationDirs(cwd)).find((dir) => dir.endsWith("_optional_role"))!;
+    expect(await readOps(cwd, dirName)).toEqual([]);
+    expect(await readMigrationTs(cwd, dirName)).toContain("No record or schema operations are needed");
+    expect(capturedStderr).not.toContain("deletes data");
   });
 });
 

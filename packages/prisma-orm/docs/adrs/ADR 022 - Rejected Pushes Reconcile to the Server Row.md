@@ -43,7 +43,7 @@ Example: two devices of one user each create a board named "Home" while offline,
 Rules that follow:
 
 - **Avoid user-chosen natural-key uniques on models that clients create offline.** Use a surrogate id as the primary key. Put a uniqueness rule on the server only if losing the second write is acceptable.
-- **Never prune rejected events from the outbox.** They are the only recovery record. A migration that rewrites a model's records ([ADR 023](ADR%20023%20-%20Migrations%20Rewrite%20Pending%20Outbox%20Payloads.md)) also rewrites that model's rejected events. If a rejected event cannot be converted, it keeps the shape it was written in, so check a payload before you resubmit it.
+- **Never prune rejected events from the outbox.** They are the only recovery record. A migration that rewrites a model's records ([ADR 023](ADR%20023%20-%20Migrations%20Rewrite%20Pending%20Outbox%20Payloads.md)) also rewrites that model's rejected events. If a rejected event cannot be converted, it keeps its payload and gets a `migrationError` marker with the transform's error message. Its original rejection reason stays in `lastError`. An app must repair a marked payload to match the current model before resubmitting it. Later successful transforms keep the marker until the app repairs the payload.
 
 ## Alternatives considered
 

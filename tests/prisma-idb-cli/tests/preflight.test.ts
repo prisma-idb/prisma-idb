@@ -101,6 +101,34 @@ describe("prisma-idb migration preflight", () => {
     expect(stderr).toContain('Object store "posts" defined in contract is missing');
   });
 
+  it("fails when the emitted contract is newer than the migration chain (migration plan skipped)", async () => {
+    const cwd = await setupTmpProject("preflight-skipped-plan");
+    const emittedHash = "sha256:emitted-after-field-change";
+    await writeSnapshot(cwd, HASH_ADDPOSTS, ["users", "posts"]);
+    await writeContractJson(cwd, emittedHash);
+    await writePackage({
+      cwd,
+      dirName: "0001_baseline",
+      from: null,
+      to: HASH_BASELINE,
+      ops: [createMarkerStoreOp, createUsersStoreOp],
+    });
+    await writePackage({
+      cwd,
+      dirName: "0002_addPosts",
+      from: HASH_BASELINE,
+      to: HASH_ADDPOSTS,
+      ops: [createPostsStoreOp],
+    });
+
+    const { stderr, exitCode } = await cli(["migration", "preflight"], { cwd });
+    expect(exitCode).toBe(2);
+    expect(stderr).toContain("IDB-CLI.PREFLIGHT_FAILED");
+    expect(stderr).toContain(emittedHash);
+    expect(stderr).toContain(HASH_ADDPOSTS);
+    expect(stderr).toContain("migration plan");
+  });
+
   it("exits 1 with a clear error when a DDL op fails (index on non-existent store)", async () => {
     const cwd = await setupTmpProject("preflight-bad-ddl");
     await writeContractJson(cwd, HASH_ADDPOSTS);

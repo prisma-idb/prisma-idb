@@ -1,5 +1,6 @@
 import { expect, it } from "vitest";
 import fc from "fast-check";
+import { domainModelsAtDefaultNamespace } from "@prisma/orm-framework/contract/types";
 import { AsyncIterableResult } from "@prisma/orm-framework/components/runtime";
 import {
   andExpr,
@@ -93,6 +94,8 @@ type Row = Record<string, unknown>;
 type Order = Record<string, "asc" | "desc">;
 type Query = { where?: IdbFilterExpr; orderBy?: Order; skip?: number; take?: number };
 let dbCounter = 0;
+/** Reads a stored row the way the ORM does: an absent nullable field is `null`. Follows the contract under test. */
+let readStored = (row: Row): Row => row;
 
 async function withDatabase(
   run: (db: IDBDatabase, driver: IdbRuntimeDriverInstance) => Promise<void>,
@@ -138,7 +141,7 @@ function seed(db: IDBDatabase, rows: Row[]): Promise<void> {
 async function oracle(db: IDBDatabase, query: Query): Promise<Row[]> {
   const rows = await new Promise<Row[]>((resolve, reject) => {
     const request = db.transaction("items").objectStore("items").getAll();
-    request.onsuccess = () => resolve(request.result as Row[]);
+    request.onsuccess = () => resolve((request.result as Row[]).map(readStored));
     request.onerror = () => reject(request.error);
   });
   const filtered = rows.filter((row) => query.where === undefined || evaluateFilter(query.where, row));
@@ -154,10 +157,17 @@ async function oracle(db: IDBDatabase, query: Query): Promise<Row[]> {
   return filtered.slice(skip, query.take === undefined ? undefined : skip + query.take);
 }
 
+/** Each test contract maps exactly one model to the `items` store. */
+function itemsCatalog(testContract: IdbContract) {
+  const [modelName] = Object.keys(domainModelsAtDefaultNamespace(testContract.domain));
+  return buildCatalog(testContract, "items", modelName);
+}
+
 function accessor(
   driver: IdbRuntimeDriverInstance,
   testContract: IdbContract = contract
 ): IdbStoreAccessor<never, never> {
+  readStored = itemsCatalog(testContract).absentAsNull;
   const orm = idbOrm({ contract: testContract, executor: new TestExecutor(driver) });
   return (orm as unknown as Record<string, IdbStoreAccessor<never, never>>)["items"]!;
 }
@@ -199,7 +209,7 @@ async function compareExists(
   where: IdbFilterExpr | undefined,
   testContract: IdbContract = contract
 ) {
-  const catalog = buildCatalog(testContract, "items");
+  const catalog = itemsCatalog(testContract);
   const request = where === undefined ? {} : { where };
   const meta = { target: "idb", storageHash: "test", lane: "idb-orm" } as const;
   const matching = await oracle(db, request);
@@ -532,7 +542,7 @@ function oracleWrite(db: IDBDatabase, where: IdbFilterExpr | undefined, patch?: 
         const result = patch === undefined ? row : { ...row, ...patch };
         if (patch === undefined) store.delete(row["id"] as string);
         else store.put(result);
-        results.push(result);
+        results.push(readStored(result));
       }
     };
     tx.oncomplete = () => resolve(results);

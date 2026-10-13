@@ -12,7 +12,7 @@ vi.mock("../src/core/wire-values", async (importOriginal) => {
 const adapter = createSqlSyncAdapter({
   contract: testContract,
   syncServer: testSyncServer,
-  contractFingerprintCheck: "off",
+  contractCheck: "off",
 });
 
 /** Payload revivals so far: one call per decoded event. A second decode of the same event would raise the count. */

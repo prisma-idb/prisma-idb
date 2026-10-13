@@ -44,6 +44,8 @@ export function transformRecord(
 
 function transformValue(transform: IdbValueTransform, value: unknown, mode: RecordTransformMode): unknown {
   switch (transform.kind) {
+    case "placeholder":
+      throw new Error(`PN-MIG-2001 Unfilled migration placeholder: ${transform.slot}`);
     case "defaultIfMissing":
       return mode === "full" && value === undefined ? transform.value : value;
     case "setLiteral":

@@ -1,6 +1,7 @@
 import { AsyncIterableResult } from "@prisma/orm-framework/components/runtime";
 import type { PlanMeta } from "@prisma/orm-framework/contract/types";
 import type { IdbFilterExpr, IdbQueryPlan } from "@prisma-idb/adapter-idb/runtime";
+import { absentAsNull } from "@prisma-idb/target-idb/runtime";
 import type {
   IdbAggregateAst,
   IdbCountAst,
@@ -773,7 +774,8 @@ export class IdbStoreAccessorImpl<
       const key = extractKeyFromRow(existing, keyPath);
       await applyReferentialActionsForRowOnUpdate(scope, this.#contract, this.#modelName, existing, effectivePatch);
       const rows = await scope.execute({ meta, kind: "update", storeName, key, patch: effectivePatch });
-      return (rows[0] ?? existing) as DefaultModelRow<TContract, ModelName>;
+      const updated = absentAsNull(this.#contract, this.#modelName)(rows[0] ?? existing);
+      return updated as DefaultModelRow<TContract, ModelName>;
     });
   }
 
@@ -888,7 +890,7 @@ export class IdbStoreAccessorImpl<
       ...(take === undefined ? {} : { take }),
     };
     const meta = this.#planMeta(this.#newGroupingKey());
-    const catalog = buildCatalog(this.#contract, this.#storeName);
+    const catalog = buildCatalog(this.#contract, this.#storeName, this.#modelName);
     const lowered = lowerCount(catalog, planQuery(catalog, request), meta, request);
     // Middleware sees a `count` AST, not the plan that answers it.
     const ast: IdbCountAst = {
@@ -955,7 +957,7 @@ export class IdbStoreAccessorImpl<
   }
 
   #lowerRows(meta: PlanMeta, request: RowsRequest): LoweredRows {
-    const catalog = buildCatalog(this.#contract, this.#storeName);
+    const catalog = buildCatalog(this.#contract, this.#storeName, this.#modelName);
     return lowerRows(catalog, planQuery(catalog, request), meta, request);
   }
 

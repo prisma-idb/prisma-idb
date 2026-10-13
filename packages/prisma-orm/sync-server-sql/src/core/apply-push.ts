@@ -1,5 +1,5 @@
 import type { GetKeyField, SyncServer, SyncPushEvent, SyncServerContract } from "@prisma-idb/sync-server";
-import type { ContractMismatchOutcome } from "./contract-fingerprint-gate";
+import type { ContractMismatchOutcome } from "./contract-check-gate";
 import { applyPushEventDecoded, decodeFailureResult, decodeWireEvent } from "./push";
 import type { SqlPushResult } from "./push";
 import { withCurrentRecord } from "./rejected-record";
@@ -29,8 +29,8 @@ export interface ApplyPushInput {
   readonly scopeKey: string;
   /** @default DEFAULT_MAX_PUSH_BATCH_SIZE */
   readonly maxBatchSize?: number;
-  /** The client's contract fingerprint, as it sent it. Checked against the server's before anything is applied. */
-  readonly clientContractFingerprint?: string | null;
+  /** The client's storage hash, as it sent it. Checked against the server's before anything is applied. */
+  readonly clientStorageHash?: string | null;
 }
 
 /**

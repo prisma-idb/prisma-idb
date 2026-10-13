@@ -3,12 +3,12 @@
  */
 
 import type { IdbContract } from "@prisma-idb/client-idb/orm";
-import { contractFingerprint } from "@prisma-idb/target-idb/runtime";
 import type { SyncIdbClient } from "./sync-client";
 import type { OutboxEvent } from "./outbox-store";
 import {
   getNextBatch,
   getOldestPendingEvent,
+  readForPush,
   markSynced,
   markFailed,
   pruneSyncedEvents,
@@ -30,12 +30,10 @@ export type SyncWorkerStatus = "idle" | "pushing" | "pulling" | "error" | "stopp
 /** What the worker passes to a handler besides its data: the facts the server needs to vet the request. */
 export interface SyncRequestContext {
   /**
-   * Resolves to the fingerprint of this client's contract. Send it with the
-   * request (for example as a header) and forward it to the server's
-   * `pull`/`applyPush`. The server refuses a request whose fingerprint
-   * differs from its own. Computed on first call, then reused.
+   * The emitted client contract's storage hash. Send it with each request
+   * and forward it as `clientStorageHash` to the server's `pull`/`applyPush`.
    */
-  readonly contractFingerprint: () => Promise<string>;
+  readonly storageHash: string;
 }
 
 export interface SyncWorkerOptions<TContract extends IdbContract> {
@@ -209,9 +207,8 @@ export function createSyncWorker<TContract extends IdbContract>(options: SyncWor
     emit("statuschange", next);
   }
 
-  let fingerprint: Promise<string> | undefined;
   const requestContext: SyncRequestContext = {
-    contractFingerprint: () => (fingerprint ??= contractFingerprint(syncClient.contract)),
+    storageHash: syncClient.contract.storage.storageHash,
   };
 
   function reportContractMismatch(error: unknown, during: ContractMismatchEvent["during"]): void {
@@ -257,7 +254,12 @@ export function createSyncWorker<TContract extends IdbContract>(options: SyncWor
   async function sendBatch(events: OutboxEvent[]): Promise<PushResult[]> {
     try {
       return await withTimeout(
-        (signal) => pushHandler(events, signal, requestContext),
+        (signal) =>
+          pushHandler(
+            events.map((event) => readForPush(syncClient.contract, event)),
+            signal,
+            requestContext
+          ),
         requestTimeoutMs,
         "pushHandler"
       );

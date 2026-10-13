@@ -4,11 +4,21 @@ import type {
   MigrationOperationPolicy,
   MigrationPlanWithAuthoringSurface,
   MigrationPlanner,
+  MigrationPlannerConflict,
   MigrationPlannerResult,
   MigrationScaffoldContext,
 } from "@prisma/orm-framework/components/control";
-import type { IdbIndexDefinition, IdbStoreDefinition } from "./idb-contract-types";
-import { createMarkerStoreOp, type IdbDdlOp } from "./migration-factories";
+import type { IdbIndexDefinition, IdbRecordField, IdbRecordFieldType, IdbStoreDefinition } from "./idb-contract-types";
+import { keyPathFields } from "./idb-contract-types";
+import {
+  defaultIfMissing,
+  placeholder,
+  transformRecordsOp,
+  createMarkerStoreOp,
+  IDB_MARKER_STORE,
+  type IdbDdlOp,
+  type IdbValueTransform,
+} from "./migration-factories";
 import type { IdbSchemaDiffInput } from "./schema-diff";
 import { diffIdbSchema } from "./schema-diff";
 
@@ -80,11 +90,7 @@ export function renderMigrationTs(input: {
 
   const operationsBlock =
     ops.length === 0
-      ? [
-          "    return [",
-          "      // Add IDB DDL operations here (createObjectStoreOp, createIndexOp, ...).",
-          "    ];",
-        ].join("\n")
+      ? ["    return [", "      // No record or schema operations are needed for this migration.", "    ];"].join("\n")
       : ["    return [", ops.map((op) => `      ${renderOpCall(op)},`).join("\n"), "    ];"].join("\n");
 
   return [
@@ -113,8 +119,16 @@ function collectFactoryImports(ops: readonly IdbDdlOp[]): string[] {
   const names = new Set<string>();
   for (const op of ops) {
     switch (op.kind) {
+      case "transformRecords":
+        names.add("transformRecordsOp");
+        for (const transform of Object.values(op.fields ?? {})) names.add(transform.kind);
+        break;
       case "createObjectStore":
-        names.add("createObjectStoreOp");
+        names.add(
+          op.storeName === IDB_MARKER_STORE && op.label === createMarkerStoreOp().label
+            ? "createMarkerStoreOp"
+            : "createObjectStoreOp"
+        );
         break;
       case "dropObjectStore":
         names.add("dropObjectStoreOp");
@@ -158,16 +172,37 @@ function renderIndexDefLiteral(def: IdbIndexDefinition): string {
 
 function renderOpCall(op: IdbDdlOp): string {
   switch (op.kind) {
-    case "transformRecords":
-      throw new Error("IDB: transformRecords must be authored by hand in migration.ts");
+    case "transformRecords": {
+      const parts: string[] = [];
+      if (op.fields !== undefined) {
+        const fields = Object.entries(op.fields).map(([name, transform]) => {
+          if (transform.kind === "placeholder")
+            return `[${JSON.stringify(name)}]: placeholder(${JSON.stringify(transform.slot)})`;
+          if (transform.kind !== "defaultIfMissing") {
+            throw new Error("IDB: custom transforms must be authored by hand in migration.ts");
+          }
+          return `[${JSON.stringify(name)}]: defaultIfMissing(${JSON.stringify(transform.value)})`;
+        });
+        parts.push(`fields: { ${fields.join(", ")} }`);
+      }
+      if (op.renameFields !== undefined) {
+        throw new Error("IDB: renames must be authored by hand in migration.ts");
+      }
+      if (op.removeFields !== undefined) parts.push(`removeFields: ${JSON.stringify(op.removeFields)}`);
+      return `transformRecordsOp(${JSON.stringify(op.storeName)}, { ${parts.join(", ")} })`;
+    }
     case "createObjectStore": {
+      // Preserve the internal marker's label as well as its DDL properties.
+      if (op.storeName === IDB_MARKER_STORE && op.label === createMarkerStoreOp().label) {
+        return "createMarkerStoreOp()";
+      }
       const optsParts = [`keyPath: ${JSON.stringify(op.def.keyPath)}`];
       if (op.def.autoIncrement !== undefined) {
         optsParts.push(`autoIncrement: ${op.def.autoIncrement}`);
       }
-      // `diffIdbSchema` passes the full contract store definition (indexes
-      // included) into `createObjectStoreOp`'s `def` for a freshly-created
-      // store. `applyOneDdlOp` never reads `def.indexes` (the separate
+      // `diffIdbSchema` keeps DDL properties (including indexes) in a
+      // freshly-created store's `def`, omitting contract record metadata.
+      // `applyOneDdlOp` never reads `def.indexes` (the separate
       // `createIndexOp`s do the work), so this is inert metadata. It is
       // still rendered: the planner's `ops.json` has it, and a re-emit that
       // dropped it would produce different hashes (see `renderIndexDefLiteral`).
@@ -188,13 +223,158 @@ function renderOpCall(op: IdbDdlOp): string {
   }
 }
 
+/** Whether a nested type change can preserve existing values without a transform. */
+function typeAcceptsExistingValues(from: IdbRecordFieldType, to: IdbRecordFieldType): boolean {
+  if (from.kind === "valueObject" && to.kind === "valueObject") {
+    if (from.name !== to.name) return false;
+    // Removed embedded fields need an authored transform; the record DSL only removes top-level fields.
+    if (Object.keys(from.fields).some((name) => !Object.hasOwn(to.fields, name))) return false;
+    return Object.entries(to.fields).every(([name, field]) =>
+      Object.hasOwn(from.fields, name) ? fieldAcceptsExistingValues(from.fields[name]!, field) : field.nullable
+    );
+  }
+  if (from.kind === "union" && to.kind === "union") {
+    return (
+      from.members.length === to.members.length &&
+      from.members.every((member, index) => typeAcceptsExistingValues(member, to.members[index]!))
+    );
+  }
+  return JSON.stringify(from) === JSON.stringify(to);
+}
+
+/** Whether existing values remain valid in the destination field. */
+function fieldAcceptsExistingValues(from: IdbRecordField, to: IdbRecordField): boolean {
+  if (from.nullable && !to.nullable) return false;
+  if (from.many !== to.many || from.dict !== to.dict) return false;
+  if (!typeAcceptsExistingValues(from.type, to.type)) return false;
+  if (from.valueSet === undefined) return to.valueSet === undefined;
+  if (to.valueSet === undefined) return true;
+  const destinationEnum = to.valueSet;
+  return (
+    from.valueSet.codecId === destinationEnum.codecId &&
+    from.valueSet.members.every((oldMember) =>
+      destinationEnum.members.some((member) => JSON.stringify(member.value) === JSON.stringify(oldMember.value))
+    )
+  );
+}
+
+/** Resolve literal defaults to the native value written by the record-transform runner. */
+function storedLiteralDefault(
+  field: IdbRecordField,
+  value: string | number | boolean
+): string | number | boolean | undefined {
+  if (field.type.kind !== "scalar") return undefined;
+  let stored: string | number | boolean;
+  switch (field.type.codecId) {
+    case "idb/decimal@1":
+      // PSL supplies numbers for Decimal defaults; IDB's Decimal codec stores strings.
+      if (typeof value !== "number" && typeof value !== "string") return undefined;
+      stored = String(value);
+      break;
+    case "idb/string@1":
+      if (typeof value !== "string") return undefined;
+      stored = value;
+      break;
+    case "idb/bool@1":
+      if (typeof value !== "boolean") return undefined;
+      stored = value;
+      break;
+    case "idb/int32@1":
+      if (typeof value !== "number" || !Number.isInteger(value) || value < -2147483648 || value > 2147483647)
+        return undefined;
+      stored = value;
+      break;
+    case "idb/double@1":
+      if (typeof value !== "number") return undefined;
+      stored = value;
+      break;
+    case "idb/json@1":
+      stored = value;
+      break;
+    default:
+      // Date, bigint, bytes and unknown codecs cannot be expressed by this JSON-literal operation.
+      return undefined;
+  }
+  if (field.valueSet && !field.valueSet.members.some((member) => Object.is(member.value, stored))) return undefined;
+  return stored;
+}
+
+function diffRecordShapes(
+  from: IdbSchemaDiffInput | null,
+  to: IdbSchemaDiffInput,
+  contract: Contract
+): { ops: IdbDdlOp[]; conflicts: MigrationPlannerConflict[] } {
+  const ops: IdbDdlOp[] = [];
+  const conflicts: MigrationPlannerConflict[] = [];
+  for (const [storeName, store] of Object.entries(to.stores)) {
+    const oldRecord = from?.stores[storeName]?.record;
+    const newRecord = store.record;
+    // New stores have no rows to backfill. Legacy DDL-only contracts carry no field history.
+    if (oldRecord === undefined || newRecord === undefined) continue;
+    const fields: Record<string, IdbValueTransform> = Object.create(null);
+    const removeFields = Object.keys(oldRecord.fields).filter((name) => !Object.hasOwn(newRecord.fields, name));
+    for (const [name, field] of Object.entries(newRecord.fields)) {
+      const oldField = Object.hasOwn(oldRecord.fields, name) ? oldRecord.fields[name] : undefined;
+      if (oldField !== undefined) {
+        if (!fieldAcceptsExistingValues(oldField, field)) {
+          // The runner rejects transforms that touch an existing primary key.
+          if (keyPathFields(store.keyPath).some((key) => key === name || key.startsWith(`${name}.`))) {
+            conflicts.push({
+              kind: "keyFieldTransform",
+              summary: `Cannot migrate incompatible key field "${name}" in store "${storeName}".`,
+              why:
+                `transformRecords cannot change key field "${name}". ` +
+                "Author a manual migration that drops and re-creates the store with the desired data flow.",
+            });
+          } else {
+            fields[name] = placeholder(`${newRecord.model}.${name}`);
+          }
+        }
+        continue;
+      }
+      if (field.nullable) continue;
+      const spec = contract.execution?.mutations?.defaults?.find(
+        (entry) => entry.ref.table === storeName && entry.ref.column === name
+      )?.onCreate;
+      const value = spec?.params?.["value"];
+      if (
+        spec?.id !== "literal" ||
+        value === null ||
+        (typeof value !== "string" && typeof value !== "number" && typeof value !== "boolean") ||
+        (typeof value === "number" && !Number.isFinite(value)) ||
+        field.many ||
+        field.dict ||
+        field.type.kind !== "scalar"
+      ) {
+        fields[name] = placeholder(`${newRecord.model}.${name}`);
+        continue;
+      }
+      const stored = storedLiteralDefault(field, value);
+      if (stored === undefined) {
+        fields[name] = placeholder(`${newRecord.model}.${name}`);
+        continue;
+      }
+      fields[name] = defaultIfMissing(stored);
+    }
+    if (Object.keys(fields).length > 0 || removeFields.length > 0) {
+      ops.push(
+        transformRecordsOp(storeName, {
+          ...(Object.keys(fields).length > 0 ? { fields } : {}),
+          ...(removeFields.length > 0 ? { removeFields } : {}),
+        })
+      );
+    }
+  }
+  return { ops, conflicts };
+}
+
 // ── Planner ───────────────────────────────────────────────────────────────────
 
 /**
  * IDB migration planner.
  *
  * `plan()` converts `fromContract` and `contract` into `IdbSchemaDiffInput`s,
- * diffs them using {@link diffIdbSchema}, and returns an
+ * diffs their stores, indexes, and record shapes, and returns an
  * {@link IdbMigrationPlanWithAuthoring} that can be executed by
  * {@link IdbMigrationRunner} or rendered to a TypeScript migration file via
  * the class-based scaffold matching vendor's Postgres/Mongo authoring surface.
@@ -241,7 +421,9 @@ export class IdbMigrationPlanner implements MigrationPlanner<"idb", "idb"> {
       };
     }
 
-    const ops = diffIdbSchema(fromSchema, toSchema);
+    const recordDiff = diffRecordShapes(fromSchema, toSchema, contract as Contract);
+    if (recordDiff.conflicts.length > 0) return { kind: "failure", conflicts: recordDiff.conflicts };
+    const ops = [...diffIdbSchema(fromSchema, toSchema), ...recordDiff.ops];
 
     // On first migration (fresh database), create the internal
     // _prisma_next_marker store so the runtime can verify the

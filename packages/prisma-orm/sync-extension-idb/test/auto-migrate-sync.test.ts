@@ -6,6 +6,8 @@ import idbTargetPack from "@prisma-idb/target-idb/pack";
 import { idbSyncExtension } from "../src/exports/control";
 import { createAutoMigratingSyncIdbClient } from "../src/exports/client";
 import { buildContractSpaceFixture } from "./_contract-space-fixture";
+import { contractSpaceFromJson } from "@prisma/orm-toolchain/migration-tools/spaces";
+import legacyContract from "../migrations/snapshots/c2c485fabf1d79f78fdaf74a1c4dd94fe4e3981493233534e003c613f643945d/contract.json" with { type: "json" };
 
 const contract = defineContract({
   family: idbFamilyPack,
@@ -21,6 +23,47 @@ function dbName(): string {
 }
 
 describe("createAutoMigratingSyncIdbClient", () => {
+  it("rehashes the legacy sync space without changing queued outbox records", async () => {
+    const space = buildContractSpaceFixture(contract);
+    const name = dbName();
+    const baseline = idbSyncExtension.contractSpace.migrations[0]!;
+    const legacyExtension = {
+      ...idbSyncExtension,
+      contractSpace: contractSpaceFromJson({
+        contractJson: legacyContract,
+        migrations: [baseline],
+        headRef: { hash: baseline.metadata.to, invariants: [] },
+      }),
+    };
+    const old = await createAutoMigratingSyncIdbClient({
+      contractSpace: space,
+      dbName: name,
+      extensions: [legacyExtension],
+    });
+    const orm = old.orm as unknown as { users: { create(data: unknown): Promise<unknown> } };
+    await orm.users.create({ id: "u1", name: "Alice" });
+    const readOutbox = (db: typeof old) =>
+      db.withTransaction(["_idb_sync_outbox"], async (scope) =>
+        scope.execute({ kind: "cursor-scan", storeName: "_idb_sync_outbox" } as never)
+      );
+    const before = await readOutbox(old);
+    await old.close();
+
+    const rehash = idbSyncExtension.contractSpace.migrations[1]!;
+    expect(rehash.metadata.from).toBe(baseline.metadata.to);
+    expect(rehash.ops).toEqual([]);
+    const current = await createAutoMigratingSyncIdbClient({
+      contractSpace: space,
+      dbName: name,
+      extensions: [idbSyncExtension],
+    });
+    try {
+      expect(await readOutbox(current)).toEqual(before);
+    } finally {
+      await current.close();
+    }
+  });
+
   beforeEach(async () => {
     const fake: { IDBFactory: new () => IDBFactory } = await import("fake-indexeddb");
     (globalThis as unknown as { indexedDB: IDBFactory }).indexedDB = new fake.IDBFactory();

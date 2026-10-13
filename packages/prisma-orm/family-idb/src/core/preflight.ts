@@ -4,7 +4,12 @@ import type { MigrationMetadata } from "@prisma/orm-toolchain/migration-tools/me
 import { computeMigrationHash } from "@prisma/orm-toolchain/migration-tools/hash";
 import { computeStorageHash } from "@prisma/orm-framework/contract/hashing";
 import { chainOrderByMetadata, type ChainablePackage } from "./chain-order";
-import { applyOneDdlOp, isIdbDdlOp, type IdbDdlOp } from "@prisma-idb/target-idb/migration";
+import {
+  assertNoMigrationPlaceholders,
+  applyOneDdlOp,
+  isIdbDdlOp,
+  type IdbDdlOp,
+} from "@prisma-idb/target-idb/migration";
 import { join } from "pathe";
 import { verifyIdbSchema } from "./schema-verify";
 import type { IdbIndexIR, IdbSchemaIR } from "./schema-ir";
@@ -12,6 +17,11 @@ import { validateContract, type IdbContract } from "./validate";
 
 export interface PreflightOptions {
   readonly migrationsDir: string;
+  /**
+   * The emitted `contract.json` the app loads. When set, its `storageHash` must be the head
+   * migration's target. The CLI always sets it.
+   */
+  readonly contractPath?: string;
   /** Output sinks. Default to `process.stdout`/`process.stderr`. */
   readonly out?: (line: string) => void;
   readonly err?: (line: string) => void;
@@ -34,6 +44,10 @@ export interface PreflightOptions {
  * contract at `migrations/snapshots/<hash>/contract.json`. The snapshot must
  * carry the head's target hash, and that hash must match its content. Extra
  * stores and indexes fail verification; the internal marker store is excluded.
+ *
+ * Also fails when the emitted `contract.json` is not the head's target: the
+ * contract changed (for example a field was added) and nobody ran
+ * `migration plan`, so the app would refuse to open.
  *
  * Exit codes: 0 on full chain success; 1 on any failure.
  */
@@ -58,6 +72,7 @@ export async function runPreflight(opts: PreflightOptions): Promise<number> {
   for (const pkg of packages) {
     out(`  ${pkg.dirName} … `);
     try {
+      assertNoMigrationPlaceholders(pkg.ops);
       currentVersion += 1;
       await applyPackage({ factory, dbName, targetVersion: currentVersion, ops: pkg.ops });
       out("ok\n");
@@ -70,6 +85,18 @@ export async function runPreflight(opts: PreflightOptions): Promise<number> {
   }
 
   const head = packages[packages.length - 1]!;
+  if (opts.contractPath !== undefined) {
+    const emittedHash = await readEmittedStorageHash(opts.contractPath);
+    if (emittedHash !== head.metadata.to) {
+      err(
+        `\nThe emitted contract ${opts.contractPath} has storageHash ${emittedHash ?? "(unreadable)"}, ` +
+          `but the migration chain ends at ${head.metadata.to}.\n` +
+          "If the contract changed, run `prisma-idb migration plan --name <slug>` to add the missing migration.\n" +
+          "Otherwise run `prisma contract emit` to refresh the contract.\n\nPreflight failed.\n"
+      );
+      return 1;
+    }
+  }
   const snapshotPath = join(migrationsDir, "snapshots", head.metadata.to, "contract.json");
   try {
     const contract = validateContract(JSON.parse(await readFile(snapshotPath, "utf-8")));
@@ -94,6 +121,15 @@ export async function runPreflight(opts: PreflightOptions): Promise<number> {
 
   out("\nPreflight passed: every migration applies cleanly and the schema matches the head contract.\n");
   return 0;
+}
+
+async function readEmittedStorageHash(contractPath: string): Promise<string | undefined> {
+  try {
+    const contract = JSON.parse(await readFile(contractPath, "utf-8")) as { storage?: { storageHash?: string } };
+    return contract.storage?.storageHash;
+  } catch {
+    return undefined;
+  }
 }
 
 interface LoadedPackage extends ChainablePackage {

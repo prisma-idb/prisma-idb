@@ -40,6 +40,7 @@ import {
   createMutationDefaultsCache,
   type MutationDefaultsCache,
 } from "./mutation-defaults";
+import { absentAsNull } from "@prisma-idb/target-idb/runtime";
 import { buildCatalog } from "./planner/catalog";
 import { lowerExists, lowerRows, lowerWrite, type WriteRequest } from "./planner/lower";
 import { planQuery } from "./planner/plan";
@@ -321,7 +322,7 @@ async function updateFirstGraph(
     await applyReferentialActionsForRowOnUpdate(scope, contract, modelName, existingRow, patch);
     const rows = await scope.execute({ meta, kind: "update", storeName, key, patch });
     const updated = rows[0];
-    if (updated) parentRow = updated;
+    if (updated) parentRow = absentAsNull(contract, modelName)(updated);
   }
 
   for (const item of childOwned) {
@@ -640,7 +641,7 @@ export async function readMutationRows(
   where: IdbFilterExpr | undefined,
   take?: number
 ): Promise<Record<string, unknown>[]> {
-  const catalog = buildCatalog(contract, getStoreName(contract, modelName));
+  const catalog = buildCatalog(contract, getStoreName(contract, modelName), modelName);
   const request = { ...(where === undefined ? {} : { where }), ...(take === undefined ? {} : { take }) };
   const lowered = lowerRows(catalog, planQuery(catalog, request), makePlanMeta(contract), request);
   return lowered.finish(await executeMutationPlan(scope, lowered.idbPlan));
@@ -653,7 +654,7 @@ async function writeMutationRows(
   request: WriteRequest
 ): Promise<Record<string, unknown>[]> {
   if (request.write !== "delete") assertValidRecord(contract, modelName, "update", request.patch ?? {});
-  const catalog = buildCatalog(contract, getStoreName(contract, modelName));
+  const catalog = buildCatalog(contract, getStoreName(contract, modelName), modelName);
   const meta = makePlanMeta(contract);
   const lowered = lowerWrite(catalog, planQuery(catalog, request), meta, request);
   if (lowered.kind === "scan") return executeMutationPlan(scope, lowered.idbPlan);
@@ -797,11 +798,11 @@ async function childExists(
 ): Promise<boolean> {
   const values = def.localFields.map((field) => parentRow[field]);
   if (values.some((value) => value === null || value === undefined)) return false;
-  return rowExists(scope, contract, meta, def.relatedStoreName, def.targetFields, values);
+  return rowExists(scope, contract, meta, def.relatedModelName, def.targetFields, values);
 }
 
 /**
- * Does `storeName` have a row whose `fields` equal `values`, pairwise?
+ * Does `modelName` have a row whose `fields` equal `values`, pairwise?
  * Compares values the way IndexedDB compares keys. `additionalFilter` narrows
  * the match in memory; it makes the check read rows instead of keys.
  */
@@ -809,13 +810,13 @@ async function rowExists(
   scope: IdbTransactionScope,
   contract: IdbContract,
   meta: PlanMeta,
-  storeName: string,
+  modelName: string,
   fields: readonly string[],
   values: readonly unknown[],
   additionalFilter?: IdbRowFilter
 ): Promise<boolean> {
   const where = andExpr(fields.map((field, i) => fieldFilter(field, "eq", values[i])));
-  const catalog = buildCatalog(contract, storeName);
+  const catalog = buildCatalog(contract, getStoreName(contract, modelName), modelName);
   const lowered = lowerExists(catalog, planQuery(catalog, { where }), meta, { where }, additionalFilter);
   // The scope runs atomic plans only. Each `await` here resolves in a
   // microtask, so the transaction stays open between the requests.
@@ -1142,13 +1143,12 @@ async function parentExists(
   values: readonly unknown[],
   excludeKey?: IDBValidKey
 ): Promise<boolean> {
-  const storeName = getStoreName(contract, parentModel);
   const keyPath = getKeyPath(contract, parentModel);
   const notExcluded =
     excludeKey === undefined
       ? undefined
       : (row: Record<string, unknown>): boolean => !keyEquals(extractKeyFromRow(row, keyPath), excludeKey);
-  return rowExists(scope, contract, meta, storeName, fields, values, notExcluded);
+  return rowExists(scope, contract, meta, parentModel, fields, values, notExcluded);
 }
 
 /** `id='u1'`, or `orgId='a', id='u1'` for a compound key. */
@@ -1306,7 +1306,7 @@ async function executeScalarUpdates(options: ScalarUpdateOptions, take?: 1): Pro
   assertValidRecord(contract, modelName, "update", patch);
   const { storeNames, enforcesOnUpdate } = collectUpdateStoreNames(contract, modelName, patch);
   const needsRowForFks = fkCheckNeedsExistingRow(contract, modelName, patch);
-  return withMutationScope(executor, storeNames, async (scope) => {
+  const updatedRows = await withMutationScope(executor, storeNames, async (scope) => {
     if (!needsRowForFks) await validateScalarFks(scope, contract, modelName, patch);
     const meta = makePlanMeta(contract);
     const where = filters.length === 0 ? undefined : andExpr(filters);
@@ -1334,6 +1334,8 @@ async function executeScalarUpdates(options: ScalarUpdateOptions, take?: 1): Pro
     }
     return results;
   });
+  // The rows come straight from the store, so a field added after they were written is absent.
+  return updatedRows.map(absentAsNull(contract, modelName));
 }
 
 // ── Delete referential action enforcement ─────────────────────────────────────
@@ -1510,10 +1512,11 @@ export async function executeDeleteAllWithReferentialActions(options: {
     const meta = makePlanMeta(contract);
     const keyPath = getKeyPath(contract, modelName);
     if (!hasEnforceableChildRelations(contract, modelName)) {
-      return writeMutationRows(scope, contract, modelName, {
+      const deleted = await writeMutationRows(scope, contract, modelName, {
         write: "delete",
         ...(where === undefined ? {} : { where }),
       });
+      return deleted.map(absentAsNull(contract, modelName));
     }
     const rows = await readMutationRows(scope, contract, modelName, where);
     for (const row of rows) {

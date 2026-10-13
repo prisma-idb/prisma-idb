@@ -208,7 +208,7 @@ export async function POST(req: Request) {
   const outcome = await sqlSyncAdapter.applyPush(db, {
     events: parsed.data.events,
     scopeKey,
-    clientContractFingerprint: req.headers.get("x-contract-fingerprint"),
+    clientStorageHash: req.headers.get("x-storage-hash"),
   });
   if (!outcome.ok) {
     switch (outcome.reason) {
@@ -225,7 +225,7 @@ export async function POST(req: Request) {
 }
 ```
 
-Both endpoints read the client's contract fingerprint from a request header and refuse a client whose contract differs from the server's. See [Contract fingerprint](/docs/prisma-8/sync/server#contract-fingerprint).
+Both endpoints read the client's storage hash from a request header and refuse a client whose contract differs from the server's. See [Contract check](/docs/prisma-8/sync/server#contract-check).
 
 `applyPush` decodes wire values and validates each event. It applies events in order, checking ownership and writing the record and its `Changelog` row in one transaction. It stops at the first retryable failure so dependent events remain pending until their parent succeeds.
 
@@ -247,7 +247,7 @@ export async function GET(req: Request) {
     scopeKey,
     lastChangelogId: new URL(req.url).searchParams.get("since") || null,
     limit: 50,
-    clientContractFingerprint: req.headers.get("x-contract-fingerprint"),
+    clientStorageHash: req.headers.get("x-storage-hash"),
   });
   if (!outcome.ok) {
     switch (outcome.reason) {
@@ -275,8 +275,8 @@ Back in the browser, create a worker that calls your two endpoints, and start it
 import { ContractMismatchError, type SyncRequestContext } from "@prisma-idb/sync-extension-idb/client";
 
 const db = await getDb();
-const send = async (url: string, init: RequestInit, { contractFingerprint }: SyncRequestContext) => {
-  const headers = { ...init.headers, "x-contract-fingerprint": await contractFingerprint() };
+const send = async (url: string, init: RequestInit, { storageHash }: SyncRequestContext) => {
+  const headers = { ...init.headers, "x-storage-hash": storageHash };
   const response = await fetch(url, { ...init, headers });
   if (response.status === 409) throw new ContractMismatchError();
   return response.json();

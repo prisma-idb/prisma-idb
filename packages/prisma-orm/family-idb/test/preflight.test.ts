@@ -10,9 +10,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { computeMigrationHash } from "@prisma/orm-toolchain/migration-tools/hash";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { transformRecordsOp, coerce } from "@prisma-idb/target-idb/migration";
+import { transformRecordsOp, coerce, defaultIfMissing, pipe, placeholder } from "@prisma-idb/target-idb/migration";
 import { runPreflight } from "../src/core/preflight";
 import { createRawIdbContract } from "./_raw-contract";
+import { defineContract } from "../src/core/contract-builder";
+import idbFamily from "../src/exports/pack";
+import idbTarget from "@prisma-idb/target-idb/pack";
 
 let cwd: string;
 let originalStdout: typeof process.stdout.write;
@@ -116,6 +119,53 @@ const indexOnMissingStore = {
 };
 
 describe("runPreflight", () => {
+  it("names all serialized unfilled slots even when the store is empty", async () => {
+    await writePackage({
+      dirName: "001_init",
+      from: null,
+      to: "head",
+      ops: [
+        createUsers,
+        transformRecordsOp("users", {
+          fields: {
+            role: placeholder("User.role"),
+            enabled: pipe(defaultIfMissing(false), placeholder("User.enabled")),
+          },
+        }),
+      ],
+    });
+    const errors: string[] = [];
+    expect(await runPreflight({ migrationsDir: join(cwd, "migrations"), err: (line) => errors.push(line) })).toBe(1);
+    expect(errors.join("")).toMatch(/PN-MIG-2001[\s\S]*User.role[\s\S]*User.enabled/);
+  });
+
+  it("accepts a filled backfill slot", async () => {
+    const head = await writeSnapshot({ users: { keyPath: "id" } });
+    await writePackage({
+      dirName: "001_init",
+      from: null,
+      to: head,
+      ops: [createMarker, createUsers, transformRecordsOp("users", { fields: { role: defaultIfMissing("member") } })],
+    });
+    expect(await runPreflight({ migrationsDir: join(cwd, "migrations") })).toBe(0);
+  });
+
+  it("fails when the emitted contract is not the head's target, and passes once it is", async () => {
+    const head = await writeSnapshot({ users: { keyPath: "id" } });
+    await writePackage({ dirName: "001_init", from: null, to: head, ops: [createMarker, createUsers] });
+    const contractPath = join(cwd, "contract.json");
+    const migrationsDir = join(cwd, "migrations");
+
+    await writeFile(contractPath, JSON.stringify({ storage: { storageHash: "emitted-after-field-change" } }), "utf-8");
+    const errors: string[] = [];
+    expect(await runPreflight({ migrationsDir, contractPath, err: (line) => errors.push(line) })).toBe(1);
+    expect(errors.join("")).toContain(`ends at ${head}`);
+    expect(errors.join("")).toContain("migration plan");
+
+    await writeFile(contractPath, JSON.stringify({ storage: { storageHash: head } }), "utf-8");
+    expect(await runPreflight({ migrationsDir, contractPath })).toBe(0);
+  });
+
   it("accepts a hand-authored transform followed by structural operations", async () => {
     const head = await writeSnapshot({ users: { keyPath: "id" }, posts: { keyPath: "id" } });
     await writePackage({
@@ -166,6 +216,22 @@ describe("runPreflight", () => {
 
     const code = await runPreflight({ migrationsDir: join(cwd, "migrations") });
     expect(code).toBe(0);
+  });
+
+  it("replays a no-op rehash with record shape and verifies only DDL", async () => {
+    const oldHash = await writeSnapshot({ users: { keyPath: "id" } });
+    const contract = defineContract({
+      family: idbFamily,
+      target: idbTarget,
+      models: { User: { store: "users", key: "id", fields: { id: "String", name: "String?" } } },
+    });
+    const newHash = contract.storage.storageHash;
+    expect(newHash).not.toBe(oldHash);
+    await writeSnapshotFile(newHash, contract);
+    await writePackage({ dirName: "0001_baseline", from: null, to: oldHash, ops: [createMarker, createUsers] });
+    await writePackage({ dirName: "0002_rehash", from: oldHash, to: newHash, ops: [] });
+
+    expect(await runPreflight({ migrationsDir: join(cwd, "migrations") })).toBe(0);
   });
 
   it("fails with a readable diff when a valid package omits a required store", async () => {

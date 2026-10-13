@@ -32,6 +32,7 @@
 
 export {
   createObjectStoreOp,
+  createMarkerStoreOp,
   dropObjectStoreOp,
   createIndexOp,
   dropIndexOp,
@@ -41,6 +42,8 @@ export {
   defaultIfMissing,
   setLiteral,
   pipe,
+  placeholder,
+  assertNoMigrationPlaceholders,
   deletedDataWarning,
 } from "../core/migration-factories";
 

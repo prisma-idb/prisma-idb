@@ -5,7 +5,7 @@ import type { PushResultBody } from "@prisma-idb/sync-extension-idb/schemas";
 import { auth } from "$lib/server/auth";
 import { getPostgres } from "$lib/server/db";
 import { sqlSyncAdapter } from "$lib/server/sync";
-import { CONTRACT_FINGERPRINT_HEADER } from "$lib/prisma/sync";
+import { STORAGE_HASH_HEADER } from "$lib/prisma/sync";
 
 /**
  * ADR 014's push endpoint: `sqlSyncAdapter.applyPush` (built once in
@@ -44,7 +44,7 @@ export const POST: RequestHandler = async ({ request }) => {
     events: parsed.data.events,
     scopeKey,
     maxBatchSize: MAX_PUSH_BATCH_SIZE,
-    clientContractFingerprint: request.headers.get(CONTRACT_FINGERPRINT_HEADER),
+    clientStorageHash: request.headers.get(STORAGE_HASH_HEADER),
   });
   if (!outcome.ok) {
     switch (outcome.reason) {

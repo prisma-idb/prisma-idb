@@ -13,6 +13,7 @@ describe("target entry points", () => {
 
   it("preserves the control descriptor and migration authoring tools", () => {
     expect(control.default.migrations.createPlanner).toBeTypeOf("function");
+    expect(migration.placeholder).toBeTypeOf("function");
     expect(migration.Migration).toBeTypeOf("function");
     expect(migration.MigrationCLI.run).toBeTypeOf("function");
     expect(migration.IdbMigrationPlanner).toBeTypeOf("function");

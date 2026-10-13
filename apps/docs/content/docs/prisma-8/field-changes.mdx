@@ -1,0 +1,158 @@
+---
+title: Author a field change
+description: Plan, fill, and ship migrations when stored fields change
+icon: GitBranch
+---
+
+Use this guide to change fields in an existing IndexedDB app. Start with a working [migration chain](/docs/prisma-8/migrations) and a client opened with `createAutoMigratingIdbClient` or its managed sync equivalent.
+
+## Add a nullable field
+
+Add `migrationError String?` to your model in `schema.prisma`. For example, keep the existing fields on `Todo` and add:
+
+```prisma
+model Todo {
+  id             String @id
+  title          String
+  migrationError String?
+}
+```
+
+### Emit the contract and plan the migration
+
+Run these commands from the app directory:
+
+```bash
+npx prisma@latest contract emit
+npx prisma-idb migration plan --name add-migration-error
+```
+
+The emitted contract includes the new field in the store's record shape. Its `storage.storageHash` changes even though the object stores and indexes stay the same.
+
+Inspect the new package under `migrations/app/`. If this is your only change, its `ops.json` is `[]`. Keep this migration. It connects the old storage hash to the new one and lets the runtime advance the marker. It does not rewrite existing records.
+
+### Bundle and check the chain
+
+```bash
+npx prisma-idb migration contract-space
+npx prisma-idb migration preflight
+```
+
+Preflight checks that the emitted contract's storage hash matches the migration chain's head. It also replays the chain and checks the final stores and indexes against the head snapshot.
+
+Commit the schema, emitted contract and types, new migration package, new snapshot, and regenerated contract-space module together. Ship them in the same app bundle.
+
+### Open the database with the new bundle
+
+Use the regenerated contract space when opening the client:
+
+```ts
+import { createAutoMigratingIdbClient } from "@prisma-idb/client-idb/client-auto";
+import { contractSpace } from "./prisma/contract-space.generated";
+
+const db = await createAutoMigratingIdbClient({
+  contractSpace,
+  dbName: "my-app",
+});
+```
+
+Use your existing `dbName`. Opening applies pending migrations before returning the client. The empty migration advances the app marker to the new storage hash. Reading a `Todo` stored before the field existed returns `migrationError: null`. The read does not modify the stored record.
+
+If you send a full record over sync yourself, include `migrationError: null`. Wire validation still requires an explicit value for every nullable field.
+
+### Recover if you skipped the migration
+
+Run the emit, plan, contract-space, and preflight commands above, then ship the resulting files together.
+
+Emitting a new contract alone leaves the migration chain at the old hash. Preflight fails when the emitted hash differs from the chain head. Opening also rejects a contract space whose bundled contract hash differs from its pinned head. If you keep the old generated module, the app still loads its old contract; it has not adopted your field change.
+
+### Reload old sync clients
+
+Deploy the server with the new emitted **client** contract used by the browser bundle. Continue forwarding the worker's `context.storageHash` to the server as `clientStorageHash`. See [Contract check](/docs/prisma-8/sync/server#contract-check).
+
+After that deployment, clients running the old bundle receive HTTP 409 on push and pull until they reload the new bundle. In your transport handlers, turn that response into `ContractMismatchError`. The worker preserves queued edits and the pull cursor, emits `contractmismatch`, and retries with backoff. Use that event to prompt a reload. The new bundle applies its migrations before sync resumes.
+
+## Add a required field with a literal default
+
+For example, add `priority Int @default(0)` to `Todo`. Emit and plan as above, using a new migration name:
+
+```bash
+npx prisma@latest contract emit
+npx prisma-idb migration plan --name add-priority
+```
+
+For an existing store, the planner writes the equivalent of this operation. Use the store name from your generated migration:
+
+```ts
+import { defaultIfMissing, transformRecordsOp } from "@prisma-idb/target-idb/migration";
+
+transformRecordsOp("Todo", {
+  fields: { priority: defaultIfMissing(0) },
+});
+```
+
+Keep the generated transform if the value is right for old records. It fills an absent field and preserves existing values, including `null`. It also rewrites queued full sync records; queued update patches keep absent fields absent.
+
+The planner supports literal defaults it can represent in the field's stored codec. The transform DSL accepts only string, number, boolean, and `null` literals. It cannot backfill `Date`, `BigInt`, `Bytes`, list, or object values. It also cannot generate a value per record for defaults such as `now()` or `uuid()`. These cases produce placeholders that the current DSL cannot fill. [WHY-200](/WHY/issues/WHY-200) tracks support for them.
+
+Add the field as nullable instead. For example, use `createdAt DateTime? @default(now())` instead of `createdAt DateTime @default(now())`. A new nullable field needs no backfill. Follow [Add a nullable field](#add-a-nullable-field) to plan and ship its migration. Old records read as `null`; the default applies to new records.
+
+Regenerate the contract space, run preflight, and commit the files together. Test the upgrade against representative old records before shipping.
+
+## Fill an unresolved transform
+
+When you add a required field without a supported literal default, or make an incompatible field change, planning writes a scaffold with unresolved placeholders. Emitting it unchanged reports `PN-MIG-2001`. For example, adding `status String` produces a field transform like this:
+
+```ts
+transformRecordsOp("Todo", {
+  fields: { status: placeholder("Todo.status") },
+});
+```
+
+Open the generated `migration.ts`. Replace every `placeholder(...)` call with a transform that produces valid values for the new field. For example, if every old record should start as pending:
+
+```ts
+import { defaultIfMissing, transformRecordsOp } from "@prisma-idb/target-idb/migration";
+
+transformRecordsOp("Todo", {
+  fields: { status: defaultIfMissing("pending") },
+});
+```
+
+For a supported type conversion, use `coerce(...)`. Its targets are `int`, `string`, `boolean`, and `isoDateString`. Use `setLiteral(...)` only when you intend to overwrite every old value with a supported primitive literal. Neither transform can write `Date`, `BigInt`, `Bytes`, list, or object values, or generate a value per record.
+
+The DSL also has no transform that fills only `null`. `defaultIfMissing(...)` preserves `null`. Changing a nullable field to required therefore has no supported transform that fills null values while preserving other values. Keep the field nullable when existing records can contain `null`. For an unsupported required-field addition, add the field as nullable so it needs no backfill, as shown above. [WHY-200](/WHY/issues/WHY-200) tracks these DSL gaps.
+
+Add the needed imports to the generated file and remove unused ones. Keep its `describe()` hashes and unrelated operations. Regenerate the package, then bundle and check it:
+
+```bash
+npx tsx migrations/app/<migration-folder>/migration.ts
+npx prisma-idb migration contract-space
+npx prisma-idb migration preflight
+```
+
+Do not ship the scaffold unchanged. Package emission, preflight, and runtime application reject unresolved placeholders, including placeholders inside `pipe(...)`. Preflight uses an empty database, so also test your chosen conversion on old records. A conversion error aborts the upgrade transaction.
+
+## Rename a field without losing its values
+
+Change the field name in the schema, emit the contract, and plan a migration. The planner treats this as a removal and an addition. It does not infer a rename.
+
+To rename `title` to `label`, replace the planned `title` removal and the `label` backfill or placeholder with:
+
+```ts
+import { transformRecordsOp } from "@prisma-idb/target-idb/migration";
+
+transformRecordsOp("Todo", {
+  renameFields: { label: "title" },
+});
+```
+
+`renameFields` maps the new name to the old name. Keep unrelated field transforms and removals. If the renamed field also changes type, put its value transform under the new name. Renames run before value transforms; removals run last. Key fields cannot be renamed, transformed, or removed.
+
+Run the edited migration file with `npx tsx`, regenerate the contract space, and run preflight as shown above. Check an old record to confirm that its value survives under the new name.
+
+## Remove a field
+
+Remove the field from the schema, emit, and plan. Review the generated `removeFields` operation and the planner's data-loss warning. The migration deletes that field from existing records. It also removes it from queued sync payloads.
+
+If the change was a rename, replace the removal and addition as shown above before shipping. Otherwise, regenerate the contract space, run preflight, and commit the migration with the emitted contract and snapshot.

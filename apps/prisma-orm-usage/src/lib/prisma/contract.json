@@ -257,7 +257,7 @@
         "id": "__unbound__"
       }
     },
-    "storageHash": "fc8ba5682814d9f05d17d2e547a2e1f6d261bd40be8b43ae981e5880717c57ee",
+    "storageHash": "ba5e70fb3c7b0b9acd469fe1fe80d172e8b04319f53365c2107baac46ec41926",
     "stores": {
       "posts": {
         "indexes": {
@@ -265,10 +265,76 @@
             "keyPath": "authorId"
           }
         },
-        "keyPath": "id"
+        "keyPath": "id",
+        "record": {
+          "fields": {
+            "authorId": {
+              "nullable": false,
+              "type": {
+                "codecId": "idb/string@1",
+                "kind": "scalar"
+              }
+            },
+            "content": {
+              "nullable": true,
+              "type": {
+                "codecId": "idb/string@1",
+                "kind": "scalar"
+              }
+            },
+            "createdAt": {
+              "nullable": false,
+              "type": {
+                "codecId": "idb/date@1",
+                "kind": "scalar"
+              }
+            },
+            "id": {
+              "nullable": false,
+              "type": {
+                "codecId": "idb/string@1",
+                "kind": "scalar"
+              }
+            },
+            "published": {
+              "nullable": false,
+              "type": {
+                "codecId": "idb/bool@1",
+                "kind": "scalar"
+              }
+            },
+            "title": {
+              "nullable": false,
+              "type": {
+                "codecId": "idb/string@1",
+                "kind": "scalar"
+              }
+            },
+            "views": {
+              "nullable": false,
+              "type": {
+                "codecId": "idb/int32@1",
+                "kind": "scalar"
+              }
+            }
+          },
+          "model": "Post"
+        }
       },
       "random_store": {
-        "keyPath": "id"
+        "keyPath": "id",
+        "record": {
+          "fields": {
+            "id": {
+              "nullable": false,
+              "type": {
+                "codecId": "idb/string@1",
+                "kind": "scalar"
+              }
+            }
+          },
+          "model": "RandomStore"
+        }
       },
       "tags": {
         "indexes": {
@@ -276,7 +342,33 @@
             "keyPath": "postId"
           }
         },
-        "keyPath": "id"
+        "keyPath": "id",
+        "record": {
+          "fields": {
+            "id": {
+              "nullable": false,
+              "type": {
+                "codecId": "idb/string@1",
+                "kind": "scalar"
+              }
+            },
+            "name": {
+              "nullable": false,
+              "type": {
+                "codecId": "idb/string@1",
+                "kind": "scalar"
+              }
+            },
+            "postId": {
+              "nullable": false,
+              "type": {
+                "codecId": "idb/string@1",
+                "kind": "scalar"
+              }
+            }
+          },
+          "model": "Tag"
+        }
       },
       "users": {
         "indexes": {
@@ -288,7 +380,61 @@
             "keyPath": "score"
           }
         },
-        "keyPath": "id"
+        "keyPath": "id",
+        "record": {
+          "fields": {
+            "active": {
+              "nullable": false,
+              "type": {
+                "codecId": "idb/bool@1",
+                "kind": "scalar"
+              }
+            },
+            "bio": {
+              "nullable": true,
+              "type": {
+                "codecId": "idb/string@1",
+                "kind": "scalar"
+              }
+            },
+            "email": {
+              "nullable": false,
+              "type": {
+                "codecId": "idb/string@1",
+                "kind": "scalar"
+              }
+            },
+            "id": {
+              "nullable": false,
+              "type": {
+                "codecId": "idb/string@1",
+                "kind": "scalar"
+              }
+            },
+            "joinedAt": {
+              "nullable": false,
+              "type": {
+                "codecId": "idb/date@1",
+                "kind": "scalar"
+              }
+            },
+            "name": {
+              "nullable": false,
+              "type": {
+                "codecId": "idb/string@1",
+                "kind": "scalar"
+              }
+            },
+            "score": {
+              "nullable": false,
+              "type": {
+                "codecId": "idb/int32@1",
+                "kind": "scalar"
+              }
+            }
+          },
+          "model": "User"
+        }
       }
     }
   },

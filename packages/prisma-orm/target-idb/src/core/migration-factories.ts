@@ -54,12 +54,13 @@ export type IdbJsonLiteral = string | number | boolean | null;
 
 /** Declarative steps applied to one field's value. */
 export type IdbValueTransform =
+  | { readonly kind: "placeholder"; readonly slot: string }
   | { readonly kind: "coerce"; readonly to: "int" | "string" | "boolean" | "isoDateString" }
   | { readonly kind: "defaultIfMissing"; readonly value: IdbJsonLiteral }
   | { readonly kind: "setLiteral"; readonly value: IdbJsonLiteral }
   | { readonly kind: "pipe"; readonly steps: readonly IdbValueTransform[] };
 
-/** Rewrites records in one store. Always `data`; authored by hand. */
+/** Rewrites records in one store. Always `data`. */
 export type TransformRecordsOp = MigrationPlanOperation & {
   readonly kind: "transformRecords";
   readonly storeName: string;
@@ -153,8 +154,8 @@ export function createMarkerStoreOp(): CreateObjectStoreOp {
 }
 
 /**
- * The warning to show when a migration drops object stores, or `undefined`
- * when it drops none. The browser applies every planned op without asking,
+ * The warning to show when a migration drops stores or removes fields.
+ * Returns `undefined` when it deletes no data. The browser applies every planned op without asking,
  * so planning or re-emitting a migration is where the developer hears that
  * it deletes data. Dropping an index loses nothing that can't be rebuilt, so
  * indexes aren't listed.
@@ -163,15 +164,26 @@ export function deletedDataWarning(ops: readonly unknown[]): string | undefined 
   const droppedStores = ops
     .filter((op): op is DropObjectStoreOp => (op as { kind?: unknown }).kind === "dropObjectStore")
     .map((op) => op.storeName);
-  if (droppedStores.length === 0) return undefined;
+  const removedFields = ops
+    .filter((op): op is TransformRecordsOp => (op as { kind?: unknown }).kind === "transformRecords")
+    .flatMap((op) => (op.removeFields ?? []).map((field) => `${op.storeName}.${field}`));
+  if (droppedStores.length === 0 && removedFields.length === 0) return undefined;
   return (
-    "\nWarning: this migration deletes data. When it runs in a user's browser, every record in these stores is deleted:\n" +
-    droppedStores.map((store) => `  - ${store}\n`).join("") +
+    "\nWarning: this migration deletes data.\n" +
+    (droppedStores.length > 0
+      ? "When it runs in a user's browser, every record in these stores is deleted:\n" +
+        droppedStores.map((store) => `  - ${store}\n`).join("")
+      : "") +
+    (removedFields.length > 0
+      ? "These fields are removed from every record:\n" +
+        removedFields.map((field) => `  - ${field}\n`).join("") +
+        "For a rename, replace the removal and addition with renameFields to preserve the values.\n"
+      : "") +
     "Check that this is intended before shipping it.\n"
   );
 }
 
-/** Create a record rewrite. The schema differ never emits this operation. */
+/** Create a record rewrite. The planner emits defaults, removals, and unfilled slots; other rewrites are authored by hand. */
 export function transformRecordsOp(
   storeName: string,
   options: Pick<TransformRecordsOp, "fields" | "renameFields" | "removeFields">
@@ -204,4 +216,29 @@ export function setLiteral(value: IdbJsonLiteral): IdbValueTransform {
 /** Apply field transforms in the supplied order. */
 export function pipe(...steps: readonly IdbValueTransform[]): IdbValueTransform {
   return { kind: "pipe", steps };
+}
+
+/** Mark a scaffolded field transform that the migration author must fill before emitting. */
+export function placeholder(slot: string): IdbValueTransform {
+  return { kind: "placeholder", slot };
+}
+
+/** Reject all unfilled slots, including those nested in pipes, before emitting or applying ops. */
+export function assertNoMigrationPlaceholders(ops: readonly IdbDdlOp[]): void {
+  const slots = new Set<string>();
+  function collect(transform: IdbValueTransform): void {
+    if (transform.kind === "placeholder") slots.add(transform.slot);
+    if (transform.kind === "pipe") transform.steps.forEach(collect);
+  }
+  for (const op of ops) {
+    if (op.kind === "transformRecords") Object.values(op.fields ?? {}).forEach(collect);
+  }
+  if (slots.size > 0) {
+    throw new Error(
+      "PN-MIG-2001 Unfilled migration placeholder\n" +
+        "The migration contains placeholders that have not been filled in:\n" +
+        [...slots].map((slot) => `  - ${slot}\n`).join("") +
+        "Fix: Open migration.ts and replace each placeholder(...) call with an actual field transform, then re-run node migration.ts."
+    );
+  }
 }

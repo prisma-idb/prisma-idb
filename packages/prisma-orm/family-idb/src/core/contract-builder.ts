@@ -19,6 +19,7 @@ import { keyPathFields } from "@prisma-idb/target-idb/pack";
 import type { ContractProjection } from "./psl-interpreter";
 import { isValidIdbKeyCodec, literalValueMatchesCodec, warnDroppedRelation } from "./psl-interpreter";
 import { validateContract } from "./validate";
+import { buildRecordShape } from "./record-shape";
 
 // ── Field type system ─────────────────────────────────────────────────────────
 
@@ -470,9 +471,13 @@ function buildRoots(models: Record<string, ModelDef<string>>): Record<string, Cr
 
 // ── Helper: derive storage.stores from model definitions ─────────────────────
 
-function buildStores(models: Record<string, ModelDef<string>>): Record<string, IdbStoreDefinition> {
+function buildStores(
+  models: Record<string, ModelDef<string>>,
+  domainModels: Record<string, ContractModelEntry>,
+  enums: Record<string, ContractEnum>
+): Record<string, IdbStoreDefinition> {
   const stores: Record<string, IdbStoreDefinition> = {};
-  for (const def of Object.values(models)) {
+  for (const [modelName, def] of Object.entries(models)) {
     const indexes: Record<string, IdbIndexDefinition> = {};
     for (const [indexName, idx] of Object.entries(def.indexes ?? {})) {
       indexes[indexName] = {
@@ -482,6 +487,7 @@ function buildStores(models: Record<string, ModelDef<string>>): Record<string, I
       };
     }
     stores[def.store] = {
+      record: buildRecordShape(modelName, domainModels[modelName]!.fields, { enum: enums }),
       keyPath: def.key,
       ...(Object.keys(indexes).length > 0 ? { indexes } : {}),
     };
@@ -590,7 +596,9 @@ export function defineContract<const TEnums extends EnumDefs = Record<never, nev
   }
   validateNoConflictingRelationActions(models);
 
-  const stores = buildStores(models);
+  const ns = UNBOUND_DOMAIN_NAMESPACE_ID;
+  const domainModels = buildModels(models, enums, ns);
+  const stores = buildStores(models, domainModels, domainEnums);
 
   // Mirror the capability surface that `prisma contract emit` writes
   // into the JSON contract — keeps the two authoring paths byte-equivalent
@@ -604,7 +612,6 @@ export function defineContract<const TEnums extends EnumDefs = Record<never, nev
 
   // v0.12.0 (ADR 221): both planes are namespace-keyed. IDB has no namespace
   // concept, so everything lives under the single unbound namespace.
-  const ns = UNBOUND_DOMAIN_NAMESPACE_ID;
   const storageBlock = {
     stores,
     namespaces: { [ns]: { id: ns, entries: {} } },
@@ -629,7 +636,7 @@ export function defineContract<const TEnums extends EnumDefs = Record<never, nev
   const domain = {
     namespaces: {
       [ns]: {
-        models: buildModels(models, enums, ns),
+        models: domainModels,
         ...(Object.keys(domainEnums).length > 0 ? { enum: domainEnums } : {}),
       },
     },

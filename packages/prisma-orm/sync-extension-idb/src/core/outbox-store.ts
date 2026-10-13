@@ -6,9 +6,12 @@
  * through the ORM so as not to trigger the sync interceptor.
  */
 
+import { domainModelsAtDefaultNamespace } from "@prisma/orm-framework/contract/types";
 import type { IdbTransactionScope } from "@prisma-idb/driver-idb/runtime";
 import type { IdbClient } from "@prisma-idb/client-idb/client";
 import type { IdbContract } from "@prisma-idb/client-idb/orm";
+import { absentAsNull } from "@prisma-idb/target-idb/runtime";
+import syncContract from "../contract.json" with { type: "json" };
 import type { OutboxEvent } from "../types";
 import { deleteRecord, getRecord, putRecord, scanStore } from "./raw-store";
 import { VERSION_META_STORE } from "./version-meta";
@@ -53,9 +56,15 @@ function isInBackoff(event: OutboxEvent, backoff: RetryBackoff, now: Date): bool
  */
 async function readPendingEvents(scope: IdbTransactionScope): Promise<OutboxEvent[]> {
   const at = (d: Date | null) => (d instanceof Date ? d.getTime() : 0);
-  return (await scanStore<OutboxEvent>(scope, OUTBOX_STORE))
-    .filter(isPending)
-    .sort((a, b) => at(a.createdAt) - at(b.createdAt));
+  return (
+    (await scanStore(scope, OUTBOX_STORE))
+      // Older outbox rows may lack nullable fields. Normalize reads without a backfill.
+      .map(
+        (event) => absentAsNull(syncContract as unknown as IdbContract, "OutboxEvent")(event) as unknown as OutboxEvent
+      )
+      .filter(isPending)
+      .sort((a, b) => at(a.createdAt) - at(b.createdAt))
+  );
 }
 
 /**
@@ -81,6 +90,30 @@ export async function getNextBatch<TContract extends IdbContract>(
   });
 
   return batch;
+}
+
+/**
+ * The event as the push should send it. The server validates a pushed record strictly: a nullable
+ * field is `null`, never missing. A create payload queued before a nullable field existed lacks
+ * that key, so it is read as `null` here. The stored event is not changed.
+ *
+ * Only a create carries a whole record. An update carries the fields it sets, and a delete only its key.
+ */
+export function readForPush(contract: IdbContract, event: OutboxEvent): OutboxEvent {
+  // A model dropped since the event was queued has no fields to fill, and a payload that is not a record
+  // has none to fill. Both go to the server unchanged, and the server decides what to do with them.
+  if (
+    event.operation !== "create" ||
+    !Object.hasOwn(domainModelsAtDefaultNamespace(contract.domain), event.entityType) ||
+    !isRecord(event.payload)
+  ) {
+    return event;
+  }
+  return { ...event, payload: absentAsNull(contract, event.entityType)(event.payload) };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 /** The oldest event the next push may still send, or `null` if the outbox has none. */
@@ -150,7 +183,7 @@ export async function markSynced(scope: IdbTransactionScope, id: string): Promis
   const existing = await getRecord<OutboxEvent>(scope, OUTBOX_STORE, id);
   if (!existing) return;
   await putRecord(scope, OUTBOX_STORE, { ...existing, synced: true, syncedAt: new Date() });
-  await clearLocalChangePending(scope, existing.versionMetaId);
+  await clearLocalChangePending(scope, existing.versionMetaId ?? null);
 }
 
 /**
@@ -184,5 +217,5 @@ export async function markFailed(
     lastAttemptedAt: new Date(),
     retryable,
   });
-  if (!retryable) await clearLocalChangePending(scope, existing.versionMetaId);
+  if (!retryable) await clearLocalChangePending(scope, existing.versionMetaId ?? null);
 }

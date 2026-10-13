@@ -82,6 +82,10 @@ export const idbEmission = {
     for (const [storeName, store] of Object.entries(storage.stores).sort(([a], [b]) => a.localeCompare(b))) {
       const storeParts: string[] = [`readonly keyPath: ${serializeValue(store.keyPath)}`];
 
+      if (store.record !== undefined) {
+        storeParts.push(`readonly record: ${serializeValue(store.record)}`);
+      }
+
       if (store.autoIncrement !== undefined) {
         storeParts.push(`readonly autoIncrement: ${store.autoIncrement}`);
       }

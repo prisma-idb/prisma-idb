@@ -5,6 +5,21 @@ import { buildRowComparator } from "../query-shaping";
 import type { QueryCatalog } from "./catalog";
 import type { LogicalPlan, PlanRequest } from "./plan";
 
+/**
+ * The row filter shared by every lowered read and write. The driver runs it on stored rows, so it
+ * reads each row as the contract describes it first: a filter on `null` matches a row that
+ * lacks the field.
+ */
+function rowFilter(catalog: QueryCatalog, request: PlanRequest, additionalFilter?: IdbRowFilter): IdbRowFilter {
+  return (stored) => {
+    const row = catalog.absentAsNull(stored);
+    return (
+      (request.where === undefined || evaluateFilter(request.where, row)) &&
+      (additionalFilter === undefined || additionalFilter(row))
+    );
+  };
+}
+
 /** Row shaping inputs. Pagination applies after the full filter. */
 export interface RowsRequest extends PlanRequest {
   readonly skip?: number;
@@ -30,9 +45,7 @@ export function lowerRows(
   request: RowsRequest,
   additionalFilter?: IdbRowFilter
 ): LoweredRows {
-  const filter: IdbRowFilter = (row) =>
-    (request.where === undefined || evaluateFilter(request.where, row)) &&
-    (additionalFilter === undefined || additionalFilter(row));
+  const filter = rowFilter(catalog, request, additionalFilter);
   const comparator = logical.direction === undefined ? buildRowComparator(request.orderBy) : undefined;
   const base = { meta, storeName: catalog.storeName };
   const pagination = {
@@ -103,7 +116,8 @@ export function lowerRows(
     finish(rows) {
       // Keep the full-filter safety boundary for every access path. Cursor
       // paths also filter before pagination, so their returned rows pass twice.
-      let result = rows.filter(filter);
+      // Every row leaves here normalized, so the caller never sees an absent nullable field.
+      let result = rows.map(catalog.absentAsNull).filter(filter);
       if (!shapedByDriver) {
         if (comparator !== undefined) result.sort(comparator);
         const skip = request.skip ?? 0;
@@ -176,9 +190,7 @@ export function lowerExists(
       finish: (rows) => rows.length > 0,
     };
   }
-  const filter: IdbRowFilter = (row) =>
-    (request.where === undefined || evaluateFilter(request.where, row)) &&
-    (additionalFilter === undefined || additionalFilter(row));
+  const filter = rowFilter(catalog, request, additionalFilter);
   return {
     idbPlan: combine(
       catalog,
@@ -219,9 +231,7 @@ export function lowerWrite(
   if (movesKey || limitedRanges) {
     return { kind: "collect", rows: lowerRows(catalog, logical, meta, request, additionalFilter) };
   }
-  const filter: IdbRowFilter = (row) =>
-    (request.where === undefined || evaluateFilter(request.where, row)) &&
-    (additionalFilter === undefined || additionalFilter(row));
+  const filter = rowFilter(catalog, request, additionalFilter);
   return {
     kind: "scan",
     idbPlan: combine(

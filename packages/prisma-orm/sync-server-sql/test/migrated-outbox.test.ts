@@ -5,7 +5,7 @@ import { computeMigrationHash } from "@prisma/orm-toolchain/migration-tools/hash
 import { defineContract } from "@prisma-idb/family-idb/contract-ts";
 import idbFamilyPack from "@prisma-idb/family-idb/pack";
 import idbTargetPack from "@prisma-idb/target-idb/pack";
-import { IdbMigrationPlanner, transformRecordsOp } from "@prisma-idb/target-idb/migration";
+import { createIndexOp, IdbMigrationPlanner, transformRecordsOp } from "@prisma-idb/target-idb/migration";
 import type { ContractSpace, MigrationPackage } from "@prisma/orm-framework/components/control";
 import type { Contract } from "@prisma/orm-framework/contract/types";
 import { idbSyncExtension } from "@prisma-idb/sync-extension-idb/control";
@@ -34,20 +34,28 @@ const newContract = defineContract({
   },
 });
 
-function migration(from: Contract | null, to: Contract): MigrationPackage {
+function baselineOperations(to: Contract) {
   const plan = new IdbMigrationPlanner().plan({
     contract: to,
-    fromContract: from,
+    fromContract: null,
     schema: null,
     policy: { allowedOperationClasses: ["additive", "widening", "destructive", "data"] },
     frameworkComponents: [],
     spaceId: "app",
   });
   if (plan.kind !== "success") throw new Error("migration plan failed");
-  const ops = [
-    ...(from ? [transformRecordsOp("users", { renameFields: { name: "legacyName" } })] : []),
-    ...plan.plan.operations,
-  ] as unknown as MigrationPackage["ops"];
+  return plan.plan.operations;
+}
+
+function migration(from: Contract | null, to: Contract): MigrationPackage {
+  // A required-field rename has no inferable default. Author the upgrade
+  // explicitly so the planner cannot remove the value this fixture preserves.
+  const ops = (from
+    ? [
+        transformRecordsOp("users", { renameFields: { name: "legacyName" } }),
+        createIndexOp("users", "byName", { keyPath: "name", unique: false }),
+      ]
+    : baselineOperations(to)) as unknown as MigrationPackage["ops"];
   const metadata = {
     from: from?.storage.storageHash ?? null,
     to: to.storage.storageHash,
@@ -90,8 +98,8 @@ describe("migrated outbox push", () => {
     const adapter = createSqlSyncAdapter({
       contract: testContract,
       syncServer: testSyncServer,
-      // This fixture tests migrated outbox delivery, not contract fingerprint negotiation.
-      contractFingerprintCheck: "off",
+      // This fixture tests migrated outbox delivery, not contract check negotiation.
+      contractCheck: "off",
     });
     const client = await createAutoMigratingSyncIdbClient({
       ...options,

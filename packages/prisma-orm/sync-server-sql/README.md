@@ -27,11 +27,11 @@ const syncServer = createSyncServer({
 const sqlSyncAdapter = createSqlSyncAdapter({ contract: serverContract, syncServer });
 
 // Push endpoint. `scopeKey` comes from the session, never the request body.
-// The browser sends its contract fingerprint in a header (see "Contract fingerprint" below).
+// The browser sends its storage hash in a header (see "Contract check" below).
 const pushed = await sqlSyncAdapter.applyPush(db, {
   events: body.events,
   scopeKey,
-  clientContractFingerprint: request.headers.get("x-contract-fingerprint"),
+  clientStorageHash: request.headers.get("x-storage-hash"),
 });
 if (!pushed.ok) {
   // "batch-too-large" | "duplicate-event-id" | "contract-mismatch"
@@ -43,7 +43,7 @@ return json(pushed.results);
 const pulled = await sqlSyncAdapter.pull(db, {
   scopeKey,
   lastChangelogId: url.searchParams.get("since"),
-  clientContractFingerprint: request.headers.get("x-contract-fingerprint"),
+  clientStorageHash: request.headers.get("x-storage-hash"),
 });
 if (!pulled.ok) {
   // "invalid-cursor" | "contract-mismatch"
@@ -52,11 +52,11 @@ if (!pulled.ok) {
 return json(pulled.logs);
 ```
 
-## Contract fingerprint
+## Contract check
 
-`pull` and `applyPush` compare `clientContractFingerprint` with `syncServer.contractFingerprint()` before they read or write anything. A missing or different fingerprint returns `{ ok: false, reason: "contract-mismatch", expected }`. Answer it with HTTP 409. The browser worker then keeps its pull cursor and queued edits, and retries after the user updates.
+`pull` and `applyPush` compare `clientStorageHash` with `syncServer.clientStorageHash` before they read or write anything. A missing or different storage hash returns `{ ok: false, reason: "contract-mismatch", expected }`. Answer it with HTTP 409. The browser worker then keeps its pull cursor and queued edits, and retries after the user updates.
 
-Set `contractFingerprintCheck: "off"` only if your deploys keep clients and server on one contract. The default is `"required"`. See the [server guide](https://prisma-idb.dev/docs/prisma-8/sync/server#contract-fingerprint) for how the digest is computed.
+Set `contractCheck: "off"` only if your deploys keep clients and server on one contract. The default is `"required"`. See the [server guide](https://prisma-idb.dev/docs/prisma-8/sync/server#contract-check) for how the digest is computed.
 
 ## Tenant parent rules
 
@@ -112,16 +112,16 @@ Upgrading both packages tightens create and update acceptance by default. No rel
 
 ## API
 
-`createSqlSyncAdapter({ contract, syncServer?, getKeyField?, contractFingerprintCheck? })` returns:
+`createSqlSyncAdapter({ contract, syncServer?, getKeyField?, contractCheck? })` returns:
 
-| Member                                                                           | Does                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| -------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `applyPush(db, { events, scopeKey, maxBatchSize?, clientContractFingerprint? })` | The whole push route: validates ownership and applies events in order until the first retryable failure. Returns `{ ok: true, results }` (the processed prefix, including that failure) or `{ ok: false, reason }` for a batch over `maxBatchSize` (default 1000, `"batch-too-large"`) a repeated event id (`"duplicate-event-id"`) or a contract mismatch (`"contract-mismatch"`). Nothing is applied when `ok` is false. Needs `syncServer`.                        |
-| `pull(db, { scopeKey, lastChangelogId?, limit?, clientContractFingerprint? })`   | The whole pull route: the next `limit` (default 50) changes after `lastChangelogId` (a UUID v7 string, exclusive), each re-authorized and resolved to its current `record` (`null` if deleted or no longer the user's). Returns `{ ok: true, logs }` or `{ ok: false, reason: "invalid-cursor" }` or `{ ok: false, reason: "contract-mismatch", expected }`. Needs `syncServer`. Invalid `limit` values (non-positive, non-integer or non-finite) throw `RangeError`. |
-| `getKeyField(model)`                                                             | The model's primary-key field.                                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| `toSyncPushPayload(operation, payload, keyField)`                                | Turns a pushed payload into the shape `validatePush` expects.                                                                                                                                                                                                                                                                                                                                                                                                         |
-| `applyPushEvent(db, event, model, check, scopeKey)`                              | In one transaction: checks ownership, writes the record and its `Changelog` row. Safe to repeat.                                                                                                                                                                                                                                                                                                                                                                      |
-| `resolvePullRecord(db, model, check, keyPath, operation)`                        | The record, if the user still owns it, or `null`.                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| Member                                                                   | Does                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| ------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `applyPush(db, { events, scopeKey, maxBatchSize?, clientStorageHash? })` | The whole push route: validates ownership and applies events in order until the first retryable failure. Returns `{ ok: true, results }` (the processed prefix, including that failure) or `{ ok: false, reason }` for a batch over `maxBatchSize` (default 1000, `"batch-too-large"`) a repeated event id (`"duplicate-event-id"`) or a contract mismatch (`"contract-mismatch"`). Nothing is applied when `ok` is false. Needs `syncServer`.                        |
+| `pull(db, { scopeKey, lastChangelogId?, limit?, clientStorageHash? })`   | The whole pull route: the next `limit` (default 50) changes after `lastChangelogId` (a UUID v7 string, exclusive), each re-authorized and resolved to its current `record` (`null` if deleted or no longer the user's). Returns `{ ok: true, logs }` or `{ ok: false, reason: "invalid-cursor" }` or `{ ok: false, reason: "contract-mismatch", expected }`. Needs `syncServer`. Invalid `limit` values (non-positive, non-integer or non-finite) throw `RangeError`. |
+| `getKeyField(model)`                                                     | The model's primary-key field.                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `toSyncPushPayload(operation, payload, keyField)`                        | Turns a pushed payload into the shape `validatePush` expects.                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `applyPushEvent(db, event, model, check, scopeKey)`                      | In one transaction: checks ownership, writes the record and its `Changelog` row. Safe to repeat.                                                                                                                                                                                                                                                                                                                                                                      |
+| `resolvePullRecord(db, model, check, keyPath, operation)`                | The record, if the user still owns it, or `null`.                                                                                                                                                                                                                                                                                                                                                                                                                     |
 
 `db` is your Prisma 8 SQL client; it needs `.transaction(fn)` and `.orm.public.<Model>`.
 

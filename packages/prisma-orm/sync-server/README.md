@@ -41,6 +41,12 @@ for (const { check } of checks) {
 
 For SQL databases, [`@prisma-idb/sync-server-sql`](https://www.npmjs.com/package/@prisma-idb/sync-server-sql) runs these checks and writes for you.
 
+## Contract identity
+
+`syncServer.clientStorageHash` is `clientContract.storage.storageHash`. Load the same emitted client `contract.json` that the browser uses, including any extension stores it contains. IDB storage hashes cover stores, indexes, and stored record shapes. Do not compare clients against the SQL server contract's hash.
+
+The SQL adapter checks this value before reading or writing. See its [contract check](../sync-server-sql/README.md#contract-check).
+
 ## Validation rules
 
 - Records must match the client contract. Extra fields and undeclared enum values fail validation.

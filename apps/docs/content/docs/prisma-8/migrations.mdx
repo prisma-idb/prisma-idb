@@ -4,7 +4,7 @@ description: Change the schema, ship the change, and check migrations in CI
 icon: GitBranch
 ---
 
-A migration changes the database's object stores and indexes to match a new schema. You plan migrations on your machine and commit them. Each user's browser applies the ones it hasn't run yet the next time the app opens the database.
+A migration advances the database to a new stored record shape, object-store layout, or set of indexes. You plan migrations on your machine and commit them. Each user's browser applies the ones it hasn't run yet the next time the app opens the database.
 
 `prisma migrate` and `prisma db update` don't apply IndexedDB migrations, because IndexedDB only exists in the browser. `createAutoMigratingIdbClient` applies them instead. Use `@prisma-idb/driver-idb/control` for the driver in `prisma.config.ts`. Migration files import the authoring tools from `@prisma-idb/target-idb/migration`.
 
@@ -22,11 +22,13 @@ npx prisma-idb migration preflight
 1. `contract emit` updates `contract.json` and `contract.d.ts`.
 2. `migration plan` compares the new contract with the one the newest migration ends at, and writes the difference as a new package under `migrations/app/`. `--name` sets the folder name, and is required for every migration after the first.
 3. `migration contract-space` regenerates the module that bundles the migrations into your app.
-4. `migration preflight` checks that the whole chain applies and produces the head contract's stores and indexes.
+4. `migration preflight` checks that the emitted contract matches the chain head, and that the whole chain applies and produces the head contract's stores and indexes.
 
 Commit the new package, the new `migrations/snapshots/` entry and the regenerated files. The next time a user opens the app, the client applies the migration before resolving.
 
 For a brand-new project the steps are the same without `--name`: the first migration is named `baseline`. The [Quick Start](/docs/prisma-8/getting-started#4-create-the-first-migration) walks through it.
+
+Field-only changes also need a migration. See [Author a field change](/docs/prisma-8/field-changes) for nullable additions, required-field backfills, unresolved transforms, and renames.
 
 ## Destructive changes
 
