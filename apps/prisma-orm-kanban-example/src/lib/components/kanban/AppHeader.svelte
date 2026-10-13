@@ -27,6 +27,7 @@
     aboutDialog?.showModal();
   }
 
+  /** Closes the modal only when the click targets its backdrop. */
   function closeAboutOnBackdrop(event: MouseEvent) {
     if (event.target === aboutDialog) {
       aboutDialog.close();

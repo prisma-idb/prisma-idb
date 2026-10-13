@@ -14,6 +14,7 @@
 
   let loggingOut = $state(false);
 
+  /** Flushes pending edits, signs out, and clears local account data before navigating to login. */
   async function logout() {
     loggingOut = true;
     try {

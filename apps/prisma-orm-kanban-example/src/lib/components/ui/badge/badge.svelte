@@ -19,6 +19,7 @@
     },
   });
 
+  /** The supported visual variants of a badge. */
   export type BadgeVariant = VariantProps<typeof badgeVariants>["variant"];
 </script>
 

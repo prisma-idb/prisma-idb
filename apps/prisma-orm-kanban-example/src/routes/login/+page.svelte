@@ -24,6 +24,7 @@
     if ($session.data?.user) goto(resolve("/"));
   });
 
+  /** Starts the Google sign-in redirect and displays provider errors. */
   async function continueWithGoogle() {
     busy = "google";
     errorMessage = "";
@@ -40,6 +41,7 @@
     }
   }
 
+  /** Creates an anonymous session and navigates to the workspace. */
   async function continueAsGuest() {
     busy = "guest";
     errorMessage = "";

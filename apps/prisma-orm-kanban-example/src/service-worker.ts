@@ -49,6 +49,7 @@ sw.addEventListener("fetch", (event) => {
   event.respondWith(cacheFirst(event.request));
 });
 
+/** Serves cached same-origin assets and falls back to the app shell for offline navigation. */
 async function cacheFirst(request: Request) {
   const cached = await caches.match(request);
   if (cached) return cached;

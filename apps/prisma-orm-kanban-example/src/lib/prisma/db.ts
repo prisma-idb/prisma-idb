@@ -6,6 +6,7 @@ import { contractSpace } from "./contract-space.generated";
 
 const DB_NAME = "prisma-idb-kanban-example";
 
+/** The sync-tracked client bound to the kanban contract. */
 type DbClient = SyncIdbClient<Contract>;
 
 const managedDb = createManagedAutoSyncIdbClient<Contract>({

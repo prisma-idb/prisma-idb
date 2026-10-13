@@ -21,9 +21,9 @@ plan-shape gate:
   field. No index can help these.
 - **Regression guards**: shapes an index already serves, such as equality on
   an indexed field, an OR of indexed equalities, `count()` and `include()`.
-- **Targets**: shapes an index could serve but that scan the whole store
-  today, such as ranges, `in()`, compound-index matches, and the foreign-key
-  lookups behind cascades and restrict checks.
+- **Planner paths**: ranges, `in()`, compound-index matches, and the
+  foreign-key lookups behind cascades and restrict checks. The plan-shape
+  gate verifies which index paths each query uses.
 
 The database is seeded once per run, with 5000 rows per store by default.
 Read operations reuse it. Mutating operations insert the rows they delete in

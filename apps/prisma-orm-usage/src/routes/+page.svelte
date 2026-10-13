@@ -14,7 +14,7 @@
   // expressions in the textarea can address `orm.users.all()`, etc.
   let orm = $state<Record<string, unknown> | null>(null);
   // `transaction` bound to `db.withTransaction` — available in the sandbox as
-  // `transaction(storeNames, fn)` for Phase 6.3 multi-store writes.
+  // `transaction(storeNames, fn)` for raw multi-store writes.
   let transaction = $state<
     ((storeNames: string[], fn: (scope: unknown) => Promise<unknown>) => Promise<unknown>) | null
   >(null);
@@ -64,6 +64,7 @@
     }
   }
 
+  /** Resets the database and rebinds the query runner to a fresh client. */
   async function reset() {
     running = true;
     try {

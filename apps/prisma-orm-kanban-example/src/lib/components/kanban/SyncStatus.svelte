@@ -25,6 +25,7 @@
   const label = $derived(kanban.isOnline ? labels[kanban.syncStatus] : "Offline");
   const isCycling = $derived(kanban.syncStatus === "pushing" || kanban.syncStatus === "pulling");
 
+  /** Formats the last completed cycle for the sync status label. */
   function formatLastSynced(date: Date | null): string {
     if (!date) return "Never synced yet";
     const seconds = Math.max(0, Math.round((Date.now() - date.getTime()) / 1000));

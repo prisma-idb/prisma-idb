@@ -4,7 +4,9 @@
 
   let { onSelect }: { onSelect: (query: string) => void } = $props();
 
+  /** A labeled expression that can be loaded into the query runner. */
   type Preset = { label: string; query: string };
+  /** A named collection of related query presets. */
   type Group = { name: string; presets: Preset[] };
 
   const groups: Group[] = [
@@ -132,6 +134,7 @@
 
   let loaded = $state<string | null>(null);
 
+  /** Loads and copies a preset, then briefly marks it as selected. */
   function select(preset: Preset) {
     onSelect(preset.query);
     navigator.clipboard.writeText(preset.query).catch(() => {});

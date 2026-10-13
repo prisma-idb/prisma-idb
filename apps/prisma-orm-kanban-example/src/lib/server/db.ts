@@ -9,6 +9,7 @@ const client = postgres<Contract>({ contractJson });
 
 let connected: Promise<unknown> | null = null;
 
+/** Shares one connected server client and permits retries after connection failures. */
 export async function getPostgres() {
   if (!connected) {
     if (!env.DATABASE_URL) {
