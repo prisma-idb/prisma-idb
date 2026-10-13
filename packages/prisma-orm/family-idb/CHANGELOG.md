@@ -18,7 +18,7 @@
 
 ### Minor Changes
 
-- [#277](https://github.com/prisma-idb/prisma-idb/pull/277) [`f062370`](https://github.com/prisma-idb/prisma-idb/commit/f062370dbc0a87a54f1c80e2b2a6e7b5b1472a51) - Verify the replayed migration schema against the head contract snapshot during preflight. Fail with a readable diff on drift, or a recovery hint when the snapshot is missing, invalid, or does not match the head migration's target hash.
+- [#277](https://github.com/prisma-idb/prisma-idb/pull/277) [`f062370`](https://github.com/prisma-idb/prisma-idb/commit/f062370dbc0a87a54f1c80e2b2a6e7b5b1472a51) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Verify the replayed migration schema against the head contract snapshot during preflight. Fail with a readable diff on drift, or a recovery hint when the snapshot is missing, invalid, or does not match the head migration's target hash.
 
 ### Patch Changes
 

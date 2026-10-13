@@ -4,17 +4,17 @@
 
 ### Minor Changes
 
-- [#286](https://github.com/prisma-idb/prisma-idb/pull/286) [`a5aa59a`](https://github.com/prisma-idb/prisma-idb/commit/a5aa59a834b43827ce940431481b2db7a49ac99c) - Answer `count()` with the driver's native count when key ranges alone decide the match, without loading rows. Check foreign-key and `restrict` existence by reading one primary key instead of scanning the parent or child store. Filters that ranges cannot decide still read only the rows in the index range, then apply the full filter.
+- [#286](https://github.com/prisma-idb/prisma-idb/pull/286) [`a5aa59a`](https://github.com/prisma-idb/prisma-idb/commit/a5aa59a834b43827ce940431481b2db7a49ac99c) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Answer `count()` with the driver's native count when key ranges alone decide the match, without loading rows. Check foreign-key and `restrict` existence by reading one primary key instead of scanning the parent or child store. Filters that ranges cannot decide still read only the rows in the index range, then apply the full filter.
 
   A `null` value in a `restrict` check now references no child rows.
 
-- [#286](https://github.com/prisma-idb/prisma-idb/pull/286) [`7d7ba73`](https://github.com/prisma-idb/prisma-idb/commit/7d7ba73cfb0ea8c4d8ef518928febba40a2b9155) - Use planned key and index ranges for mutation lookups, bulk writes, upsert, nested relation writes and referential actions. Reapply the full filter before each write. Collect matches before changing the walked index so each row is written once, within the same transaction.
+- [#286](https://github.com/prisma-idb/prisma-idb/pull/286) [`7d7ba73`](https://github.com/prisma-idb/prisma-idb/commit/7d7ba73cfb0ea8c4d8ef518928febba40a2b9155) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Use planned key and index ranges for mutation lookups, bulk writes, upsert, nested relation writes and referential actions. Reapply the full filter before each write. Collect matches before changing the walked index so each row is written once, within the same transaction.
 
-- [#290](https://github.com/prisma-idb/prisma-idb/pull/290) [`036ce01`](https://github.com/prisma-idb/prisma-idb/commit/036ce01208cc41851bd420023556756f86fc5da4) - Exclude primary-key fields from `update`, `updateAll`, `updateCount`, and `upsert.update` input types. This is a breaking type change: ported Prisma code that sets `id` in update data stops compiling, even when it repeats the existing key. For dotted key paths, the containing field is excluded because updates shallow-merge records. Create inputs are unchanged, and runtime protection remains for untyped callers.
+- [#290](https://github.com/prisma-idb/prisma-idb/pull/290) [`036ce01`](https://github.com/prisma-idb/prisma-idb/commit/036ce01208cc41851bd420023556756f86fc5da4) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Exclude primary-key fields from `update`, `updateAll`, `updateCount`, and `upsert.update` input types. This is a breaking type change: ported Prisma code that sets `id` in update data stops compiling, even when it repeats the existing key. For dotted key paths, the containing field is excluded because updates shallow-merge records. Create inputs are unchanged, and runtime protection remains for untyped callers.
 
 ### Patch Changes
 
-- [#290](https://github.com/prisma-idb/prisma-idb/pull/290) [`7bf9398`](https://github.com/prisma-idb/prisma-idb/commit/7bf9398f141a0f14f5f9146aff69c50250eff850) - Document the explicit rejection of primary-key changes across client update APIs, with atomic rollback of referential actions and sync metadata.
+- [#290](https://github.com/prisma-idb/prisma-idb/pull/290) [`7bf9398`](https://github.com/prisma-idb/prisma-idb/commit/7bf9398f141a0f14f5f9146aff69c50250eff850) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Document the explicit rejection of primary-key changes across client update APIs, with atomic rollback of referential actions and sync metadata.
 
 - Updated dependencies [[`ef3cfac`](https://github.com/prisma-idb/prisma-idb/commit/ef3cfac839a45353b5df68d4569b0c2effe45f2a), [`7bf9398`](https://github.com/prisma-idb/prisma-idb/commit/7bf9398f141a0f14f5f9146aff69c50250eff850)]:
   - @prisma-idb/driver-idb@0.12.0
@@ -26,17 +26,17 @@
 
 ### Minor Changes
 
-- [#281](https://github.com/prisma-idb/prisma-idb/pull/281) [`c184161`](https://github.com/prisma-idb/prisma-idb/commit/c1841610c7a6c98cd1d3eec565f54bbc9a414d26) - Route row reads, aggregates, grouped aggregates, and relation includes through the query planner. Use primary keys and indexes for point, membership, prefix, and range filters. Reapply the full filter to every result.
+- [#281](https://github.com/prisma-idb/prisma-idb/pull/281) [`c184161`](https://github.com/prisma-idb/prisma-idb/commit/c1841610c7a6c98cd1d3eec565f54bbc9a414d26) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Route row reads, aggregates, grouped aggregates, and relation includes through the query planner. Use primary keys and indexes for point, membership, prefix, and range filters. Reapply the full filter to every result.
 
   Use index cursor order and early limits for supported single-field ordering with `take`. Keep unsupported filters and ordering correct through full scans and in-memory shaping.
 
   Without `orderBy`, row order is unspecified. `skip`, `take`, and `first` may select different matching rows as the access path changes. Rows tied on all `orderBy` fields also have unspecified order, so pagination may select different rows among ties. Add a unique field to `orderBy` for deterministic pages.
 
-- [#281](https://github.com/prisma-idb/prisma-idb/pull/281) [`a3f0591`](https://github.com/prisma-idb/prisma-idb/commit/a3f05913180cfd7f54555d1d369192e0135d34e1) - Remove the indexed-equality, OR multi-scan, native-count and key-only fast paths. Every read, count, existence check and mutation lookup now scans the store and filters in memory. Only `findUnique` on the primary key still reads by key. Results are unchanged, but without `orderBy` the row order is now unspecified, as in Prisma. Add `orderBy` wherever you rely on an order, including with `first()`, `skip()` and `take()`.
+- [#281](https://github.com/prisma-idb/prisma-idb/pull/281) [`a3f0591`](https://github.com/prisma-idb/prisma-idb/commit/a3f05913180cfd7f54555d1d369192e0135d34e1) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Remove the indexed-equality, OR multi-scan, native-count and key-only fast paths. Every read, count, existence check and mutation lookup now scans the store and filters in memory. Only `findUnique` on the primary key still reads by key. Results are unchanged, but without `orderBy` the row order is now unspecified, as in Prisma. Add `orderBy` wherever you rely on an order, including with `first()`, `skip()` and `take()`.
 
 ### Patch Changes
 
-- [#281](https://github.com/prisma-idb/prisma-idb/pull/281) [`e4344ea`](https://github.com/prisma-idb/prisma-idb/commit/e4344ea2092b86e3dd4e0f0f1214575fbda5eee3) - Add an internal query catalog and pure access planner with stable plan explanations. The planner is not wired into query execution yet, so client behavior is unchanged.
+- [#281](https://github.com/prisma-idb/prisma-idb/pull/281) [`e4344ea`](https://github.com/prisma-idb/prisma-idb/commit/e4344ea2092b86e3dd4e0f0f1214575fbda5eee3) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Add an internal query catalog and pure access planner with stable plan explanations. The planner is not wired into query execution yet, so client behavior is unchanged.
 
 - Updated dependencies [[`79e3121`](https://github.com/prisma-idb/prisma-idb/commit/79e3121ed740224b9e1a5b2d721654e83cfa966c)]:
   - @prisma-idb/driver-idb@0.11.0
@@ -48,7 +48,7 @@
 
 ### Minor Changes
 
-- [#277](https://github.com/prisma-idb/prisma-idb/pull/277) [`9a7139a`](https://github.com/prisma-idb/prisma-idb/commit/9a7139a1764b414ebbee44f230fb7e6e7b94ab16) - Fix grouping of BigInt fields and keep Date values separate from strings. Null and undefined still share a group.
+- [#277](https://github.com/prisma-idb/prisma-idb/pull/277) [`9a7139a`](https://github.com/prisma-idb/prisma-idb/commit/9a7139a1764b414ebbee44f230fb7e6e7b94ab16) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Fix grouping of BigInt fields and keep Date values separate from strings. Null and undefined still share a group.
 
   Use the model name for related-store reads when storage metadata omits the store name.
 
@@ -66,9 +66,9 @@
 
 ### Patch Changes
 
-- [#259](https://github.com/prisma-idb/prisma-idb/pull/259) [`85ce498`](https://github.com/prisma-idb/prisma-idb/commit/85ce498e3be3261f3aec0d2294a94923bb823c15) - Simplify read-plan construction and relation result shaping. Remove unused internal helpers while preserving query and include behavior.
+- [#259](https://github.com/prisma-idb/prisma-idb/pull/259) [`85ce498`](https://github.com/prisma-idb/prisma-idb/commit/85ce498e3be3261f3aec0d2294a94923bb823c15) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Simplify read-plan construction and relation result shaping. Remove unused internal helpers while preserving query and include behavior.
 
-- [#259](https://github.com/prisma-idb/prisma-idb/pull/259) [`dc718d0`](https://github.com/prisma-idb/prisma-idb/commit/dc718d016a9659e8026950d04f6df1b513741521) - Share scalar update validation and transaction execution, group migration descriptor checks before database access, and remove unused private relation helpers. Preserve existing write behavior and public exports.
+- [#259](https://github.com/prisma-idb/prisma-idb/pull/259) [`dc718d0`](https://github.com/prisma-idb/prisma-idb/commit/dc718d016a9659e8026950d04f6df1b513741521) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Share scalar update validation and transaction execution, group migration descriptor checks before database access, and remove unused private relation helpers. Preserve existing write behavior and public exports.
 
 - Updated dependencies [[`8775088`](https://github.com/prisma-idb/prisma-idb/commit/877508838881c9f0e77222458628475d7ffd7a57), [`9ae224d`](https://github.com/prisma-idb/prisma-idb/commit/9ae224d3a576a273bbcccb4ba5bc13d922e8c91d), [`8775088`](https://github.com/prisma-idb/prisma-idb/commit/877508838881c9f0e77222458628475d7ffd7a57), [`27fdc4f`](https://github.com/prisma-idb/prisma-idb/commit/27fdc4fd8a206326d7011b8ece8a04e2de7c8375)]:
   - @prisma-idb/adapter-idb@0.9.1
