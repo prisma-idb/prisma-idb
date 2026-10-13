@@ -33,7 +33,12 @@ type BaseContract = {
       readonly __unbound__: {
         readonly models: {
           readonly Post: {
-            readonly fields: Record<string, never>;
+            readonly fields: {
+              readonly subtitle: {
+                readonly type: { readonly kind: "scalar"; readonly codecId: "idb/string@1" };
+                readonly nullable: true;
+              };
+            };
             readonly relations: Record<string, never>;
             readonly storage: { readonly storeName: "posts"; readonly keyPath: "id" };
           };
@@ -56,6 +61,20 @@ type BaseContract = {
             readonly fields: Record<string, never>;
             readonly relations: Record<string, never>;
             readonly storage: { readonly storeName: "tags"; readonly keyPath: "id" };
+          };
+          readonly Document: {
+            readonly fields: {
+              readonly requiredJson: {
+                readonly type: { readonly kind: "scalar"; readonly codecId: "idb/json@1" };
+                readonly nullable: false;
+              };
+              readonly nullableJson: {
+                readonly type: { readonly kind: "scalar"; readonly codecId: "idb/json@1" };
+                readonly nullable: true;
+              };
+            };
+            readonly relations: Record<string, never>;
+            readonly storage: { readonly storeName: "documents"; readonly keyPath: "id" };
           };
         };
       };
@@ -108,12 +127,14 @@ type MembershipRow = { readonly orgId: string; readonly userId: string; readonly
 type SessionRow = { readonly userId: string; readonly startedAt: Date; readonly device: string };
 type CounterRow = { readonly id: number; readonly label: string };
 type TagRow = { readonly id: string; readonly name: string };
+type DocumentRow = { readonly id: string; readonly requiredJson: unknown; readonly nullableJson: unknown };
 type Rows = {
   readonly Post: PostRow;
   readonly Membership: MembershipRow;
   readonly Session: SessionRow;
   readonly Counter: CounterRow;
   readonly Tag: TagRow;
+  readonly Document: DocumentRow;
 };
 
 type TestTypeMaps = IdbTypeMaps<Record<string, never>, { readonly __unbound__: Rows }, { readonly __unbound__: Rows }>;
@@ -125,6 +146,7 @@ type MembershipCreateInput = CreateInput<TestContract, "Membership">;
 type SessionCreateInput = CreateInput<TestContract, "Session">;
 type CounterCreateInput = CreateInput<TestContract, "Counter">;
 type TagCreateInput = CreateInput<TestContract, "Tag">;
+type DocumentCreateInput = CreateInput<TestContract, "Document">;
 
 describe("CreateInput", () => {
   it("makes a field with an onCreate execution default optional", () => {
@@ -145,6 +167,25 @@ describe("CreateInput", () => {
     // @ts-expect-error — authorId has no default and must remain required.
     const input: PostCreateInput = { id: "p1", title: "hello" };
     void input;
+  });
+
+  it("requires a non-nullable JSON field even though its input type accepts null", () => {
+    // @ts-expect-error — requiredJson has nullable: false and no default.
+    const omitted: DocumentCreateInput = { id: "d1" };
+    const supplied: DocumentCreateInput = { id: "d1", requiredJson: { nested: [1] } };
+    const explicitNull: DocumentCreateInput = { id: "d1", requiredJson: null };
+    void omitted;
+    void supplied;
+    void explicitNull;
+  });
+
+  it("makes a nullable JSON field optional and still accepts null", () => {
+    const omitted: DocumentCreateInput = { id: "d1", requiredJson: {} };
+    const supplied: DocumentCreateInput = { id: "d1", requiredJson: {}, nullableJson: { nested: [1] } };
+    const explicitNull: DocumentCreateInput = { id: "d1", requiredJson: {}, nullableJson: null };
+    void omitted;
+    void supplied;
+    void explicitNull;
   });
 });
 

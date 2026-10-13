@@ -258,15 +258,22 @@ type DefaultedInputField<TContract, ModelName extends string> = FieldsWithCreate
   keyof ResolvedInputRow<TContract, ModelName>;
 
 /**
- * Keys of the resolved input row whose type admits `null`, i.e. the nullable
- * fields. `create()` stores `null` for one the caller omits
- * (`completeCreateRecord` in `mutation-defaults.ts`).
+ * Keys of the resolved input row whose contract fields declare `nullable: true`.
+ * `create()` stores `null` for one the caller omits (`completeCreateRecord`
+ * in `mutation-defaults.ts`). Input types such as JSON's `unknown` can admit
+ * `null` even when the contract field is required.
  */
-type NullableInputField<TContract, ModelName extends string> = {
-  [K in keyof ResolvedInputRow<TContract, ModelName>]-?: null extends ResolvedInputRow<TContract, ModelName>[K]
-    ? K
-    : never;
-}[keyof ResolvedInputRow<TContract, ModelName>];
+type NullableInputField<TContract, ModelName extends string> = ModelName extends keyof ModelsOf<TContract>
+  ? {
+      [K in keyof ResolvedInputRow<TContract, ModelName>]-?: K extends keyof ModelsOf<TContract>[ModelName]["fields"]
+        ? IsNever<ModelsOf<TContract>[ModelName]["fields"][K]> extends true
+          ? never
+          : ModelsOf<TContract>[ModelName]["fields"][K] extends { readonly nullable: true }
+            ? K
+            : never
+        : never;
+    }[keyof ResolvedInputRow<TContract, ModelName>]
+  : never;
 
 /** The fields `create()` may omit: see {@link CreateInput}. */
 type OmittableCreateField<TContract, ModelName extends string> =
