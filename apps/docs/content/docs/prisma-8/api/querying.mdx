@@ -78,7 +78,7 @@ const page = await db.orm.todo.orderBy({ title: "asc" }).skip(20).take(10).all()
 
 - `orderBy` takes one or more fields, each `"asc"` or `"desc"`. Later fields break ties. Calling `orderBy` again replaces the sort.
 - `null` sorts after every other value, or before them when descending.
-- Without `orderBy`, rows come back in primary-key order, or index order when the query uses an index.
+- Without `orderBy`, row order is unspecified and can change when the planner chooses another access path. Add a unique field to `orderBy` when order matters.
 
 ## Select
 
