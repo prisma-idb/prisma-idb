@@ -3,6 +3,7 @@ import { IDBFactory } from "fake-indexeddb";
 import type { MigrationMetadata } from "@prisma/orm-toolchain/migration-tools/metadata";
 import { computeMigrationHash } from "@prisma/orm-toolchain/migration-tools/hash";
 import { computeStorageHash } from "@prisma/orm-framework/contract/hashing";
+import { CliStructuredError } from "@prisma/cli-engine/protocol";
 import { chainOrderByMetadata, type ChainablePackage } from "./chain-order";
 import {
   assertNoMigrationPlaceholders,
@@ -78,7 +79,7 @@ export async function runPreflight(opts: PreflightOptions): Promise<number> {
       out("ok\n");
     } catch (applyErr) {
       out("FAILED\n");
-      err(`    ${applyErr instanceof Error ? applyErr.message : String(applyErr)}\n`);
+      err(`    ${formatPreflightError(applyErr)}\n`);
       err("\nPreflight failed.\n");
       return 1;
     }
@@ -121,6 +122,12 @@ export async function runPreflight(opts: PreflightOptions): Promise<number> {
 
   out("\nPreflight passed: every migration applies cleanly and the schema matches the head contract.\n");
   return 0;
+}
+
+/** Preserves structured diagnostics because their summary omits the unfilled slot names. */
+function formatPreflightError(error: unknown): string {
+  if (!CliStructuredError.is(error)) return error instanceof Error ? error.message : String(error);
+  return [`[${error.code}] ${error.message}`, error.why].filter(Boolean).join("\n    ");
 }
 
 /** Reads `storage.storageHash` from the emitted `contract.json`; `undefined` if the file is unreadable. */

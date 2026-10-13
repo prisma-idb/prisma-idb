@@ -47,7 +47,14 @@ describe.each(["full", "patch"] as const)("transformRecord in %s mode", (mode) =
     const op = transformRecordsOp("users", {
       fields: { role: pipe(defaultIfMissing("member"), placeholder("User.role")) },
     });
-    expect(() => transformRecord(op, { role: "member" }, mode)).toThrow(/PN-MIG-2001[\s\S]*User.role/);
+    expect(() => transformRecord(op, { role: "member" }, mode)).toThrow(
+      expect.objectContaining({
+        name: "CliStructuredError",
+        code: "MIGRATION.UNFILLED_PLACEHOLDER",
+        why: "The migration contains a placeholder that has not been filled in: User.role",
+        meta: { slot: "User.role" },
+      })
+    );
   });
 
   it.each(conversions)("converts %j applied to %j", (transform, value, expected) => {

@@ -228,12 +228,12 @@ describe("migrationPlan — record field changes", () => {
     const migrationPath = join(cwd, "migrations", "app", dirName, "migration.ts");
     const emit = () => promisify(execFile)(process.execPath, ["--import", import.meta.resolve("tsx"), migrationPath]);
     await expect(emit()).rejects.toMatchObject({
-      stderr: expect.stringMatching(/PN-MIG-2001(?=[\s\S]*User.role)(?=[\s\S]*User.enabled)/),
+      stderr: expect.stringMatching(/MIGRATION\.UNFILLED_PLACEHOLDER(?=[\s\S]*User.role)(?=[\s\S]*User.enabled)/),
     });
     expect(await readOps(cwd, dirName)).toEqual(ops);
     expect(await readMeta(cwd, dirName)).toEqual(metadata);
     expect(await runPreflight({ migrationsDir: defaultPaths(cwd).migrationsDir })).toBe(1);
-    expect(capturedStderr).toMatch(/PN-MIG-2001(?=[\s\S]*User.role)(?=[\s\S]*User.enabled)/);
+    expect(capturedStderr).toMatch(/MIGRATION\.UNFILLED_PLACEHOLDER(?=[\s\S]*User.role)(?=[\s\S]*User.enabled)/);
     const filled = source
       .replace(", placeholder,", ", defaultIfMissing,")
       .replace('placeholder("User.role")', 'defaultIfMissing("member")')

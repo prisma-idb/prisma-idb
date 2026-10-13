@@ -1,4 +1,5 @@
 import type { MigrationOperationClass, MigrationPlanOperation } from "@prisma/orm-framework/components/control";
+import { errorUnfilledPlaceholder } from "@prisma/orm-framework/errors/migration";
 import type { IdbIndexDefinition, IdbStoreDefinition } from "./idb-contract-types";
 
 // ── Marker store ─────────────────────────────────────────────────────────────
@@ -226,6 +227,7 @@ export function placeholder(slot: string): IdbValueTransform {
 /** Reject all unfilled slots, including those nested in pipes, before emitting or applying ops. */
 export function assertNoMigrationPlaceholders(ops: readonly IdbDdlOp[]): void {
   const slots = new Set<string>();
+  /** Collect each distinct slot, including placeholders nested in pipes. */
   function collect(transform: IdbValueTransform): void {
     if (transform.kind === "placeholder") slots.add(transform.slot);
     if (transform.kind === "pipe") transform.steps.forEach(collect);
@@ -234,11 +236,6 @@ export function assertNoMigrationPlaceholders(ops: readonly IdbDdlOp[]): void {
     if (op.kind === "transformRecords") Object.values(op.fields ?? {}).forEach(collect);
   }
   if (slots.size > 0) {
-    throw new Error(
-      "PN-MIG-2001 Unfilled migration placeholder\n" +
-        "The migration contains placeholders that have not been filled in:\n" +
-        [...slots].map((slot) => `  - ${slot}\n`).join("") +
-        "Fix: Open migration.ts and replace each placeholder(...) call with an actual field transform, then re-run node migration.ts."
-    );
+    throw errorUnfilledPlaceholder([...slots].join(", "));
   }
 }

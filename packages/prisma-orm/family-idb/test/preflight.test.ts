@@ -136,7 +136,7 @@ describe("runPreflight", () => {
     });
     const errors: string[] = [];
     expect(await runPreflight({ migrationsDir: join(cwd, "migrations"), err: (line) => errors.push(line) })).toBe(1);
-    expect(errors.join("")).toMatch(/PN-MIG-2001[\s\S]*User.role[\s\S]*User.enabled/);
+    expect(errors.join("")).toMatch(/MIGRATION\.UNFILLED_PLACEHOLDER[\s\S]*User.role[\s\S]*User.enabled/);
   });
 
   it("accepts a filled backfill slot", async () => {
