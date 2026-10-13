@@ -4,7 +4,7 @@ import { sqlGetKeyField } from "../src/core/get-key-field";
 import { ormRootFor } from "../src/core/orm-root";
 import { toSyncPushPayload, applyPushEvent } from "../src/core/push";
 import { reviveWireValues } from "../src/core/wire-values";
-import { checkAuthorization } from "../src/core/authorization";
+import { checkAuthorization, plainRowReader } from "../src/core/authorization";
 import { resolvePullRecord } from "../src/core/resolve-pull-record";
 import { createSqlSyncAdapter } from "../src/core/create-adapter";
 import { testContract, testDb, seed } from "./helpers";
@@ -100,14 +100,22 @@ describe("checkAuthorization", () => {
 
   it("unknown-model is never authorized", async () => {
     const db = await testDb();
-    const authorized = await checkAuthorization(db, contract, getKeyField, "Ghost", { kind: "unknown-model" }, null);
+    const authorized = await checkAuthorization(
+      plainRowReader(db, contract, getKeyField),
+      contract,
+      "Ghost",
+      { kind: "unknown-model" },
+      null
+    );
     expect(authorized).toBe(false);
   });
 
   it("root check trusts its own `authorized` verdict", async () => {
     const db = await testDb();
     const check: OwnershipCheck = { kind: "root", keyField: "id", key: "u1", scopeKey: "u1", authorized: true };
-    expect(await checkAuthorization(db, contract, getKeyField, "User", check, { id: "u1" })).toBe(true);
+    expect(
+      await checkAuthorization(plainRowReader(db, contract, getKeyField), contract, "User", check, { id: "u1" })
+    ).toBe(true);
   });
 
   it("scoped check walks the relation path to the root's key", async () => {
@@ -125,7 +133,9 @@ describe("checkAuthorization", () => {
       paths: [["owner"]],
     };
     const startRow = { id: "b1", ownerId: "u1" };
-    expect(await checkAuthorization(db, contract, getKeyField, "Board", check, startRow)).toBe(true);
+    expect(
+      await checkAuthorization(plainRowReader(db, contract, getKeyField), contract, "Board", check, startRow)
+    ).toBe(true);
   });
 
   it("scoped check fails when the path resolves to a different scopeKey", async () => {
@@ -143,7 +153,9 @@ describe("checkAuthorization", () => {
       paths: [["owner"]],
     };
     const startRow = { id: "b1", ownerId: "u2" };
-    expect(await checkAuthorization(db, contract, getKeyField, "Board", check, startRow)).toBe(false);
+    expect(
+      await checkAuthorization(plainRowReader(db, contract, getKeyField), contract, "Board", check, startRow)
+    ).toBe(false);
   });
 
   it("scoped check with no startRow (deleted/never existed) is unauthorized", async () => {
@@ -156,7 +168,9 @@ describe("checkAuthorization", () => {
       scopeKey: "u1",
       paths: [["owner"]],
     };
-    expect(await checkAuthorization(db, contract, getKeyField, "Board", check, null)).toBe(false);
+    expect(await checkAuthorization(plainRowReader(db, contract, getKeyField), contract, "Board", check, null)).toBe(
+      false
+    );
   });
 });
 

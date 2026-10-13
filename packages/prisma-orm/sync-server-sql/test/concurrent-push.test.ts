@@ -251,7 +251,10 @@ describe("the scope lock's ordering guarantee", () => {
       ok: true,
       results: [{ id: "ea", success: true }],
     });
-    expect(query).toHaveBeenCalledTimes(1);
+    // Ownership locks also use raw queries. Isolation still belongs in the scope-lock statement.
+    const scopeQueries = query.mock.calls.filter(([plan]) => JSON.stringify(plan).includes("pg_advisory_xact_lock"));
+    expect(scopeQueries).toHaveLength(1);
+    expect(JSON.stringify(scopeQueries[0])).toContain("transaction_isolation");
     expect(execute).not.toHaveBeenCalled();
     expect((await pullAll(db, "u1", null)).map((log) => log.keyPath)).toEqual(["ba"]);
   });

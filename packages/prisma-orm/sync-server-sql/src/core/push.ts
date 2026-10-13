@@ -1,7 +1,13 @@
 import { domainModelsAtDefaultNamespace } from "@prisma/orm-framework/contract/types";
 import type { GetKeyField, PushCheck, SyncPushEvent, SyncServerContract } from "@prisma-idb/sync-server";
 import { ormRootFor } from "./orm-root";
-import { checkAuthorization, checkParentReferences, prepareParentReferenceChecks } from "./authorization";
+import {
+  checkAuthorization,
+  checkParentReferences,
+  plainRowReader,
+  prepareParentReferenceChecks,
+} from "./authorization";
+import { lockRow, lockingRowReader } from "./row-lock";
 import { appendChangelogRow, isEventApplied } from "./changelog";
 import { isDeterministicWriteFailure, sqlState } from "./sqlstate";
 import { reviveWireValues, WireValidationError } from "./wire-values";
@@ -175,10 +181,11 @@ export async function applyPushEvent(
  * Authorizes, then applies, one decoded outbox event: writes the model row +
  * a stamped `Changelog` row, atomically. Idempotent on the event's id.
  *
- * Authorization runs *inside* the same transaction as the write, right
- * before it — not before the transaction opens — so the row(s) it reads
- * (the record itself, and every hop the ownership walk crosses) are locked
- * against concurrent reassignment for the rest of the transaction.
+ * On Postgres, locks the target FOR UPDATE, then reads each ownership and
+ * candidate-parent hop under FOR SHARE, from child to root. Locks are held
+ * until commit. Each ORM read follows its locking statement so it sees any
+ * ownership change committed while waiting. The scope advisory lock is last.
+ * SQLite relies on its single writer and rejects stale transactions as busy.
  *
  * `db` must expose `.transaction(fn)`, calling `fn` with a scope whose
  * `.orm.public` works the same way `db.orm.public` does — the same
@@ -210,11 +217,10 @@ export async function applyPushEventDecoded(
       // The decoded payload carries the key; for an update, everything else is the patch.
       const keyField = getKeyField(contract, model);
       const { [keyField]: nativeKey, ...patch } = event.payload;
-      const startRow: Record<string, unknown> | null =
-        event.operation === "create" ? event.payload : await ormRootFor(tx, model).first({ [keyField]: nativeKey });
-
+      const plainReadRow = plainRowReader(tx, contract, getKeyField);
+      const readRow = lockingRowReader(db, tx, contract, getKeyField);
       const isAuthorized = (row: Record<string, unknown> | null) =>
-        checkAuthorization(tx, contract, getKeyField, model, check, row);
+        checkAuthorization(readRow, contract, model, check, row);
       const scopeViolation: SqlPushResult = {
         id: event.id,
         success: false,
@@ -222,6 +228,11 @@ export async function applyPushEventDecoded(
         retryable: false,
       };
 
+      // Lock the target before walking either its stored or candidate parents.
+      if (event.operation !== "create" && !(await lockRow(db, tx, contract, model, nativeKey, "update"))) {
+        return scopeViolation;
+      }
+      const startRow = event.operation === "create" ? event.payload : await plainReadRow(model, nativeKey);
       if (!(await isAuthorized(startRow))) return scopeViolation;
 
       if (event.operation !== "delete") {
@@ -229,7 +240,7 @@ export async function applyPushEventDecoded(
         if (event.operation === "update" && !(await isAuthorized(candidate))) return scopeViolation;
         if (
           check.kind === "scoped" &&
-          !(await checkParentReferences(tx, contract, getKeyField, model, check, candidate, parents))
+          !(await checkParentReferences(readRow, contract, model, check, candidate, parents))
         ) {
           return scopeViolation;
         }

@@ -10,6 +10,14 @@ import type {
 import { encodeWireKey } from "./wire-values";
 import { ormRootFor } from "./orm-root";
 
+/** Reads a native key through either a plain or locking transaction reader. */
+export type RowReader = (model: string, key: unknown) => Promise<Record<string, unknown> | null>;
+
+/** Keeps pull and rejected-record authorization free of row locks. */
+export function plainRowReader(db: unknown, contract: SyncServerContract, getKeyField: GetKeyField): RowReader {
+  return (model, key) => ormRootFor(db, model).first({ [getKeyField(contract, model)]: key });
+}
+
 /**
  * Walks one of `OwnershipCheck["scoped"].paths` (relation-name chains, e.g.
  * `["board", "user"]`) via the real SQL tables. Sequential single-key
@@ -21,9 +29,8 @@ import { ormRootFor } from "./orm-root";
  * (missing FK, deleted parent).
  */
 export async function resolveRootKeyViaPath(
-  db: unknown,
+  readRow: RowReader,
   contract: SyncServerContract,
-  getKeyField: GetKeyField,
   startModel: string,
   startRow: Record<string, unknown>,
   path: readonly string[],
@@ -46,8 +53,7 @@ export async function resolveRootKeyViaPath(
     if (fkValue == null) return null;
 
     const targetModel = relation.to.model;
-    const targetKeyField = getKeyField(contract, targetModel);
-    currentRow = (await ormRootFor(db, targetModel).first({ [targetKeyField]: fkValue })) ?? null;
+    currentRow = await readRow(targetModel, fkValue);
     currentModel = targetModel;
   }
 
@@ -59,9 +65,8 @@ export async function resolveRootKeyViaPath(
  * current row (`null` for `"root"` checks, which don't need one).
  */
 export async function checkAuthorization(
-  db: unknown,
+  readRow: RowReader,
   contract: SyncServerContract,
-  getKeyField: GetKeyField,
   model: string,
   check: OwnershipCheck,
   startRow: Record<string, unknown> | null
@@ -71,7 +76,7 @@ export async function checkAuthorization(
   if (!startRow) return false; // record already gone / never existed — nothing to authorize
 
   for (const path of check.paths) {
-    const rootKey = await resolveRootKeyViaPath(db, contract, getKeyField, model, startRow, path, check.rootKeyField);
+    const rootKey = await resolveRootKeyViaPath(readRow, contract, model, startRow, path, check.rootKeyField);
     if (rootKey === check.scopeKey) return true;
   }
   return false;
@@ -79,9 +84,8 @@ export async function checkAuthorization(
 
 /** Checks all populated candidate parents without short-circuiting on another parent's success. */
 export async function checkParentReferences(
-  db: unknown,
+  readRow: RowReader,
   contract: SyncServerContract,
-  getKeyField: GetKeyField,
   model: string,
   check: Extract<PushCheck, { kind: "scoped" }>,
   row: Record<string, unknown>,
@@ -92,7 +96,7 @@ export async function checkParentReferences(
       if (parent.nullable) continue;
       return false;
     }
-    if (!(await checkAuthorization(db, contract, getKeyField, model, { ...check, paths: parent.paths }, row))) {
+    if (!(await checkAuthorization(readRow, contract, model, { ...check, paths: parent.paths }, row))) {
       return false;
     }
   }

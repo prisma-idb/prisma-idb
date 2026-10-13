@@ -1,7 +1,7 @@
 import type { GetKeyField, OwnershipCheck, SyncServerContract } from "@prisma-idb/sync-server";
 import { reviveWireKey } from "./wire-values";
 import { ormRootFor } from "./orm-root";
-import { checkAuthorization } from "./authorization";
+import { checkAuthorization, plainRowReader } from "./authorization";
 
 /**
  * Authorizes a pulled changelog row, then returns the record's *current*
@@ -31,7 +31,13 @@ export async function resolvePullRecord(
   const startRow =
     check.kind === "scoped" ? await ormRootFor(db, model).first({ [keyField]: nativeKey(check.key) }) : null;
 
-  const authorized = await checkAuthorization(db, contract, getKeyField, model, check, startRow);
+  const authorized = await checkAuthorization(
+    plainRowReader(db, contract, getKeyField),
+    contract,
+    model,
+    check,
+    startRow
+  );
   if (!authorized || operation === "delete") return null;
 
   if (startRow && check.key === keyPath) return startRow;

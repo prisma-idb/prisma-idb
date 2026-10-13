@@ -72,6 +72,22 @@ See the [term definitions](../sync-server/README.md#tenant-parent-rules) for sco
 - Database lookup failures retain ordinary SQLSTATE retry handling.
 - Lower-level `applyPushEvent` calls also enforce these rules when a scoped check omits `parentReferences`.
 
+### Concurrent ownership changes
+
+On PostgreSQL, a push locks an update or delete target with `FOR UPDATE`.
+It then locks ownership hops and tenant parents with `FOR SHARE`, from child to root, before taking the scope advisory lock.
+Updates include both stored and candidate parents.
+These locks stay held until commit, so a parent cannot be reassigned or deleted after authorization.
+Pushes to different children can share parent locks.
+Pull and rejected-record reads remain lock-free.
+
+Application transactions that lock a parent before a child can deadlock with a push.
+PostgreSQL aborts one transaction to resolve the deadlock.
+If it aborts the push, the result is `retryable: true`.
+Serialization failures and lock timeouts are also retryable.
+The adapter sets no lock timeout; the application may configure PostgreSQL's `lock_timeout`.
+SQLite needs no extra lock because it permits one writer at a time.
+
 ### Example: Alice's FoodEntry
 
 Alice creates a `FoodEntry` with `userId: "alice"` and `mealId` pointing to Bob's `Meal`.
