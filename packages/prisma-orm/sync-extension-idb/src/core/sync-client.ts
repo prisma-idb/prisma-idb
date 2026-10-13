@@ -75,14 +75,15 @@ export interface SyncIdbClient<TContract extends IdbContract> {
    * with outbox tracking. Like {@link IdbClient.transaction}, but every tracked
    * write also appends its outbox event (and version-meta update) in the same
    * IDB transaction. `outboxwrite` listeners are notified once, after the
-   * transaction commits, and never when it rolls back.
+   * transaction commits, and never when it rolls back. The callback may return
+   * an ORM query result directly, without an `async` wrapper.
    *
    * Unlike {@link SyncIdbClient.withTransaction}, which is raw and records
    * nothing, this method tracks writes.
    */
   transaction<TRootKey extends string & keyof TContract["roots"], T>(
     rootKeys: readonly TRootKey[],
-    fn: (tx: IdbOrmTransaction<TContract, TRootKey>) => Promise<T>
+    fn: (tx: IdbOrmTransaction<TContract, TRootKey>) => PromiseLike<T>
   ): Promise<T>;
 
   /**

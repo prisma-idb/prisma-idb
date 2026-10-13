@@ -59,7 +59,7 @@ export async function runOrmTransaction<
 >(
   options: { readonly contract: TContract; readonly executor: IdbQueryExecutorWithTransaction },
   rootKeys: readonly TRootKey[],
-  fn: (tx: IdbOrmTransaction<TContract, TRootKey>) => Promise<T>
+  fn: (tx: IdbOrmTransaction<TContract, TRootKey>) => PromiseLike<T>
 ): Promise<T> {
   const { contract, executor } = options;
   if (rootKeys.length === 0) {

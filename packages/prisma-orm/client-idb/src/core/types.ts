@@ -258,21 +258,41 @@ type DefaultedInputField<TContract, ModelName extends string> = FieldsWithCreate
   keyof ResolvedInputRow<TContract, ModelName>;
 
 /**
+ * Keys of the resolved input row whose contract fields declare `nullable: true`.
+ * `create()` stores `null` for one the caller omits (`completeCreateRecord`
+ * in `mutation-defaults.ts`). Input types such as JSON's `unknown` can admit
+ * `null` even when the contract field is required.
+ */
+type NullableInputField<TContract, ModelName extends string> = ModelName extends keyof ModelsOf<TContract>
+  ? {
+      [K in keyof ResolvedInputRow<TContract, ModelName>]-?: K extends keyof ModelsOf<TContract>[ModelName]["fields"]
+        ? IsNever<ModelsOf<TContract>[ModelName]["fields"][K]> extends true
+          ? never
+          : ModelsOf<TContract>[ModelName]["fields"][K] extends { readonly nullable: true }
+            ? K
+            : never
+        : never;
+    }[keyof ResolvedInputRow<TContract, ModelName>]
+  : never;
+
+/** The fields `create()` may omit: see {@link CreateInput}. */
+type OmittableCreateField<TContract, ModelName extends string> =
+  | KeyPathField<TContract, ModelName>
+  | DefaultedInputField<TContract, ModelName>
+  | NullableInputField<TContract, ModelName>;
+
+/**
  * Input shape for `create()`: the full input row with an `autoIncrement`
- * primary key made optional (see {@link OptionalKeyPathField}), and every
- * field with an `onCreate` execution default — including a `uuid()`/`cuid()`
- * key — also made optional. Any other key field stays required.
+ * primary key made optional (see {@link OptionalKeyPathField}), every field
+ * with an `onCreate` execution default — including a `uuid()`/`cuid()` key —
+ * and every nullable field also made optional. Any other key field stays
+ * required.
  */
 export type CreateInput<TContract, ModelName extends string> = Omit<
   ResolvedInputRow<TContract, ModelName>,
-  OptionalKeyPathField<TContract, ModelName> | FieldsWithCreateDefault<TContract, ModelName>
+  OmittableCreateField<TContract, ModelName>
 > &
-  Partial<
-    Pick<
-      ResolvedInputRow<TContract, ModelName>,
-      KeyPathField<TContract, ModelName> | DefaultedInputField<TContract, ModelName>
-    >
-  >;
+  Partial<Pick<ResolvedInputRow<TContract, ModelName>, OmittableCreateField<TContract, ModelName>>>;
 
 // ── Relations ─────────────────────────────────────────────────────────────────
 

@@ -57,7 +57,7 @@ import { type IdbGroupedAccessor, createGroupedAccessor } from "./grouped-access
 import type { IdbQueryExecutor } from "./executor";
 import { assertEnumValues } from "./enum-validation";
 import { assertValidRecord } from "./record-validation";
-import { applyCreateDefaults, applyUpdateDefaults, createMutationDefaultsCache } from "./mutation-defaults";
+import { applyUpdateDefaults, completeCreateRecord, createMutationDefaultsCache } from "./mutation-defaults";
 import { loadRelation } from "./relation-loader";
 import {
   applyReferentialActionsForRowOnUpdate,
@@ -555,12 +555,7 @@ export class IdbStoreAccessorImpl<
 
     // Apply defaults before deciding whether foreign keys need checking: a
     // default can fill in a foreign key the caller left out.
-    const withDefaults = applyCreateDefaults(
-      this.#contract.execution?.mutations.defaults,
-      this.#storeName,
-      record,
-      createMutationDefaultsCache()
-    );
+    const withDefaults = completeCreateRecord(this.#contract, this.#modelName, record, createMutationDefaultsCache());
     assertEnumValues(this.#contract, this.#modelName, withDefaults);
     assertValidRecord(this.#contract, this.#modelName, "create", withDefaults);
     if (hasScalarFkFields(this.#contract, this.#modelName, withDefaults)) {
@@ -737,9 +732,9 @@ export class IdbStoreAccessorImpl<
       patchRecord,
       createMutationDefaultsCache()
     );
-    const createWithDefaults = applyCreateDefaults(
-      executionDefaults,
-      storeName,
+    const createWithDefaults = completeCreateRecord(
+      this.#contract,
+      this.#modelName,
       createRecord,
       createMutationDefaultsCache()
     );
@@ -786,9 +781,8 @@ export class IdbStoreAccessorImpl<
     // applied before deciding whether foreign keys need checking, because a
     // default can fill in a foreign key.
     const defaultsCache = createMutationDefaultsCache();
-    const executionDefaults = this.#contract.execution?.mutations.defaults;
     const records = data.map((d) =>
-      applyCreateDefaults(executionDefaults, this.#storeName, d as Record<string, unknown>, defaultsCache)
+      completeCreateRecord(this.#contract, this.#modelName, d as Record<string, unknown>, defaultsCache)
     );
     if (records.some((row) => hasScalarFkFields(this.#contract, this.#modelName, row))) {
       const executor = requireTransactionExecutor(this.#executor);

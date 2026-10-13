@@ -19,6 +19,8 @@
 import type { ExecutionMutationDefault, ExecutionMutationDefaultValue } from "@prisma/orm-framework/contract/types";
 import { generateId } from "@prisma/orm-framework/ids/runtime";
 import type { IdbMutationDefaultGeneratorId } from "@prisma-idb/target-idb/pack";
+import { absentAsNull } from "@prisma-idb/target-idb/runtime";
+import { getStoreName, type IdbContract } from "./types";
 
 /** Per-top-level-mutation-call cache, keyed by generator id. Create one with {@link createMutationDefaultsCache}. */
 export type MutationDefaultsCache = Map<string, unknown>;
@@ -78,6 +80,28 @@ export function applyCreateDefaults(
     result[d.ref.column] = resolveGeneratedValue(d.onCreate, cache);
   }
   return result;
+}
+
+/**
+ * Completes a create record: applies the `onCreate` defaults, then stores
+ * `null` for every nullable field the record still lacks. IndexedDB has no
+ * column defaults, so this is what keeps stored rows complete while the create
+ * input leaves nullable fields optional, as Prisma's does. Call it after any
+ * relation values are resolved into `data`, and validate the result.
+ */
+export function completeCreateRecord(
+  contract: IdbContract,
+  modelName: string,
+  data: Record<string, unknown>,
+  cache: MutationDefaultsCache
+): Record<string, unknown> {
+  const withDefaults = applyCreateDefaults(
+    contract.execution?.mutations.defaults,
+    getStoreName(contract, modelName),
+    data,
+    cache
+  );
+  return absentAsNull(contract, modelName)(withDefaults);
 }
 
 /**

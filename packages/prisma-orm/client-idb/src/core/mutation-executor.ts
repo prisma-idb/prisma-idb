@@ -35,8 +35,8 @@ import type { IdbQueryExecutor } from "./executor";
 import { assertEnumValues } from "./enum-validation";
 import { assertValidRecord } from "./record-validation";
 import {
-  applyCreateDefaults,
   applyUpdateDefaults,
+  completeCreateRecord,
   createMutationDefaultsCache,
   type MutationDefaultsCache,
 } from "./mutation-defaults";
@@ -572,7 +572,7 @@ async function insertSingleRow(
   assertNoNestedCallbacks(modelName, data);
   const storeName = getStoreName(contract, modelName);
   const meta = makePlanMeta(contract);
-  const record = applyCreateDefaults(contract.execution?.mutations.defaults, storeName, data, defaultsCache);
+  const record = completeCreateRecord(contract, modelName, data, defaultsCache);
   assertEnumValues(contract, modelName, record);
   assertValidRecord(contract, modelName, "create", record);
   await validateScalarFks(scope, contract, modelName, record);
@@ -1166,12 +1166,7 @@ export async function executeScalarCreateWithFkValidation(options: {
   // Apply defaults first, so the transaction declares the parent store of a
   // foreign key that a default fills in. `insertSingleRow` checks the result.
   const defaultsCache = createMutationDefaultsCache();
-  const record = applyCreateDefaults(
-    contract.execution?.mutations.defaults,
-    getStoreName(contract, modelName),
-    data,
-    defaultsCache
-  );
+  const record = completeCreateRecord(contract, modelName, data, defaultsCache);
   const storeNames = collectScalarFkStoreNames(contract, modelName, record);
   return withMutationScope(executor, storeNames, (scope) =>
     insertSingleRow(scope, contract, modelName, record, defaultsCache)
@@ -1191,10 +1186,7 @@ export async function executeScalarCreateAllWithFkValidation(options: {
 }): Promise<Record<string, unknown>[]> {
   const { executor, contract, modelName, data } = options;
   const defaultsCache = createMutationDefaultsCache();
-  const storeName = getStoreName(contract, modelName);
-  const records = data.map((row) =>
-    applyCreateDefaults(contract.execution?.mutations.defaults, storeName, row, defaultsCache)
-  );
+  const records = data.map((row) => completeCreateRecord(contract, modelName, row, defaultsCache));
   const storeNames = [...new Set(records.flatMap((row) => collectScalarFkStoreNames(contract, modelName, row)))];
   return withMutationScope(executor, storeNames, async (scope) => {
     const inserted: Record<string, unknown>[] = [];
