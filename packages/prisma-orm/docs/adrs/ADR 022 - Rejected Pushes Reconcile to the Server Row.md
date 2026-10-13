@@ -22,7 +22,7 @@ The server also treated every database error as retryable. A unique violation th
   - A rejected create is undone, because the server has no such row.
   - A rejected update is replaced by the server's row.
   - A rejected delete restores the row if it still exists, and does nothing if it is already gone.
-- **The server supplies `record`.** `applyPush` attaches it to every non-retryable failure whose key it can decode. It reads the row with the same ownership check as `pull`, so `record` never exposes a row the caller could not already pull.
+- **The server supplies `record`.** `applyPush` attaches it to every non-retryable failure whose key it can decode. It reads the row with the same ownership check as `pull`, then projects it to the client contract before wire encoding ([ADR 012](ADR%20012%20-%20Client%20Contract%20Subsetting.md)). `record` contains only client-contract fields, so it exposes neither inaccessible rows nor server-only fields.
 - **The client validates before it writes.** It decodes `record` and checks it against the client contract, as it does for a pulled row. A `record` that is missing or invalid leaves the local write in place and counts the event as `unreconciled`. A later pull is the only repair.
 - **The write is raw and atomic.** It adds no outbox event and runs no referential actions. It runs in the same transaction that records the failure, so the pending flag never clears while the rejected write remains.
 - **The server classifies database errors by SQLSTATE.** Class 22 (data exception) and class 23 (integrity constraint violation) are non-retryable. Every other error, including an error with no SQLSTATE, stays retryable. When in doubt, the client stalls rather than discards data.

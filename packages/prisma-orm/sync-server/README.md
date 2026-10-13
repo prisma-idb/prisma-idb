@@ -104,11 +104,11 @@ Other families can extend the exported `defaultValidationCodecs` with a `codecLo
 
 ## Entry points
 
-| Import                             | Contains                                                                                                                                                                        |
-| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `@prisma-idb/sync-server`          | `createSyncServer`, with `validatePush` and `buildPullQueries`. Also `buildOwnershipDag`, `resolveAuthorizationPaths`, `resolveParentReferenceChecks` and `defaultGetKeyField`. |
-| `@prisma-idb/sync-server/postgres` | `defineConfig`: a Postgres config that reads the shared schema, removes the `idb` attributes and adds the `Changelog` model.                                                    |
-| `@prisma-idb/sync-server/schema`   | `sqlContractWithSync` for other SQL targets, and the text transforms `prepareSqlSchemaWithSync` and `injectChangelogModelSql`.                                                  |
+| Import                             | Contains                                                                                                                                                                                         |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `@prisma-idb/sync-server`          | `createSyncServer`, with `validatePush`, `buildPullQueries` and `projectRecord`. Also `buildOwnershipDag`, `resolveAuthorizationPaths`, `resolveParentReferenceChecks` and `defaultGetKeyField`. |
+| `@prisma-idb/sync-server/postgres` | `defineConfig`: a Postgres config that reads the shared schema, removes the `idb` attributes and adds the `Changelog` model.                                                                     |
+| `@prisma-idb/sync-server/schema`   | `sqlContractWithSync` for other SQL targets, and the text transforms `prepareSqlSchemaWithSync` and `injectChangelogModelSql`.                                                                   |
 
 ## Documentation
 

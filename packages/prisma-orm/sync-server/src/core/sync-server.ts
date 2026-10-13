@@ -237,6 +237,8 @@ export interface SyncServer {
   readonly rootModel: string;
   /** The storage hash of the emitted client contract, including extension stores (ADR 015). */
   readonly clientStorageHash: string;
+  /** Copies only top-level client-contract fields. Throws for an unknown client model. */
+  projectRecord(model: string, row: Readonly<Record<string, unknown>>): Record<string, unknown>;
   /** Resolve every event's ownership check. Pure — never touches a database. */
   validatePush(
     events: readonly SyncPushEvent[],
@@ -255,6 +257,12 @@ export interface SyncServer {
  */
 export function createSyncServer(options: CreateSyncServerOptions): SyncServer {
   const dag = buildOwnershipDag(options.contract, options.clientContract, options.rootModel);
+  const clientFields = new Map(
+    Object.entries(domainModelsAtDefaultNamespace(options.clientContract.domain)).map(([name, model]) => [
+      name,
+      new Set(Object.keys(model.fields)),
+    ])
+  );
   const getKeyField = options.getKeyField ?? defaultGetKeyField;
   const codecLookup = options.codecLookup ?? defaultValidationCodecs;
   for (const model of dag.clientModels) {
@@ -273,6 +281,11 @@ export function createSyncServer(options: CreateSyncServerOptions): SyncServer {
   return {
     rootModel: dag.rootModel,
     clientStorageHash: options.clientContract.storage.storageHash,
+    projectRecord: (model, row) => {
+      const fields = clientFields.get(model);
+      if (!fields) throw new Error(`projectRecord: model "${model}" is not defined in the client contract.`);
+      return Object.fromEntries(Object.entries(row).filter(([name]) => fields.has(name)));
+    },
     validatePush: (events, pushOptions) =>
       validatePush(dag, options.contract, options.clientContract, getKeyField, events, {
         ...pushOptions,

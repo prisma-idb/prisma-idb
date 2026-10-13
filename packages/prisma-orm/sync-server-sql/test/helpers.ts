@@ -50,6 +50,7 @@ const testClientContract = (() => {
                   "UuidItem",
                   "BytesUser",
                   "BytesItem",
+                  "PrivateNote",
                 ].includes(name)
             )
           ),
@@ -153,7 +154,8 @@ export async function seed(
       | "AlternateParent"
       | "AlternateEntry"
       | "Lookup"
-      | "OwnerBridge",
+      | "OwnerBridge"
+      | "PrivateNote",
       Record<string, unknown>[]
     >
   >

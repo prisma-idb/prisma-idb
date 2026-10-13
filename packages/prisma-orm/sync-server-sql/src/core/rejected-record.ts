@@ -34,7 +34,7 @@ async function readCurrentRecord(
   })[0]!;
   if (check.kind === "unknown-model") return undefined;
   // "update", so a rejected delete reports the row that still exists.
-  return resolvePullRecord(db, contract, getKeyField, event.entityType, check, key, "update");
+  return resolvePullRecord(db, syncServer, contract, getKeyField, event.entityType, check, key, "update");
 }
 
 /**
