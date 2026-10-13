@@ -1,6 +1,6 @@
 # ADR 023: Migrations rewrite pending outbox payloads
 
-- **Status:** Proposed (Accepted on merge)
+- **Status:** Accepted.
 - **Date:** 2026-10-08
 - **Area:** Migrations, Sync
 

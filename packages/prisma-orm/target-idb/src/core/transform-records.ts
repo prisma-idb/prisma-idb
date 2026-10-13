@@ -42,6 +42,7 @@ export function transformRecord(
   return result;
 }
 
+/** Applies one value transform; an unfilled placeholder throws, wherever it sits in a pipe. */
 function transformValue(transform: IdbValueTransform, value: unknown, mode: RecordTransformMode): unknown {
   switch (transform.kind) {
     case "placeholder":
