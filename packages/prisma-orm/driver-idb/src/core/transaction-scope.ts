@@ -15,7 +15,7 @@
  * - `rollback()` is idempotent: calling it on an already-aborted transaction is
  *   a no-op (the DOMException from IDB is swallowed).
  *
- * Issue #6 (scope hard-coding): since this scope's execute() bypasses both of
+ * Since this scope's execute() bypasses both of
  * `RuntimeCore`'s middleware chains (query()'s and execute()'s alike), the
  * cache middleware never fires inside a scope → reads are always fresh.
  */
@@ -23,10 +23,12 @@ import type { IdbAtomicPlan } from "./plan-body";
 import { IdbExecuteError, isTransactionInactiveError, transactionInactiveError } from "./execute/error";
 import { executeOpInTx } from "./execute/ops";
 
+/** A record returned by an IDB operation. */
 type Row = Record<string, unknown>;
 
 // ── Public interface ──────────────────────────────────────────────────────────
 
+/** Atomic operations and commit or rollback controls over one multi-store transaction. */
 export interface IdbTransactionScope {
   /**
    * Execute a single atomic plan inside the shared IDB transaction.
@@ -56,6 +58,7 @@ export interface IdbTransactionScope {
 
 // ── Implementation ────────────────────────────────────────────────────────────
 
+/** Keep pending operations attached to the same transaction and settle them on abort. */
 class IdbTransactionScopeImpl implements IdbTransactionScope {
   readonly #tx: IDBTransaction;
   readonly #onComplete: Promise<void>;
@@ -87,6 +90,7 @@ class IdbTransactionScopeImpl implements IdbTransactionScope {
     this.#onComplete.catch(() => {});
   }
 
+  /** Issue the operation in the existing scope and abort that scope on failure. */
   execute(plan: IdbAtomicPlan): Promise<Row[]> {
     return new Promise<Row[]>((resolve, reject) => {
       let store: IDBObjectStore;
@@ -128,6 +132,7 @@ class IdbTransactionScopeImpl implements IdbTransactionScope {
     return this.#onComplete;
   }
 
+  /** Abort uncommitted writes; a finished transaction has nothing left to roll back. */
   rollback(): void {
     try {
       this.#tx.abort();

@@ -15,6 +15,7 @@ class IdbControlDriver implements ControlDriverInstance<"idb", "idb"> {
   readonly familyId = "idb" as const;
   readonly targetId = "idb" as const;
 
+  /** Return no rows because the Node control driver has no browser database to query. */
   async query<Row = Record<string, unknown>>(
     _sql: string,
     _params?: readonly unknown[]

@@ -28,6 +28,7 @@ export class IdbAdapter implements IdbRuntimeAdapterInstance {
     this.#codecs = codecs;
   }
 
+  /** Pass the execution-ready body through; current IDB codecs need no stored-value conversion. */
   lower(plan: IdbQueryPlan, ctx: IdbLowererContext): Promise<IdbPlanBody> {
     // If a codec ever transforms stored values, encode plan.idbPlan's
     // record and key fields here: resolve each field's codec through

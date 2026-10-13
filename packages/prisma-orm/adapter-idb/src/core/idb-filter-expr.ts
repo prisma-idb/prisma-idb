@@ -52,6 +52,7 @@ export interface IdbNullCheckExpr {
   readonly isNull: boolean;
 }
 
+/** A field predicate, logical combination, or null check in the IDB filter AST. */
 export type IdbFilterExpr = IdbFieldFilter | IdbAndExpr | IdbOrExpr | IdbNotExpr | IdbNullCheckExpr;
 
 // ── Factory helpers ───────────────────────────────────────────────────────────

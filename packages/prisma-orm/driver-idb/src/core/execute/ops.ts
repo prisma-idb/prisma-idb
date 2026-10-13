@@ -37,8 +37,11 @@ import {
 import { keyIdentity } from "./key-identity";
 import { toOptionalIdbKeyRange } from "./key-range";
 
+/** A record returned by an IDB operation. */
 type Row = Record<string, unknown>;
+/** Deliver rows while the operation is still inside an IDB event callback. */
 type OnComplete = (rows: Row[]) => void;
+/** Route operation failures to the transaction owner. */
 type OnError = (err: unknown) => void;
 
 /**
@@ -85,6 +88,7 @@ function guardCallback(
 function assertUnchangedPrimaryKey(store: IDBObjectStore, plan: IdbAtomicPlan, key: IDBValidKey, row: Row): void {
   const keyPath = store.keyPath;
   if (keyPath == null) return;
+  /** Resolve an inline key path, including dotted paths, from the merged record. */
   const extract = (path: string): unknown =>
     path === ""
       ? row
@@ -128,6 +132,7 @@ export function executeOpInTx(
   }
 }
 
+/** Select the executor for an atomic plan without introducing asynchronous gaps. */
 function dispatchOp(store: IDBObjectStore, plan: IdbAtomicPlan, onComplete: OnComplete, onError: OnError): void {
   switch (plan.kind) {
     case "key-get":
@@ -172,6 +177,7 @@ export function planTxMode(plan: IdbAtomicPlan): IDBTransactionMode {
 
 // ── Per-operation executors ──────────────────────────────────────────────────
 
+/** Read one primary key and return no rows when it is absent. */
 function execKeyGet(store: IDBObjectStore, plan: IdbKeyGetPlan, onComplete: OnComplete, onError: OnError): void {
   const req = store.get(plan.key);
   req.onsuccess = () => {
@@ -181,6 +187,7 @@ function execKeyGet(store: IDBObjectStore, plan: IdbKeyGetPlan, onComplete: OnCo
   req.onerror = () => onError(opError("KEY_GET_FAILED", plan, "key-get", req.error));
 }
 
+/** Read a bounded range from a store or index, handling a zero cap explicitly. */
 function execGetAll(store: IDBObjectStore, plan: IdbGetAllPlan, onComplete: OnComplete, onError: OnError): void {
   // getAll(undefined, 0) would read everything, so a zero cap is answered without a request.
   if (plan.count === 0) return onComplete([]);
@@ -191,6 +198,7 @@ function execGetAll(store: IDBObjectStore, plan: IdbGetAllPlan, onComplete: OnCo
   req.onerror = () => onError(opError("GET_ALL_FAILED", plan, "get-all", req.error, storeTarget(plan)));
 }
 
+/** Count a store or index range without materializing record values. */
 function execCount(store: IDBObjectStore, plan: IdbCountPlan, onComplete: OnComplete, onError: OnError): void {
   const source: IDBObjectStore | IDBIndex = plan.indexName !== undefined ? store.index(plan.indexName) : store;
   const range = toOptionalIdbKeyRange(plan.range);
@@ -199,6 +207,7 @@ function execCount(store: IDBObjectStore, plan: IdbCountPlan, onComplete: OnComp
   req.onerror = () => onError(opError("COUNT_FAILED", plan, "count", req.error, storeTarget(plan)));
 }
 
+/** Read primary keys for existence checks without fetching record values. */
 function execKeys(store: IDBObjectStore, plan: IdbKeysPlan, onComplete: OnComplete, onError: OnError): void {
   const source: IDBObjectStore | IDBIndex = plan.indexName !== undefined ? store.index(plan.indexName) : store;
   const fail = (cause: unknown) => onError(opError("KEYS_FAILED", plan, "keys read", cause, storeTarget(plan)));
@@ -223,6 +232,7 @@ function execKeys(store: IDBObjectStore, plan: IdbKeysPlan, onComplete: OnComple
   req.onerror = () => fail(req.error);
 }
 
+/** Filter cursor rows and stop at the page limit unless sorting needs the full range. */
 function execCursorScan(
   store: IDBObjectStore,
   plan: IdbCursorScanPlan,
@@ -307,6 +317,7 @@ function withGeneratedKey(
   return { ...record, [store.keyPath]: key };
 }
 
+/** Insert without overwriting, then echo any generated inline key. */
 function execAdd(store: IDBObjectStore, plan: IdbAddPlan, onComplete: OnComplete, onError: OnError): void {
   // Use the optional out-of-line key when provided; otherwise IDB derives the
   // key from the record via the store's keyPath.
@@ -316,6 +327,7 @@ function execAdd(store: IDBObjectStore, plan: IdbAddPlan, onComplete: OnComplete
   req.onerror = () => onError(opError("ADD_FAILED", plan, "add", req.error));
 }
 
+/** Replace or insert a record and echo any generated inline key. */
 function execPut(store: IDBObjectStore, plan: IdbPutPlan, onComplete: OnComplete, onError: OnError): void {
   // Use the optional out-of-line key when provided; otherwise IDB derives the
   // key from the record via the store's keyPath.
@@ -325,6 +337,7 @@ function execPut(store: IDBObjectStore, plan: IdbPutPlan, onComplete: OnComplete
   req.onerror = () => onError(opError("PUT_FAILED", plan, "put", req.error));
 }
 
+/** Read, merge, and write a patch in one transaction while preserving primary-key identity. */
 function execUpdate(store: IDBObjectStore, plan: IdbUpdatePlan, onComplete: OnComplete, onError: OnError): void {
   // Step 1: read the current record.
   const getReq = store.get(plan.key);
@@ -341,6 +354,7 @@ function execUpdate(store: IDBObjectStore, plan: IdbUpdatePlan, onComplete: OnCo
   getReq.onerror = () => onError(opError("KEY_GET_FAILED", plan, "update (get phase)", getReq.error));
 }
 
+/** Delete each key in the requested range and echo its previous row. */
 function execDelete(store: IDBObjectStore, plan: IdbDeletePlan, onComplete: OnComplete, onError: OnError): void {
   // `plan.key` may be a single key or an `IDBKeyRange` spanning several
   // records (deleteMany). Walk a cursor over it so every matched record is
@@ -365,6 +379,7 @@ function execDelete(store: IDBObjectStore, plan: IdbDeletePlan, onComplete: OnCo
   req.onerror = () => onError(opError("DELETE_FAILED", plan, "delete", req.error));
 }
 
+/** Write each matching cursor row once, even when its indexed value moves forward. */
 function execScanWrite(store: IDBObjectStore, plan: IdbScanWritePlan, onComplete: OnComplete, onError: OnError): void {
   // A zero limit writes nothing; without this the first match would be written before the limit check.
   if (plan.take === 0) return onComplete([]);
