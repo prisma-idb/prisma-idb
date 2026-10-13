@@ -21,7 +21,7 @@ const open = await db.orm.todo.where({ done: false }).orderBy({ title: "asc" }).
 - **Typed, chainable queries.** `where`, `orderBy`, `include`, `aggregate` and friends. The API is chained calls, not Prisma Client's single argument object.
 - **Relations enforced like a SQL database.** Foreign keys are checked on every write, and `onDelete` and `onUpdate` actions run in the same transaction.
 - **Reviewed migrations.** Schema changes are planned on your machine, committed, and applied in each user's browser the next time the app opens.
-- **Optional sync.** Two packages keep IndexedDB and a server database in step, per user.
+- **Optional sync.** The sync client, ownership server, and SQL adapter keep IndexedDB and a server database in step, per user.
 
 ## How it fits together
 

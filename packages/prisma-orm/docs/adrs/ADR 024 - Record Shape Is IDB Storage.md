@@ -28,7 +28,7 @@ Migration packages still identify their operations separately. This preserves up
 
 ### 3. Read absent nullable fields as null
 
-When the ORM reads an old record, it returns `null` for a missing nullable field. This also applies inside value objects, lists, dictionaries, and union members. It does not write a value back to IndexedDB.
+When the ORM reads an old record, it returns `null` for a missing nullable field. This also applies inside value objects, lists, and dictionaries. Union fields are unsupported and rejected before records are read. It does not write a value back to IndexedDB.
 
 Adding a nullable field therefore needs a migration that advances the hash and marker, but no record rewrite. The planner writes an empty operations list when nothing else changes.
 

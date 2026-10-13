@@ -23,7 +23,9 @@ The kanban example is a complete SvelteKit app. Each user's boards live in Index
 
 ## Run it locally
 
-You need Docker for Postgres. From the repository root:
+You need Docker for Postgres. In the app environment, set `DATABASE_URL` to the database configured in `docker-compose.yml` and set `BETTER_AUTH_SECRET` to a generated secret. Google sign-in also needs `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`; guest sign-in works without them.
+
+From the repository root:
 
 ```bash
 pnpm --filter @prisma-idb/prisma-orm-kanban-example db:up     # start Postgres
