@@ -124,7 +124,7 @@ Each of three paired rounds used five warmups and 30 samples per path, with five
 | 5,000         | 2     | 194.54  | 0.97         | 99.50%      | [-99.53%, -99.46%]     |
 | 5,000         | 3     | 197.56  | 0.94         | 99.52%      | [-99.54%, -99.48%]     |
 
-Every round exceeded the agreed 20% and 0.5 ms/query improvement bar. The plan-shape gate separately pins one value read for numeric and Date suffix `first()`, and six for a residual-filtered page with `skip(1).take(2)`, at 100 and 1,000 total rows. These timings measure equivalent MyFit query semantics in `client-idb`. MyFit still uses the legacy generated client, so its current build does not receive this speedup.
+Every round exceeded the agreed 20% and 0.5 ms/query improvement bar. The plan-shape gate separately pins one value read for numeric and Date suffix `first()`, and six for a residual-filtered page with `skip(1).take(2)`, at 100 and 1,000 total rows. These timings measure equivalent MyFit query semantics in `client-idb`. These figures describe the benchmark queries at the recorded sizes.
 
 ## Related
 
