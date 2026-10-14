@@ -21,12 +21,14 @@
   let boardId = $derived(todo.boardId);
   const boardName = $derived(kanban.boards.find((board) => board.id === boardId)?.name);
 
+  /** Moves the todo through the workspace store and restores the selector to its saved board. */
   async function move(destinationId: string) {
     await kanban.moveTodo(todo.id, destinationId);
     // A failed move leaves the todo on its original board.
     boardId = todo.boardId;
   }
 
+  /** Saves a trimmed nonempty title and the current description draft. */
   async function save() {
     const trimmed = title.trim();
     if (!trimmed) return;

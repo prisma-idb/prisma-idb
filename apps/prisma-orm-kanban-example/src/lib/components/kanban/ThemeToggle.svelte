@@ -3,6 +3,7 @@
   import { MonitorIcon, MoonIcon, SunIcon } from "@lucide/svelte";
   import { Button } from "$lib/components/ui/button";
 
+  /** The persisted theme preference, including the system color scheme. */
   type ThemeMode = "light" | "dark" | "system";
 
   const STORAGE_KEY = "mode-watcher-mode";
@@ -18,6 +19,7 @@
     return value === "light" || value === "dark" || value === "system";
   }
 
+  /** Applies and persists the preference while updating browser theme metadata. */
   function applyMode(nextMode: ThemeMode) {
     const root = document.documentElement;
     const resolved = nextMode === "system" ? (mediaQuery?.matches ? "dark" : "light") : nextMode;
@@ -31,6 +33,7 @@
     localStorage.setItem(STORAGE_KEY, nextMode);
   }
 
+  /** Advances through the supported theme preferences and applies the next one. */
   function cycleTheme() {
     const next = CYCLE[(CYCLE.indexOf(mode) + 1) % CYCLE.length];
     mode = next;

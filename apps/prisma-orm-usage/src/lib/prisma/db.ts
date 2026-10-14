@@ -23,6 +23,7 @@ export function resolveDbName(): string {
 // switch between them via reset() below.
 const managedByDbName = new Map<string, ManagedIdbClient<IdbClient<Contract>>>();
 
+/** Caches a managed client for each named test or interactive database. */
 function managedDb(dbName: string): ManagedIdbClient<IdbClient<Contract>> {
   let managed = managedByDbName.get(dbName);
   if (!managed) {

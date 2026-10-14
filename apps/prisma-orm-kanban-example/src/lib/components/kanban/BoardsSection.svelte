@@ -10,6 +10,7 @@
 
   let newBoardName = $state("");
 
+  /** Submits a board name, using a numbered name for an empty draft. */
   async function createBoard(event: Event) {
     event.preventDefault();
     const name = newBoardName.trim() || `Board ${kanban.boards.length + 1}`;

@@ -41,8 +41,10 @@ export const BENCHMARK_OPERATION_IDS = [
   "create-with-fk-check",
 ] as const;
 
+/** The stable operation identifiers shared by benchmark results and comparisons. */
 export type BenchmarkOperationId = (typeof BENCHMARK_OPERATION_IDS)[number];
 
+/** A benchmark operation bound to this schema and its stable identifiers. */
 type Definition = BenchmarkOperationDefinition<BenchmarkClient, void, BenchmarkOperationId>;
 
 const noop = async (): Promise<void> => {};
@@ -63,6 +65,7 @@ const FAST = 100;
 const QUICK = 20;
 const SHORT = 5;
 
+/** Builds a read benchmark with optional repetitions to reduce timer quantization noise. */
 function read(
   operationId: BenchmarkOperationId,
   label: string,
@@ -123,7 +126,7 @@ export const operationDefinitions: readonly Definition[] = [
     SHORT
   ),
 
-  // ── Shapes an index could serve but that scan today ──
+  // ── Range, membership, compound, and ordered query shapes ──
   read("find-lt-indexed", "findMany, lt on indexed field (1%)", (c, n) =>
     c.orm.items
       .where((m) => m.score.lt(onePercent(n)))

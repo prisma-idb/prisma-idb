@@ -37,9 +37,12 @@
     },
   });
 
+  /** The supported visual variants of a button. */
   export type ButtonVariant = VariantProps<typeof buttonVariants>["variant"];
+  /** The supported button sizes. */
   export type ButtonSize = VariantProps<typeof buttonVariants>["size"];
 
+  /** Native button or link attributes combined with variant and element-reference props. */
   export type ButtonProps = WithElementRef<HTMLButtonAttributes> &
     WithElementRef<HTMLAnchorAttributes> & {
       variant?: ButtonVariant;

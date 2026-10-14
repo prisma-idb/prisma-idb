@@ -16,12 +16,14 @@
   let draftTitle = $state("");
   let draftDescription = $state("");
 
+  /** Saves a trimmed nonempty board name through the workspace store. */
   async function saveBoard() {
     const name = boardName.trim();
     if (!name) return;
     await kanban.updateBoard(board.id, name);
   }
 
+  /** Submits the todo draft and clears its local fields after the store call completes. */
   async function addTodo(event: Event) {
     event.preventDefault();
     const title = draftTitle.trim();

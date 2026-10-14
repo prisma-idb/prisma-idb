@@ -19,6 +19,7 @@ const output = document.querySelector<HTMLDivElement>("#output")!;
 // open, and both would then write results into the page.
 let running = false;
 
+/** Seeds the selected dataset and displays timing results while ensuring the client closes. */
 async function run(config: BenchmarkConfig): Promise<void> {
   output.replaceChildren();
   status.textContent = `Seeding ${config.datasetSize} rows per store…`;
@@ -53,6 +54,7 @@ async function run(config: BenchmarkConfig): Promise<void> {
   }
 }
 
+/** Validates form or URL inputs and prevents overlapping benchmark executions. */
 function start(input: { datasetSize: unknown; warmupRuns: unknown; measuredRuns: unknown }): void {
   const sanitized = sanitizeBenchmarkConfigInputs(input);
   if (!sanitized.ok) {
@@ -68,6 +70,7 @@ function start(input: { datasetSize: unknown; warmupRuns: unknown; measuredRuns:
     });
 }
 
+/** Displays an execution error through the same output panel used by browser tests. */
 function showError(message: string): void {
   status.textContent = "Failed";
   const node = document.createElement("pre");

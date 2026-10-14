@@ -6,8 +6,11 @@ import { getNextBatch } from "@prisma-idb/sync-extension-idb/client";
 import type { SyncWorker, SyncWorkerStatus } from "@prisma-idb/sync-extension-idb/client";
 import { SvelteDate } from "svelte/reactivity";
 
+/** The local user row mirrored from the authenticated session. */
 type User = DefaultModelRow<Contract, "User">;
+/** The local todo row displayed and edited by the board components. */
 export type Todo = DefaultModelRow<Contract, "Todo">;
+/** A board with its todos loaded in creation order. */
 export type BoardWithTodos = IncludedRow<Contract, "Board", { todos: true }>;
 
 /**
@@ -35,6 +38,7 @@ function makeId(prefix: string) {
   return `${prefix}_${crypto.randomUUID()}`;
 }
 
+/** Owns the local workspace, tracked mutations, and the page’s sync subscriptions. */
 export class KanbanStore {
   status = $state<"opening" | "ready" | "error">("opening");
   errorMessage = $state("");
@@ -55,12 +59,14 @@ export class KanbanStore {
   todos = $derived(this.boards.flatMap((b) => b.todos));
   completedTodos = $derived(this.todos.filter((t) => t.isCompleted).length);
 
+  /** Sets the workspace’s error status, stores its message, and releases the busy state. */
   showError = (error: unknown) => {
     this.status = "error";
     this.errorMessage = error instanceof Error ? error.message : "Something went wrong.";
     this.busy = false;
   };
 
+  /** Reloads the signed-in user’s boards and their todos from IndexedDB. */
   private async loadBoards(userId: string) {
     const db = await getDb();
     this.boards = await db.orm.board
@@ -72,7 +78,7 @@ export class KanbanStore {
   }
 
   /** Count the entire outbox so the pending badge stays accurate beyond the worker's batch size. */
-  private async refreshPendingCount(db?: Awaited<ReturnType<typeof getDb>>) {
+  async refreshPendingCount(db?: Awaited<ReturnType<typeof getDb>>) {
     const client = db ?? (await getDb());
     const pending = await getNextBatch(client.rawClient, { limit: Number.POSITIVE_INFINITY });
     this.pendingSyncCount = pending.length;
@@ -189,6 +195,7 @@ export class KanbanStore {
     this.syncWorker = null;
   }
 
+  /** Saves a tracked board and adds the committed row to the visible workspace. */
   async createBoard(name: string) {
     const userId = this.activeUser?.id;
     if (!userId) return;
@@ -207,6 +214,7 @@ export class KanbanStore {
     }
   }
 
+  /** Saves a tracked board name before updating the visible workspace. */
   async updateBoard(boardId: string, name: string) {
     this.busy = true;
     this.errorMessage = "";
@@ -221,6 +229,7 @@ export class KanbanStore {
     }
   }
 
+  /** Deletes a tracked board and removes it from the visible workspace. */
   async deleteBoard(boardId: string) {
     this.busy = true;
     this.errorMessage = "";
@@ -235,6 +244,7 @@ export class KanbanStore {
     }
   }
 
+  /** Saves a tracked todo and adds it to its board after the write succeeds. */
   async createTodo(boardId: string, title: string, description: string) {
     this.busy = true;
     this.errorMessage = "";
@@ -268,6 +278,7 @@ export class KanbanStore {
     }
   }
 
+  /** Saves the opposite completion state before refreshing the visible todo. */
   async toggleTodo(todoId: string, currentValue: boolean) {
     this.busy = true;
     this.errorMessage = "";
@@ -286,6 +297,7 @@ export class KanbanStore {
     }
   }
 
+  /** Saves a tracked todo edit and reflects it in the visible workspace. */
   async updateTodo(todoId: string, title: string, description: string) {
     this.busy = true;
     this.errorMessage = "";
@@ -303,6 +315,7 @@ export class KanbanStore {
     }
   }
 
+  /** Moves a todo through a tracked foreign-key update, then reloads board membership. */
   async moveTodo(todoId: string, boardId: string) {
     const userId = this.activeUser?.id;
     if (!userId) return;
@@ -319,6 +332,7 @@ export class KanbanStore {
     }
   }
 
+  /** Deletes a tracked todo and removes it from the visible boards. */
   async deleteTodo(todoId: string) {
     this.busy = true;
     this.errorMessage = "";

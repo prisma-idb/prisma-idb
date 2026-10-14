@@ -5,11 +5,13 @@ import contractJson from "./contract.json" with { type: "json" };
 // (`pnpm contract:emit`), built from the same source.
 import type { contract as contractSource } from "./contract.server";
 
+/** The benchmark’s emitted schema type, kept separate from browser runtime imports. */
 type Contract = typeof contractSource;
 const contract = contractJson as unknown as Contract;
 
 const DB_NAME = "prisma-orm-benchmark";
 
+/** A client bound to the benchmark schema. */
 export type BenchmarkClient = IdbClient<Contract>;
 
 const pad = (i: number) => String(i).padStart(6, "0");
@@ -76,6 +78,7 @@ function seedRows(n: number): Record<string, Record<string, unknown>[]> {
   };
 }
 
+/** Resolves an IndexedDB request or propagates its native request error. */
 function request<T>(req: IDBRequest<T>): Promise<T> {
   return new Promise((resolve, reject) => {
     req.onsuccess = () => resolve(req.result);
@@ -83,6 +86,7 @@ function request<T>(req: IDBRequest<T>): Promise<T> {
   });
 }
 
+/** Waits for seed writes to commit, rejecting aborts and transaction errors. */
 function transactionDone(tx: IDBTransaction): Promise<void> {
   return new Promise((resolve, reject) => {
     tx.oncomplete = () => resolve();

@@ -15,6 +15,7 @@
     },
   });
 
+  /** The supported visual variants of an alert. */
   export type AlertVariant = VariantProps<typeof alertVariants>["variant"];
 </script>
 
