@@ -58,7 +58,7 @@ export function buildCatalog(contract: IdbContract, storeName: string, modelName
       fields[name] = Object.freeze({
         codecId: field.type.kind === "scalar" ? field.type.codecId : undefined,
         nullable: field.nullable,
-        collection: field.many === true || field.dict === true,
+        collection: Boolean(field.many) || field.dict === true,
       });
     }
   }

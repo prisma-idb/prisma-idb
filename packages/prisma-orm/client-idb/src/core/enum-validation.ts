@@ -37,7 +37,8 @@ function resolveEnumRule(contract: IdbContract, field: ContractField): EnumField
     enumName: ref.entityName,
     values: new Set(contractEnum.members.map((member) => member.value)),
     nullable: field.nullable,
-    many: field.many === true,
+    // `many` is `true` in older contracts and an object (`{ elementNullable }`) in newer ones.
+    many: Boolean(field.many),
   };
 }
 

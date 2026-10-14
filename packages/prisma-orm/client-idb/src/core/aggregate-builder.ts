@@ -69,10 +69,11 @@ function reduceAggregate(
       return values.reduce((acc, n) => acc + n, 0);
     case "avg":
       return values.reduce((acc, n) => acc + n, 0) / values.length;
+    // Not `Math.min(...values)`: spreading a large array overflows the call stack.
     case "min":
-      return Math.min(...values);
+      return values.reduce((acc, n) => Math.min(acc, n));
     case "max":
-      return Math.max(...values);
+      return values.reduce((acc, n) => Math.max(acc, n));
   }
 }
 
