@@ -28,6 +28,11 @@ function parseFiniteNumber(value: unknown): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+/**
+ * Validates the dataset size, warmup runs and measured runs entered for a benchmark run.
+ * Non-numeric values and a dataset size below the minimum return an error. Other
+ * out-of-range values are truncated to integers and clamped to the configured limits.
+ */
 export function sanitizeBenchmarkConfigInputs(input: {
   datasetSize: unknown;
   warmupRuns: unknown;

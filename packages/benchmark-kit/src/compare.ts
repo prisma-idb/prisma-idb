@@ -164,6 +164,10 @@ function bootstrapMedianDeltaCI(
   };
 }
 
+/**
+ * Pairs one metric from the baseline and current runs and computes the percent change.
+ * Non-finite inputs become `null`, and a zero baseline with a non-zero current is `Infinity`.
+ */
 function pairMetric(baseline: number, current: number): MetricPair {
   const baselineOk = Number.isFinite(baseline);
   const currentOk = Number.isFinite(current);
@@ -205,6 +209,10 @@ export function mergeRuns(runs: BenchmarkRun[]): BenchmarkRun {
   return { ...runs[0], id: runs.map((run) => run.id).join(","), operations: [...merged.values()] };
 }
 
+/**
+ * Returns the per-operation sample count when every operation reports the same one,
+ * else `null`. `hasPartialData` is true when some operations lack `samplesMs`.
+ */
 function getMeasuredSampleCount(run: BenchmarkRun): { count: number | null; hasPartialData: boolean } {
   const operations = run.operations ?? [];
   const counts = operations.flatMap((op) => (Array.isArray(op.samplesMs) ? [op.samplesMs.length] : []));
@@ -214,6 +222,10 @@ function getMeasuredSampleCount(run: BenchmarkRun): { count: number | null; hasP
   return { count: allEqual ? (counts[0] ?? null) : null, hasPartialData };
 }
 
+/**
+ * Lists reasons the comparison is advisory: missing or too few samples, or
+ * different sample counts between runs. Any notice stops the gate from failing the build.
+ */
 function getComparisonNotices(baseline: BenchmarkRun, current: BenchmarkRun): string[] {
   const notices: string[] = [];
   const minSamples = BENCHMARK_REGRESSION_GATE.minMeaningfulP95Samples;
