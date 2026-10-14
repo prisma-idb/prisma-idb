@@ -2,8 +2,7 @@ import { GeistSans } from "geist/font/sans";
 import { Provider } from "@/components/provider";
 import "./global.css";
 import { Metadata } from "next";
-
-const siteUrl = "https://prisma-idb.dev";
+import { siteName, siteUrl } from "@/lib/seo";
 
 export const metadata: Metadata = {
   title: {
@@ -16,8 +15,8 @@ export const metadata: Metadata = {
   openGraph: {
     type: "website",
     locale: "en_US",
-    url: siteUrl,
-    siteName: "Prisma IDB",
+    url: "/",
+    siteName,
     title: "Prisma IDB — Type-safe IndexedDB with the Prisma API",
     description:
       "A Prisma generator that creates a type-safe IndexedDB client with the API you already know — plus optional bidirectional sync.",

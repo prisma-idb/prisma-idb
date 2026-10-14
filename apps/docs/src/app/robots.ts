@@ -1,4 +1,5 @@
 import type { MetadataRoute } from "next";
+import { siteUrl } from "@/lib/seo";
 
 export const dynamic = "force-static";
 
@@ -8,6 +9,6 @@ export default function robots(): MetadataRoute.Robots {
       userAgent: "*",
       allow: "/",
     },
-    sitemap: "https://prisma-idb.dev/sitemap.xml",
+    sitemap: `${siteUrl}/sitemap.xml`,
   };
 }

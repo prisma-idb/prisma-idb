@@ -1,7 +1,6 @@
 import type { MetadataRoute } from "next";
 import { source } from "@/lib/source";
-
-const siteUrl = "https://prisma-idb.dev";
+import { siteUrl } from "@/lib/seo";
 
 export const dynamic = "force-static";
 

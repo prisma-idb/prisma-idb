@@ -1,4 +1,5 @@
-import { getPageImage, source } from "@/lib/source";
+import { source } from "@/lib/source";
+import { docsPageMetadata } from "@/lib/seo";
 import { DocsBody, DocsDescription, DocsPage, DocsTitle } from "fumadocs-ui/layouts/docs/page";
 import { notFound } from "next/navigation";
 import { getMDXComponents } from "@/mdx-components";
@@ -37,11 +38,5 @@ export async function generateMetadata(props: PageProps<"/docs/[[...slug]]">): P
   const page = source.getPage(params.slug);
   if (!page) notFound();
 
-  return {
-    title: page.data.title,
-    description: page.data.description,
-    openGraph: {
-      images: getPageImage(page).url,
-    },
-  };
+  return docsPageMetadata(page);
 }
