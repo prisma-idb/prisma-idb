@@ -27,6 +27,7 @@ export interface SqlPushEvent {
   readonly payload: unknown;
 }
 
+/** The application result for one event, including retry and reconciliation information. */
 export interface SqlPushResult {
   readonly id: string;
   readonly success: boolean;
@@ -46,6 +47,7 @@ export interface SqlPushResult {
 // so this write-only value reaches the codec and encodes to the text "null".
 const jsonNull = Object.freeze({ toJSON: () => null });
 
+/** Preserves required JSON null as a codec value rather than SQL NULL. */
 function ormWriteValues(
   contract: SyncServerContract,
   model: string,

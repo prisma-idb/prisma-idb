@@ -8,11 +8,13 @@ import { type, type Type } from "arktype";
 import { idbCodecLookup } from "./codecs";
 import { isValidIdbKey } from "./key-compare";
 
+/** The validation verdict, with diagnostic messages when a record or key is rejected. */
 export type ValidationResult = { readonly ok: true } | { readonly ok: false; readonly issues: readonly string[] };
 
 /** Codec application types, not SQL storage types or JSON wire types. */
 export type ValidationCodecLookup = Pick<CodecLookup, "targetTypesFor">;
 
+/** Selects native codecs and the fields a create or update input may omit. */
 export interface RecordValidationOptions {
   readonly codecLookup?: ValidationCodecLookup;
   /** Updates validate only supplied fields; supplied undefined is still invalid. */

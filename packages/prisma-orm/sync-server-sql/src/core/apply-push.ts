@@ -23,6 +23,7 @@ export interface SqlPushWireEvent {
   readonly payload: unknown;
 }
 
+/** A push batch with its authenticated scope, contract identity, and optional size limit. */
 export interface ApplyPushInput {
   readonly events: readonly SqlPushWireEvent[];
   /** The authenticated caller's scope (e.g. the session's user id) — never taken from the request body. */

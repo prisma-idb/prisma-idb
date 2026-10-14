@@ -25,10 +25,12 @@
 /** Namespaces this package's locks, so they can't collide with the app's own `pg_advisory_*` keys. */
 const SCOPE_LOCK_CLASS = 0x70_69_64_62; // "pidb"
 
+/** The raw SQL builder surface used to declare the lock query’s isolation-level result. */
 interface RawSqlBuilder {
   returnsRow(spec: Record<string, string>): { build(): unknown };
 }
 
+/** The transaction query surface used to acquire a scope lock. */
 interface SqlScope {
   query(plan: never): Promise<unknown>;
 }

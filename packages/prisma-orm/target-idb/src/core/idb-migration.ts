@@ -10,10 +10,9 @@ import type { IdbDdlOp } from "./migration-factories";
  * the facade re-export from `@prisma-idb/target-idb/migration` without
  * redeclaring target-local identity.
  *
- * Unlike SQL/Mongo, IDB has no per-instance control adapter to materialize —
- * IDB DDL ops are pure data. The base constructor signature still accepts the
- * `ControlStack` so the framework's `MigrationCLI` orchestration can pass one
- * uniformly, but it is unused inside an IDB migration.
+ * IDB DDL operations are pure data. Constructing a migration requires no
+ * control stack or adapter materialization. The inherited constructor still
+ * accepts an optional control stack for framework callers.
  */
 export abstract class IdbMigration extends Migration<IdbDdlOp, "idb", "idb"> {
   readonly targetId = "idb" as const;

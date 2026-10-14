@@ -33,6 +33,7 @@ export type SyncClientEventMap = {
   outboxwrite: readonly OutboxWriteEntry[];
 };
 
+/** Configures the migrated database and the models whose writes should be tracked. */
 export interface SyncIdbClientOptions<TContract extends IdbContract> {
   /** The resolved IDB contract. */
   readonly contract: TContract;
@@ -49,6 +50,7 @@ export interface SyncIdbClientOptions<TContract extends IdbContract> {
   readonly trackedModels?: ReadonlyArray<string> | "*";
 }
 
+/** A tracked ORM and raw transaction access sharing one migrated IndexedDB database. */
 export interface SyncIdbClient<TContract extends IdbContract> {
   /** The resolved IDB contract this client was created with. */
   readonly contract: TContract;
@@ -130,6 +132,7 @@ export interface SyncIdbClient<TContract extends IdbContract> {
 
 // ── withTransaction helper ────────────────────────────────────────────────────
 
+/** Commits a raw transaction after the callback succeeds and rolls it back on failure. */
 async function runInTransaction<T>(
   runtime: { transaction: (stores: string[], mode?: IDBTransactionMode) => Promise<IdbTransactionScope> },
   storeNames: string[],

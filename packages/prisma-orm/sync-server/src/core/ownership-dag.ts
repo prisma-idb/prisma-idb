@@ -70,9 +70,11 @@ export function buildOwnershipDag(
   return { rootModel, edges, clientModels };
 }
 
+/** Rejects relation cycles before ownership paths are used to authorize requests. */
 function validateAcyclic(edges: ReadonlyMap<string, ReadonlySet<string>>): void {
   const state = new Map<string, "visiting" | "done">();
 
+  /** Visits each ownership node once and detects back edges on the active path. */
   function visit(node: string): void {
     if (state.get(node) === "done") return;
     if (state.get(node) === "visiting") {
@@ -90,6 +92,7 @@ function validateAcyclic(edges: ReadonlyMap<string, ReadonlySet<string>>): void 
   }
 }
 
+/** Ensures every client model can reach the authenticated root through owning relations. */
 function validateClientReachability(
   edges: ReadonlyMap<string, ReadonlySet<string>>,
   clientModels: ReadonlySet<string>,

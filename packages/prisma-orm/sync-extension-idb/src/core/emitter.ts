@@ -11,6 +11,7 @@ export interface Emitter<EventMap> {
   on<K extends keyof EventMap>(event: K, callback: (payload: EventMap[K]) => void): () => void;
 }
 
+/** Creates a synchronous typed emitter with independent listener sets for each event. */
 export function createEmitter<EventMap>(): Emitter<EventMap> {
   const listeners = new Map<keyof EventMap, Set<(payload: never) => void>>();
 

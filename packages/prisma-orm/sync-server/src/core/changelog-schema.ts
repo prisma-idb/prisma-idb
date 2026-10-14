@@ -1,45 +1,13 @@
 import { stripIdbExcludeAttributes } from "@prisma-idb/family-idb/contract-psl";
 
 /**
- * Synthetic `Changelog` model, appended to the raw PSL text of a server
- * contract (never the client one) so a consumer never hand-authors it —
- * the old generator required an exact 6-field model + a matching enum and
- * threw one of a dozen validation errors if either drifted.
+ * Server-only changelog schema appended to the shared PSL source.
  *
- * `id` is a UUID v7 (`uuid(7)`), matching the old generator: fixed-width
- * and time-ordered, so it sorts correctly as a plain string — the pull
- * cursor stays an opaque string on the wire and never needs numeric
- * comparison or an int range check. The `uuid(7)` default is only a
- * fallback: `@prisma-idb/sync-server-sql` supplies each id itself, under a
- * per-scope lock, so ids and commit order agree (see `changelog-id.ts` and
- * `scope-lock.ts` there). `keyPath` is `String`, not `Json`: every
- * model this package's own consumers sync uses a single-field `String`
- * key today (no compound keys), so there's nothing to store as JSON, and
- * — confirmed directly against a real Postgres run — this target's
- * `pg/jsonb@1` codec doesn't decode correctly in the currently-published
- * `@prisma/orm-postgres` version (every other codec, including the enum,
- * decodes fine). `String` sidesteps a real gap rather than working around
- * it blindly. If a future consumer needs a genuinely compound/JSON-shaped
- * key, this is the function to fork, not patch — it'd change
- * `sync-server`'s own `key: unknown` handling too, not just this schema
- * fragment.
- *
- * The enum deliberately has no `@@type(...)` codec pragma — confirmed
- * empirically (a throwaway `contract emit` against `@prisma/orm-postgres`)
- * that omitting it still resolves to `pg/text@1`, because
- * `@prisma/orm-postgres/config`'s `defineConfig` already sets
- * `enumInferenceCodecs: { text: PG_TEXT_CODEC_ID, ... }` — the *target*
- * supplies that default, not the schema text. Hardcoding `@@type("pg/text@1")`
- * here would have been redundant against Postgres and actively wrong
- * against a different SQL target (e.g. a future SQLite one, whose
- * own inference default isn't a `pg/*` codec) — this function is named
- * `*Sql`, not `*Postgres`, so it shouldn't assume one. This doesn't make it
- * Mongo-portable, to be clear — Mongo's contract-psl is a different PSL
- * dialect entirely (different scalar types, presumably no `enum`/
- * `@default(uuid(7))` the way SQL has them), so this function was
- * never going to apply there regardless; the fix here is about staying
- * agnostic *within* the SQL family (Postgres/SQLite/whatever comes next),
- * which is the scope its name actually promises.
+ * The SQL adapter supplies UUID v7 ids under a per-scope lock so cursor order
+ * agrees with commit order. UUID v7 is also the schema default.
+ * Keys use a single String column; compound keys need a separate sync design.
+ * The SQL target's enum inference selects the operation codec, so this schema
+ * does not hardcode a Postgres codec.
  */
 const CHANGELOG_MODEL_SQL_PSL = `
 enum ChangeOperation {

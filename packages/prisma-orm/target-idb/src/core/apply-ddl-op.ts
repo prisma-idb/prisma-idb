@@ -119,8 +119,7 @@ export function applyOneDdlOp(
 
 /**
  * Marker write input. The `space` field is the contract-space identifier
- * (`"app"` for the single app space; per-extension callers pass their own
- * space id when extensions land on IDB). All other fields mirror
+ * (`"app"` for the app space; extensions pass their own space id). Other fields mirror
  * {@link ContractMarkerRecord} exactly so the in-DB record has full parity
  * with the framework's canonical marker shape.
  */
@@ -144,6 +143,7 @@ export interface MarkerWriteInput {
  */
 export type IdbMarkerRecord = ContractMarkerRecord & { readonly space: string };
 
+/** Builds the complete framework marker shape with a native IndexedDB timestamp. */
 function toMarkerRecord(input: MarkerWriteInput): IdbMarkerRecord {
   return {
     space: input.space,

@@ -7,12 +7,14 @@ import {
 /** Fills the nullable fields a stored record lacks with `null`. Returns the record itself when none is missing. */
 export type AbsentAsNull = (record: Record<string, unknown>) => Record<string, unknown>;
 
+/** Normalizes one stored field or container without changing an already complete value. */
 type NormalizeValue = (value: unknown) => unknown;
 const unchanged: NormalizeValue = (value) => value;
 
 // Contracts are immutable for the lifetime of a runtime.
 const normalizers = new WeakMap<ContractWithDomain, Map<string, AbsentAsNull>>();
 
+/** Recognizes plain stored records without treating native scalar objects as field maps. */
 function isRecord(value: unknown): value is Record<string, unknown> {
   return (
     value !== null &&

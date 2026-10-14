@@ -28,6 +28,7 @@ export interface NewChangelogRow {
   readonly outboxEventId: string;
 }
 
+/** The SQL query operations needed to read a scoped changelog page or its greatest id. */
 interface ChangelogQuery {
   where(clause: Record<string, unknown>): ChangelogQuery;
   select(...fields: string[]): ChangelogQuery;

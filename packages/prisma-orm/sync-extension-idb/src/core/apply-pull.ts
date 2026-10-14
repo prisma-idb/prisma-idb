@@ -66,6 +66,7 @@ import type { LogWithRecord, ApplyPullResult, VersionMetaRecord } from "../types
  */
 type LogOutcome = "applied" | "already-applied" | "invalid" | "halt";
 
+/** Applies a changelog page in order and returns the cursor position safe to persist. */
 export async function applyPull<TContract extends IdbContract>(
   syncClient: SyncIdbClient<TContract>,
   logs: LogWithRecord[]

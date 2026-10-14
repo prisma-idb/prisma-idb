@@ -7,8 +7,8 @@ import { dataType } from "@prisma/orm-framework/components/codec";
  * named data type to be registered by some component in the assembled stack
  * (ADR 254). The IDB target registers these through `idbTargetDescriptorMeta.dataTypes`.
  *
- * No casts are declared yet: IDB migrations never rewrite stored values from
- * one type to another, so there is nothing to convert.
+ * No framework casts are declared. Authored IDB record transforms provide
+ * the supported value conversions during migrations.
  */
 export const idbString = dataType("idb/string", {});
 export const idbDouble = dataType("idb/double", {});

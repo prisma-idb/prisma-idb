@@ -21,6 +21,7 @@ export function isValidIdbKey(value: unknown): value is IDBValidKey {
   return isValidKey(value, new Set());
 }
 
+/** Checks key members while rejecting sparse arrays, repeated arrays, and cycles. */
 function isValidKey(value: unknown, seen: Set<unknown>): boolean {
   if (typeof value === "number") return !Number.isNaN(value);
   if (typeof value === "string") return true;
@@ -64,12 +65,14 @@ export function keyEquals(a: IDBValidKey, b: IDBValidKey): boolean {
   return a === b;
 }
 
+/** Views an entire buffer or the exact byte range of a typed view. */
 function binaryBytes(key: unknown): Uint8Array | null {
   if (key instanceof ArrayBuffer) return new Uint8Array(key);
   if (ArrayBuffer.isView(key)) return new Uint8Array(key.buffer, key.byteOffset, key.byteLength);
   return null;
 }
 
+/** Encodes compound-key members with tags that distinguish native key types. */
 function tokenPart(key: unknown): unknown {
   if (Array.isArray(key)) return ["a", key.map(tokenPart)];
   if (key instanceof Date) return ["d", key.getTime()];
@@ -138,6 +141,7 @@ export function compareFieldValues(a: unknown, b: unknown): number {
 
 const KEY_TYPE_RANK = { number: 0, date: 1, string: 2, binary: 3, array: 4 } as const;
 
+/** Assigns the native IndexedDB ordering rank to a valid key. */
 function keyTypeRank(key: IDBValidKey): number {
   if (typeof key === "number") return KEY_TYPE_RANK.number;
   if (key instanceof Date) return KEY_TYPE_RANK.date;
@@ -146,6 +150,7 @@ function keyTypeRank(key: IDBValidKey): number {
   return KEY_TYPE_RANK.binary;
 }
 
+/** Compares valid keys through IndexedDB, or structurally when no factory is available. */
 function compareKeys(a: IDBValidKey, b: IDBValidKey): number {
   try {
     if (typeof indexedDB !== "undefined") return indexedDB.cmp(a, b);

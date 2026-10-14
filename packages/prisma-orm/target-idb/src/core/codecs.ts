@@ -191,6 +191,7 @@ function bytesToBase64(bytes: Uint8Array): string {
   return result;
 }
 
+/** Decodes the padded base64 representation used by the bytes JSON codec. */
 function base64ToBytes(base64: string): Uint8Array {
   const stripped = base64.replace(/=+$/, "");
   const out = new Uint8Array(Math.floor((stripped.length * 3) / 4));
@@ -212,9 +213,9 @@ function base64ToBytes(base64: string): Uint8Array {
 /**
  * Pre-built CodecLookup for all IDB codecs.
  *
- * All IDB codecs are currently identity transforms, but using the real lookup
- * ensures per-field encoding works automatically when non-identity codecs are
- * added (e.g. idb/date@1 already encodes/decodes Date objects).
+ * Native storage codecs preserve structured-clone values. JSON codecs convert
+ * dates, bigint, and bytes to their wire representations. Both paths use the
+ * same descriptor registry.
  */
 export const idbCodecLookup: CodecLookup = (() => {
   const codecMap = new Map(

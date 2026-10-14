@@ -10,14 +10,7 @@ import type { IdbIndexDefinition, IdbStoreDefinition } from "./idb-contract-type
  */
 export const IDB_MARKER_STORE = "_prisma_next_marker";
 
-/**
- * Default keyPath for the marker store.
- *
- * Keyed by `space` (per-contract-space, defaulting to `"app"`) rather than
- * the legacy `"id"`/`"default"` shape so the storage layout doesn't need to
- * be migrated later if IDB grows extension support. See ADR 021 +
- * feedback issue #5.
- */
+/** Markers are keyed by contract space, including the app and each extension. */
 const MARKER_KEYPATH = "space";
 
 // ── Op kinds ──────────────────────────────────────────────────────────────────
@@ -92,6 +85,7 @@ export function isIdbDdlOp(op: MigrationPlanOperation): op is IdbDdlOp {
 
 // ── Factories ─────────────────────────────────────────────────────────────────
 
+/** Builds an additive object-store operation for a migration. */
 export function createObjectStoreOp(storeName: string, def: IdbStoreDefinition): CreateObjectStoreOp {
   return {
     kind: "createObjectStore",
@@ -103,6 +97,7 @@ export function createObjectStoreOp(storeName: string, def: IdbStoreDefinition):
   };
 }
 
+/** Builds a destructive operation that removes a store and all its records. */
 export function dropObjectStoreOp(storeName: string): DropObjectStoreOp {
   return {
     kind: "dropObjectStore",
@@ -113,6 +108,7 @@ export function dropObjectStoreOp(storeName: string): DropObjectStoreOp {
   };
 }
 
+/** Builds an additive index operation with the supplied native index options. */
 export function createIndexOp(storeName: string, indexName: string, def: IdbIndexDefinition): CreateIndexOp {
   return {
     kind: "createIndex",
@@ -125,6 +121,7 @@ export function createIndexOp(storeName: string, indexName: string, def: IdbInde
   };
 }
 
+/** Builds a destructive operation that removes an index without deleting records. */
 export function dropIndexOp(storeName: string, indexName: string): DropIndexOp {
   return {
     kind: "dropIndex",
