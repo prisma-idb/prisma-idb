@@ -144,6 +144,7 @@ export interface MarkerWriteInput {
  */
 export type IdbMarkerRecord = ContractMarkerRecord & { readonly space: string };
 
+/** Converts marker input to the stored row, filling optional fields with their empty defaults and stamping `updatedAt`. */
 function toMarkerRecord(input: MarkerWriteInput): IdbMarkerRecord {
   return {
     space: input.space,

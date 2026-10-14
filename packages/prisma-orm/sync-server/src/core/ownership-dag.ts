@@ -70,6 +70,7 @@ export function buildOwnershipDag(
   return { rootModel, edges, clientModels };
 }
 
+/** Throws when the ownership graph has a cycle, naming the model where the walk re-entered it. */
 function validateAcyclic(edges: ReadonlyMap<string, ReadonlySet<string>>): void {
   const state = new Map<string, "visiting" | "done">();
 
@@ -90,6 +91,10 @@ function validateAcyclic(edges: ReadonlyMap<string, ReadonlySet<string>>): void 
   }
 }
 
+/**
+ * Throws when a client model has no chain of owning relations to `rootModel`.
+ * Walks the edges in reverse from the root and checks that every client model is reached.
+ */
 function validateClientReachability(
   edges: ReadonlyMap<string, ReadonlySet<string>>,
   clientModels: ReadonlySet<string>,

@@ -191,6 +191,7 @@ function bytesToBase64(bytes: Uint8Array): string {
   return result;
 }
 
+/** Decodes base64 text, with or without `=` padding. Characters outside the base64 alphabet decode as zero bits. */
 function base64ToBytes(base64: string): Uint8Array {
   const stripped = base64.replace(/=+$/, "");
   const out = new Uint8Array(Math.floor((stripped.length * 3) / 4));

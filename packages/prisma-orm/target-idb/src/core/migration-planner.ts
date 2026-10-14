@@ -115,6 +115,7 @@ export function renderMigrationTs(input: {
   ].join("\n");
 }
 
+/** Returns the sorted names of the migration factories that `ops` call, for the generated file's import line. */
 function collectFactoryImports(ops: readonly IdbDdlOp[]): string[] {
   const names = new Set<string>();
   for (const op of ops) {
@@ -170,6 +171,10 @@ function renderIndexDefLiteral(def: IdbIndexDefinition): string {
   return `{ ${optsParts.join(", ")} }`;
 }
 
+/**
+ * Renders `op` as the factory call that recreates it in a scaffolded migration file.
+ * Throws for operations the scaffold cannot express, such as renames and custom transforms.
+ */
 function renderOpCall(op: IdbDdlOp): string {
   switch (op.kind) {
     case "transformRecords": {

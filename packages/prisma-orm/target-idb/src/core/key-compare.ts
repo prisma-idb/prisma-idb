@@ -21,6 +21,11 @@ export function isValidIdbKey(value: unknown): value is IDBValidKey {
   return isValidKey(value, new Set());
 }
 
+/**
+ * Whether `value` is a valid IndexedDB key: a non-NaN number, a string, a valid
+ * `Date`, binary data, or an array of valid keys. Sparse arrays are invalid, and `seen` makes an
+ * array that contains itself, or repeats an array, invalid too.
+ */
 function isValidKey(value: unknown, seen: Set<unknown>): boolean {
   if (typeof value === "number") return !Number.isNaN(value);
   if (typeof value === "string") return true;
@@ -146,6 +151,10 @@ function keyTypeRank(key: IDBValidKey): number {
   return KEY_TYPE_RANK.binary;
 }
 
+/**
+ * Orders two keys like `indexedDB.cmp`: by type rank, then by value, comparing arrays element by element.
+ * Falls back to a structural comparison when `indexedDB` is unavailable or `cmp` throws.
+ */
 function compareKeys(a: IDBValidKey, b: IDBValidKey): number {
   try {
     if (typeof indexedDB !== "undefined") return indexedDB.cmp(a, b);
