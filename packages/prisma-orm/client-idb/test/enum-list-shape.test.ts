@@ -26,6 +26,7 @@ const SCHEMA = `
   }
 `;
 
+/** Parses a PSL schema and interprets it into an IDB contract, throwing the diagnostics when interpretation fails. */
 function contractFromPsl(schema: string): IdbContract {
   const { document, sources } = parse(schema, "schema.prisma");
   const { symbolTable } = buildSymbolTable({ documents: [document], sources, pslBlockDescriptors: {} });
