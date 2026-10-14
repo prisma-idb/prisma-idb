@@ -97,6 +97,7 @@ class IdbTransactionScopeImpl implements IdbTransactionScope {
       try {
         store = this.#tx.objectStore(plan.storeName);
       } catch (err) {
+        this.rollback();
         if (isTransactionInactiveError(err)) {
           reject(transactionInactiveError(plan.kind, plan.storeName, err));
           return;
