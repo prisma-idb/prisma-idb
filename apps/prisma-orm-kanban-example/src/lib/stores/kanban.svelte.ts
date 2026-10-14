@@ -78,7 +78,7 @@ export class KanbanStore {
   }
 
   /** Count the entire outbox so the pending badge stays accurate beyond the worker's batch size. */
-  private async refreshPendingCount(db?: Awaited<ReturnType<typeof getDb>>) {
+  async refreshPendingCount(db?: Awaited<ReturnType<typeof getDb>>) {
     const client = db ?? (await getDb());
     const pending = await getNextBatch(client.rawClient, { limit: Number.POSITIVE_INFINITY });
     this.pendingSyncCount = pending.length;

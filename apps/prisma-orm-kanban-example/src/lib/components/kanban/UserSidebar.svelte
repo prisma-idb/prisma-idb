@@ -23,8 +23,10 @@
       // it's valid. resetDb() wipes local IDB unconditionally, so anything
       // still pending after this is unrecoverable; abort logout and surface
       // it instead of silently discarding local-only work.
+      await kanban.refreshPendingCount();
       if (kanban.pendingSyncCount > 0) {
         await kanban.syncNow();
+        await kanban.refreshPendingCount();
         if (kanban.pendingSyncCount > 0) {
           throw new Error("Some changes haven't synced yet. Check your connection and try again.");
         }
