@@ -39,6 +39,7 @@ export { IdbAdapter } from "../core/idb-adapter";
 
 const idbRuntimeAdapterDescriptor: RuntimeAdapterDescriptor<"idb", "idb", IdbRuntimeAdapterInstance> = {
   ...idbAdapterDescriptorMeta,
+  /** Build an adapter with the codec registry shared by the IDB runtime stack. */
   create(_stack: ExecutionStack<"idb", "idb">): IdbRuntimeAdapterInstance {
     // Construct the adapter with the real IDB codec lookup so per-field
     // encoding works when non-identity codecs are added. The current set

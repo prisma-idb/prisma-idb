@@ -36,7 +36,7 @@ Upstream draws the same line. `prisma migrate`, which applies planned migration 
 
 - Shipping a destructive migration is a normal release. The review is the developer's, at plan time.
 - A migration that drops a store deletes that store's records on every user's device the next time they open the app. The warning at plan time is the only prompt.
-- Data that exists only on the device, such as unsynced offline work, is lost if its store is dropped. Apps that need to keep it must move it before dropping the store. Until record transforms exist, that means keeping the old store for a release.
+- Data that exists only on the device, such as unsynced offline work, is lost if its store is dropped. Apps that need to keep it must move it before dropping the store.
 
 ## Related
 

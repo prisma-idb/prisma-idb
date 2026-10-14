@@ -1,5 +1,5 @@
 /**
- * Phase 9.1/9.2 — compound primary keys and compound secondary indexes.
+ * compound primary keys and compound secondary indexes.
  *
  * Covers, against real fake-indexeddb execution (not just IR/type assertions):
  *   - CRUD (create/findUnique/delete/update/upsert/all/where) on a

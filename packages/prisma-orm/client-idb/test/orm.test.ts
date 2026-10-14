@@ -495,7 +495,7 @@ describe("IdbStoreAccessor — include (relations)", () => {
   });
 });
 
-// ── Phase 6.5 / 6.6 / 6.7 fixtures ─────────────────────────────────────────────
+// ── Include, aggregate, and projection fixtures ─────────────────────────────────────────────
 
 // Posts seeded with `published` + `views` so refinement / aggregate tests have
 // something to filter, order, and reduce over. Field values matter at runtime;
@@ -530,7 +530,7 @@ function usersWithPostsContract() {
   );
 }
 
-describe("IdbStoreAccessor — include refinement (Phase 6.5)", () => {
+describe("IdbStoreAccessor — include refinement", () => {
   let driver: IdbRuntimeDriverInstance;
   let executor: TestExecutor;
 
@@ -624,7 +624,7 @@ describe("IdbStoreAccessor — include refinement (Phase 6.5)", () => {
   });
 });
 
-describe("IdbStoreAccessor — aggregate / groupBy (Phase 6.6)", () => {
+describe("IdbStoreAccessor — aggregate / groupBy", () => {
   let driver: IdbRuntimeDriverInstance;
   let executor: TestExecutor;
 
@@ -772,7 +772,7 @@ describe("IdbStoreAccessor — aggregate / groupBy (Phase 6.6)", () => {
   });
 });
 
-describe("IdbStoreAccessor — select projection (Phase 6.7)", () => {
+describe("IdbStoreAccessor — select projection", () => {
   let driver: IdbRuntimeDriverInstance;
   let executor: TestExecutor;
 

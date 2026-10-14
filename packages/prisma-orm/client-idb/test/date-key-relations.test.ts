@@ -2,7 +2,7 @@
  * Relations joined on a `DateTime` key.
  *
  * `Date` values read back from IndexedDB are fresh objects, so JS `===` never
- * matches two equal dates. Since Phase 9.4 an FK to a `DateTime`-keyed parent
+ * matches two equal dates. An FK to a `DateTime`-keyed parent
  * passes validation (key equality), so every path that later joins on that FK
  * — referential actions and `include()` — must compare the same way, or the
  * child is silently orphaned / never loaded.

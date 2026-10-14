@@ -12,6 +12,7 @@ import type { ContractField } from "@prisma/orm-framework/contract/types";
 import { domainModelsAtDefaultNamespace } from "@prisma/orm-framework/contract/types";
 import type { IdbContract } from "./types";
 
+/** The allowed values and nullability of one enum field. */
 type EnumFieldRule = {
   readonly enumName: string;
   readonly values: ReadonlySet<unknown>;
@@ -19,10 +20,12 @@ type EnumFieldRule = {
   readonly many: boolean;
 };
 
+/** Enum validation rules keyed by model field name. */
 type ModelEnumRules = ReadonlyMap<string, EnumFieldRule>;
 
 const rulesByContract = new WeakMap<IdbContract, Map<string, ModelEnumRules>>();
 
+/** Resolve an enum reference against its declared namespace before validating writes. */
 function resolveEnumRule(contract: IdbContract, field: ContractField): EnumFieldRule | undefined {
   const ref = field.valueSet;
   if (ref === undefined || ref.plane !== "domain" || ref.entityKind !== "enum") return undefined;
@@ -38,6 +41,7 @@ function resolveEnumRule(contract: IdbContract, field: ContractField): EnumField
   };
 }
 
+/** Cache enum rules by contract identity and model to avoid rebuilding them for each write. */
 function getModelEnumRules(contract: IdbContract, modelName: string): ModelEnumRules {
   let byModel = rulesByContract.get(contract);
   if (byModel === undefined) {
@@ -61,6 +65,7 @@ function describe(value: unknown): string {
   return typeof value === "string" ? JSON.stringify(value) : `${String(value)} (${typeof value})`;
 }
 
+/** Describe an invalid enum value together with the declared alternatives. */
 function invalidValueError(modelName: string, fieldName: string, rule: EnumFieldRule, value: unknown): Error {
   const expected = [...rule.values].map((v) => JSON.stringify(v)).join(", ");
   return new Error(

@@ -28,7 +28,6 @@ export function evaluateFilter(expr: IdbFilterExpr, row: Record<string, unknown>
       return true;
     }
     case "or": {
-      if (expr.exprs.length === 0) return false;
       for (const e of expr.exprs) {
         if (evaluateFilter(e, row)) return true;
       }
@@ -44,6 +43,7 @@ export function evaluateFilter(expr: IdbFilterExpr, row: Record<string, unknown>
   }
 }
 
+/** Evaluate one field predicate with the same comparisons used by index-backed queries. */
 function evalFieldOp(field: string, op: IdbFilterOp, value: unknown, row: Record<string, unknown>): boolean {
   const cell = row[field];
   switch (op) {

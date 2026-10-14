@@ -21,7 +21,7 @@ function defaultOutputFromContractPath(contractPath: string): string {
 /**
  * Wraps an in-memory contract object for use in `prisma.config.ts`.
  *
- * Use this with the no-emit (TypeScript-first) workflow per ADR 006.
+ * Use this when the contract is authored as a TypeScript value.
  *
  * @example
  * ```ts

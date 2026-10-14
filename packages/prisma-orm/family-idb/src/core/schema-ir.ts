@@ -1,6 +1,6 @@
 /**
  * IndexedDB schema IR — the in-memory representation of the object store
- * structure used by introspect(), schemaVerify(), and the manifest format.
+ * structure used by offline replay and schema verification.
  *
  * Mirrors the contract types in `@prisma-idb/target-idb/pack` but
  * is independent of any versioned contract hash so it can be used as a
@@ -16,18 +16,21 @@
  */
 export type IdbKeyPathIR = string | readonly string[];
 
+/** The key path and flags read from an IndexedDB index. */
 export type IdbIndexIR = {
   readonly keyPath: IdbKeyPathIR;
   readonly unique: boolean;
   readonly multiEntry?: boolean;
 };
 
+/** The primary-key layout and indexes read from an object store. */
 export type IdbStoreIR = {
   readonly keyPath: IdbKeyPathIR;
   readonly autoIncrement?: boolean;
   readonly indexes?: Record<string, IdbIndexIR>;
 };
 
+/** Object-store metadata used for offline schema verification. */
 export type IdbSchemaIR = {
   readonly stores: Record<string, IdbStoreIR>;
 };

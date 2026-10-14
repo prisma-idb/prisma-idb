@@ -103,9 +103,8 @@ function validateSupportedFieldTypes(contract: Contract): void {
  * @returns The validated, fully-typed {@link IdbContract}.
  */
 export function validateContract(value: unknown): IdbContract {
-  // In v0.11.0 the contract arrives already structurally parsed (it's a
-  // Contract object, not raw JSON). Domain validation checks roots, models,
-  // valueObjects, and relations.
+  // The framework supplies a structurally parsed contract. Domain validation
+  // checks roots, models, value objects, and relations.
   const contract = value as Contract;
   validateContractDomain(contract);
   validateSupportedFieldTypes(contract);

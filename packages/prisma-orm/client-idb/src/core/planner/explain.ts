@@ -14,6 +14,7 @@ export function explain(plan: LogicalPlan): string {
   });
 }
 
+/** Represent non-JSON key values explicitly so plan explanations preserve their identity. */
 function describeValue(value: unknown): unknown {
   if (typeof value === "number" && !Number.isFinite(value)) return { number: String(value) };
   if (value instanceof Date) return { date: value.toISOString() };

@@ -17,6 +17,7 @@ import type { IdbAtomicPlan, IdbBatchPlan, IdbPlanBody } from "../plan-body";
 import { IdbExecuteError, isTransactionInactiveError, transactionInactiveError } from "./error";
 import { executeOpInTx, planTxMode } from "./ops";
 
+/** A record returned by an IDB operation. */
 type Row = Record<string, unknown>;
 
 // ── Public API ───────────────────────────────────────────────────────────────
@@ -35,6 +36,7 @@ export function executeIdbPlan(db: IDBDatabase, plan: IdbPlanBody): Promise<Row[
 
 // ── Atomic plans ─────────────────────────────────────────────────────────────
 
+/** Resolve a single-store operation only after its transaction commits. */
 function executeAtomicPlan(db: IDBDatabase, plan: IdbAtomicPlan): Promise<Row[]> {
   return new Promise<Row[]>((resolve, reject) => {
     let tx: IDBTransaction;
@@ -94,6 +96,7 @@ function executeAtomicPlan(db: IDBDatabase, plan: IdbAtomicPlan): Promise<Row[]>
 
 // ── Batch plans ──────────────────────────────────────────────────────────────
 
+/** Run all operations in one transaction and deliver rows after commit. */
 function executeBatchPlan(db: IDBDatabase, plan: IdbBatchPlan): Promise<Row[]> {
   return new Promise<Row[]>((resolve, reject) => {
     const mode: IDBTransactionMode = plan.ops.some((op) => planTxMode(op) === "readwrite") ? "readwrite" : "readonly";

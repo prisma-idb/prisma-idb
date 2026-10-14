@@ -1,5 +1,5 @@
 /**
- * Phase 6.8 — FK referential action enforcement on delete.
+ * FK referential action enforcement on delete.
  *
  * Covers:
  *   restrict (default) — throws when children exist; succeeds when none

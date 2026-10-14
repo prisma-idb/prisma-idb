@@ -20,6 +20,7 @@ import type { IdbAtomicPlan, IdbTransactionScope } from "@prisma-idb/driver-idb/
 import type { IdbQueryExecutorWithTransaction } from "./mutation-scope";
 import { executeMutationPlan } from "./mutation-executor";
 
+/** A record returned by an IDB operation. */
 type Row = Record<string, unknown>;
 
 /** `open` until an operation fails (`aborted`) or finds the transaction already finished (`auto-committed`). */
@@ -29,6 +30,7 @@ function isTransactionInactive(error: unknown): boolean {
   return error instanceof IdbExecuteError && error.code === "TRANSACTION_INACTIVE";
 }
 
+/** Bind ORM operations to one scope and record aborts or early commits. */
 export class OpenTransaction implements IdbQueryExecutorWithTransaction, IdbTransactionScope {
   readonly #scope: IdbTransactionScope;
   readonly #storeNames: ReadonlySet<string>;
@@ -73,6 +75,7 @@ export class OpenTransaction implements IdbQueryExecutorWithTransaction, IdbTran
     }
   }
 
+  /** Expose rows from the existing scope through the ORM query-result interface. */
   query<R>(plan: IdbQueryPlan<R>): AsyncIterableResult<R> {
     const run = executeMutationPlan.bind(null, this);
     return new AsyncIterableResult(
@@ -82,6 +85,7 @@ export class OpenTransaction implements IdbQueryExecutorWithTransaction, IdbTran
     );
   }
 
+  /** Reuse the outer scope after verifying that the requested stores were declared. */
   async transaction(storeNames: string[]): Promise<IdbTransactionScope> {
     this.#assertNotEnded();
     try {
@@ -93,6 +97,7 @@ export class OpenTransaction implements IdbQueryExecutorWithTransaction, IdbTran
     return this;
   }
 
+  /** Run one operation in the scope and abort the transaction when it fails. */
   async execute(plan: IdbAtomicPlan): Promise<Row[]> {
     this.#assertNotEnded();
     try {
@@ -153,6 +158,7 @@ export class OpenTransaction implements IdbQueryExecutorWithTransaction, IdbTran
       });
   }
 
+  /** Record synchronous accessor failures before propagating them to the callback. */
   #recordThrown<R>(call: () => R): R {
     try {
       return call();
@@ -168,6 +174,7 @@ export class OpenTransaction implements IdbQueryExecutorWithTransaction, IdbTran
     }
   }
 
+  /** Reject undeclared stores before an operation can escape the transaction scope. */
   #assertStoresListed(storeNames: readonly string[]): void {
     const missing = storeNames.filter((name) => !this.#storeNames.has(name));
     if (missing.length > 0) {

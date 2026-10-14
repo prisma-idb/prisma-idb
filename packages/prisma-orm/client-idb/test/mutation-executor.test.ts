@@ -200,7 +200,7 @@ describe("executeNestedCreateMutation — 1:N child create", () => {
     expect(posts[0]?.["authorId"]).toBe("u1");
   });
 
-  // PLAN Issue #22: a relation callback nested inside an already-nested record
+  // A relation callback nested inside an already-nested record
   // is unsupported. The guard must throw a descriptive error rather than letting
   // IDB's structured-clone surface an opaque DataCloneError.
   it("rejects recursive nesting with a descriptive error (not DataCloneError)", async () => {
@@ -390,7 +390,7 @@ describe("executeNestedUpdateMutation", () => {
   });
 });
 
-// ── child-owned connect matches ALL rows (PLAN Issue #24) ────────────────────
+// ── child-owned connect matches ALL rows ────────────────────
 
 describe("executeNestedUpdateMutation — 1:N connect matches all", () => {
   let db: IDBDatabase;
@@ -428,7 +428,7 @@ describe("executeNestedUpdateMutation — 1:N connect matches all", () => {
   });
 });
 
-// ── upsert is atomic when the executor supports transactions (Issue #24) ─────
+// ── upsert is atomic when the executor supports transactions ─────
 
 describe("upsert — atomic path (transaction-capable executor)", () => {
   let db: IDBDatabase;

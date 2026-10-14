@@ -398,6 +398,7 @@ export class IdbStoreAccessorImpl<
 
   // ── Builder methods ───────────────────────────────────────────────────────
 
+  /** Add a callback or shorthand predicate to a new accessor without mutating this one. */
   where(
     filter: WhereFilter<TContract, ModelName> | WhereCallback<TContract, ModelName>
   ): IdbStoreAccessor<TContract, ModelName, TIncludes, TSelected> {
@@ -437,6 +438,7 @@ export class IdbStoreAccessorImpl<
     relation: K,
     refineFn: IncludeRefineFn<TContract, ModelName, K, IdbIncludeScalar>
   ): IdbStoreAccessor<TContract, ModelName, TIncludes & Record<K, "scalar">, TSelected>;
+  /** Add a collection or count refinement while preserving this accessor state. */
   include<K extends ReferenceRelKeys<TContract, ModelName>>(
     relation: K,
     refineFn?: IncludeRefineFn<
@@ -462,6 +464,7 @@ export class IdbStoreAccessorImpl<
     ) as unknown as IdbStoreAccessor<TContract, ModelName, IncludeSpec<TContract, ModelName>, TSelected>;
   }
 
+  /** Narrow scalar output fields while retaining included relations. */
   select<Fields extends FieldTuple<TContract, ModelName>>(
     ...fields: Fields
   ): IdbStoreAccessor<TContract, ModelName, TIncludes, Fields[number]> {
@@ -477,6 +480,7 @@ export class IdbStoreAccessorImpl<
 
   // ── Execution methods ─────────────────────────────────────────────────────
 
+  /** Read matching rows, load includes, and project fields before yielding. */
   all(): AsyncIterableResult<SelectedRow<TContract, ModelName, TIncludes, TSelected>> {
     const groupingKey = this.#newGroupingKey();
     // Capture the private fields needed inside the generator. Private names
@@ -509,6 +513,7 @@ export class IdbStoreAccessorImpl<
     return this.take(1).all().first();
   }
 
+  /** Reduce all filtered rows; query pagination does not constrain aggregates. */
   async aggregate<Spec extends IdbAggregateSpec>(
     fn: (agg: IdbAggregateBuilder<TContract, ModelName>) => Spec
   ): Promise<IdbAggregateResult<Spec>> {
@@ -526,6 +531,7 @@ export class IdbStoreAccessorImpl<
     return computeAggregateSpec(spec, rows) as IdbAggregateResult<Spec>;
   }
 
+  /** Carry this filter into a grouped accessor whose materialization is owned here. */
   groupBy<Fields extends FieldTuple<TContract, ModelName>>(
     ...fields: Fields
   ): IdbGroupedAccessor<TContract, ModelName, Fields> {
@@ -540,6 +546,7 @@ export class IdbStoreAccessorImpl<
     });
   }
 
+  /** Complete and validate one record, using a transaction when relations need checks. */
   async create(data: MutationCreateInput<TContract, ModelName>): Promise<DefaultModelRow<TContract, ModelName>> {
     const record = data as Record<string, unknown>;
 
@@ -583,6 +590,7 @@ export class IdbStoreAccessorImpl<
     return withDefaults as DefaultModelRow<TContract, ModelName>;
   }
 
+  /** Resolve the ordered primary-key fields and return their first match. */
   async findUnique(key: KeyType<TContract, ModelName>): Promise<DefaultModelRow<TContract, ModelName> | null> {
     const groupingKey = this.#newGroupingKey();
     const meta = this.#planMeta(groupingKey);
@@ -597,6 +605,7 @@ export class IdbStoreAccessorImpl<
     return (lowered.finish(rows)[0] as DefaultModelRow<TContract, ModelName> | undefined) ?? null;
   }
 
+  /** Delete a keyed row with child actions when its relations require them. */
   async delete(key: KeyType<TContract, ModelName>): Promise<void> {
     if (hasEnforceableChildRelations(this.#contract, this.#modelName)) {
       await executeDeleteWithReferentialActions({
@@ -620,6 +629,7 @@ export class IdbStoreAccessorImpl<
     await this.#executor.query(plan).toArray();
   }
 
+  /** Update the first matching row with scalar or nested relation validation. */
   async update(
     patch: MutationUpdateInput<TContract, ModelName>
   ): Promise<DefaultModelRow<TContract, ModelName> | null> {
@@ -699,6 +709,7 @@ export class IdbStoreAccessorImpl<
     return (await this.updateAll(patch).toArray()).length;
   }
 
+  /** Select and apply the create or update arm inside one transaction. */
   async upsert(args: {
     create: CreateInput<TContract, ModelName>;
     update: PatchInput<TContract, ModelName>;
@@ -774,6 +785,7 @@ export class IdbStoreAccessorImpl<
     });
   }
 
+  /** Complete a batch with shared query defaults and insert it atomically. */
   createAll(data: CreateInput<TContract, ModelName>[]): AsyncIterableResult<DefaultModelRow<TContract, ModelName>> {
     // One shared cache for the whole batch — every row in a single createAll()
     // call gets the same generated `temporal.updatedAt()` timestamp, matching
@@ -861,6 +873,7 @@ export class IdbStoreAccessorImpl<
     return (await this.deleteAll().toArray()).length;
   }
 
+  /** Return an include-count descriptor during refinement, or execute a top-level count. */
   count(): Promise<number> {
     if (this.#includeRefinementMode) {
       // Inside an include() refinement, count() is a scalar-include marker that
@@ -874,6 +887,7 @@ export class IdbStoreAccessorImpl<
 
   // ── Private helpers ───────────────────────────────────────────────────────
 
+  /** Count this filtered page through the planner, without applying select or include. */
   async #countTerminal(): Promise<number> {
     const combined = this.#combinedFilterExpr();
     const { skip, take } = this.#state;
@@ -907,7 +921,6 @@ export class IdbStoreAccessorImpl<
     }
 
     const rel = getRelation(this.#contract, this.#modelName, relation);
-    // v0.12.0: `relation.to` is a CrossReference `{ namespace, model }`.
     const relatedModelName = rel?.to.model ?? relation;
     const child = new IdbStoreAccessorImpl(
       this.#contract,
@@ -955,6 +968,7 @@ export class IdbStoreAccessorImpl<
     return lowerRows(catalog, planQuery(catalog, request), meta, request);
   }
 
+  /** Pair the query intent with its planned driver operation and result shaping. */
   #buildScanPlan(groupingKey: string): { plan: IdbQueryPlan<Record<string, unknown>>; finish: LoweredRows["finish"] } {
     const combined = this.#combinedFilterExpr();
     const meta = this.#planMeta(groupingKey);
@@ -980,6 +994,7 @@ export class IdbStoreAccessorImpl<
     return combineFilterExprs(this.#state.filters);
   }
 
+  /** Batch-load each requested relation using the unprojected parent rows. */
   async #applyIncludes(rows: Record<string, unknown>[], groupingKey: string): Promise<Record<string, unknown>[]> {
     const relNames = Object.keys(this.#state.includes);
     if (relNames.length === 0) return rows;
@@ -1009,6 +1024,7 @@ export class IdbStoreAccessorImpl<
     });
   }
 
+  /** Attach the contract hash and grouping key shared by this operation. */
   #planMeta(groupingKey: string): PlanMeta {
     return {
       target: "idb",
@@ -1018,6 +1034,7 @@ export class IdbStoreAccessorImpl<
     };
   }
 
+  /** Preserve shared runtime wiring while replacing only the accessor state. */
   #clone(overrides: Partial<IdbAccessorState>): IdbStoreAccessorImpl<TContract, ModelName, TIncludes, TSelected> {
     return new IdbStoreAccessorImpl(
       this.#contract,

@@ -20,8 +20,10 @@
  * These numbers are deterministic, so tests can assert them exactly.
  */
 
+/** An IndexedDB read operation whose requests and results the probe records. */
 export type ProbeOp = "openCursor" | "openKeyCursor" | "get" | "getAll" | "getKey" | "getAllKeys" | "count";
 
+/** One read request with its source and range information. */
 export interface ProbeRequest {
   readonly op: ProbeOp;
   readonly store: string;
@@ -29,18 +31,21 @@ export interface ProbeRequest {
   readonly ranged: boolean;
 }
 
+/** The observed read costs at one point in a test. */
 export interface ProbeSnapshot {
   readonly valuesRead: number;
   readonly keysRead: number;
   readonly requests: readonly ProbeRequest[];
 }
 
+/** Controls for observing and restoring the test-only read instrumentation. */
 export interface IdbProbe {
   snapshot(): ProbeSnapshot;
   reset(): void;
   uninstall(): void;
 }
 
+/** A native object-store or index read surface. */
 type Source = IDBObjectStore | IDBIndex;
 
 const PROBED_OPS: readonly ProbeOp[] = [
@@ -53,6 +58,7 @@ const PROBED_OPS: readonly ProbeOp[] = [
   "count",
 ];
 
+/** Identify the source so assertions distinguish store and index reads. */
 function describeSource(source: Source): { store: string; index: string | undefined } {
   return "objectStore" in source
     ? { store: source.objectStore.name, index: source.name }

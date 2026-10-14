@@ -11,6 +11,7 @@ import { runOrmTransaction } from "./orm-transaction";
 import type { IdbOrmTransaction } from "./orm-transaction";
 import type { IdbContract } from "./types";
 
+/** The contract, database name, and runtime hooks used to create a client. */
 export interface IdbClientOptions<TContract extends IdbContract> {
   readonly contract: TContract;
   readonly dbName: string;
@@ -20,6 +21,7 @@ export interface IdbClientOptions<TContract extends IdbContract> {
   readonly middleware?: readonly IdbMiddleware[];
 }
 
+/** A typed ORM and the connection and transaction operations that own its lifetime. */
 export interface IdbClient<TContract extends IdbContract> {
   readonly orm: IdbOrmClient<TContract>;
   /**

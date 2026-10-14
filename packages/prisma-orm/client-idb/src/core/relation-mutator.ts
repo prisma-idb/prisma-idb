@@ -24,11 +24,13 @@ import type {
   RelationMutationDisconnect,
 } from "./types";
 
+/** Build the relation descriptors consumed by the nested-write executor. */
 export function createRelationMutator<TContract extends IdbContract, ModelName extends string>(): IdbRelationMutator<
   TContract,
   ModelName
 > {
   return {
+    /** Normalize a single nested record or a list into one create descriptor. */
     create(
       data: CreateInput<TContract, ModelName> | readonly CreateInput<TContract, ModelName>[]
     ): RelationMutationCreate<TContract, ModelName> {

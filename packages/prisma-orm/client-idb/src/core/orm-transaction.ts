@@ -100,6 +100,7 @@ async function failCommittedEarly(scope: IdbTransactionScope, cause: unknown): P
   throw new IdbTransactionCommittedEarlyError(cause);
 }
 
+/** Collect stores used by relation reads, child actions, and cascading updates. */
 function storeNamesNeededBy(contract: IdbContract, modelName: string): string[] {
   return [
     ...collectRelatedStoreNames(contract, modelName),
@@ -108,6 +109,7 @@ function storeNamesNeededBy(contract: IdbContract, modelName: string): string[] 
   ];
 }
 
+/** Expose only the requested roots and abort the scope on any accessor failure. */
 function pickRoots<TContract extends IdbContract, TRootKey extends string & keyof TContract["roots"]>(
   orm: IdbOrmClient<TContract>,
   rootKeys: readonly TRootKey[],

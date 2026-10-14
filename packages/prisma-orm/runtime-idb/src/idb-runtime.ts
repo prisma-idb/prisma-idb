@@ -49,8 +49,7 @@ export interface IdbRuntimeOptions {
  * `AsyncIterableResult<Row>` — an async iterable that also fulfils as a
  * `Row[]` when awaited. `execute()` runs the same plan for its side effects
  * and resolves a {@link RuntimeStatementStats} (`{ affectedRows }`) instead
- * of rows — mirrors the upstream `RuntimeCore` query()/execute() split
- * (rc.4).
+ * of rows, matching the upstream `RuntimeCore` query()/execute() split.
  */
 export interface IdbRuntime {
   query<Row>(plan: IdbQueryPlan & { readonly _row?: Row }, options?: RuntimeExecuteOptions): AsyncIterableResult<Row>;
@@ -59,9 +58,9 @@ export interface IdbRuntime {
    * Open a multi-store IDB transaction and return an `IdbTransactionScope`.
    *
    * The scope's `execute(plan)` runs `IdbAtomicPlan`s directly inside the
-   * transaction — middleware is bypassed (Issue #6 fix: cache middleware
-   * never fires for reads inside a transaction). `commit()` resolves on
-   * `tx.oncomplete`; `rollback()` calls `tx.abort()`.
+   * transaction. Middleware is bypassed, so transaction reads reach the driver
+   * without a cached result. `commit()` resolves on `tx.oncomplete`;
+   * `rollback()` calls `tx.abort()`.
    *
    * Used by `withMutationScope()` in `client-idb`.
    */
@@ -92,12 +91,11 @@ export interface IdbRuntime {
  * `contentHash` mirrors the vendor SQL/Mongo runtimes: it
  * canonicalizes the execution plan's structural identity fields
  * and SHA-512 hashes them via WebCrypto. The resulting digest is
- * a bounded, opaque cache key suitable for middleware like
- * a cross-family cache middleware.
+ * a bounded, opaque identity for the serializable execution fields.
  *
- * Non-serializable fields (in-memory filter functions, comparators,
- * `IDBKeyRange` objects) are reduced to their deterministic shape
- * so that two semantically identical plans produce the same hash.
+ * Key ranges are hashed by their bounds. Filter and comparator functions
+ * are omitted, so the hash
+ * does not distinguish different predicates or in-memory sort orders.
  */
 function buildMiddlewareContext(contract: Record<string, unknown>): RuntimeMiddlewareContext {
   return {

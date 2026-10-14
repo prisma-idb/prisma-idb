@@ -17,7 +17,7 @@
  * - Child-owned `connect` → `scope.execute({ kind: "scan-write", write: "put-merged", ... })`.
  *   IDB has no UPDATE SET WHERE, so we use the scan-write plan with a filter closure.
  * - `connect()` for parent-owned (N:1) relations throws if the referenced row is not
- *   found — this is Phase 6.4's implicit FK validation for the connect case.
+ *   found — this checks that the connected parent exists.
  * - Recursive nesting (nested writes inside nested writes) is not supported and throws.
  *
  * All multi-store writes are wrapped in a single `withMutationScope` call that opens
@@ -64,6 +64,7 @@ import type { IdbTransactionScope } from "@prisma-idb/driver-idb/runtime";
 
 // ── Internal types ─────────────────────────────────────────────────────────────
 
+/** The store and join fields needed to execute a reference relation. */
 interface RelationDefinition {
   readonly relationName: string;
   readonly relatedModelName: string;
@@ -73,11 +74,13 @@ interface RelationDefinition {
   readonly targetFields: readonly string[];
 }
 
+/** A relation paired with the descriptor returned by its mutation callback. */
 interface ParsedRelationMutation {
   readonly relation: RelationDefinition;
   readonly mutation: IdbRelationMutation<IdbContract, string>;
 }
 
+/** Scalar write data separated from relation mutation descriptors. */
 interface ParsedMutationInput {
   readonly scalarData: Record<string, unknown>;
   readonly relationMutations: readonly ParsedRelationMutation[];
@@ -99,6 +102,7 @@ export function makePlanMeta(contract: IdbContract): PlanMeta {
 
 const relationDefsCache = new WeakMap<object, Map<string, RelationDefinition[]>>();
 
+/** Cache reference-relation metadata by contract identity and model. */
 function getRelationDefinitions(contract: IdbContract, modelName: string): RelationDefinition[] {
   let perContract = relationDefsCache.get(contract);
   if (!perContract) {
@@ -174,6 +178,7 @@ export function requireTransactionExecutor(executor: IdbQueryExecutor): IdbQuery
 
 // ── Entry points ──────────────────────────────────────────────────────────────
 
+/** Create a parent and its nested related rows in one transaction. */
 export async function executeNestedCreateMutation(options: {
   executor: IdbQueryExecutorWithTransaction;
   contract: IdbContract;
@@ -189,6 +194,7 @@ export async function executeNestedCreateMutation(options: {
   );
 }
 
+/** Update the first filtered parent and its nested relations in one transaction. */
 export async function executeNestedUpdateMutation(options: {
   executor: IdbQueryExecutorWithTransaction;
   contract: IdbContract;
@@ -257,6 +263,7 @@ function fkParentStoreNames(contract: IdbContract, modelName: string): string[] 
 
 // ── Graph operations ──────────────────────────────────────────────────────────
 
+/** Resolve parent-owned references before inserting the parent, then write its children. */
 async function createGraph(
   scope: IdbTransactionScope,
   contract: IdbContract,
@@ -288,6 +295,7 @@ async function createGraph(
   return parentRow;
 }
 
+/** Read the parent before resolving relation mutations and validating its scalar patch. */
 async function updateFirstGraph(
   scope: IdbTransactionScope,
   contract: IdbContract,
@@ -334,6 +342,7 @@ async function updateFirstGraph(
 
 // ── Input parsing ─────────────────────────────────────────────────────────────
 
+/** Separate scalar values from validated relation callback results. */
 function parseMutationInput(
   contract: IdbContract,
   modelName: string,
@@ -368,6 +377,7 @@ function parseMutationInput(
 
 // ── Ownership partitioning ────────────────────────────────────────────────────
 
+/** Separate relations whose foreign keys belong to the parent from those owned by children. */
 function partitionByOwnership(mutations: readonly ParsedRelationMutation[]): {
   parentOwned: ParsedRelationMutation[];
   childOwned: ParsedRelationMutation[];
@@ -391,6 +401,7 @@ function partitionByOwnership(mutations: readonly ParsedRelationMutation[]): {
 
 // ── Parent-owned (N:1) mutations ──────────────────────────────────────────────
 
+/** Resolve a to-one mutation into scalar foreign-key values on the parent. */
 async function applyParentOwnedMutation(
   scope: IdbTransactionScope,
   contract: IdbContract,
@@ -411,7 +422,7 @@ async function applyParentOwnedMutation(
     if (!row) {
       throw new Error(`create() nested mutation for relation "${relation.relationName}" requires data`);
     }
-    // Recursive nesting is not supported in Phase 6.4 — the nested record must
+    // Recursive nesting is not supported — the nested record must
     // be a plain scalar create, not itself a nested mutation.
     const relatedRow = await insertSingleRow(scope, contract, relation.relatedModelName, row, defaultsCache);
     copyRelatedValuesToParent(relation, scalarData, relatedRow);
@@ -430,6 +441,7 @@ async function applyParentOwnedMutation(
   copyRelatedValuesToParent(relation, scalarData, relatedRow);
 }
 
+/** Copy each referenced value into the matching local foreign-key field. */
 function copyRelatedValuesToParent(
   relation: RelationDefinition,
   scalarData: Record<string, unknown>,
@@ -446,6 +458,7 @@ function copyRelatedValuesToParent(
 
 // ── Child-owned (1:N / 1:1) mutations ────────────────────────────────────────
 
+/** Create, connect, or disconnect children using the persisted parent join values. */
 async function applyChildOwnedMutation(
   scope: IdbTransactionScope,
   contract: IdbContract,
@@ -485,7 +498,7 @@ async function applyChildOwnedMutation(
       // scan-write + put-merged: set the FK fields on every child row matching
       // the criterion. No `take` cap — the vendor's relational connect
       // (`executeUpdateCount`) connects all matching rows; for the normal
-      // unique-key criterion that is exactly one row anyway. (PLAN Issue #24.)
+      // unique-key criterion that is exactly one row anyway.
       await writeMutationRows(scope, contract, relation.relatedModelName, {
         write: "put-merged",
         patch,
@@ -537,6 +550,7 @@ async function applyChildOwnedMutation(
   }
 }
 
+/** Resolve parent join values before writing children; missing values cannot form a relation. */
 function readParentColumnValues(
   parentModelName: string,
   relation: RelationDefinition,
@@ -562,6 +576,7 @@ function readParentColumnValues(
 
 // ── Row operations ────────────────────────────────────────────────────────────
 
+/** Complete and validate a nested record, then insert it with foreign-key checks. */
 async function insertSingleRow(
   scope: IdbTransactionScope,
   contract: IdbContract,
@@ -582,10 +597,10 @@ async function insertSingleRow(
 
 /**
  * Recursive nesting (a relation callback inside an already-nested create) is
- * not supported in Phase 6.4. Without this guard the callback function would be
+ * not supported. Without this guard the callback function would be
  * handed to `store.put(...)`, where IDB's structured-clone throws an opaque
  * `DataCloneError` ("could not be cloned") that gives the developer no hint
- * about the real cause. Surface a precise error instead. (PLAN Issue #22.)
+ * about the real cause. Surface a precise error instead.
  */
 function assertNoNestedCallbacks(modelName: string, data: Record<string, unknown>): void {
   for (const [field, value] of Object.entries(data)) {
@@ -599,6 +614,7 @@ function assertNoNestedCallbacks(modelName: string, data: Record<string, unknown
   }
 }
 
+/** Require a non-empty connect criterion and return its first matching row. */
 async function findRowByCriterion(
   scope: IdbTransactionScope,
   contract: IdbContract,
@@ -612,6 +628,7 @@ async function findRowByCriterion(
   return (await readMutationRows(scope, contract, modelName, expr, 1))[0] ?? null;
 }
 
+/** Find the first parent selected by the nested-update filters. */
 async function findFirstByFilters(
   scope: IdbTransactionScope,
   contract: IdbContract,
@@ -647,6 +664,7 @@ export async function readMutationRows(
   return lowered.finish(await executeMutationPlan(scope, lowered.idbPlan));
 }
 
+/** Write planned matches, collecting preimages first when changing the walked index key. */
 async function writeMutationRows(
   scope: IdbTransactionScope,
   contract: IdbContract,
@@ -689,6 +707,7 @@ function buildParentJoinWhere(parentValues: Map<string, unknown>): IdbFilterExpr
  */
 type ReferentialActionKind = "onDelete" | "onUpdate";
 
+/** Read an explicitly declared referential action from model storage metadata. */
 function getStoredAction(
   contract: IdbContract,
   modelName: string,
@@ -731,6 +750,7 @@ function getReferentialActionForRelation(
   return enforcedAction(findDeclaredAction(contract, modelName, def, kind));
 }
 
+/** Find an action on the enforcement side or on its matching inverse relation. */
 function findDeclaredAction(
   contract: IdbContract,
   modelName: string,
@@ -770,6 +790,7 @@ function enforcedAction(declared: IdbReferentialAction | undefined): EnforcedRef
   return declared === undefined || declared === "noAction" ? "restrict" : declared;
 }
 
+/** Identify relations that need child checks when this model changes. */
 function isChildEnforcementRelation(contract: IdbContract, modelName: string, def: RelationDefinition): boolean {
   if (def.cardinality === "1:N") return true;
   if (def.cardinality === "1:1") {
@@ -1066,6 +1087,7 @@ export function hasScalarFkFields(contract: IdbContract, modelName: string, data
   return false;
 }
 
+/** Include parent stores for the non-null foreign keys supplied by this write. */
 export function collectScalarFkStoreNames(
   contract: IdbContract,
   modelName: string,
@@ -1156,6 +1178,7 @@ function describeTuple(fields: readonly string[], values: readonly unknown[]): s
   return fields.map((f, i) => `${f}='${String(values[i])}'`).join(", ");
 }
 
+/** Create one completed record and check its foreign keys in the same transaction. */
 export async function executeScalarCreateWithFkValidation(options: {
   executor: IdbQueryExecutorWithTransaction;
   contract: IdbContract;
@@ -1250,6 +1273,7 @@ function collectUpdateStoreNames(
   };
 }
 
+/** The executor, contract, filters, and scalar patch for a validated update. */
 interface ScalarUpdateOptions {
   readonly executor: IdbQueryExecutorWithTransaction;
   readonly contract: IdbContract;
@@ -1365,6 +1389,7 @@ export function collectDeleteStoreNames(contract: IdbContract, modelName: string
   const stores = new Set<string>();
   const visitedModels = new Set<string>();
 
+  /** Collect cascade stores once per model so cyclic relations cannot recurse indefinitely. */
   function walk(mName: string): void {
     if (visitedModels.has(mName)) return;
     visitedModels.add(mName);
@@ -1467,6 +1492,7 @@ export async function applyReferentialActionsForRow(
   }
 }
 
+/** Load a keyed row, apply its child actions, and delete it in one transaction. */
 export async function executeDeleteWithReferentialActions(options: {
   executor: IdbQueryExecutorWithTransaction;
   contract: IdbContract;
@@ -1491,6 +1517,7 @@ export async function executeDeleteWithReferentialActions(options: {
   });
 }
 
+/** Delete filtered rows with all child actions inside the same transaction. */
 export async function executeDeleteAllWithReferentialActions(options: {
   executor: IdbQueryExecutorWithTransaction;
   contract: IdbContract;

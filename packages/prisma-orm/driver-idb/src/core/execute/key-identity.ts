@@ -19,6 +19,7 @@ export function keyIdentity(key: IDBValidKey): string {
 /** The `byteLength` getter throws unless its receiver has an `[[ArrayBufferData]]` slot, in any realm. */
 const arrayBufferByteLength = Object.getOwnPropertyDescriptor(ArrayBuffer.prototype, "byteLength")!.get!;
 
+/** Detect the ArrayBuffer internal slot across realms without relying on instanceof. */
 function isArrayBuffer(value: unknown): value is ArrayBuffer {
   try {
     arrayBufferByteLength.call(value);

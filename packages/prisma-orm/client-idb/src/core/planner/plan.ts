@@ -33,10 +33,12 @@ export interface LogicalPlan {
   readonly direction?: IdbScanDirection;
 }
 
+/** One open or closed endpoint of a field constraint. */
 interface Bound {
   readonly value: IDBValidKey;
   readonly open: boolean;
 }
+/** Intersected points and bounds for one field, with index-coverage information. */
 interface Constraint {
   points?: IDBValidKey[];
   lower?: Bound;
@@ -45,6 +47,7 @@ interface Constraint {
   startsWith?: boolean;
   rejectsNonKeys?: boolean;
 }
+/** A safe access source and its deterministic selection cost. */
 interface Candidate {
   source: CatalogSource;
   ranges: (IdbKeyRangeDescriptor | undefined)[];
@@ -52,6 +55,7 @@ interface Candidate {
   consumed: number;
   declaration: number;
 }
+/** Filter atoms and residual predicates used to decide whether an index is safe. */
 interface Normalized {
   atoms: IdbFieldFilter[];
   residual: number;
@@ -157,8 +161,10 @@ function full(exact: boolean): LogicalPlan {
   return { access: { kind: "full" }, exact };
 }
 
+/** Flatten supported conjunctions and same-field unions while retaining unsupported predicates. */
 function normalize(where: IdbFilterExpr | undefined): Normalized {
   const result: Normalized = { atoms: [], residual: 0, excluded: false, empty: false };
+  /** Collect usable atoms and mark filters that require the full-row path. */
   function visit(expr: IdbFilterExpr): void {
     switch (expr.kind) {
       case "field":
@@ -227,6 +233,7 @@ function singleFieldSource(source: CatalogSource, field: string): boolean {
   return source.fields.length === 1 && source.fields[0] === field;
 }
 
+/** Intersect one supported predicate with a field constraint without narrowing unsafe values. */
 function addAtom(constraint: Constraint, atom: IdbFieldFilter, field: CatalogField | undefined): void {
   if (atom.op === "eq" || atom.op === "in") {
     const values: unknown[] = atom.op === "eq" ? [atom.value] : Array.isArray(atom.value) ? atom.value : [];
@@ -261,6 +268,7 @@ function uniqueKeys(values: IDBValidKey[]): IDBValidKey[] {
   const sorted = [...values].sort(compareFieldValues);
   return sorted.filter((value, i) => i === 0 || compareFieldValues(sorted[i - 1], value) !== 0);
 }
+/** Keep the tighter endpoint when several comparisons constrain the same field. */
 function intersectBound(constraint: Constraint, side: "lower" | "upper", bound: Bound): void {
   const previous = constraint[side];
   const comparison = previous === undefined ? 0 : compareFieldValues(bound.value, previous.value);
@@ -268,6 +276,7 @@ function intersectBound(constraint: Constraint, side: "lower" | "upper", bound: 
     constraint[side] = bound;
   }
 }
+/** Check a point against both endpoints, including open-bound equality. */
 function insideBounds(value: IDBValidKey, constraint: Constraint): boolean {
   const lower = constraint.lower;
   const upper = constraint.upper;
@@ -277,6 +286,7 @@ function insideBounds(value: IDBValidKey, constraint: Constraint): boolean {
     return false;
   return true;
 }
+/** Discard points outside the bounds and detect ranges that cannot match. */
 function contradictory(constraint: Constraint): boolean {
   if (constraint.points) {
     constraint.points = constraint.points.filter((value) => insideBounds(value, constraint));
@@ -287,6 +297,7 @@ function contradictory(constraint: Constraint): boolean {
   return comparison > 0 || (comparison === 0 && (constraint.lower.open || constraint.upper.open));
 }
 
+/** Build a safe source range only when its index contains every possible match. */
 function filteringCandidate(
   catalog: QueryCatalog,
   source: CatalogSource,
@@ -351,6 +362,7 @@ function filteringCandidate(
   return { source, ranges, cost, consumed, declaration };
 }
 
+/** Convert scalar endpoints into the matching driver range descriptor. */
 function scalarRange(constraint: Constraint): IdbKeyRangeDescriptor {
   if (constraint.lower && constraint.upper)
     return {
@@ -364,6 +376,7 @@ function scalarRange(constraint: Constraint): IdbKeyRangeDescriptor {
   return { kind: "upper", key: constraint.upper!.value, open: constraint.upper!.open };
 }
 
+/** Bound a compound prefix and suffix using IndexedDB key ordering. */
 function compoundRange(
   prefix: IDBValidKey[],
   constraint: Constraint | undefined,
@@ -387,6 +400,7 @@ function compoundRange(
   };
 }
 
+/** Find the exclusive upper bound of a UTF-16 prefix, if one exists. */
 function stringSuccessor(prefix: string): string | undefined {
   for (let i = prefix.length - 1; i >= 0; i--) {
     const code = prefix.charCodeAt(i);

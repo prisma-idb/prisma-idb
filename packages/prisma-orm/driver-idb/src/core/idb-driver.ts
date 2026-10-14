@@ -3,6 +3,7 @@ import { executeIdbPlan } from "./execute";
 import { MARKER_STORE_NAME, type IdbMarkerRecord, type IdbPlanBody } from "./plan-body";
 import { createTransactionScope, type IdbTransactionScope } from "./transaction-scope";
 
+/** Own the database connection and execute driver plans after it opens. */
 export class IdbRuntimeDriverInstance implements RuntimeDriverInstance<"idb", "idb"> {
   readonly familyId = "idb" as const;
   readonly targetId = "idb" as const;
@@ -77,6 +78,7 @@ export class IdbRuntimeDriverInstance implements RuntimeDriverInstance<"idb", "i
   execute(plan: IdbPlanBody): AsyncIterable<Record<string, unknown>> {
     const dbPromise = this.db;
     return {
+      /** Wait for commit before exposing materialized rows to the runtime. */
       [Symbol.asyncIterator]() {
         return (async function* () {
           const db = await dbPromise;

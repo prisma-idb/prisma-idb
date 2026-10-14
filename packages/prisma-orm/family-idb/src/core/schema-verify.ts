@@ -60,6 +60,7 @@ export interface IdbVerifyDatabaseSchemaResult extends Omit<VerifyDatabaseSchema
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+/** Record a matching schema component and its child checks. */
 function passNode(
   kind: string,
   name: string,
@@ -79,6 +80,7 @@ function passNode(
   };
 }
 
+/** Record a schema mismatch with the expected and actual values. */
 function failNode(
   kind: string,
   name: string,
@@ -102,6 +104,7 @@ function failNode(
   };
 }
 
+/** Record an extra schema component allowed by non-strict verification. */
 function warnNode(
   kind: string,
   name: string,
@@ -125,6 +128,7 @@ function warnNode(
   };
 }
 
+/** Summarize the status of the supplied verification nodes and their descendants. */
 function countStatuses(nodes: readonly SchemaVerificationNode[]): {
   pass: number;
   warn: number;
@@ -149,6 +153,7 @@ function countStatuses(nodes: readonly SchemaVerificationNode[]): {
 
 // ── Per-index verification ────────────────────────────────────────────────────
 
+/** Compare index key order and flags, collecting mismatches alongside tree nodes. */
 function verifyIndex(
   indexName: string,
   contractIndex: { keyPath: IdbIndexIR["keyPath"]; unique: boolean; multiEntry?: boolean },
@@ -263,6 +268,7 @@ function verifyIndex(
 
 // ── Per-store verification ────────────────────────────────────────────────────
 
+/** Compare store keys and flags, then check missing and extra indexes. */
 function verifyStore(
   storeName: string,
   contractStore: {
@@ -325,7 +331,7 @@ function verifyStore(
     children.push(verifyIndex(indexName, contractIndex, actualIndex, storeName, storePath, issues));
   }
 
-  // extra indexes in manifest (only relevant in strict mode)
+  // Extra indexes in the supplied schema (only relevant in strict mode)
   for (const indexName of Object.keys(actualIndexes)) {
     if (!(indexName in contractIndexes)) {
       const msg = `Index "${indexName}" exists in manifest but is not in contract`;
@@ -439,7 +445,7 @@ export function verifyIdbSchema(
     storeNodes.push(verifyStore(storeName, contractStore, actualStore, strict, issues));
   }
 
-  // Extra stores in manifest (only in strict mode as failures, otherwise warnings).
+  // Extra stores in the supplied schema (only in strict mode as failures, otherwise warnings).
   for (const [storeName, actualStore] of Object.entries(actualStores)) {
     if (!(storeName in contractStores)) {
       const msg = `Object store "${storeName}" exists in manifest but is not in contract`;

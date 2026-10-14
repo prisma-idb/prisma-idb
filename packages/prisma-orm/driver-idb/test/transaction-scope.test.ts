@@ -252,10 +252,20 @@ describe("unknown store", () => {
   });
   afterEach(() => db.close());
 
-  it("execute rejects with IdbExecuteError STORE_NOT_FOUND", async () => {
+  it("rejects an unknown store and rolls back earlier writes", async () => {
     const scope = createTransactionScope(db, ["users"]);
+    await scope.execute({ meta: META, kind: "put", storeName: "users", record: { id: "u1", name: "Alice" } });
     const plan: IdbPutPlan = { meta: META, kind: "put", storeName: "nonexistent", record: { id: "x1" } };
-    await expect(scope.execute(plan)).rejects.toBeInstanceOf(IdbExecuteError);
+    const result = scope.execute(plan);
+    await expect(result).rejects.toBeInstanceOf(IdbExecuteError);
+    await expect(result).rejects.toMatchObject({
+      code: "STORE_NOT_FOUND",
+      planKind: "put",
+      storeName: "nonexistent",
+      cause: { name: "NotFoundError" },
+    });
+    await expect(scope.commit()).rejects.toMatchObject({ code: "TRANSACTION_ABORTED" });
+    expect(await getAllRows(db, "users")).toEqual([]);
   });
 });
 
@@ -292,6 +302,6 @@ describe("transaction inactive", () => {
     const scope = createTransactionScope(db, ["users"], "readonly");
     const err = await scope.execute({ ...get, storeName: "nope" }).catch((e: unknown) => e);
     expect((err as IdbExecuteError).code).toBe("STORE_NOT_FOUND");
-    await scope.commit();
+    await expect(scope.commit()).rejects.toMatchObject({ code: "TRANSACTION_ABORTED" });
   });
 });
