@@ -4,6 +4,7 @@ function round(value: number): number {
   return Number(value.toFixed(3));
 }
 
+/** Returns the `percentile` (0 to 1) of `sortedValues` using linear interpolation between neighbours. */
 function quantile(sortedValues: number[], percentile: number): number {
   if (sortedValues.length === 0) return 0;
   if (sortedValues.length === 1) return sortedValues[0] ?? 0;
@@ -22,6 +23,7 @@ function quantile(sortedValues: number[], percentile: number): number {
   return lowerValue + (upperValue - lowerValue) * (position - lowerIndex);
 }
 
+/** Summarizes `samplesMs` as min, max, mean, median, p95, p99, population standard deviation and ops per second. */
 export function summarizeSamples(samplesMs: number[]): BenchmarkStatSummary {
   const sorted = [...samplesMs].sort((a, b) => a - b);
   const meanMs = sorted.reduce((sum, value) => sum + value, 0) / Math.max(1, sorted.length);

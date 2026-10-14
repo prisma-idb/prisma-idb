@@ -1,5 +1,9 @@
 type CliArgValue = string | boolean;
 
+/**
+ * Parses `--key=value`, `--key value` and bare `--flag` arguments from `argv`
+ * (skipping the node binary and script path). Bare flags are `true`.
+ */
 export function parseArgs(argv: string[]): Record<string, CliArgValue> {
   const parsed: Record<string, CliArgValue> = {};
   for (let i = 2; i < argv.length; i += 1) {

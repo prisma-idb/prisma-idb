@@ -164,6 +164,10 @@ function bootstrapMedianDeltaCI(
   };
 }
 
+/**
+ * Pairs one metric from the baseline and current runs and computes the percent change.
+ * Non-finite inputs become `null`, and a zero baseline with a non-zero current is `Infinity`.
+ */
 function pairMetric(baseline: number, current: number): MetricPair {
   const baselineOk = Number.isFinite(baseline);
   const currentOk = Number.isFinite(current);
@@ -205,6 +209,10 @@ export function mergeRuns(runs: BenchmarkRun[]): BenchmarkRun {
   return { ...runs[0], id: runs.map((run) => run.id).join(","), operations: [...merged.values()] };
 }
 
+/**
+ * Returns the per-operation sample count when every operation reports the same one,
+ * else `null`. `hasPartialData` is true when some operations lack `samplesMs`.
+ */
 function getMeasuredSampleCount(run: BenchmarkRun): { count: number | null; hasPartialData: boolean } {
   const operations = run.operations ?? [];
   const counts = operations.flatMap((op) => (Array.isArray(op.samplesMs) ? [op.samplesMs.length] : []));
@@ -214,6 +222,10 @@ function getMeasuredSampleCount(run: BenchmarkRun): { count: number | null; hasP
   return { count: allEqual ? (counts[0] ?? null) : null, hasPartialData };
 }
 
+/**
+ * Lists reasons the comparison is advisory: missing or too few samples, or
+ * different sample counts between runs. Any notice stops the gate from failing the build.
+ */
 function getComparisonNotices(baseline: BenchmarkRun, current: BenchmarkRun): string[] {
   const notices: string[] = [];
   const minSamples = BENCHMARK_REGRESSION_GATE.minMeaningfulP95Samples;
@@ -250,6 +262,65 @@ function getComparisonNotices(baseline: BenchmarkRun, current: BenchmarkRun): st
 }
 
 /**
+ * Builds the comparison row for one operation present in both runs. Applies the
+ * regression gate and flags high-variance operations as noisy.
+ */
+function compareOperation(
+  operationId: string,
+  baselineOp: BenchmarkOperation,
+  currentOp: BenchmarkOperation,
+  threshold: number
+): ComparisonRow {
+  const p95 = pairMetric(Number(baselineOp.summary?.p95Ms), Number(currentOp.summary?.p95Ms));
+  const mean = pairMetric(Number(baselineOp.summary?.meanMs), Number(currentOp.summary?.meanMs));
+
+  const baselineSamples = baselineOp.samplesMs;
+  const currentSamples = currentOp.samplesMs;
+  const median = pairMetric(
+    baselineSamples ? medianOf(baselineSamples) : Number.NaN,
+    currentSamples ? medianOf(currentSamples) : Number.NaN
+  );
+  const bootstrap = bootstrapMedianDeltaCI(baselineSamples, currentSamples);
+
+  // Flag operations where either run has high coefficient of variation.
+  // A high CV means the samples are spread out, making any % delta unreliable.
+  const baselineCV = coefficientOfVariation(baselineSamples);
+  const currentCV = coefficientOfVariation(currentSamples);
+  const noisy = (baselineCV !== null && baselineCV > CV_THRESHOLD) || (currentCV !== null && currentCV > CV_THRESHOLD);
+
+  // Gate criterion: lower bound of bootstrap CI on median delta must exceed the
+  // threshold. This filters out apparent regressions caused by sample variance:
+  // a true regression is one where even the pessimistic edge of the CI is above
+  // the threshold. Also require the absolute median change to exceed
+  // minAbsoluteDeltaMs to avoid flagging sub-millisecond jitter.
+  const minAbsDelta = BENCHMARK_REGRESSION_GATE.minAbsoluteDeltaMs;
+  const absoluteMedianDelta =
+    median.baseline !== null && median.current !== null ? Math.abs(median.current - median.baseline) : null;
+  const exceedsAbsolute = absoluteMedianDelta === null || absoluteMedianDelta >= minAbsDelta;
+  const ciLower = bootstrap?.ciLowerPercent ?? null;
+  // Only positive infinity counts as exceeding the threshold; -Infinity is a
+  // huge improvement, not a regression.
+  const ciExceedsThreshold = ciLower !== null && (ciLower === Number.POSITIVE_INFINITY || ciLower > threshold);
+  const isRegression = ciExceedsThreshold && exceedsAbsolute;
+  // Warn when the point estimate exceeds threshold but the CI lower bound
+  // doesn't — i.e., the regression might be real but isn't statistically robust.
+  const observedExceeds =
+    bootstrap !== null &&
+    (bootstrap.medianDeltaPercent === Number.POSITIVE_INFINITY || bootstrap.medianDeltaPercent > threshold);
+  const isWarn = !isRegression && observedExceeds && exceedsAbsolute;
+
+  return {
+    operationId,
+    p95,
+    mean,
+    median,
+    bootstrap,
+    status: isRegression ? "FAIL" : isWarn ? "WARN" : "PASS",
+    noisy,
+  };
+}
+
+/**
  * Compares two runs operation by operation and applies the regression gate.
  * Each side may be several runs of one tree merged with `mergeRuns`.
  */
@@ -276,56 +347,9 @@ export function compareRuns(baseline: BenchmarkRun, current: BenchmarkRun, thres
     }
     if (!baselineOp || !currentOp) continue;
 
-    const p95 = pairMetric(Number(baselineOp.summary?.p95Ms), Number(currentOp.summary?.p95Ms));
-    const mean = pairMetric(Number(baselineOp.summary?.meanMs), Number(currentOp.summary?.meanMs));
-
-    const baselineSamples = baselineOp.samplesMs;
-    const currentSamples = currentOp.samplesMs;
-    const median = pairMetric(
-      baselineSamples ? medianOf(baselineSamples) : Number.NaN,
-      currentSamples ? medianOf(currentSamples) : Number.NaN
-    );
-    const bootstrap = bootstrapMedianDeltaCI(baselineSamples, currentSamples);
-
-    // Flag operations where either run has high coefficient of variation.
-    // A high CV means the samples are spread out, making any % delta unreliable.
-    const baselineCV = coefficientOfVariation(baselineSamples);
-    const currentCV = coefficientOfVariation(currentSamples);
-    const noisy =
-      (baselineCV !== null && baselineCV > CV_THRESHOLD) || (currentCV !== null && currentCV > CV_THRESHOLD);
-
-    // Gate criterion: lower bound of bootstrap CI on median delta must exceed the
-    // threshold. This filters out apparent regressions caused by sample variance:
-    // a true regression is one where even the pessimistic edge of the CI is above
-    // the threshold. Also require the absolute median change to exceed
-    // minAbsoluteDeltaMs to avoid flagging sub-millisecond jitter.
-    const minAbsDelta = BENCHMARK_REGRESSION_GATE.minAbsoluteDeltaMs;
-    const absoluteMedianDelta =
-      median.baseline !== null && median.current !== null ? Math.abs(median.current - median.baseline) : null;
-    const exceedsAbsolute = absoluteMedianDelta === null || absoluteMedianDelta >= minAbsDelta;
-    const ciLower = bootstrap?.ciLowerPercent ?? null;
-    // Only positive infinity counts as exceeding the threshold; -Infinity is a
-    // huge improvement, not a regression.
-    const ciExceedsThreshold = ciLower !== null && (ciLower === Number.POSITIVE_INFINITY || ciLower > threshold);
-    const isRegression = ciExceedsThreshold && exceedsAbsolute;
-    // Warn when the point estimate exceeds threshold but the CI lower bound
-    // doesn't — i.e., the regression might be real but isn't statistically robust.
-    const observedExceeds =
-      bootstrap !== null &&
-      (bootstrap.medianDeltaPercent === Number.POSITIVE_INFINITY || bootstrap.medianDeltaPercent > threshold);
-    const isWarn = !isRegression && observedExceeds && exceedsAbsolute;
-
-    const row: ComparisonRow = {
-      operationId,
-      p95,
-      mean,
-      median,
-      bootstrap,
-      status: isRegression ? "FAIL" : isWarn ? "WARN" : "PASS",
-      noisy,
-    };
+    const row = compareOperation(operationId, baselineOp, currentOp, threshold);
     rows.push(row);
-    if (isRegression && !noisy) regressions.push(row);
+    if (row.status === "FAIL" && !row.noisy) regressions.push(row);
   }
 
   rows.sort((a, b) => a.operationId.localeCompare(b.operationId));

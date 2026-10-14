@@ -51,6 +51,7 @@ function statusIcon(row: ComparisonRow, threshold: number): string {
   return isClearSpeedup(row, threshold) ? "🔵" : "🟢";
 }
 
+/** Renders `rows` as a Markdown table with one status icon, delta and CI per operation. */
 function renderRowsTable(rows: ComparisonRow[], threshold: number): string[] {
   const lines = ["| | Operation | Median Δ | 95% CI | Baseline → current (ms) |", "| :-: | :-- | ---: | :-- | :-- |"];
   for (const row of rows) {
