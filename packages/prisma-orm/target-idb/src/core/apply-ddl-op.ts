@@ -299,8 +299,10 @@ export function openAndUpgrade(input: {
         upgradeError = error;
         tx.abort();
       };
-      // Runs the op at `index`, then the hook and completion callback, then the next op.
-      // Once every op has run, writes the markers.
+      /**
+       * Runs the op at `index`, then the hook and completion callback, then the next op.
+       * Once every op has run, writes the markers. Any thrown error aborts the upgrade.
+       */
       const runNext = (index: number): void => {
         try {
           const op = input.ops[index];
@@ -322,10 +324,16 @@ export function openAndUpgrade(input: {
           failUpgrade(error);
         }
       };
-      // Runs once an op's DDL has been applied. A `transformRecords` hook may finish
-      // asynchronously, so the next op starts from its `onDone`, never more than once.
+      /**
+       * Runs once an op's DDL has been applied. A `transformRecords` hook may finish
+       * asynchronously, so the next op starts from its `onDone`, never more than once.
+       */
       const finishOp = (op: IdbDdlOp, index: number): void => {
         let completed = false;
+        /**
+         * Completes the op exactly once: later calls are ignored. A defined `hookError`, or
+         * an error thrown by `onOperationComplete`, aborts the upgrade instead of starting the next op.
+         */
         const onDone = (hookError?: unknown) => {
           if (completed) return;
           completed = true;
