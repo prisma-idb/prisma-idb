@@ -8,7 +8,7 @@
  * - two pages share a title or a description.
  */
 import { readFileSync, readdirSync, statSync } from "node:fs";
-import { join, relative } from "node:path";
+import { join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { decodeHtmlEntities } from "./decode-html-entities.mjs";
 
@@ -27,7 +27,12 @@ function listPageFiles(dir) {
 
 /** Maps an exported HTML file to its canonical URL. Next writes the root without a trailing slash. */
 function urlForFile(file) {
-  const path = "/" + relative(outDir, file).replace(/\.html$/, "");
+  const path =
+    "/" +
+    relative(outDir, file)
+      .split(sep)
+      .join("/")
+      .replace(/\.html$/, "");
   return path === "/index" ? siteUrl : `${siteUrl}${path}`;
 }
 
@@ -71,10 +76,14 @@ for (const page of pages) {
   if (page.ogUrl && page.ogUrl !== page.url) problems.push(`${page.url}: og:url is ${page.ogUrl}`);
 }
 for (const field of ["title", "description"]) {
-  const urlsByValue = Map.groupBy(
-    pages.filter((page) => page[field]),
-    (page) => page[field]
-  );
+  const urlsByValue = new Map();
+  for (const page of pages) {
+    const value = page[field];
+    if (!value) continue;
+    const group = urlsByValue.get(value) ?? [];
+    group.push(page);
+    urlsByValue.set(value, group);
+  }
   for (const [value, group] of urlsByValue) {
     if (group.length > 1) problems.push(`duplicate ${field} "${value}": ${group.map((page) => page.url).join(", ")}`);
   }
