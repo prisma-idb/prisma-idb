@@ -68,7 +68,7 @@ Calling `where()` more than once adds conditions: a row must match all of them.
 
 `DateTime` and `Bytes` values compare by value, so `eq(new Date("2026-01-01"))` matches a stored date at that moment. Comparing values of different types follows IndexedDB's key order: numbers, then dates, then strings, then binary values.
 
-Equality filters on an indexed field or the primary key use the index. Other filters read every row in the store and test each one.
+The query planner uses primary keys and indexes for supported equality, range, membership, and compound filters. It reapplies the full filter to candidate rows. When no index can cover every possible match, it scans the store.
 
 ## Sorting and pagination
 
@@ -78,7 +78,7 @@ const page = await db.orm.todo.orderBy({ title: "asc" }).skip(20).take(10).all()
 
 - `orderBy` takes one or more fields, each `"asc"` or `"desc"`. Later fields break ties. Calling `orderBy` again replaces the sort.
 - `null` sorts after every other value, or before them when descending.
-- Without `orderBy`, rows come back in primary-key order, or index order when the query uses an index.
+- Without `orderBy`, row order is unspecified and can change when the planner chooses another access path. Add a unique field to `orderBy` when order matters.
 
 ## Select
 

@@ -2,10 +2,8 @@
 
 > Historical proposal. Source observations, line numbers and phase references below describe the survey at authoring time. They do not establish current behavior or approval to implement it. See the [plans index](README.md) for current source pointers.
 
-Time-boxed experiment. Goal is an answer, not mergeable code. Branch:
-`spike/shared-authoring-spec`, cut from the tip of `feat/prisma-orm-enums-why6`
-(or from `feat/prisma-orm-rc12` once PR #235 has merged), because the enum work
-is the most recent source of drift and its findings are the first fixtures.
+Time-boxed experiment. Goal is an answer, not mergeable code. The enum
+parity findings below define the initial fixtures.
 
 ## 0. The question
 
@@ -59,8 +57,8 @@ lower → Contract`. They converge on `Contract`, not earlier. Drift is a
 | Contract assembly, roots, stores, hashes                                        | `defineContract` body                                      | tail of `interpretPslDocumentToIdbContract`                                                    |
 | Execution defaults (`uuid()`, `cuid()`, `now()`, `@updatedAt`), `autoIncrement` | **not supported**                                          | supported                                                                                      |
 
-TS `ModelDef` is a strict subset of what PSL produces. That gap is the
-"lots of missing features on TS side" item in `todo.md`.
+TS `ModelDef` was a strict subset of what PSL produced when this survey was
+written. Extending the public TypeScript authoring surface is outside the spike.
 
 Error style differs on purpose today: PSL collects **all** diagnostics with
 spans and stable `IDB_*` codes; the builder throws the first error with a
