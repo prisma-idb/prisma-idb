@@ -1,3 +1,4 @@
+import type { CatalogField } from "./planner/catalog";
 import type { AggregateFn, IdbAggregateBuilder, IdbAggregateSelector } from "./types";
 
 /**
@@ -44,12 +45,13 @@ function isAggregateSelector(value: unknown): value is IdbAggregateSelector<unkn
  * - `sum`/`avg`/`min`/`max` → computed over the non-null numeric values of
  *   `field`; `null` when no row has a non-null value (matching Prisma's
  *   "aggregate of an empty set is null" and the vendor `coerceAggregateValue`
- *   null handling). String-encoded numbers are coerced via `Number()`.
+ *   null handling). Values must match the declared number codec.
  */
 function reduceAggregate(
   fn: AggregateFn,
   field: string | undefined,
-  rows: readonly Record<string, unknown>[]
+  rows: readonly Record<string, unknown>[],
+  codecId: string | undefined
 ): number | null {
   if (fn === "count") return rows.length;
   if (field === undefined) return null;
@@ -58,17 +60,22 @@ function reduceAggregate(
   for (const row of rows) {
     const raw = row[field];
     if (raw === null || raw === undefined) continue;
-    const n = Number(raw);
-    if (!Number.isNaN(n)) values.push(n);
+    if (typeof raw !== "number" || !Number.isFinite(raw)) {
+      throw new TypeError(`${fn}("${field}") requires finite number values`);
+    }
+    if (codecId === "idb/int32@1" && (!Number.isInteger(raw) || raw < -2147483648 || raw > 2147483647)) {
+      throw new TypeError(`${fn}("${field}") requires Int values in the signed 32-bit range`);
+    }
+    values.push(raw);
   }
 
   if (values.length === 0) return null;
 
   switch (fn) {
     case "sum":
-      return values.reduce((acc, n) => acc + n, 0);
+      return sumValues(values, field, codecId === "idb/int32@1");
     case "avg":
-      return values.reduce((acc, n) => acc + n, 0) / values.length;
+      return sumValues(values, field, codecId === "idb/int32@1") / values.length;
     // Not `Math.min(...values)`: spreading a large array overflows the call stack.
     case "min":
       return values.reduce((acc, n) => Math.min(acc, n));
@@ -77,17 +84,32 @@ function reduceAggregate(
   }
 }
 
+/** Reject overflow before a rounded or nonfinite intermediate total can reach the result. */
+function sumValues(values: readonly number[], field: string, integer: boolean): number {
+  let total = 0;
+  for (const value of values) {
+    total += value;
+    if (!Number.isFinite(total) || (integer && !Number.isSafeInteger(total))) {
+      throw new RangeError(
+        `Aggregate total for "${field}" exceeds the ${integer ? "safe integer" : "finite number"} range`
+      );
+    }
+  }
+  return total;
+}
+
 /**
  * Run every selector in an aggregate spec against `rows`, producing the
  * result object keyed by the spec's aliases.
  */
 export function computeAggregateSpec(
   spec: Record<string, IdbAggregateSelector<unknown>>,
-  rows: readonly Record<string, unknown>[]
+  rows: readonly Record<string, unknown>[],
+  fields: Readonly<Record<string, CatalogField>> = {}
 ): Record<string, number | null> {
   const result: Record<string, number | null> = {};
   for (const [alias, selector] of Object.entries(spec)) {
-    result[alias] = reduceAggregate(selector.fn, selector.field, rows);
+    result[alias] = reduceAggregate(selector.fn, selector.field, rows, fields[selector.field ?? ""]?.codecId);
   }
   return result;
 }
@@ -109,13 +131,15 @@ export function toAggregateRequests(
 
 /**
  * Validate a user-supplied aggregate spec: it must be non-empty and every
- * value must be a real selector. Throws a descriptive error otherwise, so a
+ * value must be a real selector over a declared scalar number field (except
+ * count, which has no field). Throws a descriptive error otherwise, so a
  * typo (e.g. returning a plain object) fails loudly rather than silently
  * producing `NaN`/`undefined` results.
  */
 export function assertValidAggregateSpec(
   spec: Record<string, unknown>,
-  context: "aggregate()" | "groupBy().aggregate()"
+  context: "aggregate()" | "groupBy().aggregate()",
+  fields: Readonly<Record<string, CatalogField>>
 ): void {
   const entries = Object.entries(spec);
   if (entries.length === 0) {
@@ -124,6 +148,11 @@ export function assertValidAggregateSpec(
   for (const [alias, selector] of entries) {
     if (!isAggregateSelector(selector)) {
       throw new Error(`${context} selector "${alias}" is invalid`);
+    }
+    if (selector.fn === "count") continue;
+    const field = typeof selector.field === "string" ? fields[selector.field] : undefined;
+    if (!field || field.collection || (field.codecId !== "idb/int32@1" && field.codecId !== "idb/double@1")) {
+      throw new TypeError(`${context} selector "${alias}" requires a declared number field (Int or Float)`);
     }
   }
 }

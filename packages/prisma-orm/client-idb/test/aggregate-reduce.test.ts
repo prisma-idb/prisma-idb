@@ -44,4 +44,20 @@ describe("computeAggregateSpec", () => {
       lowest: null,
     });
   });
+
+  it.each(["sum", "avg"] as const)("%s rejects positive and negative Int accumulation outside the safe range", (fn) => {
+    const fields = { n: { codecId: "idb/int32@1", nullable: false, collection: false } };
+    // 2^22 copies of the largest int32 still fit; one more crosses 2^53 - 1.
+    const row = { n: 2147483647 };
+    const rows = Array.from({ length: 4_194_304 }, () => row);
+    /** Reduce shared row references without allocating millions of distinct records. */
+    function compute() {
+      return computeAggregateSpec({ value: { kind: "aggregate", fn, field: "n" } }, rows, fields);
+    }
+    expect(compute()).toEqual({ value: fn === "sum" ? 9007199250546688 : 2147483647 });
+    rows.push(row);
+    expect(compute).toThrow(/safe integer range/);
+    row.n = -2147483648;
+    expect(compute).toThrow(/safe integer range/);
+  });
 });
