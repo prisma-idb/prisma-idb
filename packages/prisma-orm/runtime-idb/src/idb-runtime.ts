@@ -137,6 +137,8 @@ function hashablePlan(
   inheritedIdentity?: IdbLoweredPlan["queryIdentity"]
 ): Record<string, unknown> {
   const hashable: Record<string, unknown> = {};
+  // Hash queryIdentity alongside per-function identity: key-get and get-all
+  // plans can apply structured filters and ordering after driver execution.
   const identity = (exec as IdbLoweredPlan).queryIdentity ?? inheritedIdentity;
   for (const [key, value] of Object.entries(exec as unknown as Record<string, unknown>)) {
     if (key === "meta") {

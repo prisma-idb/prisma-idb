@@ -45,7 +45,11 @@ export function lowerRows(
   request: RowsRequest,
   additionalFilter?: IdbRowFilter
 ): LoweredRows {
-  const filter = rowFilter(catalog, request, additionalFilter);
+  // Omit a no-op closure so unfiltered reads keep a stable middleware cache key.
+  const filter =
+    request.where === undefined && additionalFilter === undefined
+      ? undefined
+      : rowFilter(catalog, request, additionalFilter);
   const comparator = logical.direction === undefined ? buildRowComparator(request.orderBy) : undefined;
   const base = { meta, storeName: catalog.storeName };
   const pagination = {
@@ -62,7 +66,7 @@ export function lowerRows(
       idbPlan = {
         ...base,
         kind: "cursor-scan",
-        filter,
+        ...(filter === undefined ? {} : { filter }),
         ...(comparator === undefined ? {} : { comparator }),
         ...pagination,
       };
@@ -88,7 +92,7 @@ export function lowerRows(
             ...access,
             kind: "cursor-scan",
             direction: logical.direction,
-            filter,
+            ...(filter === undefined ? {} : { filter }),
             take: (request.skip ?? 0) + request.take,
           };
         }
@@ -97,14 +101,15 @@ export function lowerRows(
           return {
             ...access,
             kind: "cursor-scan",
-            filter,
+            ...(filter === undefined ? {} : { filter }),
             ...(logical.direction === undefined ? {} : { direction: logical.direction }),
             ...(comparator === undefined ? {} : { comparator }),
             ...pagination,
           };
         }
         // getAll has no descending traversal; a cursor preserves planned order.
-        if (logical.direction === "prev") return { ...access, kind: "cursor-scan", direction: "prev", filter };
+        if (logical.direction === "prev")
+          return { ...access, kind: "cursor-scan", direction: "prev", ...(filter === undefined ? {} : { filter }) };
         return { ...access, kind: "get-all" };
       });
       idbPlan = single ? ops[0]! : { meta, kind: "batch", storeNames: [catalog.storeName], ops };
@@ -118,7 +123,8 @@ export function lowerRows(
       // Keep the full-filter safety boundary for every access path. Cursor
       // paths also filter before pagination, so their returned rows pass twice.
       // Every row leaves here normalized, so the caller never sees an absent nullable field.
-      let result = rows.map(catalog.absentAsNull).filter(filter);
+      let result = rows.map(catalog.absentAsNull);
+      if (filter !== undefined) result = result.filter(filter);
       if (!shapedByDriver) {
         if (comparator !== undefined) result.sort(comparator);
         const skip = request.skip ?? 0;
