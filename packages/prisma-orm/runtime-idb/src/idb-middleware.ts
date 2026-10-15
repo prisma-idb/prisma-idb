@@ -1,10 +1,10 @@
 import type { RuntimeMiddleware } from "@prisma/orm-framework/components/runtime";
-import type { IdbPlanBody } from "@prisma-idb/driver-idb/runtime";
+import type { IdbLoweredPlan } from "@prisma-idb/adapter-idb/runtime";
 
 /**
  * IDB-family middleware.
  *
- * Extends the generic `RuntimeMiddleware<IdbPlanBody>` marker. `familyId` is
+ * Extends the generic `RuntimeMiddleware<IdbLoweredPlan>` marker. `familyId` is
  * optional so generic cross-family middleware (e.g. telemetry) — which carry
  * no `familyId` — remain assignable. When present, it must be `'idb'`; the
  * runtime can reject mismatches at construction time via
@@ -26,6 +26,6 @@ import type { IdbPlanBody } from "@prisma-idb/driver-idb/runtime";
  * - Observation-only hooks (telemetry, cache population, logging) work
  *   correctly — they just receive rows from an already-complete scan.
  */
-export interface IdbMiddleware extends RuntimeMiddleware<IdbPlanBody> {
+export interface IdbMiddleware extends RuntimeMiddleware<IdbLoweredPlan> {
   readonly familyId?: "idb";
 }

@@ -1,7 +1,6 @@
 import type { CodecCallContext } from "@prisma/orm-framework/components/codec";
 import type { RuntimeAdapterInstance } from "@prisma/orm-framework/components/execution";
-import type { IdbPlanBody } from "@prisma-idb/driver-idb/runtime";
-import type { IdbQueryPlan } from "./idb-query-plan";
+import type { IdbLoweredPlan, IdbQueryPlan } from "./idb-query-plan";
 
 /**
  * Lowering context passed to the adapter's `lower()` method.
@@ -22,7 +21,7 @@ export interface IdbLowererContext<TContract = unknown> extends CodecCallContext
  *
  * Extends the generic `RuntimeAdapterInstance` marker with the IDB-specific
  * `lower()` method. `lower()` is the core of the adapter: it translates an
- * {@link IdbQueryPlan} (IDB execution plan + meta) into an {@link IdbPlanBody}
+ * {@link IdbQueryPlan} (IDB execution plan + meta) into an {@link IdbLoweredPlan}
  * (one of the strongly-typed IDB operation plans) that the driver can execute
  * directly against `window.indexedDB`.
  *
@@ -40,5 +39,5 @@ export interface IdbRuntimeAdapterInstance extends RuntimeAdapterInstance<"idb",
    *   `AbortSignal` for cooperative cancellation.
    * @returns The IDB plan body describing the exact IDB operation(s) to run.
    */
-  lower(plan: IdbQueryPlan, ctx: IdbLowererContext): Promise<IdbPlanBody>;
+  lower(plan: IdbQueryPlan, ctx: IdbLowererContext): Promise<IdbLoweredPlan>;
 }

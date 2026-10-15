@@ -10,7 +10,12 @@ import {
 } from "@prisma/orm-framework/components/runtime";
 import { canonicalStringify } from "@prisma/orm-framework/utils/canonical-stringify";
 import { hashContent } from "@prisma/orm-framework/utils/hash-content";
-import type { IdbLowererContext, IdbQueryPlan, IdbRuntimeAdapterInstance } from "@prisma-idb/adapter-idb/runtime";
+import type {
+  IdbLoweredPlan,
+  IdbLowererContext,
+  IdbQueryPlan,
+  IdbRuntimeAdapterInstance,
+} from "@prisma-idb/adapter-idb/runtime";
 import type { IdbPlanBody, IdbRuntimeDriverInstance, IdbTransactionScope } from "@prisma-idb/driver-idb/runtime";
 import type { IdbMiddleware } from "./idb-middleware";
 
@@ -91,11 +96,10 @@ export interface IdbRuntime {
  * `contentHash` mirrors the vendor SQL/Mongo runtimes: it
  * canonicalizes the execution plan's structural identity fields
  * and SHA-512 hashes them via WebCrypto. The resulting digest is
- * a bounded, opaque identity for the serializable execution fields.
- *
- * Key ranges are hashed by their bounds. Filter and comparator functions
- * are omitted, so the hash
- * does not distinguish different predicates or in-memory sort orders.
+ * a bounded, opaque identity for the execution fields and the structured
+ * closure identities carried through lowering. Key ranges use their bounds.
+ * Opaque closures get a fresh nonce on every hash call: their captured state
+ * may change even when the function reference stays the same.
  */
 function buildMiddlewareContext(contract: Record<string, unknown>): RuntimeMiddlewareContext {
   return {
@@ -121,20 +125,30 @@ function buildMiddlewareContext(contract: Record<string, unknown>): RuntimeMiddl
 
 /**
  * Reduce a plan to the fields that decide cache-key equality, so two
- * semantically identical plans hash the same.
+ * structured plans with the same identity hash the same.
  *
  * - `meta` keeps only `storageHash`, its identity field.
- * - Functions (`IdbRowFilter`, `IdbRowComparator`) are dropped; they cannot be hashed.
+ * - Structured filters and comparators use their canonical query identities.
+ * - Each opaque function gets a fresh nonce, preventing unsafe cache reuse.
  * - A key range collapses to its bounds. Only `delete`'s `key` can hold one; range descriptors are plain data and hash as they are.
  */
-function hashablePlan(exec: ExecutionPlan): Record<string, unknown> {
+function hashablePlan(
+  exec: ExecutionPlan,
+  inheritedIdentity?: IdbLoweredPlan["queryIdentity"]
+): Record<string, unknown> {
   const hashable: Record<string, unknown> = {};
+  const identity = (exec as IdbLoweredPlan).queryIdentity ?? inheritedIdentity;
   for (const [key, value] of Object.entries(exec as unknown as Record<string, unknown>)) {
     if (key === "meta") {
       const meta = value as Record<string, unknown> | undefined;
       hashable["meta"] = { storageHash: meta?.["storageHash"] };
     } else if (typeof value === "function") {
-      continue;
+      const semanticIdentity = key === "filter" || key === "comparator" ? identity?.[key] : undefined;
+      // Function reference or source equality cannot account for mutable captures.
+      hashable[key] = semanticIdentity === undefined ? { opaqueClosure: crypto.randomUUID() } : { semanticIdentity };
+    } else if (key === "ops" && (exec as IdbPlanBody).kind === "batch") {
+      // A range-split read applies the same structured predicate in each scan.
+      hashable[key] = (value as readonly ExecutionPlan[]).map((op) => hashablePlan(op, identity));
     } else if (isIdbKeyRange(value)) {
       hashable[key] = keyRangeIdentity(value);
     } else {

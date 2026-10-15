@@ -20,6 +20,7 @@
  *   create() — descriptor wires up a real IdbAdapter (no throw)
  */
 import { describe, expect, it } from "vitest";
+import { canonicalStringify } from "@prisma/orm-framework/utils/canonical-stringify";
 import { IdbAdapter } from "../src/core/idb-adapter";
 import type { IdbQueryPlan } from "../src/core/idb-query-plan";
 import type { IdbLowererContext } from "../src/core/runtime-adapter-instance";
@@ -170,5 +171,61 @@ describe("idbRuntimeAdapterDescriptor.create()", () => {
     const plan = makePlan(idbPlan);
     const result = await instance.lower(plan, TEST_CTX);
     expect(result).toBe(idbPlan);
+  });
+});
+
+describe("IdbAdapter.lower() — closure identities", () => {
+  it("snapshots structured filter values without mutating the driver plan", async () => {
+    const where = { kind: "field" as const, field: "score", op: "eq" as const, value: 10 };
+    const idbPlan: IdbCursorScanPlan = {
+      meta: META,
+      kind: "cursor-scan",
+      storeName: "users",
+      filter: () => true,
+    };
+    const result = await adapter.lower(
+      { ...makePlan(idbPlan), ast: { kind: "findMany", modelName: "User", where } },
+      TEST_CTX
+    );
+    const identity = canonicalStringify(where);
+    where.value = 20;
+    expect(result.queryIdentity?.filter).toBe(identity);
+    expect(result).not.toBe(idbPlan);
+    expect(result).toMatchObject(idbPlan);
+    expect(idbPlan).not.toHaveProperty("queryIdentity");
+  });
+
+  it("preserves comparator field priority and directions", async () => {
+    const orderBy = { score: "asc", id: "desc" } as const;
+    const result = await adapter.lower(
+      {
+        ...makePlan({ meta: META, kind: "cursor-scan", storeName: "users" }),
+        ast: { kind: "findMany", modelName: "User", orderBy },
+      },
+      TEST_CTX
+    );
+    expect(result.queryIdentity?.comparator).toBe(
+      canonicalStringify([
+        ["score", "asc"],
+        ["id", "desc"],
+      ])
+    );
+  });
+
+  it("leaves unsupported filter values opaque without failing lowering", async () => {
+    const idbPlan: IdbCursorScanPlan = { meta: META, kind: "cursor-scan", storeName: "users", filter: () => true };
+    const result = await adapter.lower(
+      {
+        ...makePlan(idbPlan),
+        ast: {
+          kind: "findMany",
+          modelName: "User",
+          where: { kind: "field", field: "bytes", op: "eq", value: new ArrayBuffer(2) },
+        },
+      },
+      TEST_CTX
+    );
+    expect(result).toBe(idbPlan);
+    expect(result.queryIdentity).toBeUndefined();
   });
 });
