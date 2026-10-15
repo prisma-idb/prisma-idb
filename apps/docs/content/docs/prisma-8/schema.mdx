@@ -26,6 +26,8 @@ Decimal values stay as the strings you supply. Accepted forms include `"-12.50"`
 
 Decimal equality, membership, range filters and `orderBy` compare exact numeric values without converting them to JavaScript numbers. For example, `"10"`, `"10.00"` and `"1e1"` compare equal. Primary-key lookups and unique constraints retain IndexedDB's string identity, so the stored spelling still matters for those operations.
 
+For a Decimal primary key stored as `"10"`, `findUnique("10.00")` returns `null`. A `where({ id: "10.00" })` filter matches that row numerically. This distinction also applies to Decimal fields in compound primary keys.
+
 ## Models and stores
 
 Each model becomes an IndexedDB object store. The store is named after the model with its first letter lowercased, so `model TodoItem` is stored in `todoItem`. The same name is the model's key on the client: `db.orm.todoItem`.

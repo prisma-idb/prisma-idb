@@ -1,7 +1,7 @@
 import { AsyncIterableResult } from "@prisma/orm-framework/components/runtime";
 import type { PlanMeta } from "@prisma/orm-framework/contract/types";
 import type { IdbFilterExpr, IdbQueryPlan } from "@prisma-idb/adapter-idb/runtime";
-import { absentAsNull } from "@prisma-idb/target-idb/runtime";
+import { absentAsNull, isValidIdbKey } from "@prisma-idb/target-idb/runtime";
 import type {
   IdbAggregateAst,
   IdbCountAst,
@@ -590,19 +590,22 @@ export class IdbStoreAccessorImpl<
     return (row ?? withDefaults) as DefaultModelRow<TContract, ModelName>;
   }
 
-  /** Resolve the ordered primary-key fields and return their first match. */
+  /** Read the exact stored primary key without applying numeric predicate semantics. */
   async findUnique(key: KeyType<TContract, ModelName>): Promise<DefaultModelRow<TContract, ModelName> | null> {
+    if (!isValidIdbKey(key)) return null;
     const groupingKey = this.#newGroupingKey();
     const meta = this.#planMeta(groupingKey);
     const ast: IdbFindUniqueAst = { kind: "findUnique", modelName: this.#modelName, key };
-    const keyPath = getKeyPath(this.#contract, this.#modelName);
-    const fields = typeof keyPath === "string" ? [keyPath] : keyPath;
-    const values = typeof keyPath === "string" ? [key] : (key as readonly unknown[]);
-    const where = combineFilterExprs(fields.map((field, i) => ({ kind: "field", field, op: "eq", value: values[i] })));
-    const request: RowsRequest = { ...(where === undefined ? {} : { where }), take: 1 };
-    const lowered = this.#lowerRows(meta, request);
-    const rows = await this.#executor.query<Record<string, unknown>>({ meta, ast, idbPlan: lowered.idbPlan }).toArray();
-    return (lowered.finish(rows)[0] as DefaultModelRow<TContract, ModelName> | undefined) ?? null;
+    const [row] = await this.#executor
+      .query<Record<string, unknown>>({
+        meta,
+        ast,
+        idbPlan: { meta, kind: "key-get", storeName: this.#storeName, key },
+      })
+      .toArray();
+    return row === undefined
+      ? null
+      : (absentAsNull(this.#contract, this.#modelName)(row) as DefaultModelRow<TContract, ModelName>);
   }
 
   /** Delete a keyed row with child actions when its relations require them. */
