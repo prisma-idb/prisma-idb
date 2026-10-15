@@ -584,10 +584,10 @@ export class IdbStoreAccessorImpl<
       idbPlan: { meta, kind: "add", storeName: this.#storeName, record: withDefaults },
     };
     // The IDB driver echoes the stored record back as the single result row.
-    for await (const row of this.#executor.query(plan)) {
-      return row as DefaultModelRow<TContract, ModelName>;
-    }
-    return withDefaults as DefaultModelRow<TContract, ModelName>;
+    // Read the result to its end: returning early from the loop would skip the
+    // `afterQuery` middleware hook.
+    const [row] = await this.#executor.query(plan).toArray();
+    return (row ?? withDefaults) as DefaultModelRow<TContract, ModelName>;
   }
 
   /** Resolve the ordered primary-key fields and return their first match. */
