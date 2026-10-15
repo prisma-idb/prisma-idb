@@ -136,7 +136,7 @@ describe("planQuery", () => {
       expect(descriptor(f("a", "in", ["x", value]))).toEqual({ access: "full", exact: false });
     }
   );
-  it.each(["idb/string@1", "idb/int32@1", "idb/double@1", "idb/date@1", "idb/decimal@1", "idb/bytes@1"])(
+  it.each(["idb/string@1", "idb/int32@1", "idb/double@1", "idb/date@1", "idb/bytes@1"])(
     "allows ranges for %s",
     (codecId) => {
       const values: Record<string, unknown[]> = {
@@ -144,7 +144,6 @@ describe("planQuery", () => {
         "idb/int32@1": [1, 9],
         "idb/double@1": [1.5, 9.5],
         "idb/date@1": [new Date(1), new Date(9)],
-        "idb/decimal@1": ["1", "9"],
         "idb/bytes@1": [new Uint8Array([1]), new Uint8Array([9])],
       };
       const [lower, upper] = values[codecId]!;

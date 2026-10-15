@@ -14,7 +14,7 @@ function rowFilter(catalog: QueryCatalog, request: PlanRequest, additionalFilter
   return (stored) => {
     const row = catalog.absentAsNull(stored);
     return (
-      (request.where === undefined || evaluateFilter(request.where, row)) &&
+      (request.where === undefined || evaluateFilter(request.where, row, catalog.fields)) &&
       (additionalFilter === undefined || additionalFilter(row))
     );
   };
@@ -50,7 +50,7 @@ export function lowerRows(
     request.where === undefined && additionalFilter === undefined
       ? undefined
       : rowFilter(catalog, request, additionalFilter);
-  const comparator = logical.direction === undefined ? buildRowComparator(request.orderBy) : undefined;
+  const comparator = logical.direction === undefined ? buildRowComparator(request.orderBy, catalog.fields) : undefined;
   const base = { meta, storeName: catalog.storeName };
   const pagination = {
     ...(request.skip === undefined ? {} : { skip: request.skip }),

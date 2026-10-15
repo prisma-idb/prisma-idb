@@ -34,7 +34,7 @@ export type {
   IdbFilterOp,
 } from "../core/idb-filter-expr";
 export { fieldFilter, andExpr, orExpr, notExpr, nullCheckExpr, shorthandToFilterExpr } from "../core/idb-filter-expr";
-export { evaluateFilter } from "../core/filter-eval";
+export { evaluateFilter, assertValidDecimalFilter } from "../core/filter-eval";
 export { IdbAdapter } from "../core/idb-adapter";
 
 const idbRuntimeAdapterDescriptor: RuntimeAdapterDescriptor<"idb", "idb", IdbRuntimeAdapterInstance> = {

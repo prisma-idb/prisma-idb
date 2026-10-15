@@ -41,11 +41,17 @@ const scalar = fc.oneof(
   fc.constant(null)
 );
 const metadata = fc.record({ codec: fc.constantFrom(...codecs), nullable: fc.boolean() });
+/** Generate storage values accepted by each field codec. */
 function valueFor(codec: string): fc.Arbitrary<unknown> {
   switch (codec) {
     case "idb/string@1":
-    case "idb/decimal@1":
       return string;
+    case "idb/decimal@1":
+      return fc.oneof(
+        integer.map(String),
+        fc.tuple(integer, integer).map(([coefficient, exponent]) => `${coefficient}.00e${exponent}`),
+        fc.constantFrom("1.000000000000000000001", "9007199254740993", "-1e400")
+      );
     case "idb/int32@1":
       return integer;
     case "idb/double@1":
@@ -97,28 +103,22 @@ const inputs = fc
           : valueFor(config.c.codec),
       })
       .chain((row) => {
+        /** Decimal numeric operands must be valid even on an empty or short-circuited branch. */
+        const operandFor = (name: "id" | "a" | "b" | "c") =>
+          name !== "id" && config[name].codec === "idb/decimal@1"
+            ? fc.oneof(valueFor(config[name].codec), fc.constant(null), fc.constant(undefined))
+            : scalar;
         const atom = fc
           .tuple(
             fc.constantFrom("id", "a", "b", "c"),
-            fc.constantFrom<IdbFilterOp>(
-              "eq",
-              "in",
-              "gt",
-              "gte",
-              "lt",
-              "lte",
-              "startsWith",
-              "contains",
-              "neq",
-              "notIn"
-            ),
-            scalar,
-            fc.boolean()
+            fc.constantFrom<IdbFilterOp>("eq", "in", "gt", "gte", "lt", "lte", "startsWith", "contains", "neq", "notIn")
           )
-          .map(([name, op, random, useRow]) => {
-            const value = useRow ? row[name] : random;
-            return f(name, op, op === "in" || op === "notIn" ? [value, random] : value);
-          });
+          .chain(([name, op]) =>
+            fc.tuple(operandFor(name), fc.boolean()).map(([random, useRow]) => {
+              const value = useRow ? row[name] : random;
+              return f(name, op, op === "in" || op === "notIn" ? [value, random] : value);
+            })
+          );
         const filter: fc.Arbitrary<IdbFilterExpr> = fc.oneof(
           atom,
           fc.array(atom, { maxLength: 5 }).map(andExpr),
@@ -126,8 +126,10 @@ const inputs = fc
           atom.map(notExpr),
           atom.map((expr) => andExpr([f("a", "eq", row.a), expr, nullCheckExpr("b", false)])),
           fc
-            .tuple(fc.constantFrom("a", "b", "c"), scalar)
-            .map(([name, random]) => orExpr([f(name, "eq", row[name]), f(name, "in", [random])]))
+            .constantFrom("a", "b", "c")
+            .chain((name) =>
+              operandFor(name).map((random) => orExpr([f(name, "eq", row[name]), f(name, "in", [random])]))
+            )
         );
         return filter.map((where) => ({ config, row, where }));
       })
@@ -169,8 +171,8 @@ it("planned ranges contain every codec-supported row matched by evaluateFilter",
             if (comparison === 0) expect(Boolean(range.lowerOpen || range.upperOpen)).toBe(false);
           }
         }
-        if (evaluateFilter(where, row)) expect(planContains(plan, row)).toBe(true);
-        if (plan.exact) expect(planContains(plan, row)).toBe(evaluateFilter(where, row));
+        if (evaluateFilter(where, row, c.fields)) expect(planContains(plan, row)).toBe(true);
+        if (plan.exact) expect(planContains(plan, row)).toBe(evaluateFilter(where, row, c.fields));
       }),
       { numRuns: 5000, seed: 98003 }
     );

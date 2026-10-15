@@ -68,7 +68,9 @@ Calling `where()` more than once adds conditions: a row must match all of them.
 
 `DateTime` and `Bytes` values compare by value, so `eq(new Date("2026-01-01"))` matches a stored date at that moment. Comparing values of different types follows IndexedDB's key order: numbers, then dates, then strings, then binary values.
 
-The query planner uses primary keys and indexes for supported equality, range, membership, and compound filters. It reapplies the full filter to candidate rows. When no index can cover every possible match, it scans the store.
+`Decimal` fields use exact numeric equality, membership, ranges and sorting. For example, `eq("1e1")` matches `"10.00"`, and `gt("9")` matches `"10"`. Numeric comparisons preserve all significant digits, including values outside JavaScript's number range. String operators such as `startsWith` still inspect the stored text. See [Decimal storage and valid inputs](/docs/prisma-8/schema#scalar-types).
+
+The query planner uses primary keys and indexes for supported equality, range, membership, and compound filters. It reapplies the full filter to candidate rows. When no index can cover every possible match, it scans the store. Decimal predicates use residual numeric filters rather than native string key ranges. Decimal sorting completes before `skip` and `take`.
 
 ## Sorting and pagination
 

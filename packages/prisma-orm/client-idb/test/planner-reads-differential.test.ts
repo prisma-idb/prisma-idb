@@ -15,9 +15,9 @@ import { createIDBRuntimeDriver, type IdbRuntimeDriverInstance } from "@prisma-i
 import { defineContract } from "@prisma-idb/family-idb/contract-ts";
 import idbFamilyPack from "@prisma-idb/family-idb/pack";
 import idbTargetPack from "@prisma-idb/target-idb/pack";
-import { compareFieldValues } from "@prisma-idb/target-idb/runtime";
+import { compareDecimalValues, compareFieldValues } from "@prisma-idb/target-idb/runtime";
 import { idbOrm, type IdbQueryExecutor, type IdbStoreAccessor, type IdbContract } from "../src/exports/orm";
-import { buildCatalog } from "../src/core/planner/catalog";
+import { buildCatalog, type QueryCatalog } from "../src/core/planner/catalog";
 import { lowerExists } from "../src/core/planner/lower";
 import { planQuery } from "../src/core/planner/plan";
 
@@ -96,6 +96,8 @@ type Query = { where?: IdbFilterExpr; orderBy?: Order; skip?: number; take?: num
 let dbCounter = 0;
 /** Reads a stored row the way the ORM does: an absent nullable field is `null`. Follows the contract under test. */
 let readStored = (row: Row): Row => row;
+/** Codec metadata for the contract currently used by the full-scan oracle. */
+let comparisonFields: QueryCatalog["fields"] = {};
 
 async function withDatabase(
   run: (db: IDBDatabase, driver: IdbRuntimeDriverInstance) => Promise<void>,
@@ -144,11 +146,17 @@ async function oracle(db: IDBDatabase, query: Query): Promise<Row[]> {
     request.onsuccess = () => resolve((request.result as Row[]).map(readStored));
     request.onerror = () => reject(request.error);
   });
-  const filtered = rows.filter((row) => query.where === undefined || evaluateFilter(query.where, row));
+  const filtered = rows.filter(
+    (row) => query.where === undefined || evaluateFilter(query.where, row, comparisonFields)
+  );
   if (query.orderBy)
     filtered.sort((a, b) => {
       for (const [field, direction] of Object.entries(query.orderBy!)) {
-        const comparison = compareFieldValues(a[field], b[field]);
+        const compare =
+          comparisonFields[field]?.codecId === "idb/decimal@1" && a[field] != null && b[field] != null
+            ? compareDecimalValues
+            : compareFieldValues;
+        const comparison = compare(a[field], b[field]);
         if (comparison !== 0) return direction === "desc" ? -comparison : comparison;
       }
       return 0;
@@ -167,7 +175,9 @@ function accessor(
   driver: IdbRuntimeDriverInstance,
   testContract: IdbContract = contract
 ): IdbStoreAccessor<never, never> {
-  readStored = itemsCatalog(testContract).absentAsNull;
+  const catalog = itemsCatalog(testContract);
+  readStored = catalog.absentAsNull;
+  comparisonFields = catalog.fields;
   const orm = idbOrm({ contract: testContract, executor: new TestExecutor(driver) });
   return (orm as unknown as Record<string, IdbStoreAccessor<never, never>>)["items"]!;
 }
@@ -533,7 +543,10 @@ function oracleWrite(db: IDBDatabase, where: IdbFilterExpr | undefined, patch?: 
       const cursor = request.result;
       if (cursor) {
         const row = cursor.value as Row;
-        if ((where === undefined || evaluateFilter(where, row)) && (take === undefined || matched.length < take))
+        if (
+          (where === undefined || evaluateFilter(where, row, comparisonFields)) &&
+          (take === undefined || matched.length < take)
+        )
           matched.push(row);
         cursor.continue();
         return;

@@ -6,6 +6,7 @@ import {
 } from "@prisma/orm-framework/contract/types";
 import { type, type Type } from "arktype";
 import { idbCodecLookup } from "./codecs";
+import { isDecimalString } from "./decimal-compare";
 import { isValidIdbKey } from "./key-compare";
 
 /** The validation verdict, with diagnostic messages when a record or key is rejected. */
@@ -54,6 +55,9 @@ function buildType(
     for (const alternative of types.slice(1)) validator = validator.or(alternative!);
     if (fieldType.codecId === "idb/int32@1") {
       validator = type("-2147483648 <= number.integer <= 2147483647");
+    }
+    if (fieldType.codecId === "idb/decimal@1") {
+      validator = type("string").narrow(isDecimalString);
     }
     return validator;
   }

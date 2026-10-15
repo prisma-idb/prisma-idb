@@ -16,11 +16,15 @@ This page lists what a Prisma schema can contain when it targets IndexedDB, and 
 | `Boolean`   | `boolean`        | Can't be a key or indexed. See [Indexes](#indexes).  |
 | `DateTime`  | `Date`           | Compared and sorted by time, not by object identity. |
 | `BigInt`    | `bigint`         | Can't be a key or indexed.                           |
-| `Decimal`   | `string`         |                                                      |
+| `Decimal`   | `string`         | Stored as text; compared and sorted numerically.     |
 | `Json`      | any JSON value   | Can't be a key or indexed.                           |
 | `Bytes`     | `Uint8Array`     | Compared and sorted byte by byte.                    |
 
 Add `?` to make a field optional. Its value is then `null` when it isn't set.
+
+Decimal values stay as the strings you supply. Accepted forms include `"-12.50"`, `".5"` and `"1.25e3"`. Empty strings, whitespace, hexadecimal values, `NaN` and infinities are invalid. Creates and updates reject invalid Decimal values. Numeric filter operands must also be valid decimal text, even when the query would return no rows. A numeric comparison that encounters invalid text in existing records throws; repair those records before filtering or sorting them.
+
+Decimal equality, membership, range filters and `orderBy` compare exact numeric values without converting them to JavaScript numbers. For example, `"10"`, `"10.00"` and `"1e1"` compare equal. Primary-key lookups and unique constraints retain IndexedDB's string identity, so the stored spelling still matters for those operations.
 
 ## Models and stores
 
@@ -63,7 +67,7 @@ Pass `name:` to choose an index's name, for example `@@index([userId], name: "by
 
 Like keys, indexed fields must be `String`, `Int`, `Float`, `DateTime`, `Decimal` or `Bytes`. IndexedDB silently leaves other values out of an index, so `contract emit` rejects an index on a `Boolean`, `BigInt` or `Json` field.
 
-Queries use an index automatically for equality filters on an indexed field.
+Queries use an index automatically for supported equality filters on an indexed field. Decimal predicates and sorting run in memory because their stored strings have a different order from their numeric values. A query can still use a separate index to narrow candidates safely.
 
 ## Defaults
 
