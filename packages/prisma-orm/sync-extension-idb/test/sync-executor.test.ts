@@ -524,6 +524,22 @@ describe("SyncInterceptorExecutor.transaction() — relational mutations", () =>
     expect(postUpdate!.versionMetaId).toBe('Post::"p1"');
   });
 
+  it("rejects nonunique upsert filters without changing rows or sync tracking", async () => {
+    const { client } = await createTestSyncClient();
+    const users = asAccessors(client.orm)["users"]!;
+    await users.create({ id: "u1", name: "Alice" });
+    const outbox = await scanAll(client, "_idb_sync_outbox");
+    const metadata = await scanAll(client, "_idb_sync_version_meta");
+
+    await expect(
+      users.upsert({ where: { name: "Alice" }, create: { id: "u2", name: "New" }, update: { name: "Updated" } })
+    ).rejects.toThrow(/upsert.*complete primary key or unique index/i);
+
+    expect(await scanAll(client, "users")).toEqual([{ id: "u1", name: "Alice" }]);
+    expect(await scanAll(client, "_idb_sync_outbox")).toEqual(outbox);
+    expect(await scanAll(client, "_idb_sync_version_meta")).toEqual(metadata);
+  });
+
   it("tracks upsert()'s create branch as a normal, correctly-keyed create event", async () => {
     // upsert() always goes through its own atomic transaction-scope path in
     // real usage (store-accessor.ts checks `typeof exec.transaction ===

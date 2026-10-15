@@ -57,6 +57,7 @@ import { type IdbGroupedAccessor, createGroupedAccessor } from "./grouped-access
 import type { IdbQueryExecutor } from "./executor";
 import { assertEnumValues } from "./enum-validation";
 import { assertValidRecord } from "./record-validation";
+import { assertUniqueLookup } from "./unique-lookup";
 import { applyUpdateDefaults, completeCreateRecord, createMutationDefaultsCache } from "./mutation-defaults";
 import { loadRelation } from "./relation-loader";
 import {
@@ -302,6 +303,10 @@ export interface IdbStoreAccessor<
 
   /**
    * Insert or update a single record.
+   *
+   * `where` must contain a complete primary key or declared unique index,
+   * with non-null IndexedDB key values for every member. Additional equality
+   * predicates are allowed. Invalid lookups reject before any mutation.
    *
    * - If a row matching `where` exists: shallow-merge `update` onto it and
    *   return the merged row.
@@ -720,6 +725,10 @@ export class IdbStoreAccessorImpl<
     update: PatchInput<TContract, ModelName>;
     where: WhereFilter<TContract, ModelName>;
   }): Promise<DefaultModelRow<TContract, ModelName>> {
+    assertUniqueLookup(
+      buildCatalog(this.#contract, this.#storeName, this.#modelName),
+      args.where as Record<string, unknown>
+    );
     const keyPath = getKeyPath(this.#contract, this.#modelName);
     const whereExpr = shorthandToFilterExpr(args.where as Record<string, unknown>);
     const meta = this.#planMeta(this.#newGroupingKey());
