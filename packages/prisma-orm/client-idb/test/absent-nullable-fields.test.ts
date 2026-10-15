@@ -122,9 +122,9 @@ describe("rows stored without a nullable field", () => {
     expect(await users.where({ nickname: null }).count()).toBe(3);
   });
 
-  it("matches in and notIn lists holding null on a field the row lacks", async () => {
-    expect(await posts.where(() => fieldFilter("subtitle", "in", [null])).count()).toBe(2);
-    expect(await posts.where(() => fieldFilter("subtitle", "notIn", [null])).count()).toBe(1);
+  it("keeps null-only membership unknown on absent and present fields", async () => {
+    expect(await posts.where(() => fieldFilter("subtitle", "in", [null])).count()).toBe(0);
+    expect(await posts.where(() => fieldFilter("subtitle", "notIn", [null])).count()).toBe(0);
   });
 
   it("reads the field as null in a 1:N relation load", async () => {

@@ -66,6 +66,18 @@ const todos = await db.orm.todo
 
 Calling `where()` more than once adds conditions: a row must match all of them.
 
+Nullable comparisons follow SQL's three-valued logic. A comparison against a null or absent field is unknown. `not(unknown)` stays unknown. `and` returns false if any condition is false; otherwise, an unknown condition makes the result unknown. `or` returns true if any condition is true; otherwise, an unknown condition makes the result unknown. A filter keeps only rows where the complete condition is true.
+
+For example, `email.neq("alice@example.com")`, `email.notIn(["alice@example.com"])`, and `not(email.eq("alice@example.com"))` exclude null emails. To include them, use `or(email.neq("alice@example.com"), email.isNull())`.
+
+Explicit null checks remain true or false: `eq(null)` and `isNull()` match null and absent fields. `neq(null)` and `isNotNull()` match present values. The shorthand `{ email: null }` is also a null check.
+
+Membership lists preserve SQL null semantics:
+
+- `in(["Alice", null])` matches `"Alice"`. For other values, including null, the result is unknown.
+- `notIn(["Alice", null])` matches no rows. Negating it matches only `"Alice"`.
+- `in([])` is false and `notIn([])` is true for every row, including null fields.
+
 `DateTime` and `Bytes` values compare by value, so `eq(new Date("2026-01-01"))` matches a stored date at that moment. Comparing values of different types follows IndexedDB's key order: numbers, then dates, then strings, then binary values.
 
 `Decimal` fields use exact numeric equality, membership, ranges and sorting. For example, `eq("1e1")` matches `"10.00"`, and `gt("9")` matches `"10"`. Numeric comparisons preserve all significant digits, including values outside JavaScript's number range. String operators such as `startsWith` still inspect the stored text. See [Decimal storage and valid inputs](/docs/prisma-8/schema#scalar-types).
