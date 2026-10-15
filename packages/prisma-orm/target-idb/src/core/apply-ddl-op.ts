@@ -214,6 +214,23 @@ export function readMarker(db: IDBDatabase, space: string): Promise<IdbMarkerRec
 }
 
 /**
+ * Puts `markers` into the marker store inside the open version-change transaction,
+ * unlike {@link writeMarkers}, which opens its own transaction.
+ * Throws when the migration chain never created the marker store.
+ */
+function putMarkersInUpgrade(db: IDBDatabase, tx: IDBTransaction, markers: readonly MarkerWriteInput[]): void {
+  if (markers.length === 0) return;
+  if (!db.objectStoreNames.contains(IDB_MARKER_STORE)) {
+    throw new Error(
+      `IDB: the "${IDB_MARKER_STORE}" store does not exist after applying the migration, ` +
+        "so its marker can't be written. The migration chain should create this store in its first migration."
+    );
+  }
+  const markerStore = tx.objectStore(IDB_MARKER_STORE);
+  for (const marker of markers) markerStore.put(toMarkerRecord(marker));
+}
+
+/**
  * Open `dbName` at `targetVersion` and, inside `upgradeneeded`, apply `ops`
  * and then write `markers`. Then close the connection.
  *
@@ -278,58 +295,64 @@ export function openAndUpgrade(input: {
       tx.addEventListener("abort", () => {
         upgradeError ??= tx.error ?? undefined;
       });
-      const runNext = (i: number): void => {
+      const failUpgrade = (error: unknown): void => {
+        upgradeError = error;
+        tx.abort();
+      };
+      /**
+       * Runs the op at `index`, then the hook and completion callback, then the next op.
+       * Once every op has run, writes the markers. Any thrown error aborts the upgrade.
+       */
+      const runNext = (index: number): void => {
         try {
-          const op = input.ops[i];
+          const op = input.ops[index];
           if (op) {
             input.onOperationStart?.(op);
             applyOneDdlOp(
               db,
               tx,
               op,
-              () => {
-                let completed = false;
-                const onDone = (hookError?: unknown) => {
-                  if (completed) return;
-                  completed = true;
-                  try {
-                    if (hookError !== undefined) throw hookError;
-                    input.onOperationComplete?.(op);
-                    runNext(i + 1);
-                  } catch (error) {
-                    upgradeError = error;
-                    tx.abort();
-                  }
-                };
-                if (op.kind === "transformRecords" && input.onTransformRecords) {
-                  try {
-                    input.onTransformRecords(tx, op, onDone);
-                  } catch (error) {
-                    onDone(error);
-                  }
-                } else {
-                  onDone();
-                }
-              },
+              () => finishOp(op, index),
               (error) => {
                 upgradeError = error;
               }
             );
-            return;
+          } else {
+            putMarkersInUpgrade(db, tx, input.markers ?? []);
           }
-          const markers = input.markers ?? [];
-          if (markers.length === 0) return;
-          if (!db.objectStoreNames.contains(IDB_MARKER_STORE)) {
-            throw new Error(
-              `IDB: the "${IDB_MARKER_STORE}" store does not exist after applying the migration, ` +
-                "so its marker can't be written. The migration chain should create this store in its first migration."
-            );
-          }
-          const markerStore = tx.objectStore(IDB_MARKER_STORE);
-          for (const marker of markers) markerStore.put(toMarkerRecord(marker));
         } catch (error) {
-          upgradeError = error;
-          tx.abort();
+          failUpgrade(error);
+        }
+      };
+      /**
+       * Runs once an op's DDL has been applied. A `transformRecords` hook may finish
+       * asynchronously, so the next op starts from its `onDone`, never more than once.
+       */
+      const finishOp = (op: IdbDdlOp, index: number): void => {
+        let completed = false;
+        /**
+         * Completes the op exactly once: later calls are ignored. A defined `hookError`, or
+         * an error thrown by `onOperationComplete`, aborts the upgrade instead of starting the next op.
+         */
+        const onDone = (hookError?: unknown) => {
+          if (completed) return;
+          completed = true;
+          try {
+            if (hookError !== undefined) throw hookError;
+            input.onOperationComplete?.(op);
+            runNext(index + 1);
+          } catch (error) {
+            failUpgrade(error);
+          }
+        };
+        if (op.kind === "transformRecords" && input.onTransformRecords) {
+          try {
+            input.onTransformRecords(tx, op, onDone);
+          } catch (error) {
+            onDone(error);
+          }
+        } else {
+          onDone();
         }
       };
       runNext(0);

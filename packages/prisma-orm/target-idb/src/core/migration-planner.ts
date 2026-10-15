@@ -8,7 +8,13 @@ import type {
   MigrationPlannerResult,
   MigrationScaffoldContext,
 } from "@prisma/orm-framework/components/control";
-import type { IdbIndexDefinition, IdbRecordField, IdbRecordFieldType, IdbStoreDefinition } from "./idb-contract-types";
+import type {
+  IdbIndexDefinition,
+  IdbRecordField,
+  IdbRecordFieldType,
+  IdbRecordShape,
+  IdbStoreDefinition,
+} from "./idb-contract-types";
 import { keyPathFields } from "./idb-contract-types";
 import {
   defaultIfMissing,
@@ -308,17 +314,101 @@ function assertSupportedRecordFields(fields: Record<string, IdbRecordField>, own
   }
 }
 
+/** Rejects unsupported field types in the stored record metadata of every store in `schema`. */
+function assertSupportedSchemaRecords(schema: IdbSchemaDiffInput | null): void {
+  for (const store of Object.values(schema?.stores ?? {})) {
+    if (store.record) assertSupportedRecordFields(store.record.fields, `Model "${store.record.model}"`);
+  }
+}
+
+/**
+ * Returns the value an added field's literal create default stores, or
+ * `undefined` when the field has no default the record-transform runner can write as-is.
+ */
+function storedCreateDefault(
+  contract: Contract,
+  storeName: string,
+  name: string,
+  field: IdbRecordField
+): string | number | boolean | undefined {
+  const spec = contract.execution?.mutations?.defaults?.find(
+    (entry) => entry.ref.table === storeName && entry.ref.column === name
+  )?.onCreate;
+  const value = spec?.params?.["value"];
+  if (spec?.id !== "literal" || field.many || field.dict || field.type.kind !== "scalar") return undefined;
+  if (typeof value !== "string" && typeof value !== "number" && typeof value !== "boolean") return undefined;
+  if (typeof value === "number" && !Number.isFinite(value)) return undefined;
+  return storedLiteralDefault(field, value);
+}
+
+/**
+ * Returns the transform that fills a field added to a store with existing rows.
+ * Nullable fields need none. Non-nullable fields take their literal create default
+ * when it can be stored as-is, and otherwise get a placeholder the author must fill in.
+ */
+function planAddedFieldTransform(
+  contract: Contract,
+  storeName: string,
+  newRecord: IdbRecordShape,
+  name: string,
+  field: IdbRecordField
+): IdbValueTransform | undefined {
+  if (field.nullable) return undefined;
+  const stored = storedCreateDefault(contract, storeName, name, field);
+  return stored === undefined ? placeholder(`${newRecord.model}.${name}`) : defaultIfMissing(stored);
+}
+
+/**
+ * Plans the `transformRecords` op for one store whose record shape changed, or
+ * `undefined` when its existing rows need no rewrite. Conflicts the planner
+ * cannot resolve are appended to `conflicts`.
+ */
+function planStoreRecordTransform(
+  contract: Contract,
+  storeName: string,
+  store: IdbStoreDefinition,
+  oldRecord: IdbRecordShape,
+  newRecord: IdbRecordShape,
+  conflicts: MigrationPlannerConflict[]
+): IdbDdlOp | undefined {
+  const fields: Record<string, IdbValueTransform> = Object.create(null);
+  const removeFields = Object.keys(oldRecord.fields).filter((name) => !Object.hasOwn(newRecord.fields, name));
+  for (const [name, field] of Object.entries(newRecord.fields)) {
+    const oldField = Object.hasOwn(oldRecord.fields, name) ? oldRecord.fields[name] : undefined;
+    if (oldField === undefined) {
+      const transform = planAddedFieldTransform(contract, storeName, newRecord, name, field);
+      if (transform !== undefined) fields[name] = transform;
+      continue;
+    }
+    if (fieldAcceptsExistingValues(oldField, field)) continue;
+    // The runner rejects transforms that touch an existing primary key.
+    if (keyPathFields(store.keyPath).some((key) => key === name || key.startsWith(`${name}.`))) {
+      conflicts.push({
+        kind: "keyFieldTransform",
+        summary: `Cannot migrate incompatible key field "${name}" in store "${storeName}".`,
+        why:
+          `transformRecords cannot change key field "${name}". ` +
+          "Author a manual migration that drops and re-creates the store with the desired data flow.",
+      });
+    } else {
+      fields[name] = placeholder(`${newRecord.model}.${name}`);
+    }
+  }
+  if (Object.keys(fields).length === 0 && removeFields.length === 0) return undefined;
+  return transformRecordsOp(storeName, {
+    ...(Object.keys(fields).length > 0 ? { fields } : {}),
+    ...(removeFields.length > 0 ? { removeFields } : {}),
+  });
+}
+
 /** Plans stored-record transformations after rejecting unsupported metadata. */
 function diffRecordShapes(
   from: IdbSchemaDiffInput | null,
   to: IdbSchemaDiffInput,
   contract: Contract
 ): { ops: IdbDdlOp[]; conflicts: MigrationPlannerConflict[] } {
-  for (const schema of [from, to]) {
-    for (const store of Object.values(schema?.stores ?? {})) {
-      if (store.record) assertSupportedRecordFields(store.record.fields, `Model "${store.record.model}"`);
-    }
-  }
+  assertSupportedSchemaRecords(from);
+  assertSupportedSchemaRecords(to);
   const ops: IdbDdlOp[] = [];
   const conflicts: MigrationPlannerConflict[] = [];
   for (const [storeName, store] of Object.entries(to.stores)) {
@@ -326,59 +416,8 @@ function diffRecordShapes(
     const newRecord = store.record;
     // New stores have no rows to backfill. Legacy DDL-only contracts carry no field history.
     if (oldRecord === undefined || newRecord === undefined) continue;
-    const fields: Record<string, IdbValueTransform> = Object.create(null);
-    const removeFields = Object.keys(oldRecord.fields).filter((name) => !Object.hasOwn(newRecord.fields, name));
-    for (const [name, field] of Object.entries(newRecord.fields)) {
-      const oldField = Object.hasOwn(oldRecord.fields, name) ? oldRecord.fields[name] : undefined;
-      if (oldField !== undefined) {
-        if (!fieldAcceptsExistingValues(oldField, field)) {
-          // The runner rejects transforms that touch an existing primary key.
-          if (keyPathFields(store.keyPath).some((key) => key === name || key.startsWith(`${name}.`))) {
-            conflicts.push({
-              kind: "keyFieldTransform",
-              summary: `Cannot migrate incompatible key field "${name}" in store "${storeName}".`,
-              why:
-                `transformRecords cannot change key field "${name}". ` +
-                "Author a manual migration that drops and re-creates the store with the desired data flow.",
-            });
-          } else {
-            fields[name] = placeholder(`${newRecord.model}.${name}`);
-          }
-        }
-        continue;
-      }
-      if (field.nullable) continue;
-      const spec = contract.execution?.mutations?.defaults?.find(
-        (entry) => entry.ref.table === storeName && entry.ref.column === name
-      )?.onCreate;
-      const value = spec?.params?.["value"];
-      if (
-        spec?.id !== "literal" ||
-        value === null ||
-        (typeof value !== "string" && typeof value !== "number" && typeof value !== "boolean") ||
-        (typeof value === "number" && !Number.isFinite(value)) ||
-        field.many ||
-        field.dict ||
-        field.type.kind !== "scalar"
-      ) {
-        fields[name] = placeholder(`${newRecord.model}.${name}`);
-        continue;
-      }
-      const stored = storedLiteralDefault(field, value);
-      if (stored === undefined) {
-        fields[name] = placeholder(`${newRecord.model}.${name}`);
-        continue;
-      }
-      fields[name] = defaultIfMissing(stored);
-    }
-    if (Object.keys(fields).length > 0 || removeFields.length > 0) {
-      ops.push(
-        transformRecordsOp(storeName, {
-          ...(Object.keys(fields).length > 0 ? { fields } : {}),
-          ...(removeFields.length > 0 ? { removeFields } : {}),
-        })
-      );
-    }
+    const op = planStoreRecordTransform(contract, storeName, store, oldRecord, newRecord, conflicts);
+    if (op !== undefined) ops.push(op);
   }
   return { ops, conflicts };
 }
