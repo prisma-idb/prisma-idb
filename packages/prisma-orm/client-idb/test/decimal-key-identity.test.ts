@@ -83,6 +83,8 @@ afterEach(() => databases.splice(0).forEach((db) => db.close()));
 
 describe.each([false, true])("Decimal key identity (compound primary key: %s)", (compound) => {
   const key = (id: string, group = "a") => (compound ? [group, id] : id);
+  /** Upsert needs the complete primary key, so a compound key also carries its group. */
+  const lookup = (id: string) => (compound ? { group: "a", id } : { id });
 
   it("resolves numeric aliases, preserves normalization and reads the physical key first", async () => {
     const { items, plans } = await setup(compound);
@@ -142,7 +144,7 @@ describe.each([false, true])("Decimal key identity (compound primary key: %s)", 
       await expect(items.updateAll({ amount: "30" }).toArray()).rejects.toMatchObject({ code: "PUT_FAILED" });
       await expect(
         items.upsert({
-          where: { id: "2.00" },
+          where: lookup("2.00"),
           create: { id: "3", group: "a", amount: "40" },
           update: { amount: "10.000" },
         })
@@ -162,7 +164,7 @@ describe.each([false, true])("Decimal key identity (compound primary key: %s)", 
     });
     expect(
       await items.upsert({
-        where: { id: "1e1" },
+        where: lookup("1e1"),
         create: { id: "30", group: "a", amount: "40" },
         update: { id: "10.0", note: "upserted" },
       })
