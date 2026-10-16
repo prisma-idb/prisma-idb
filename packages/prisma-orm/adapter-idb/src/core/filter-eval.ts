@@ -47,32 +47,51 @@ function isDecimalField(fields: FilterFieldMetadata, field: string): boolean {
   return fields[field]?.codecId === "idb/decimal@1" && !fields[field]?.collection;
 }
 
-/** Evaluate an AST node against a single row. Returns `true` to keep the row. */
+/** SQL predicate result before the outer WHERE boundary discards unknown. */
+type PredicateResult = boolean | null;
+
+/** Evaluate an AST node against a single row. Only SQL TRUE keeps the row. */
 export function evaluateFilter(
   expr: IdbFilterExpr,
   row: Record<string, unknown>,
   fields: FilterFieldMetadata = {}
 ): boolean {
+  return evaluatePredicate(expr, row, fields) === true;
+}
+
+/** Preserve unknown through logical composition so negation cannot admit null comparisons. */
+function evaluatePredicate(
+  expr: IdbFilterExpr,
+  row: Record<string, unknown>,
+  fields: FilterFieldMetadata
+): PredicateResult {
   switch (expr.kind) {
     case "field":
       return evalFieldOp(expr.field, expr.op, expr.value, row, fields);
     case "and": {
+      let result: PredicateResult = true;
       for (const e of expr.exprs) {
-        if (!evaluateFilter(e, row, fields)) return false;
+        const child = evaluatePredicate(e, row, fields);
+        if (child === false) return false;
+        if (child === null) result = null;
       }
-      return true;
+      return result;
     }
     case "or": {
+      let result: PredicateResult = false;
       for (const e of expr.exprs) {
-        if (evaluateFilter(e, row, fields)) return true;
+        const child = evaluatePredicate(e, row, fields);
+        if (child === true) return true;
+        if (child === null) result = null;
       }
-      return false;
+      return result;
     }
-    case "not":
-      return !evaluateFilter(expr.expr, row, fields);
+    case "not": {
+      const result = evaluatePredicate(expr.expr, row, fields);
+      return result === null ? null : !result;
+    }
     case "null-check": {
-      const v = row[expr.field];
-      const isNullish = v === null || v === undefined;
+      const isNullish = !isPresent(row[expr.field]);
       return expr.isNull ? isNullish : !isNullish;
     }
   }
@@ -85,49 +104,60 @@ function evalFieldOp(
   value: unknown,
   row: Record<string, unknown>,
   fields: FilterFieldMetadata
-): boolean {
+): PredicateResult {
   const cell = row[field];
+  // Upstream eq(null) and neq(null) are explicit null checks, not SQL comparisons.
+  if (value === null && (op === "eq" || op === "neq")) {
+    return op === "eq" ? !isPresent(cell) : isPresent(cell);
+  }
   const decimal = isDecimalField(fields, field);
   const compare = decimal ? compareDecimalValues : compareFieldValues;
-  const equal = decimal
-    ? (a: unknown, b: unknown) =>
-        isPresent(a) && isPresent(b) ? compareDecimalValues(a, b) === 0 : fieldValuesEqual(a, b)
-    : fieldValuesEqual;
+  const equal = decimal ? (a: unknown, b: unknown) => compareDecimalValues(a, b) === 0 : fieldValuesEqual;
+  if (op === "in" || op === "notIn") {
+    const result = evaluateMembership(cell, value, equal);
+    if (result === null) return null;
+    return op === "in" ? result : !result;
+  }
+  if (!isPresent(cell) || !isPresent(value)) return null;
+
   switch (op) {
     case "eq":
-      // `eq` treats null and undefined as equivalent so the shorthand path
-      // (`{ field: someValue }`) keeps working when stored rows omit the
-      // field. Literal-null equality goes through `null-check` instead.
-      if (value === null) return cell === null || cell === undefined;
       return equal(cell, value);
     case "neq":
-      if (value === null) return cell !== null && cell !== undefined;
       return !equal(cell, value);
     case "gt":
-      return isPresent(cell) && isPresent(value) && compare(cell, value) > 0;
+      return compare(cell, value) > 0;
     case "lt":
-      return isPresent(cell) && isPresent(value) && compare(cell, value) < 0;
+      return compare(cell, value) < 0;
     case "gte":
-      return isPresent(cell) && isPresent(value) && compare(cell, value) >= 0;
+      return compare(cell, value) >= 0;
     case "lte":
-      return isPresent(cell) && isPresent(value) && compare(cell, value) <= 0;
-    case "in": {
-      if (!Array.isArray(value)) return false;
-      return value.some((v) => equal(cell, v));
-    }
-    case "notIn": {
-      if (!Array.isArray(value)) return true;
-      return !value.some((v) => equal(cell, v));
-    }
+      return compare(cell, value) <= 0;
     case "contains":
-      return isPresent(cell) && String(cell).includes(String(value));
+      return String(cell).includes(String(value));
     case "startsWith":
-      return isPresent(cell) && String(cell).startsWith(String(value));
+      return String(cell).startsWith(String(value));
     case "endsWith":
-      return isPresent(cell) && String(cell).endsWith(String(value));
+      return String(cell).endsWith(String(value));
     default:
       return false;
   }
+}
+
+/** Match SQL IN: empty lists are false; otherwise null operands leave an unmatched result unknown. */
+function evaluateMembership(
+  cell: unknown,
+  values: unknown,
+  equal: (a: unknown, b: unknown) => boolean
+): PredicateResult {
+  if (!Array.isArray(values) || values.length === 0) return false;
+  if (!isPresent(cell)) return null;
+  let result: PredicateResult = false;
+  for (const value of values) {
+    if (!isPresent(value)) result = null;
+    else if (equal(cell, value)) return true;
+  }
+  return result;
 }
 
 function isPresent(value: unknown): boolean {

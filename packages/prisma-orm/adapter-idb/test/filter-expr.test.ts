@@ -11,6 +11,8 @@
  */
 import { describe, expect, it } from "vitest";
 import {
+  type IdbFilterExpr,
+  type IdbFilterOp,
   andExpr,
   fieldFilter,
   nullCheckExpr,
@@ -43,7 +45,7 @@ describe("evaluateFilter — field operators", () => {
     expect(evaluateFilter(fieldFilter("name", "eq", "Bob"), ALICE)).toBe(false);
   });
 
-  it("neq is the inverse of eq, with null/undefined parity", () => {
+  it("neq compares present values and supports explicit null checks", () => {
     expect(evaluateFilter(fieldFilter("name", "neq", "Alice"), ALICE)).toBe(false);
     expect(evaluateFilter(fieldFilter("name", "neq", "Bob"), ALICE)).toBe(true);
     // `neq null` is true only when the field has a real value.
@@ -176,5 +178,110 @@ describe("shorthandToFilterExpr", () => {
   it("drops undefined entries entirely", () => {
     const e = shorthandToFilterExpr({ name: "Alice", bio: undefined });
     expect(e).toEqual({ kind: "field", field: "name", op: "eq", value: "Alice" });
+  });
+});
+
+describe("evaluateFilter — nullable comparisons", () => {
+  it("preserves unknown through nested negation", () => {
+    const comparison = fieldFilter("bio", "eq", "Bob's bio");
+    expect(evaluateFilter(notExpr(comparison), ALICE)).toBe(false);
+    expect(evaluateFilter(notExpr(notExpr(comparison)), ALICE)).toBe(false);
+  });
+});
+
+describe("evaluateFilter — three-valued logic", () => {
+  const row = { value: null };
+  const predicates = {
+    true: andExpr([]),
+    false: orExpr([]),
+    unknown: fieldFilter("value", "eq", "x"),
+  };
+  const cases = [
+    ["true", "true", true, true],
+    ["true", "false", false, true],
+    ["true", "unknown", null, true],
+    ["false", "true", false, true],
+    ["false", "false", false, false],
+    ["false", "unknown", false, null],
+    ["unknown", "true", null, true],
+    ["unknown", "false", false, null],
+    ["unknown", "unknown", null, null],
+  ] as const;
+
+  it.each(cases)("composes %s and %s before applying WHERE", (left, right, expectedAnd, expectedOr) => {
+    const operands = [predicates[left], predicates[right]];
+    for (const [expr, result] of [
+      [andExpr(operands), expectedAnd],
+      [orExpr(operands), expectedOr],
+    ] as const) {
+      expect(evaluateFilter(expr, row)).toBe(result === true);
+      expect(evaluateFilter(notExpr(expr), row)).toBe(result === false);
+      expect(evaluateFilter(notExpr(notExpr(expr)), row)).toBe(result === true);
+    }
+  });
+
+  const comparisons: IdbFilterOp[] = ["eq", "neq", "gt", "gte", "lt", "lte", "contains", "startsWith", "endsWith"];
+  it.each(comparisons)("%s on a null or absent field stays unknown under NOT", (op) => {
+    for (const row of [{ value: null }, {}]) {
+      const expr = fieldFilter("value", op, "x");
+      expect(evaluateFilter(expr, row)).toBe(false);
+      expect(evaluateFilter(notExpr(expr), row)).toBe(false);
+      expect(evaluateFilter(notExpr(notExpr(expr)), row)).toBe(false);
+    }
+  });
+
+  it.each(["gt", "gte", "lt", "lte", "contains", "startsWith", "endsWith"] as const)(
+    "%s with a null operand stays unknown under NOT",
+    (op) => {
+      const expr = fieldFilter("value", op, null);
+      expect(evaluateFilter(expr, { value: "x" })).toBe(false);
+      expect(evaluateFilter(notExpr(expr), { value: "x" })).toBe(false);
+    }
+  );
+
+  it("keeps explicit null checks two-valued, including inside NOT", () => {
+    for (const row of [{ value: null }, {}, { value: "x" }]) {
+      const isNull = row.value !== "x";
+      const checks: Array<[IdbFilterExpr, boolean]> = [
+        [fieldFilter("value", "eq", null), isNull],
+        [fieldFilter("value", "neq", null), !isNull],
+        [nullCheckExpr("value", true), isNull],
+        [nullCheckExpr("value", false), !isNull],
+      ];
+      for (const [expr, expected] of checks) {
+        expect(evaluateFilter(expr, row)).toBe(expected);
+        expect(evaluateFilter(notExpr(expr), row)).toBe(!expected);
+      }
+    }
+  });
+});
+
+describe("evaluateFilter — SQL membership", () => {
+  const cases = [
+    ["x", [], false],
+    [null, [], false],
+    [undefined, [], false],
+    ["x", ["x"], true],
+    ["y", ["x"], false],
+    [null, ["x"], null],
+    [undefined, ["x"], null],
+    ["x", [null], null],
+    [null, [null], null],
+    [undefined, [null], null],
+    ["x", [null, "x"], true],
+    ["x", ["x", null], true],
+    ["y", ["x", null], null],
+    [null, ["x", null], null],
+    [undefined, ["x", null], null],
+  ] as const;
+
+  it.each(cases)("evaluates %s IN %j before negation", (cell, values, result) => {
+    const row = { value: cell };
+    const included = fieldFilter("value", "in", values);
+    const excluded = fieldFilter("value", "notIn", values);
+    expect(evaluateFilter(included, row)).toBe(result === true);
+    expect(evaluateFilter(excluded, row)).toBe(result === false);
+    expect(evaluateFilter(notExpr(included), row)).toBe(result === false);
+    expect(evaluateFilter(notExpr(excluded), row)).toBe(result === true);
   });
 });

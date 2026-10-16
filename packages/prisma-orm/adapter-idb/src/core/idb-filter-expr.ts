@@ -42,9 +42,9 @@ export interface IdbNotExpr {
 }
 
 /**
- * Null check. Distinct from `eq null` because IDB serialises absent
- * fields as `undefined`; a null check treats `null` and `undefined`
- * as equivalent (matching the shorthand `where({ field: null })`).
+ * Explicit null check. Like `eq(null)` and `neq(null)`, it treats null
+ * and absent fields as equivalent and always returns true or false.
+ * Other nullable comparisons can be unknown until the full filter is evaluated.
  */
 export interface IdbNullCheckExpr {
   readonly kind: "null-check";
