@@ -73,18 +73,22 @@ export async function resolveDecimalKey(
   scope: Pick<IdbTransactionScope, "execute">,
   contract: IdbContract,
   modelName: string,
-  key: unknown
+  key: unknown,
+  snapshot?: readonly Record<string, unknown>[]
 ): Promise<Record<string, unknown> | undefined> {
   if (!isValidIdbKey(key)) return undefined;
   const storeName = getStoreName(contract, modelName);
   const decimal = hasDecimalPrimaryKey(contract, modelName);
   // Reject malformed Decimal operands even when there are no stored rows to compare.
   if (decimal && !decimalKeysEqual(contract, modelName, key, key)) return undefined;
-  const [exact] = await scope.execute({ kind: "key-get", storeName, key } as IdbAtomicPlan);
-  if (!decimal) return exact;
+  if (!snapshot) {
+    const [exact] = await scope.execute({ kind: "key-get", storeName, key } as IdbAtomicPlan);
+    if (!decimal) return exact;
+  }
   // The physical index cannot reveal aliases, even on an exact hit. A scan
   // also detects ambiguous databases created before numeric uniqueness checks.
-  const matches = (await scope.execute({ kind: "cursor-scan", storeName } as IdbAtomicPlan)).filter((row) =>
+  const rows = snapshot ?? (await scope.execute({ kind: "cursor-scan", storeName } as IdbAtomicPlan));
+  const matches = rows.filter((row) =>
     decimalKeysEqual(
       contract,
       modelName,
@@ -138,9 +142,11 @@ async function assertUnique(
   record: Record<string, unknown>,
   previousKey: IDBValidKey | undefined,
   kind: string,
-  modelName: string
+  modelName: string,
+  snapshot?: readonly Record<string, unknown>[]
 ): Promise<void> {
-  const rows = await scope.execute({ kind: "cursor-scan", storeName: catalog.storeName } as IdbAtomicPlan);
+  const rows =
+    snapshot ?? (await scope.execute({ kind: "cursor-scan", storeName: catalog.storeName } as IdbAtomicPlan));
   const previous = rows.find(
     (row) => previousKey !== undefined && keyEquals(extractKeyFromRow(row, catalog.primaryKey.keyPath), previousKey)
   );
@@ -210,18 +216,19 @@ async function executeDecimalWrite(
   scope: IdbTransactionScope,
   contract: IdbContract,
   modelName: string,
-  plan: IdbAtomicPlan
+  plan: IdbAtomicPlan,
+  snapshot?: readonly Record<string, unknown>[]
 ): Promise<Record<string, unknown>[]> {
   const catalog = buildCatalog(contract, plan.storeName, modelName);
   if (plan.kind === "scan-write") return executeDecimalScanWrite(scope, contract, modelName, plan);
   if (plan.kind === "delete") {
     if (!isValidIdbKey(plan.key)) return scope.execute(plan);
-    const row = await resolveDecimalKey(scope, contract, modelName, plan.key);
+    const row = await resolveDecimalKey(scope, contract, modelName, plan.key, snapshot);
     return scope.execute({ ...plan, key: row ? extractKeyFromRow(row, catalog.primaryKey.keyPath) : plan.key });
   }
   if (plan.kind !== "add" && plan.kind !== "put" && plan.kind !== "update") return scope.execute(plan);
   const key = plan.kind === "update" ? plan.key : extractKeyFromRow(plan.record, catalog.primaryKey.keyPath);
-  const previous = plan.kind === "add" ? undefined : await resolveDecimalKey(scope, contract, modelName, key);
+  const previous = plan.kind === "add" ? undefined : await resolveDecimalKey(scope, contract, modelName, key, snapshot);
   const previousKey = previous && extractKeyFromRow(previous, catalog.primaryKey.keyPath);
   const record = preserveDecimalKeySpelling(
     contract,
@@ -229,7 +236,7 @@ async function executeDecimalWrite(
     plan.kind === "update" ? { ...previous, ...plan.patch } : plan.record,
     previousKey
   );
-  await assertUnique(scope, catalog, record, previousKey, plan.kind, modelName);
+  await assertUnique(scope, catalog, record, previousKey, plan.kind, modelName, snapshot);
   return scope.execute(
     plan.kind === "update"
       ? {
@@ -260,19 +267,28 @@ async function executeDecimalScanWrite(
       return true;
     })
     .slice(0, take);
+  // The selected preimages omit rows outside the filter/range. Uniqueness
+  // and legacy-alias checks must still include those rows.
+  if (matches.length === 0) return [];
+  const snapshot =
+    !plan.indexName && !plan.range && !plan.filter
+      ? [...rows]
+      : await scope.execute({ kind: "cursor-scan", storeName: plan.storeName } as IdbAtomicPlan);
   const result: Record<string, unknown>[] = [];
   for (const row of matches) {
     const key = extractKeyFromRow(row, catalog.primaryKey.keyPath);
-    result.push(
-      ...(await executeDecimalWrite(
-        scope,
-        contract,
-        modelName,
-        plan.write === "delete"
-          ? { ...plan, kind: "delete", key }
-          : { ...plan, kind: "update", key, patch: plan.patch ?? {} }
-      ))
+    const written = await executeDecimalWrite(
+      scope,
+      contract,
+      modelName,
+      plan.write === "delete"
+        ? { ...plan, kind: "delete", key }
+        : { ...plan, kind: "update", key, patch: plan.patch ?? {} },
+      snapshot
     );
+    result.push(...written);
+    const index = snapshot.findIndex((stored) => keyEquals(extractKeyFromRow(stored, catalog.primaryKey.keyPath), key));
+    snapshot.splice(index, 1, ...(plan.write === "delete" ? [] : written));
   }
   return result;
 }

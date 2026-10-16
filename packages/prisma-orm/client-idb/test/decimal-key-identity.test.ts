@@ -4,6 +4,7 @@ import { defineContract } from "@prisma-idb/family-idb/contract-ts";
 import idbFamilyPack from "@prisma-idb/family-idb/pack";
 import idbTargetPack from "@prisma-idb/target-idb/pack";
 import type { IdbQueryPlan } from "@prisma-idb/adapter-idb/runtime";
+import type { IdbAtomicPlan } from "@prisma-idb/driver-idb/runtime";
 import { createIDBRuntimeDriver } from "@prisma-idb/driver-idb/runtime";
 import { idbOrm, type IdbQueryExecutorWithTransaction, type IdbStoreAccessor } from "../src/exports/orm";
 
@@ -11,7 +12,7 @@ const databases: IDBDatabase[] = [];
 let counter = 0;
 
 /** Exercise Decimal primary keys and a unique index through the real client and driver. */
-async function setup(compound: boolean, compoundUnique = false) {
+async function setup(compound: boolean, compoundUnique = false, decimalPrimary = true) {
   const keyPath = compound ? ["group", "id"] : "id";
   const contract = defineContract({
     family: idbFamilyPack,
@@ -20,7 +21,13 @@ async function setup(compound: boolean, compoundUnique = false) {
       Item: {
         store: "items",
         key: keyPath,
-        fields: { id: "Decimal", group: "String", amount: "Decimal", note: "String?", bucketId: "String?" },
+        fields: {
+          id: decimalPrimary ? "Decimal" : "String",
+          group: "String",
+          amount: "Decimal",
+          note: "String?",
+          bucketId: "String?",
+        },
         relations: { bucket: { to: "Bucket", cardinality: "N:1", on: { local: ["bucketId"], target: ["id"] } } },
         indexes: { byAmount: { keyPath: compoundUnique ? ["group", "amount"] : "amount", unique: true } },
       },
@@ -46,8 +53,19 @@ async function setup(compound: boolean, compoundUnique = false) {
   databases.push(db);
   const driver = createIDBRuntimeDriver(name).create();
   const plans: IdbQueryPlan<unknown>["idbPlan"][] = [];
+  const transactionPlans: IdbAtomicPlan[] = [];
   const executor: IdbQueryExecutorWithTransaction = {
-    transaction: (stores: string[], mode?: IDBTransactionMode) => driver.transaction(stores, mode),
+    async transaction(stores: string[], mode?: IDBTransactionMode) {
+      const scope = await driver.transaction(stores, mode);
+      return {
+        commit: () => scope.commit(),
+        rollback: () => scope.rollback(),
+        execute(plan) {
+          transactionPlans.push(plan);
+          return scope.execute(plan);
+        },
+      };
+    },
     query<Row>(plan: IdbQueryPlan<Row>): AsyncIterableResult<Row> {
       plans.push(plan.idbPlan);
       return new AsyncIterableResult(
@@ -58,7 +76,7 @@ async function setup(compound: boolean, compoundUnique = false) {
     },
   };
   const orm = idbOrm({ contract, executor }) as unknown as Record<string, IdbStoreAccessor<never, never>>;
-  return { items: orm["items"]!, buckets: orm["buckets"]!, plans, driver };
+  return { items: orm["items"]!, buckets: orm["buckets"]!, plans, driver, transactionPlans };
 }
 
 afterEach(() => databases.splice(0).forEach((db) => db.close()));
@@ -208,5 +226,48 @@ describe.each([false, true])("Decimal key identity (compound primary key: %s)", 
       await expect(items.findUnique(key(id))).rejects.toMatchObject({ code: "DECIMAL_IDENTITY_CONFLICT" });
     await expect(items.delete(key("1e1"))).rejects.toMatchObject({ code: "DECIMAL_IDENTITY_CONFLICT" });
     expect(await items.count()).toBe(2);
+  });
+});
+
+describe.each([false, true])("Decimal bulk scan budget (Decimal primary key: %s)", (decimalPrimary) => {
+  it("checks unselected rows and rolls back collisions created earlier in the bulk write", async () => {
+    const { items } = await setup(false, false, decimalPrimary);
+    await items
+      .createAll([
+        { id: "1", group: "a", amount: "10" },
+        { id: "2", group: "a", amount: "20" },
+        { id: "3", group: "b", amount: "30" },
+      ])
+      .toArray();
+    await expect(items.where({ group: "a" }).updateAll({ amount: "3e1" }).toArray()).rejects.toMatchObject({
+      code: "PUT_FAILED",
+    });
+    await expect(items.where({ group: "a" }).updateAll({ amount: "40" }).toArray()).rejects.toMatchObject({
+      code: "PUT_FAILED",
+    });
+    expect(await items.where({ amount: "10" }).count()).toBe(1);
+    expect(await items.where({ amount: "20" }).count()).toBe(1);
+    expect(await items.where({ amount: "30" }).count()).toBe(1);
+  });
+
+  it.each(["update", "delete"] as const)("bounds store scans for a bulk %s", async (operation) => {
+    const { items, transactionPlans } = await setup(false, false, decimalPrimary);
+    await items
+      .createAll([
+        { id: "1", group: "a", amount: "10" },
+        { id: "2", group: "a", amount: "20" },
+        { id: "3", group: "b", amount: "30" },
+        { id: "4", group: "b", amount: "40" },
+      ])
+      .toArray();
+    transactionPlans.length = 0;
+    const selected = items.where({ group: "a" });
+    const result = await (
+      operation === "update" ? selected.updateAll({ note: "changed" }) : selected.deleteAll()
+    ).toArray();
+    expect(result).toHaveLength(2);
+    expect(transactionPlans.filter((plan) => plan.kind === "cursor-scan").length).toBeLessThanOrEqual(2);
+    expect(await items.count()).toBe(operation === "delete" ? 2 : 4);
+    if (operation === "update") expect(await items.where({ note: "changed" }).count()).toBe(2);
   });
 });

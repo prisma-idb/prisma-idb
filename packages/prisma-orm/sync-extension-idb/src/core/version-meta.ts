@@ -31,11 +31,14 @@ export async function resolveVersionMeta(
   contract: IdbContract,
   model: string,
   key: IDBValidKey,
-  wireKey: unknown = key
+  wireKey: unknown = key,
+  snapshot?: ReadonlyMap<string, VersionMetaRecord>
 ): Promise<VersionMetaRecord | undefined> {
-  const exact = await getRecord<VersionMetaRecord>(scope, VERSION_META_STORE, versionMetaKey(model, wireKey));
+  const id = versionMetaKey(model, wireKey);
+  const exact = snapshot ? snapshot.get(id) : await getRecord<VersionMetaRecord>(scope, VERSION_META_STORE, id);
   if (!hasDecimalPrimaryKey(contract, model)) return exact;
-  const matches = (await scanStore<VersionMetaRecord>(scope, VERSION_META_STORE)).filter(
+  const rows = snapshot ? [...snapshot.values()] : await scanStore<VersionMetaRecord>(scope, VERSION_META_STORE);
+  const matches = rows.filter(
     (meta) =>
       meta.model === model && decimalKeysEqual(contract, model, nativeVersionMetaKey(contract, model, meta.key), key)
   );
