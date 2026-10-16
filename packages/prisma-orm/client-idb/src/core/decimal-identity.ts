@@ -288,7 +288,8 @@ async function executeDecimalScanWrite(
     );
     result.push(...written);
     const index = snapshot.findIndex((stored) => keyEquals(extractKeyFromRow(stored, catalog.primaryKey.keyPath), key));
-    snapshot.splice(index, 1, ...(plan.write === "delete" ? [] : written));
+    if (index >= 0) snapshot.splice(index, 1, ...(plan.write === "delete" ? [] : written));
+    else if (plan.write !== "delete") snapshot.push(...written);
   }
   return result;
 }
