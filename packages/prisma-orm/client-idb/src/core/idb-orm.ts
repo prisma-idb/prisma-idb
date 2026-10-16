@@ -1,5 +1,6 @@
 import type { Contract } from "@prisma/orm-framework/contract/types";
 import type { IdbContract, IdbStorage } from "./types";
+import { withDecimalIdentityExecutor } from "./decimal-identity";
 import type { IdbQueryExecutor } from "./executor";
 import { type IdbStoreAccessor, IdbStoreAccessorImpl } from "./store-accessor";
 
@@ -65,7 +66,8 @@ export interface IdbOrmOptions<TContract extends IdbContract> {
  * ```
  */
 export function idbOrm<TContract extends IdbContract>(options: IdbOrmOptions<TContract>): IdbOrmClient<TContract> {
-  const { contract, executor } = options;
+  const { contract } = options;
+  const executor = withDecimalIdentityExecutor(contract, options.executor);
 
   // One counter per idbOrm() call — two clients in the same realm get
   // independent key sequences and can't interleave (ADR 160).

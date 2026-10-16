@@ -16,10 +16,11 @@
 
 import type { IdbTransactionScope } from "@prisma-idb/driver-idb/runtime";
 import type { IdbContract } from "@prisma-idb/client-idb/orm";
-import { getKeyPath, getStoreName } from "@prisma-idb/client-idb/orm";
+import { getKeyPath, getStoreName, extractKeyFromRow } from "@prisma-idb/client-idb/orm";
 import { decodePullLog } from "./apply-pull";
 import { deleteRecord, getRecord, putRecord } from "./raw-store";
-import { VERSION_META_STORE, versionMetaKey } from "./version-meta";
+import { VERSION_META_STORE, versionMetaMatches, nativeVersionMetaKey, resolveVersionMeta } from "./version-meta";
+import { preserveDecimalKeySpelling } from "@prisma-idb/client-idb/internal";
 import type { OutboxEvent, PushResult, VersionMetaRecord } from "../types";
 
 /** A rejected event's server row, decoded and validated, ready to write. */
@@ -29,6 +30,8 @@ export interface Reconciliation {
   readonly versionMetaId: string;
   /** The server's row, or `null` if the local row must be deleted. */
   readonly record: Record<string, unknown> | null;
+  /** Contract and model used to retain the local Decimal key spelling on restoration. */
+  readonly identity?: { contract: IdbContract; model: string };
 }
 
 /**
@@ -49,7 +52,8 @@ export function planReconciliation<TContract extends IdbContract>(
   if (record === undefined || versionMetaId === null) return null;
   try {
     const storeName = getStoreName(contract, event.entityType);
-    if (record === null) return { storeName, versionMetaId, record: null };
+    if (record === null)
+      return { storeName, versionMetaId, record: null, identity: { contract, model: event.entityType } };
 
     const decoded = decodePullLog(
       contract,
@@ -62,8 +66,8 @@ export function planReconciliation<TContract extends IdbContract>(
       },
       false
     );
-    if (!decoded?.record || versionMetaKey(event.entityType, decoded.key) !== versionMetaId) return null;
-    return { storeName, versionMetaId, record: decoded.record };
+    if (!decoded?.record || !versionMetaMatches(contract, event.entityType, versionMetaId, decoded.key)) return null;
+    return { storeName, versionMetaId, record: decoded.record, identity: { contract, model: event.entityType } };
   } catch {
     return null;
   }
@@ -91,11 +95,26 @@ function wireKeyOf(keyPath: string | readonly string[], record: Record<string, u
  */
 export async function applyReconciliation(scope: IdbTransactionScope, reconciliation: Reconciliation): Promise<void> {
   const { storeName, versionMetaId, record } = reconciliation;
-  const meta = await getRecord<VersionMetaRecord>(scope, VERSION_META_STORE, versionMetaId);
+  let meta = await getRecord<VersionMetaRecord>(scope, VERSION_META_STORE, versionMetaId);
+  const identity = reconciliation.identity;
+  if (identity) {
+    const key = meta
+      ? nativeVersionMetaKey(identity.contract, identity.model, meta.key)
+      : record && extractKeyFromRow(record, getKeyPath(identity.contract, identity.model));
+    if (key !== undefined && key !== null)
+      meta = await resolveVersionMeta(scope, identity.contract, identity.model, key as IDBValidKey);
+  }
   if (meta?.localChangePending) return;
   if (record !== null) {
-    await putRecord(scope, storeName, record);
+    await putRecord(
+      scope,
+      storeName,
+      identity && meta ? preserveDecimalKeySpelling(identity.contract, identity.model, record, meta.key) : record
+    );
     return;
   }
-  if (meta) await deleteRecord(scope, storeName, meta.key as IDBValidKey);
+  if (meta) {
+    const key = identity ? nativeVersionMetaKey(identity.contract, identity.model, meta.key) : meta.key;
+    await deleteRecord(scope, storeName, key as IDBValidKey);
+  }
 }

@@ -24,9 +24,13 @@ Add `?` to make a field optional. Its value is then `null` when it isn't set.
 
 Decimal values stay as the strings you supply. Accepted forms include `"-12.50"`, `".5"` and `"1.25e3"`. Empty strings, whitespace, hexadecimal values, `NaN` and infinities are invalid. Creates and updates reject invalid Decimal values. Numeric filter operands must also be valid decimal text, even when the query would return no rows. A numeric comparison that encounters invalid text in existing records throws; repair those records before filtering or sorting them.
 
-Decimal equality, membership, range filters and `orderBy` compare exact numeric values without converting them to JavaScript numbers. For example, `"10"`, `"10.00"` and `"1e1"` compare equal. Primary-key lookups and unique constraints retain IndexedDB's string identity, so the stored spelling still matters for those operations.
+Decimal equality, membership, range filters and `orderBy` compare exact numeric values without converting them to JavaScript numbers. For example, `"10"`, `"10.00"` and `"1e1"` compare equal. Primary-key lookups and unique constraints use the same numeric equality, including in compound keys.
 
-For a Decimal primary key stored as `"10"`, `findUnique("10.00")` returns `null`. A `where({ id: "10.00" })` filter matches that row numerically. This distinction also applies to Decimal fields in compound primary keys.
+For a Decimal primary key stored as `"10"`, `findUnique("10.00")` returns that row. Creating another row with key `"1e1"` fails with a unique constraint error. Updates, deletes and upserts also resolve equivalent Decimal key spellings. Updating a primary key from `"10"` to `"10.00"` keeps the stored spelling `"10"`.
+
+Numeric key checks run inside the write transaction. Mutations on models with Decimal primary or unique keys require a transaction-capable executor, such as the standard IndexedDB runtime. Decimal primary-key lookups read the physical key first, then scan for numeric aliases. The scan also detects conflicting rows from older databases, even after an exact hit. Decimal unique checks scan rows too; native string indexes cannot enforce numeric equality. Keys without Decimal fields retain their native lookup and uniqueness paths.
+
+If older data contains several primary or unique keys for the same numeric value, identity operations throw `IdbDecimalIdentityConflictError` with code `DECIMAL_IDENTITY_CONFLICT`. Resolve those conflicting records before retrying. The client never selects or deletes a conflicting row automatically. Sync uses the same numeric identity for pending changes, staleness checks and rejected-write reconciliation. It preserves existing local key spellings and metadata references without changing the storage schema or wire format. This does not add compound-key support to the SQL sync server.
 
 ## Models and stores
 

@@ -50,13 +50,21 @@
  * unauthorized record has to stop existing locally, not just stop updating.
  */
 
+import type { IdbTransactionScope } from "@prisma-idb/driver-idb/runtime";
 import type { IdbContract } from "@prisma-idb/client-idb/orm";
 import { getStoreName, getKeyPath, extractKeyFromRow } from "@prisma-idb/client-idb/orm";
 import { collectDeleteStoreNames, applyReferentialActionsForRow } from "@prisma-idb/client-idb/internal";
-import { decodeJsonRecord, validateRecord, validateKeyPath, keyEquals } from "@prisma-idb/target-idb/runtime";
+import { decodeJsonRecord, validateRecord, validateKeyPath } from "@prisma-idb/target-idb/runtime";
 import type { SyncIdbClient } from "./sync-client";
-import { deleteRecord, getRecord, putRecord } from "./raw-store";
-import { VERSION_META_STORE, versionMetaKey } from "./version-meta";
+import { deleteRecord, putRecord } from "./raw-store";
+import { VERSION_META_STORE, versionMetaKey, resolveVersionMeta } from "./version-meta";
+import {
+  decimalKeysEqual,
+  hasDecimalPrimaryKey,
+  preserveDecimalKeySpelling,
+  resolveDecimalKey,
+  IdbDecimalIdentityConflictError,
+} from "@prisma-idb/client-idb/internal";
 import type { LogWithRecord, ApplyPullResult, VersionMetaRecord } from "../types";
 
 /**
@@ -138,7 +146,7 @@ export function decodePullLog<TContract extends IdbContract>(
 
     const record = decodeJsonRecord(contract.domain, log.model, log.record!);
     if (!validateRecord(contract, log.model, record).ok) return null;
-    if (!keyEquals(key, extractKeyFromRow(record, keyPath))) return null;
+    if (!decimalKeysEqual(contract, log.model, key, extractKeyFromRow(record, keyPath))) return null;
     return { key, record };
   } catch {
     return null;
@@ -167,40 +175,65 @@ async function applyLog<TContract extends IdbContract>(
   const decoded = decodePullLog(contract, log, isDelete);
   if (!decoded) return "invalid";
   const { key, record } = decoded;
-  const metaId = versionMetaKey(log.model, log.keyPath);
 
   try {
     return await syncClient.withTransaction([VERSION_META_STORE, ...storeNames], async (scope): Promise<LogOutcome> => {
-      const meta = await getRecord<VersionMetaRecord>(scope, VERSION_META_STORE, metaId);
+      const meta = await resolveVersionMeta(scope, contract, log.model, key, log.keyPath);
 
       if (meta) {
         if (meta.lastAppliedChangeId !== null && meta.lastAppliedChangeId >= log.changelogId) return "already-applied";
         if (meta.localChangePending) return "halt";
       }
 
+      const identity = await resolvePullIdentity(scope, contract, log, key, record, meta);
       if (isDelete) {
-        const row = await getRecord(scope, storeName, key);
-        if (row) {
-          await applyReferentialActionsForRow(scope, contract, log.model, row);
-          await deleteRecord(scope, storeName, key);
+        if (identity.row) {
+          await applyReferentialActionsForRow(scope, contract, log.model, identity.row);
+          await deleteRecord(scope, storeName, identity.key);
         }
       } else {
-        await putRecord(scope, storeName, record!);
+        await putRecord(scope, storeName, identity.record!);
       }
 
       await putRecord(scope, VERSION_META_STORE, {
-        id: metaId,
+        id: identity.metaId,
         model: log.model,
-        key: log.keyPath,
+        key: identity.metaKey,
         lastAppliedChangeId: log.changelogId,
         localChangePending: false,
       } satisfies VersionMetaRecord);
 
       return "applied";
     });
-  } catch {
+  } catch (error) {
     // e.g. a `restrict` referential action or a write failure mid-transaction:
     // halt the page, so the next pull retries this row before any later one.
+    if (error instanceof IdbDecimalIdentityConflictError) throw error;
     return "halt";
   }
+}
+
+/** Keep application and metadata aliases on their existing spelling after the pending-change guard. */
+async function resolvePullIdentity(
+  scope: IdbTransactionScope,
+  contract: IdbContract,
+  log: LogWithRecord,
+  key: IDBValidKey,
+  record: Record<string, unknown> | null,
+  meta: VersionMetaRecord | undefined
+) {
+  const keyPath = getKeyPath(contract, log.model);
+  const row = await resolveDecimalKey(scope, contract, log.model, key);
+  const storedKey = row ? extractKeyFromRow(row, keyPath) : (meta?.key ?? key);
+  const effectiveRecord = record && preserveDecimalKeySpelling(contract, log.model, record, storedKey);
+  let identityKey: unknown = log.keyPath;
+  if (hasDecimalPrimaryKey(contract, log.model))
+    identityKey = effectiveRecord ? extractKeyFromRow(effectiveRecord, keyPath) : storedKey;
+  return {
+    row,
+    key: storedKey as IDBValidKey,
+    record: effectiveRecord,
+    metaId: meta?.id ?? versionMetaKey(log.model, identityKey),
+    metaKey: meta?.key ?? identityKey,
+  };
 }

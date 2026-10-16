@@ -53,7 +53,8 @@ import type { IdbKeyPath } from "@prisma-idb/client-idb/orm";
 import { domainModelsAtDefaultNamespace } from "@prisma/orm-framework/contract/types";
 import type { OutboxEvent, OutboxWriteEntry } from "../types";
 import { OUTBOX_STORE } from "./outbox-store";
-import { VERSION_META_STORE, versionMetaKey } from "./version-meta";
+import { VERSION_META_STORE, versionMetaKey, resolveVersionMeta } from "./version-meta";
+import { hasDecimalPrimaryKey, preserveDecimalKeySpelling } from "@prisma-idb/client-idb/internal";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -504,6 +505,13 @@ class SyncInterceptingTransactionScope implements IdbTransactionScope {
 
   /** Executes a raw plan and records any tracked writes in the same transaction. */
   async execute(plan: IdbAtomicPlan): Promise<Record<string, unknown>[]> {
+    const { contract } = this.#config;
+    const model = getModelNameForStore(contract, plan.storeName);
+    if (plan.kind === "add" && model && isTrackedModel(this.#config, model) && hasDecimalPrimaryKey(contract, model)) {
+      const key = extractKeyFromRow(plan.record, getKeyPath(contract, model));
+      const previous = await resolveVersionMeta(this.#inner, contract, model, key);
+      if (previous) plan = { ...plan, record: preserveDecimalKeySpelling(contract, model, plan.record, previous.key) };
+    }
     const rows = await this.#inner.execute(plan);
     await this.#maybeTrack(plan, rows);
     return rows;
@@ -595,8 +603,27 @@ class SyncInterceptingTransactionScope implements IdbTransactionScope {
   /** Writes every entry's outbox-add + VersionMeta-put, buffering it as ONE `commit()`-time `onOutboxWrite` batch — a no-op for an empty array (e.g. a scan-write that matched zero rows). */
   async #writeOutboxAndMeta(entries: readonly OutboxWriteEntry[]): Promise<void> {
     if (entries.length === 0) return;
-    for (const op of outboxOpsFor(entries, syncPlanMeta(this.#config.contract))) {
-      await this.#inner.execute(op);
+    const { contract } = this.#config;
+    for (const entry of entries) {
+      const previous =
+        entry.key !== undefined && hasDecimalPrimaryKey(contract, entry.modelName)
+          ? await resolveVersionMeta(this.#inner, contract, entry.modelName, entry.key as IDBValidKey)
+          : undefined;
+      for (const op of outboxOpsFor([entry], syncPlanMeta(contract))) {
+        if (previous && op.kind === "add") {
+          await this.#inner.execute({ ...op, record: { ...op.record, versionMetaId: previous.id } });
+        } else if (previous && op.kind === "put") {
+          await this.#inner.execute({
+            ...op,
+            record: {
+              ...op.record,
+              id: previous.id,
+              key: previous.key,
+              lastAppliedChangeId: previous.lastAppliedChangeId,
+            },
+          });
+        } else await this.#inner.execute(op);
+      }
     }
     this.#pendingBatches.push([...entries]);
   }

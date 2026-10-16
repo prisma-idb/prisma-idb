@@ -79,6 +79,7 @@ import {
   validateScalarFks,
 } from "./mutation-executor";
 import { withMutationScope } from "./mutation-scope";
+import { resolveDecimalKey } from "./decimal-identity";
 import { buildCatalog } from "./planner/catalog";
 import { planQuery } from "./planner/plan";
 import { lowerCount, lowerRows, type LoweredRows, type RowsRequest } from "./planner/lower";
@@ -590,19 +591,20 @@ export class IdbStoreAccessorImpl<
     return (row ?? withDefaults) as DefaultModelRow<TContract, ModelName>;
   }
 
-  /** Read the exact stored primary key without applying numeric predicate semantics. */
+  /** Resolve a primary key numerically for Decimal fields while retaining its stored spelling. */
   async findUnique(key: KeyType<TContract, ModelName>): Promise<DefaultModelRow<TContract, ModelName> | null> {
     if (!isValidIdbKey(key)) return null;
-    const groupingKey = this.#newGroupingKey();
-    const meta = this.#planMeta(groupingKey);
+    const meta = this.#planMeta(this.#newGroupingKey());
     const ast: IdbFindUniqueAst = { kind: "findUnique", modelName: this.#modelName, key };
-    const [row] = await this.#executor
-      .query<Record<string, unknown>>({
-        meta,
-        ast,
-        idbPlan: { meta, kind: "key-get", storeName: this.#storeName, key },
-      })
-      .toArray();
+    const row = await resolveDecimalKey(
+      {
+        execute: (body) =>
+          this.#executor.query<Record<string, unknown>>({ meta, ast, idbPlan: { ...body, meta } }).toArray(),
+      },
+      this.#contract,
+      this.#modelName,
+      key
+    );
     return row === undefined
       ? null
       : (absentAsNull(this.#contract, this.#modelName)(row) as DefaultModelRow<TContract, ModelName>);
