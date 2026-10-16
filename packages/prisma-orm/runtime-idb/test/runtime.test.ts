@@ -753,11 +753,13 @@ describe("built-in contentHash plan identity", () => {
 
   const range = (lower: unknown, upper: unknown) => ({ lower, upper, lowerOpen: false, upperOpen: true });
 
-  it("ignores function-valued fields such as row filters", async () => {
+  it("never reuses a hash for an opaque function, even the same reference", async () => {
     const contentHash = await captureContentHash();
     const base = { kind: "cursor-scan", storeName: "users" };
 
-    expect(await contentHash({ ...base, filter: () => true })).toBe(await contentHash(base));
+    const plan = { ...base, filter: () => true };
+    expect(await contentHash(plan)).not.toBe(await contentHash(base));
+    expect(await contentHash(plan)).not.toBe(await contentHash(plan));
   });
 
   it("keeps only the storage hash from meta", async () => {

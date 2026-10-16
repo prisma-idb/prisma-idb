@@ -5,7 +5,7 @@ import { IdbAdapter } from "../core/idb-adapter";
 import type { IdbRuntimeAdapterInstance } from "../core/runtime-adapter-instance";
 
 export type { IdbRuntimeAdapterInstance, IdbLowererContext } from "../core/runtime-adapter-instance";
-export type { IdbQueryPlan } from "../core/idb-query-plan";
+export type { IdbQueryPlan, IdbLoweredPlan } from "../core/idb-query-plan";
 export type {
   IdbQueryAst,
   IdbFindManyAst,

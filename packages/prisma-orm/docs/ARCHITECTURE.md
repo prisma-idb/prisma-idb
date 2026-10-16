@@ -43,7 +43,7 @@ client-idb      typed ORM; builds query plans, enforces relations
 runtime-idb     middleware, marker check
    │
    ▼
-adapter-idb     query plan → driver plan (a passthrough today)
+adapter-idb     query plan → driver plan with closure identity
    │
    ▼
 driver-idb      runs the plan in an IndexedDB transaction
@@ -59,11 +59,11 @@ family-idb      control plane only: schema reading and CLI integration
 
 When the app calls `db.orm.user.where({ active: true }).all()`:
 
-1. **`client-idb` builds the plan.** The store accessor turns the chained calls into an `IdbQueryPlan`. The plan carries a driver-level plan (`idbPlan`), which already contains everything the driver needs: the store, an optional index and key range, and plain functions for any filtering and sorting the key range can't express ([ADR 004](adrs/ADR%20004%20-%20Driver%20Isolation%20via%20Row%20Filter%20Closure.md)). It also carries an `ast` describing the query, for middleware to inspect.
-2. **`runtime-idb` receives the plan** through `query(plan)`, runs each middleware's `beforeExecute`, and asks the adapter to lower the plan.
-3. **`adapter-idb` lowers the plan.** Today this returns `plan.idbPlan` unchanged, because every IDB codec stores values as they are. Encoding would happen here if a codec ever needed it.
+1. **`client-idb` builds the plan.** The store accessor turns the chained calls into an `IdbQueryPlan`. The plan carries a driver-level plan (`idbPlan`), which already contains everything the driver needs: the store, an optional index and key range, and plain functions for any filtering and sorting the key range can't express ([ADR 004](adrs/ADR%20004%20-%20Driver%20Isolation%20via%20Row%20Filter%20Closure.md)). It also carries an `ast` describing the query, which the adapter uses to derive semantic closure identity.
+2. **`runtime-idb` receives the plan** through `query(plan)` and asks the adapter to lower it before running query middleware.
+3. **`adapter-idb` lowers the plan.** It preserves `plan.idbPlan` and adds canonical `queryIdentity` strings for structured filters and comparators. Middleware receives this lowered plan. Every IDB codec stores values as they are; encoding would happen here if a codec ever needed it.
 4. **`driver-idb` runs the plan.** It opens a transaction, walks a cursor or calls `get`, `getAll`, `count` or `getKey`, and collects every matching row before the transaction ends ([ADR 006](adrs/ADR%20006%20-%20Collect%20then%20Yield%20Full%20Row%20Materialization.md)). Requests are chained through IndexedDB callbacks, never `await`, so the transaction stays active ([ADR 005](adrs/ADR%20005%20-%20Event-Driven%20Execution%20No%20Async%20Await.md)).
-5. **`runtime-idb` yields the rows,** calling each middleware's `onRow` and then `afterExecute`.
+5. **`runtime-idb` yields the rows,** calling each middleware's `onRow` and then `afterQuery`.
 
 Most writes take a different route: they need to read and write several stores in one transaction. `client-idb`'s mutation executor calls `withMutationScope`, which opens one multi-store transaction through the runtime's `transaction()`. It then runs driver plans directly on the returned `IdbTransactionScope` to check foreign keys, apply referential actions and write the rows ([ADR 007](adrs/ADR%20007%20-%20Two%20Transaction%20APIs.md), [ADR 009](adrs/ADR%20009%20-%20FK%20Validation%20and%20Referential%20Action%20Enforcement.md)). Middleware doesn't see these steps.
 
@@ -225,7 +225,7 @@ One entrypoint, `./runtime`, exporting `createIdbRuntime`, `IdbRuntime` and `Idb
 | `verifyMarker()`            | Checks that the database's marker matches the contract's `storageHash`.   |
 | `close()`                   | Closes the connection.                                                    |
 
-Middleware gets a context with a `contentHash(plan)` function. It hashes the plan's data and skips its functions, so equal queries produce equal hashes and a cache middleware can use them as keys. Because rows are collected before they are yielded, `onRow` runs over rows already in memory. It can't slow down the cursor.
+Middleware gets a context with a `contentHash(plan)` function. It returns a SHA-512 digest of the plan's data. Functions that carry a structured identity hash by that identity, so equal queries produce equal hashes. A raw closure with no structured identity gets a fresh nonce on every call, so it never produces a stale cache hit. A cache middleware can use the digest as a key. Because rows are collected before they are yielded, `onRow` runs over rows already in memory. It can't slow down the cursor.
 
 Depends on `adapter-idb` and `driver-idb`.
 
