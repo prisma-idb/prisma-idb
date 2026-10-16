@@ -141,6 +141,21 @@ describe("upsert unique lookup validation", () => {
     expect(await members.count()).toBe(4);
   });
 
+  it("validates and filters on one read of each lookup property", async () => {
+    let reads = 0;
+    const where = {
+      get email() {
+        // A later read would drop the key and leave an unfiltered lookup.
+        return reads++ === 0 ? existing.email : undefined;
+      },
+    };
+    expect(await members.upsert({ where: where as never, create, update: { name: "updated" } })).toEqual({
+      ...existing,
+      name: "updated",
+    });
+    expect(await members.count()).toBe(3);
+  });
+
   it("keeps additional equality predicates when a unique key is complete", async () => {
     // The extra predicate excludes the existing unique row, selecting the create branch.
     expect(
