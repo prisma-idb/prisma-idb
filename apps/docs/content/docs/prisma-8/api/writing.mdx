@@ -45,6 +45,12 @@ An update merges the patch into the stored row. Fields you leave out keep their 
 
 `upsert()` updates the row that matches `where`, or creates one from `create` if none matches. The lookup and the write happen in one transaction.
 
+`where` must include the complete primary key or a declared unique index. A multi-entry index can't serve as the lookup. Supply an equality value for every field of a compound key, such as `where: { orgId, userId }`. Extra equality filters are allowed and must also match for the update branch to run. The `create` data is used as supplied, with defaults applied; lookup values are not copied into it.
+
+Every value used to establish uniqueness must be a valid, non-null IndexedDB key. A nullable unique field works with a non-null key value. `null` and `undefined` cannot establish uniqueness because IndexedDB omits them from indexes. A unique multi-entry index cannot establish uniqueness for an equality filter on the whole field.
+
+An empty filter, a nonunique filter, or an incomplete compound key rejects before any mutation. This also applies when the filter currently matches only one row or no rows. If an older call used such a filter, add a complete primary key or unique index to `where`.
+
 ```ts
 const user = await db.orm.user.upsert({
   where: { id: "user_1" },

@@ -335,10 +335,10 @@ const SCENARIOS: readonly Scenario[] = [
     run: (o) => o["items"].where({ category: "c3" }).update({ status: "archived" }),
   },
   {
-    name: "upsert: indexed existing-row lookup",
+    name: "upsert: primary-key existing-row lookup",
     run: (o) =>
       o["items"].upsert({
-        where: { category: "c3" },
+        where: { id: "item-0003" },
         create: { id: "new", category: "new", score: 0, status: "active", orgId: "o1", rank: 0 },
         update: { status: "archived" },
       }),
@@ -470,10 +470,10 @@ const EXPECTED: Record<string, Measurement> = {
     requests: ["get items range x100", "getAll items.byCategory range"],
   },
   "update: eq on indexed field": { values: [1, 1], keys: [0, 0], requests: ["openCursor items.byCategory range"] },
-  "upsert: indexed existing-row lookup": {
+  "upsert: primary-key existing-row lookup": {
     values: [2, 2],
     keys: [0, 0],
-    requests: ["get items range", "openCursor items.byCategory range"],
+    requests: ["get items range x2"],
   },
 };
 
