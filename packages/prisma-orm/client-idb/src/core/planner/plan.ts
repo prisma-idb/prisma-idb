@@ -1,3 +1,4 @@
+import { assertValidDecimalFilter } from "@prisma-idb/adapter-idb/runtime";
 import type { IdbFieldFilter, IdbFilterExpr } from "@prisma-idb/adapter-idb/runtime";
 import type { IdbKeyRangeDescriptor, IdbScanDirection } from "@prisma-idb/driver-idb/runtime";
 import { compareFieldValues, isValidIdbKey, keyEquals } from "@prisma-idb/target-idb/runtime";
@@ -77,17 +78,12 @@ const COST = {
 // These encoders also accept non-keys, so index coverage needs a rejecting predicate.
 const KEY_PARTIAL_CODECS = new Set(["idb/double@1", "idb/date@1"]);
 
-const KEY_CODECS = new Set([
-  "idb/string@1",
-  "idb/int32@1",
-  "idb/double@1",
-  "idb/date@1",
-  "idb/decimal@1",
-  "idb/bytes@1",
-]);
+// Decimal strings are keys, but native key comparisons do not match numeric semantics.
+const KEY_CODECS = new Set(["idb/string@1", "idb/int32@1", "idb/double@1", "idb/date@1", "idb/bytes@1"]);
 
 /** Choose the cheapest safe access without opening IndexedDB or probing cardinality. */
 export function planQuery(catalog: QueryCatalog, request: PlanRequest): LogicalPlan {
+  if (request.where !== undefined) assertValidDecimalFilter(request.where, catalog.fields);
   const normalized = normalize(request.where);
   if (normalized.empty) return { access: { kind: "empty" }, exact: true };
   const orders = Object.entries(request.orderBy ?? {});
@@ -129,7 +125,8 @@ export function planQuery(catalog: QueryCatalog, request: PlanRequest): LogicalP
   if (orders.length === 1 && request.take !== undefined) {
     const [field, order] = orders[0]!;
     if (selected) {
-      if (sourceOrdersField(selected.source, field, constraints)) direction = order === "asc" ? "next" : "prev";
+      if (catalog.fields[field]?.codecId !== "idb/decimal@1" && sourceOrdersField(selected.source, field, constraints))
+        direction = order === "asc" ? "next" : "prev";
     } else {
       const ordering = sources.find(
         (source) => !source.multiEntry && singleFieldSource(source, field) && completeKeyField(catalog.fields[field])
@@ -235,6 +232,8 @@ function singleFieldSource(source: CatalogSource, field: string): boolean {
 
 /** Intersect one supported predicate with a field constraint without narrowing unsafe values. */
 function addAtom(constraint: Constraint, atom: IdbFieldFilter, field: CatalogField | undefined): void {
+  // Decimal text has numeric equality and order, so native string ranges are unsafe.
+  if (field?.codecId === "idb/decimal@1") return;
   if (atom.op === "eq" || atom.op === "in") {
     const values: unknown[] = atom.op === "eq" ? [atom.value] : Array.isArray(atom.value) ? atom.value : [];
     if (!values.every(isValidIdbKey)) return;

@@ -7,7 +7,7 @@ import { buildRowComparator, combineFilterExprs } from "./query-shaping";
 import type { IncludeEntry } from "./store-state";
 import { fieldValueToken, getStoreName } from "./types";
 import type { IdbContract } from "./types";
-import { buildCatalog } from "./planner/catalog";
+import { buildCatalog, type QueryCatalog } from "./planner/catalog";
 import { planQuery } from "./planner/plan";
 import { lowerRows } from "./planner/lower";
 
@@ -122,7 +122,7 @@ export async function loadRelation(
   const plan: IdbQueryPlan<Record<string, unknown>> = { meta: planMeta, idbPlan: lowered.idbPlan };
   const relatedRows = lowered.finish(await executor.query(plan).toArray());
 
-  return attachRelatedRows(relName, entry, rows, relatedRows, relation);
+  return attachRelatedRows(relName, entry, rows, relatedRows, relation, catalog.fields);
 }
 
 /** Attach related rows by their join tuple, shaping each parent's collection independently. */
@@ -131,7 +131,8 @@ function attachRelatedRows(
   entry: IncludeEntry,
   rows: Record<string, unknown>[],
   relatedRows: Record<string, unknown>[],
-  relation: ContractReferenceRelation
+  relation: ContractReferenceRelation,
+  fields: QueryCatalog["fields"]
 ): Record<string, unknown>[] {
   const {
     cardinality,
@@ -161,7 +162,7 @@ function attachRelatedRows(
     }
 
     // Collection: apply refined orderBy / skip / take per parent group.
-    const comparator = buildRowComparator(entry.state.orderBy);
+    const comparator = buildRowComparator(entry.state.orderBy, fields);
     const skip = entry.state.skip ?? 0;
     const take = entry.state.take;
     return rows.map((row) => {

@@ -51,9 +51,11 @@ import type {
 import { extractKeyFromRow, getKeyPath, getStoreName } from "@prisma-idb/client-idb/orm";
 import type { IdbKeyPath } from "@prisma-idb/client-idb/orm";
 import { domainModelsAtDefaultNamespace } from "@prisma/orm-framework/contract/types";
-import type { OutboxEvent, OutboxWriteEntry } from "../types";
+import type { OutboxEvent, OutboxWriteEntry, VersionMetaRecord } from "../types";
 import { OUTBOX_STORE } from "./outbox-store";
-import { VERSION_META_STORE, versionMetaKey } from "./version-meta";
+import { scanStore } from "./raw-store";
+import { VERSION_META_STORE, versionMetaKey, resolveVersionMeta } from "./version-meta";
+import { hasDecimalPrimaryKey, preserveDecimalKeySpelling } from "@prisma-idb/client-idb/internal";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -496,6 +498,8 @@ class SyncInterceptingTransactionScope implements IdbTransactionScope {
   // comment), only actually emitted once `commit()`'s `tx.oncomplete`
   // confirms every write in the transaction is durable.
   #pendingBatches: OutboxWriteEntry[][] = [];
+  // Reuse metadata across bulk writes and cascades in this transaction only.
+  #versionMetaSnapshot: Map<string, VersionMetaRecord> | undefined;
 
   constructor(inner: IdbTransactionScope, config: SyncInterceptorConfig) {
     this.#inner = inner;
@@ -504,6 +508,15 @@ class SyncInterceptingTransactionScope implements IdbTransactionScope {
 
   /** Executes a raw plan and records any tracked writes in the same transaction. */
   async execute(plan: IdbAtomicPlan): Promise<Record<string, unknown>[]> {
+    const { contract } = this.#config;
+    if (plan.storeName === VERSION_META_STORE && ["add", "put", "update", "delete", "scan-write"].includes(plan.kind))
+      this.#versionMetaSnapshot = undefined;
+    const model = getModelNameForStore(contract, plan.storeName);
+    if (plan.kind === "add" && model && isTrackedModel(this.#config, model) && hasDecimalPrimaryKey(contract, model)) {
+      const key = extractKeyFromRow(plan.record, getKeyPath(contract, model));
+      const previous = await this.#resolveVersionMeta(model, key);
+      if (previous) plan = { ...plan, record: preserveDecimalKeySpelling(contract, model, plan.record, previous.key) };
+    }
     const rows = await this.#inner.execute(plan);
     await this.#maybeTrack(plan, rows);
     return rows;
@@ -592,11 +605,36 @@ class SyncInterceptingTransactionScope implements IdbTransactionScope {
     }
   }
 
+  /** Resolve aliases from a lazy snapshot shared by all tracked writes in this transaction. */
+  async #resolveVersionMeta(model: string, key: IDBValidKey): Promise<VersionMetaRecord | undefined> {
+    if (!this.#versionMetaSnapshot) {
+      const rows = await scanStore<VersionMetaRecord>(this.#inner, VERSION_META_STORE);
+      this.#versionMetaSnapshot = new Map(rows.map((meta) => [meta.id, meta]));
+    }
+    return resolveVersionMeta(this.#inner, this.#config.contract, model, key, key, this.#versionMetaSnapshot);
+  }
+
   /** Writes every entry's outbox-add + VersionMeta-put, buffering it as ONE `commit()`-time `onOutboxWrite` batch — a no-op for an empty array (e.g. a scan-write that matched zero rows). */
   async #writeOutboxAndMeta(entries: readonly OutboxWriteEntry[]): Promise<void> {
     if (entries.length === 0) return;
-    for (const op of outboxOpsFor(entries, syncPlanMeta(this.#config.contract))) {
-      await this.#inner.execute(op);
+    const { contract } = this.#config;
+    for (const entry of entries) {
+      const previous =
+        entry.key !== undefined && hasDecimalPrimaryKey(contract, entry.modelName)
+          ? await this.#resolveVersionMeta(entry.modelName, entry.key as IDBValidKey)
+          : undefined;
+      for (const op of outboxOpsFor([entry], syncPlanMeta(contract))) {
+        if (op.kind === "put") {
+          const record = previous
+            ? { ...op.record, id: previous.id, key: previous.key, lastAppliedChangeId: previous.lastAppliedChangeId }
+            : op.record;
+          await this.#inner.execute({ ...op, record });
+          const meta = record as unknown as VersionMetaRecord;
+          this.#versionMetaSnapshot?.set(meta.id, meta);
+        } else if (previous && op.kind === "add") {
+          await this.#inner.execute({ ...op, record: { ...op.record, versionMetaId: previous.id } });
+        } else await this.#inner.execute(op);
+      }
     }
     this.#pendingBatches.push([...entries]);
   }

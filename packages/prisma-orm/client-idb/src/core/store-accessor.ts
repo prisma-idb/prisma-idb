@@ -1,7 +1,7 @@
 import { AsyncIterableResult } from "@prisma/orm-framework/components/runtime";
 import type { PlanMeta } from "@prisma/orm-framework/contract/types";
 import type { IdbFilterExpr, IdbQueryPlan } from "@prisma-idb/adapter-idb/runtime";
-import { absentAsNull } from "@prisma-idb/target-idb/runtime";
+import { absentAsNull, isValidIdbKey } from "@prisma-idb/target-idb/runtime";
 import type {
   IdbAggregateAst,
   IdbCountAst,
@@ -79,6 +79,7 @@ import {
   validateScalarFks,
 } from "./mutation-executor";
 import { withMutationScope } from "./mutation-scope";
+import { resolveDecimalKey } from "./decimal-identity";
 import { buildCatalog } from "./planner/catalog";
 import { planQuery } from "./planner/plan";
 import { lowerCount, lowerRows, type LoweredRows, type RowsRequest } from "./planner/lower";
@@ -590,19 +591,23 @@ export class IdbStoreAccessorImpl<
     return (row ?? withDefaults) as DefaultModelRow<TContract, ModelName>;
   }
 
-  /** Resolve the ordered primary-key fields and return their first match. */
+  /** Resolve a primary key numerically for Decimal fields while retaining its stored spelling. */
   async findUnique(key: KeyType<TContract, ModelName>): Promise<DefaultModelRow<TContract, ModelName> | null> {
-    const groupingKey = this.#newGroupingKey();
-    const meta = this.#planMeta(groupingKey);
+    if (!isValidIdbKey(key)) return null;
+    const meta = this.#planMeta(this.#newGroupingKey());
     const ast: IdbFindUniqueAst = { kind: "findUnique", modelName: this.#modelName, key };
-    const keyPath = getKeyPath(this.#contract, this.#modelName);
-    const fields = typeof keyPath === "string" ? [keyPath] : keyPath;
-    const values = typeof keyPath === "string" ? [key] : (key as readonly unknown[]);
-    const where = combineFilterExprs(fields.map((field, i) => ({ kind: "field", field, op: "eq", value: values[i] })));
-    const request: RowsRequest = { ...(where === undefined ? {} : { where }), take: 1 };
-    const lowered = this.#lowerRows(meta, request);
-    const rows = await this.#executor.query<Record<string, unknown>>({ meta, ast, idbPlan: lowered.idbPlan }).toArray();
-    return (lowered.finish(rows)[0] as DefaultModelRow<TContract, ModelName> | undefined) ?? null;
+    const row = await resolveDecimalKey(
+      {
+        execute: (body) =>
+          this.#executor.query<Record<string, unknown>>({ meta, ast, idbPlan: { ...body, meta } }).toArray(),
+      },
+      this.#contract,
+      this.#modelName,
+      key
+    );
+    return row === undefined
+      ? null
+      : (absentAsNull(this.#contract, this.#modelName)(row) as DefaultModelRow<TContract, ModelName>);
   }
 
   /** Delete a keyed row with child actions when its relations require them. */

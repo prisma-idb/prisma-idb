@@ -8,6 +8,7 @@
  * same IDB transaction as the model write.
  */
 
+import { withDecimalIdentityScope } from "@prisma-idb/client-idb/internal";
 import { IdbAdapter } from "@prisma-idb/adapter-idb/runtime";
 import { createIDBRuntimeDriver } from "@prisma-idb/driver-idb/runtime";
 import type { IdbTransactionScope } from "@prisma-idb/driver-idb/runtime";
@@ -201,7 +202,7 @@ export function createSyncIdbClient<TContract extends IdbContract>(
   const rawOrm = idbOrm({ contract: options.contract, executor: runtime });
 
   const withTransaction = <T>(storeNames: string[], fn: (scope: IdbTransactionScope) => Promise<T>) =>
-    runInTransaction(runtime, storeNames, fn);
+    runInTransaction(runtime, storeNames, (scope) => fn(withDecimalIdentityScope(scope, options.contract)));
 
   const rawClient: IdbClient<TContract> = {
     orm: rawOrm,

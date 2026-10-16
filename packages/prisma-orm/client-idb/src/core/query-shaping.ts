@@ -1,7 +1,8 @@
 import type { IdbFilterExpr } from "@prisma-idb/adapter-idb/runtime";
 import { andExpr } from "@prisma-idb/adapter-idb/runtime";
 import type { IdbRowComparator } from "@prisma-idb/driver-idb/runtime";
-import { compareFieldValues } from "@prisma-idb/target-idb/runtime";
+import { compareDecimalValues, compareFieldValues } from "@prisma-idb/target-idb/runtime";
+import type { CatalogField } from "./planner/catalog";
 
 /**
  * Combine accumulated filter expressions with AND.
@@ -20,17 +21,23 @@ export function combineFilterExprs(filters: ReadonlyArray<IdbFilterExpr>): IdbFi
  * Build an in-memory comparator from an `orderBy` spec (field → direction).
  *
  * Returns `undefined` when there is nothing to sort by. Compares fields in
- * declaration order, with {@link compareFieldValues}: the same order an
+ * declaration order. Decimal fields use exact numeric order; other fields
+ * use {@link compareFieldValues}: the same order an
  * IndexedDB index uses, so equal `Date`s tie and fall through to the next
  * field, and `null`s sort last (first when descending).
  */
 export function buildRowComparator(
-  orderBy: Readonly<Record<string, "asc" | "desc">> | undefined
+  orderBy: Readonly<Record<string, "asc" | "desc">> | undefined,
+  fields: Readonly<Record<string, CatalogField>> = {}
 ): IdbRowComparator | undefined {
   if (orderBy === undefined) return undefined;
   return (a: Record<string, unknown>, b: Record<string, unknown>): number => {
     for (const [field, dir] of Object.entries(orderBy)) {
-      const cmp = compareFieldValues(a[field], b[field]);
+      const metadata = fields[field];
+      const decimal = metadata?.codecId === "idb/decimal@1" && !metadata.collection;
+      const present = a[field] != null && b[field] != null;
+      const cmp =
+        decimal && present ? compareDecimalValues(a[field], b[field]) : compareFieldValues(a[field], b[field]);
       if (cmp === 0) continue;
       return dir === "desc" ? -cmp : cmp;
     }

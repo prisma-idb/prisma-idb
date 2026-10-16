@@ -42,6 +42,7 @@ import {
 } from "./mutation-defaults";
 import { absentAsNull } from "@prisma-idb/target-idb/runtime";
 import { buildCatalog } from "./planner/catalog";
+import { preserveDecimalKeySpelling } from "./decimal-identity";
 import { lowerExists, lowerRows, lowerWrite, type WriteRequest } from "./planner/lower";
 import { planQuery } from "./planner/plan";
 import { withMutationScope, type IdbQueryExecutorWithTransaction } from "./mutation-scope";
@@ -1003,6 +1004,7 @@ export async function applyReferentialActionsForRowOnUpdate(
   visited: Set<string> = new Set()
 ): Promise<void> {
   const keyPath = getKeyPath(contract, modelName);
+  patch = preserveDecimalKeySpelling(contract, modelName, patch, extractKeyFromRow(oldRow, keyPath));
   const rowKey = `${getStoreName(contract, modelName)}::${keyToken(extractKeyFromRow(oldRow, keyPath))}`;
   if (visited.has(rowKey)) return;
   visited.add(rowKey);
