@@ -220,7 +220,7 @@ class IdbRuntimeImpl extends RuntimeCore<IdbQueryPlan, IdbPlanBody, IdbMiddlewar
    * codec encoding can resolve field→codec mappings from the contract's
    * storage schema.
    */
-  protected override lower(plan: IdbQueryPlan, ctx: CodecCallContext): Promise<IdbPlanBody> {
+  protected override lower(plan: IdbQueryPlan, ctx: CodecCallContext): Promise<IdbLoweredPlan> {
     const lowererCtx: IdbLowererContext = {
       ...ctx,
       contract: this.#contract,

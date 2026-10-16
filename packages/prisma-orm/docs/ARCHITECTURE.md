@@ -225,7 +225,7 @@ One entrypoint, `./runtime`, exporting `createIdbRuntime`, `IdbRuntime` and `Idb
 | `verifyMarker()`            | Checks that the database's marker matches the contract's `storageHash`.   |
 | `close()`                   | Closes the connection.                                                    |
 
-Middleware gets a context with a `contentHash(plan)` function. It hashes the plan's data and skips its functions, so equal queries produce equal hashes and a cache middleware can use them as keys. Because rows are collected before they are yielded, `onRow` runs over rows already in memory. It can't slow down the cursor.
+Middleware gets a context with a `contentHash(plan)` function. It returns a SHA-512 digest of the plan's data. Functions that carry a structured identity hash by that identity, so equal queries produce equal hashes. A raw closure with no structured identity gets a fresh nonce on every call, so it never produces a stale cache hit. A cache middleware can use the digest as a key. Because rows are collected before they are yielded, `onRow` runs over rows already in memory. It can't slow down the cursor.
 
 Depends on `adapter-idb` and `driver-idb`.
 
