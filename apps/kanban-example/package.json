@@ -13,7 +13,7 @@
     "lint": "prettier --check . && eslint .",
     "format": "prettier --write .",
     "test": "playwright test",
-    "generate": "prisma generate"
+    "generate": "svelte-kit sync && prisma generate"
   },
   "devDependencies": {
     "@internationalized/date": "^3.12.3",
