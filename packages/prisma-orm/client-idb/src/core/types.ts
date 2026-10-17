@@ -591,7 +591,8 @@ export type AggregateFn = "count" | "sum" | "avg" | "min" | "max";
  * output type is assignable to `number`. For a loosely-typed `IdbContract`
  * (no type maps — `DefaultModelRow` is `Record<string, unknown>`) the row key
  * set widens to `string`, so we allow any field name rather than collapsing to
- * `never`. Mirrors `NumericFieldNames` from `sql-orm-client`, trait-free.
+ * `never`. Runtime validation still requires a declared scalar Int or Float
+ * field. Mirrors `NumericFieldNames` from `sql-orm-client`, trait-free.
  */
 export type NumericFieldNames<TContract, ModelName extends string> = string extends keyof DefaultModelRow<
   TContract,

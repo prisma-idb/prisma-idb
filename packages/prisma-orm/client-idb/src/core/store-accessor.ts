@@ -524,7 +524,8 @@ export class IdbStoreAccessorImpl<
     fn: (agg: IdbAggregateBuilder<TContract, ModelName>) => Spec
   ): Promise<IdbAggregateResult<Spec>> {
     const spec = fn(createAggregateBuilder<TContract, ModelName>());
-    assertValidAggregateSpec(spec, "aggregate()");
+    const { fields } = buildCatalog(this.#contract, this.#storeName, this.#modelName);
+    assertValidAggregateSpec(spec, "aggregate()", fields);
     const combined = this.#combinedFilterExpr();
     const ast: IdbAggregateAst = {
       kind: "aggregate",
@@ -534,7 +535,7 @@ export class IdbStoreAccessorImpl<
     };
     // Like SQL's aggregate, skip/take don't apply.
     const rows = await this.#materialize(this.#newGroupingKey(), ast);
-    return computeAggregateSpec(spec, rows) as IdbAggregateResult<Spec>;
+    return computeAggregateSpec(spec, rows, fields) as IdbAggregateResult<Spec>;
   }
 
   /** Carry this filter into a grouped accessor whose materialization is owned here. */
@@ -547,6 +548,7 @@ export class IdbStoreAccessorImpl<
     return createGroupedAccessor<TContract, ModelName, Fields>({
       modelName: this.#modelName,
       by: fields as readonly string[],
+      fields: buildCatalog(this.#contract, this.#storeName, this.#modelName).fields,
       where: combined,
       materialize,
     });

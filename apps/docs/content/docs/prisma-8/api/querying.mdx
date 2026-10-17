@@ -144,7 +144,11 @@ const stats = await db.orm.task.aggregate((agg) => ({
 }));
 ```
 
-`count()` counts rows. `sum`, `avg`, `min` and `max` take a numeric field.
+`count()` counts every matching row, including rows with null or unsupported field values. It returns `0` for an empty set.
+
+`sum`, `avg`, `min` and `max` accept scalar `Int` and `Float` fields and return `number | null`. They skip null and absent values. They return `null` when no value remains. Field types are checked at runtime, including contracts without TypeScript type maps. String, DateTime, Decimal, BigInt, collection and unknown fields are rejected, even for an empty set. Numeric strings and dates are never converted to numbers.
+
+Non-null inputs must be finite numbers. `Int` inputs must also be integers in the signed 32-bit range. `sum` and `avg` throw a `RangeError` if an intermediate total becomes nonfinite. For `Int`, they also throw if an intermediate total exceeds the JavaScript safe-integer range, ±(2^53 − 1). This can reject an average even when its final value would fit. `Float` arithmetic uses JavaScript floating-point precision. Exact BigInt and Decimal aggregation is not supported.
 
 ## Group by
 
@@ -153,4 +157,4 @@ const perUser = await db.orm.todo.groupBy("userId").aggregate((agg) => ({ total:
 // [{ userId: "user_1", total: 3 }, { userId: "user_2", total: 1 }]
 ```
 
-`groupBy()` returns one row per distinct combination of the grouping fields, with the aggregates you ask for. It supports BigInt fields. Equal Date, binary, array and JSON object values share a group. A Date and its ISO string form separate groups. Invalid Dates share a separate group. Null and undefined share a group.
+`groupBy()` returns one row per distinct combination of the grouping fields, with the aggregates you ask for. Grouping keys can be BigInt fields. The aggregate selectors follow the same input and overflow rules as ordinary aggregates. An empty set produces no groups. Equal Date, binary, array and JSON object values share a group. A Date and its ISO string form separate groups. Invalid Dates share a separate group. Null and undefined share a group.

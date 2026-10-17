@@ -5,6 +5,7 @@ import {
   createAggregateBuilder,
   toAggregateRequests,
 } from "./aggregate-builder";
+import type { CatalogField } from "./planner/catalog";
 import { fieldValueToken } from "./types";
 import type { DefaultModelRow, IdbAggregateBuilder, IdbAggregateResult, IdbAggregateSpec } from "./types";
 
@@ -49,6 +50,8 @@ export interface IdbGroupedAccessor<TContract, ModelName extends string, Fields 
 /** Runtime wiring handed to {@link createGroupedAccessor} by the store accessor. */
 interface GroupedAccessorInit {
   readonly modelName: string;
+  /** Declared scalar types used to validate selectors and numeric reductions. */
+  readonly fields: Readonly<Record<string, CatalogField>>;
   /** Group-key fields, in declaration order. */
   readonly by: readonly string[];
   /** Combined `where` expression carried over from the source accessor, if any. */
@@ -87,7 +90,7 @@ export function createGroupedAccessor<TContract, ModelName extends string, Field
       fn: (agg: IdbAggregateBuilder<TContract, ModelName>) => Spec
     ): Promise<Array<GroupedResultRow<TContract, ModelName, Fields, Spec>>> {
       const spec = fn(createAggregateBuilder<TContract, ModelName>());
-      assertValidAggregateSpec(spec, "groupBy().aggregate()");
+      assertValidAggregateSpec(spec, "groupBy().aggregate()", init.fields);
 
       const ast: IdbGroupByAst = {
         kind: "groupBy",
@@ -115,7 +118,7 @@ export function createGroupedAccessor<TContract, ModelName extends string, Field
 
       return Array.from(groups.values()).map(
         (group) =>
-          ({ ...group.key, ...computeAggregateSpec(spec, group.rows) }) as GroupedResultRow<
+          ({ ...group.key, ...computeAggregateSpec(spec, group.rows, init.fields) }) as GroupedResultRow<
             TContract,
             ModelName,
             Fields,

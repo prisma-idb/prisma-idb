@@ -642,7 +642,10 @@ describe("IdbStoreAccessor — aggregate / groupBy", () => {
   });
 
   function postsClient() {
-    const contract = makeTestContract({ posts: "Post" }, { Post: { storeName: "posts", keyPath: "id" } });
+    const contract = makeTestContract(
+      { posts: "Post" },
+      { Post: { storeName: "posts", keyPath: "id", fields: { views: "Int" } } }
+    );
     return asRecord(idbOrm({ contract, executor }));
   }
 
