@@ -33,11 +33,13 @@ it.each<RowsRequest>([{}, { orderBy: { n: "asc" } }])(
       middleware: [
         {
           name: "read-cache",
-          async interceptQuery(plan, ctx) {
-            const hash = await ctx.contentHash(plan);
-            const hit = hashes.includes(hash);
-            hashes.push(hash);
-            return hit ? { rows: [] } : undefined;
+          intercept: {
+            async onQuery(plan, ctx) {
+              const hash = await ctx.contentHash(plan);
+              const hit = hashes.includes(hash);
+              hashes.push(hash);
+              return hit ? { rows: [] } : undefined;
+            },
           },
         },
       ],

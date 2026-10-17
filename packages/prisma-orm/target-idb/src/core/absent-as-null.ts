@@ -48,7 +48,7 @@ function buildFieldNormalizer(contract: ContractWithDomain, field: ContractField
       if (!Array.isArray(value)) return value;
       let filled: unknown[] | undefined;
       value.forEach((item, index) => {
-        const read = element(item);
+        const read = item === null ? item : element(item);
         if (read !== item) (filled ??= [...value])[index] = read;
       });
       return filled ?? value;

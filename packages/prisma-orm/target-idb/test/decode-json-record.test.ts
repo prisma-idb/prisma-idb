@@ -33,7 +33,7 @@ describe("decodeJsonRecord", () => {
   );
   it("rejects omitted union fields and empty union containers", () => {
     expect(() => decodeJsonRecord(domain, "Item", {})).toThrow(/field "choice" uses a union type/);
-    for (const extra of [{ many: true }, { dict: true }] as const) {
+    for (const extra of [{ many: { elementNullable: false } }, { dict: true }] as const) {
       const nestedDomain: ContractWithDomain["domain"] = {
         namespaces: {
           default: {

@@ -87,7 +87,8 @@ export type IdbRecordShape = {
 export type IdbRecordField = {
   readonly type: IdbRecordFieldType;
   readonly nullable: boolean;
-  readonly many?: true;
+  /** Present for a list field; `elementNullable` allows `null` elements. */
+  readonly many?: { readonly elementNullable: boolean };
   readonly dict?: true;
   readonly valueSet?: ContractEnum & { readonly name: string };
 };

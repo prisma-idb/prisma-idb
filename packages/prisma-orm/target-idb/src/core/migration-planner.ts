@@ -7,6 +7,8 @@ import type {
   MigrationPlannerConflict,
   MigrationPlannerResult,
   MigrationScaffoldContext,
+  PlanOrigin,
+  ResolvedMigrationStatement,
 } from "@prisma/orm-framework/components/control";
 import type {
   IdbIndexDefinition,
@@ -25,6 +27,7 @@ import {
   type IdbDdlOp,
   type IdbValueTransform,
 } from "./migration-factories";
+import { dataLossOf, refuseStatements } from "./plan-subjects";
 import type { IdbSchemaDiffInput } from "./schema-diff";
 import { diffIdbSchema } from "./schema-diff";
 
@@ -248,7 +251,8 @@ function typeAcceptsExistingValues(from: IdbRecordFieldType, to: IdbRecordFieldT
 /** Whether existing values remain valid in the destination field. */
 function fieldAcceptsExistingValues(from: IdbRecordField, to: IdbRecordField): boolean {
   if (from.nullable && !to.nullable) return false;
-  if (from.many !== to.many || from.dict !== to.dict) return false;
+  if (Boolean(from.many) !== Boolean(to.many) || from.dict !== to.dict) return false;
+  if (from.many?.elementNullable && !to.many?.elementNullable) return false;
   if (!typeAcceptsExistingValues(from.type, to.type)) return false;
   if (from.valueSet === undefined) return to.valueSet === undefined;
   if (to.valueSet === undefined) return true;
@@ -332,7 +336,7 @@ function storedCreateDefault(
   field: IdbRecordField
 ): string | number | boolean | undefined {
   const spec = contract.execution?.mutations?.defaults?.find(
-    (entry) => entry.ref.table === storeName && entry.ref.column === name
+    (entry) => entry.ref.entry === storeName && entry.ref.field === name
   )?.onCreate;
   const value = spec?.params?.["value"];
   if (spec?.id !== "literal" || field.many || field.dict || field.type.kind !== "scalar") return undefined;
@@ -444,11 +448,18 @@ export class IdbMigrationPlanner implements MigrationPlanner<"idb", "idb"> {
     readonly schema: unknown;
     readonly policy: MigrationOperationPolicy;
     readonly fromContract: Contract | null;
+    /** The origin the plan asserts, which the runner checks against the marker; `null` skips the check. */
+    readonly origin: PlanOrigin | null;
+    /** Statements the user gave; the IDB planner refuses every one of them. */
+    readonly statements: readonly ResolvedMigrationStatement[];
     readonly frameworkComponents: ReadonlyArray<TargetBoundComponentDescriptor<"idb", "idb">>;
     /** Accepted for framework interface conformance; the IDB planner does not use this value. */
     readonly spaceId: string;
   }): MigrationPlannerResult {
-    const { contract, fromContract } = options;
+    const { contract, fromContract, origin, statements } = options;
+
+    const refusal = refuseStatements(statements, fromContract, contract as Contract);
+    if (refusal !== undefined) return refusal;
 
     const fromSchema = contractToIdbSchema(fromContract);
     const toSchema = contractToIdbSchema(contract);
@@ -480,13 +491,13 @@ export class IdbMigrationPlanner implements MigrationPlanner<"idb", "idb"> {
       ops.unshift(createMarkerStoreOp());
     }
 
-    const fromHash = fromContract !== null ? extractStorageHash(fromContract) : null;
+    const fromHash = origin?.storageHash ?? null;
     const toHash = extractStorageHash(contract);
 
     const plan: IdbMigrationPlanWithAuthoring = {
       targetId: "idb",
       // `null` means "no origin validation" — the runner skips the origin check.
-      origin: fromHash !== null ? { storageHash: fromHash } : null,
+      origin,
       destination: { storageHash: toHash },
       operations: ops,
       renderTypeScript() {
@@ -494,7 +505,14 @@ export class IdbMigrationPlanner implements MigrationPlanner<"idb", "idb"> {
       },
     };
 
-    return { kind: "success", plan };
+    return {
+      kind: "success",
+      plan,
+      appliedStatements: [],
+      dataLoss: dataLossOf(ops, fromSchema),
+      accessWidening: [],
+      temporaryValues: [],
+    };
   }
 
   /** Creates an empty migration between the scaffold context’s storage identities. */

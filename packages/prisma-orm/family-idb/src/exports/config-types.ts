@@ -38,6 +38,7 @@ function defaultOutputFromContractPath(contractPath: string): string {
 export function typescriptContract(contract: Contract, output?: string): ContractConfig {
   return {
     source: {
+      format: "typescript",
       load: async () => ok(contract),
     },
     ...(output !== undefined ? { output } : {}),
@@ -59,6 +60,7 @@ export function typescriptContract(contract: Contract, output?: string): Contrac
 export function typescriptContractFromPath(contractPath: string, output?: string): ContractConfig {
   return {
     source: {
+      format: "typescript",
       inputs: [contractPath],
       load: async (context) => {
         const [absolutePath] = context.resolvedInputs;

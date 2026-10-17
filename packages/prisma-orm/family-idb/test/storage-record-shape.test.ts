@@ -27,7 +27,7 @@ function contract(
 
 function psl(schema: string) {
   const { document, sources } = parse(schema, "test.prisma");
-  const { symbolTable } = buildSymbolTable({ documents: [document], sources, pslBlockDescriptors: {} });
+  const { symbolTable } = buildSymbolTable({ documents: [document], sources, defaultNamespaceId: "__unbound__" });
   const result = interpretPslDocumentToIdbContract(symbolTable, "test.prisma");
   if (!result.ok) throw new Error(JSON.stringify(result));
   return result.value;
@@ -100,7 +100,7 @@ describe("IDB storage record shape", () => {
     const scalar: ContractField = { type: { kind: "scalar", codecId: "idb/string@1" }, nullable: false };
     const fields: Record<string, ContractField> = {
       id: scalar,
-      profile: { type: { kind: "valueObject", name: "Profile" }, nullable: true, many: true },
+      profile: { type: { kind: "valueObject", name: "Profile" }, nullable: true, many: { elementNullable: false } },
     };
     const shape = (codecId: string) =>
       buildRecordShape("User", fields, {
@@ -119,7 +119,7 @@ describe("IDB storage record shape", () => {
     expect(hash(original)).not.toBe(hash(shape("idb/int32@1")));
     expect(original.fields["profile"]).toMatchObject({
       nullable: true,
-      many: true,
+      many: { elementNullable: false },
       type: {
         kind: "valueObject",
         fields: {
@@ -157,6 +157,8 @@ describe("IDB storage record shape", () => {
     const plan = new IdbMigrationPlanner().plan({
       contract: to,
       fromContract: from,
+      origin: null,
+      statements: [],
       schema: null,
       frameworkComponents: [],
       spaceId: "app",

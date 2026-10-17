@@ -117,7 +117,7 @@ export default {
     target,
     adapter,
     contract: {
-      source: { load: async () => ({ ok: true, value: {} }) },
+      source: { format: "typescript", load: async () => ({ ok: true, value: {} }) },
       output: ${JSON.stringify(contractOutput)},
     },
     migrations: { dir: ${JSON.stringify(migrationsDir)} },

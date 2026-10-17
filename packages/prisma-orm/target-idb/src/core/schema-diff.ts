@@ -42,9 +42,9 @@ function indexDefinitionsDiffer(a: IdbIndexDefinition, b: IdbIndexDefinition): b
  * 1. Create new stores — additive
  * 2. Create indexes on those new stores — additive
  * 3. Create new indexes on existing stores — additive
- * 4. Replace mutated indexes on surviving stores — destructive + additive
+ * 4. Replace mutated indexes on surviving stores — widening + additive
  *    (IDB cannot alter an existing index in place, so this is drop+create)
- * 5. Drop removed indexes from surviving stores — destructive
+ * 5. Drop removed indexes from surviving stores — widening
  * 6. Drop removed stores — destructive
  *
  * @param from - Current schema, or `null` for a fresh (empty) database.
@@ -115,7 +115,7 @@ export function diffIdbSchema(from: IdbSchemaDiffInput | null, to: IdbSchemaDiff
 
   // 4. Replace mutated indexes on surviving stores — drop then create.
   // Emit the drop first so the createIndex in the same upgradeneeded
-  // transaction sees an available slot. Operation class is "destructive"
+  // transaction sees an available slot. Operation class is "widening"
   // for the drop (policy may filter it) and "additive" for the create.
   for (const [storeName, toDef] of Object.entries(toStores)) {
     const fromDef = fromStores[storeName];
@@ -132,7 +132,7 @@ export function diffIdbSchema(from: IdbSchemaDiffInput | null, to: IdbSchemaDiff
     }
   }
 
-  // 5. Drop removed indexes from surviving stores (destructive)
+  // 5. Drop removed indexes from surviving stores (widening)
   for (const [storeName, fromDef] of Object.entries(fromStores)) {
     if (!(storeName in toStores)) continue; // whole store gone — handled below
     const toStoreDef = toStores[storeName];

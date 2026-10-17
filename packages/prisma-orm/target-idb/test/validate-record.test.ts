@@ -45,7 +45,7 @@ describe("validateRecord", () => {
   it("distinguishes missing fields, nullable containers and list elements", () => {
     const schema = contract({
       note: field("idb/string@1", { nullable: true }),
-      tags: field("idb/string@1", { many: true }),
+      tags: field("idb/string@1", { many: { elementNullable: false } }),
     });
     expect(validateRecord(schema, "Item", { id: "a", note: null, tags: ["ok"] }).ok).toBe(true);
     for (const record of [
@@ -55,6 +55,14 @@ describe("validateRecord", () => {
       { id: "a", note: null, tags: [null] },
     ])
       expect(validateRecord(schema, "Item", record).ok).toBe(false);
+  });
+  it("accepts null list elements only when the field allows them", () => {
+    const strict = contract({ tags: field("idb/string@1", { many: { elementNullable: false } }) });
+    const loose = contract({ tags: field("idb/string@1", { many: { elementNullable: true } }) });
+    const record = { id: "a", tags: ["x", null] };
+    expect(validateRecord(strict, "Item", record).ok).toBe(false);
+    expect(validateRecord(loose, "Item", record)).toEqual({ ok: true });
+    expect(validateRecord(loose, "Item", { id: "a", tags: ["x", 2] }).ok).toBe(false);
   });
   it("checks every IDB codec's native representation and int32 bounds", () => {
     const schema = contract({
@@ -104,7 +112,7 @@ describe("validateRecord", () => {
     expect(validateRecord(schema, "Item", { id: "a", json: { nested: null } }, options)).toEqual({ ok: true });
     expect(validateRecord(schema, "Item", { id: "a" }, options).ok).toBe(false);
     expect(validateRecord(schema, "Item", { id: "a", json: undefined }, options).ok).toBe(false);
-    for (const extra of [{ many: true }, { dict: true }] as const) {
+    for (const extra of [{ many: { elementNullable: false } }, { dict: true }] as const) {
       expect(
         validateRecord(contract({ json: field(codecId, extra) }), "Item", { id: "a", json: null }, options).ok
       ).toBe(false);
@@ -115,7 +123,7 @@ describe("validateRecord", () => {
     const status = field("idb/string@1", {
       valueSet: { plane: "domain", namespaceId: "default", entityKind: "enum", entityName: "Status" },
     });
-    const schema = contract({ status, statuses: { ...status, many: true } }, "id", {
+    const schema = contract({ status, statuses: { ...status, many: { elementNullable: false } } }, "id", {
       enum: {
         Status: {
           codecId: "idb/string@1",

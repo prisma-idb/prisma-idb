@@ -58,7 +58,9 @@ function decodeFieldValue(
 ): unknown {
   if (value === null || value === undefined) return value;
   if (field.many) {
-    return Array.isArray(value) ? value.map((el) => decodeScalarOrValueObject(el, field, domain, fieldLabel)) : value;
+    return Array.isArray(value)
+      ? value.map((el) => (el === null ? el : decodeScalarOrValueObject(el, field, domain, fieldLabel)))
+      : value;
   }
   if (field.dict) {
     return isPlainObject(value)

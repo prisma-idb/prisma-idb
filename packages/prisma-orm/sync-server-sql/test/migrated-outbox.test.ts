@@ -38,6 +38,8 @@ function baselineOperations(to: Contract) {
   const plan = new IdbMigrationPlanner().plan({
     contract: to,
     fromContract: null,
+    origin: null,
+    statements: [],
     schema: null,
     policy: { allowedOperationClasses: ["additive", "widening", "destructive", "data"] },
     frameworkComponents: [],

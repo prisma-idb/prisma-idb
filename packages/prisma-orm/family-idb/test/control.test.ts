@@ -11,6 +11,8 @@
 import { VERIFY_CODE_TARGET_MISMATCH } from "@prisma/orm-framework/components/control";
 import { describe, expect, it } from "vitest";
 import { createIdbFamilyInstance } from "../src/core/control-instance";
+import type { Contract } from "@prisma/orm-framework/contract/types";
+import { dropIndexOp, dropObjectStoreOp } from "@prisma-idb/target-idb/migration";
 import { createRawIdbContract } from "./_raw-contract";
 
 /** Build a raw contract object with the given IDB stores. */
@@ -82,21 +84,16 @@ describe("createIdbFamilyInstance", () => {
     expect(result.code).toBe(VERIFY_CODE_TARGET_MISMATCH);
   });
 
-  it("sign returns structured refusal", async () => {
-    const contract = rawContract({ users: { keyPath: "id" } });
-    const result = await instance.sign({
-      driver,
-      contract,
-      contractPath: "/contract.json",
-    });
-    expect(result.ok).toBe(false);
-    // SignDatabaseResult has no top-level `code` field (unlike
-    // VerifyDatabaseResult); the refusal lives in the summary text.
-    expect(result.summary).toContain("cannot be signed from the CLI");
-    expect(result.summary).toContain("only exists in the browser");
-    // marker is required by the type — refusal carries an "untouched" record.
-    expect(result.marker.created).toBe(false);
-    expect(result.marker.updated).toBe(false);
+  it("storageNameOf names the object store an operation acts on", () => {
+    expect(instance.storageNameOf(dropObjectStoreOp("users"))).toBe("users");
+    expect(instance.storageNameOf(dropIndexOp("users", "byEmail"))).toBe("users");
+  });
+
+  it("signSpaces refuses because the CLI cannot write the browser marker", async () => {
+    const contract = rawContract({ users: { keyPath: "id" } }) as Contract;
+    await expect(instance.signSpaces({ driver, spaces: [{ space: "app", contract, expected: null }] })).rejects.toThrow(
+      /only exists in the browser/
+    );
   });
 
   it("readMarker returns null (no marker queryable from CLI)", async () => {

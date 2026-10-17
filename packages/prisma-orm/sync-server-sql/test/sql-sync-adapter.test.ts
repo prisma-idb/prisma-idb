@@ -26,7 +26,11 @@ describe("wire revival", () => {
     const fields = contract.domain.namespaces["public"]!.models["Todo"]!.fields;
     fields["big"] = { nullable: false, type: { kind: "scalar", codecId: "pg/int8@1" } };
     fields["bytes"] = { nullable: false, type: { kind: "scalar", codecId: "pg/bytea@1" } };
-    fields["dates"] = { nullable: false, many: true, type: { kind: "scalar", codecId: "pg/timestamptz-date@1" } };
+    fields["dates"] = {
+      nullable: false,
+      many: { elementNullable: false },
+      type: { kind: "scalar", codecId: "pg/timestamptz-date@1" },
+    };
     const date = "2026-01-02T03:04:05.000Z";
     const wire = { dueAt: date, big: "42", bytes: "AQI=", dates: [date] };
     expect(reviveWireValues(contract, "Todo", wire)).toEqual({

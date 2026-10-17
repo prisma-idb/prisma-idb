@@ -8,6 +8,7 @@
  * real project.
  */
 
+import { planOriginOf } from "@prisma/orm-framework/components/control";
 import type { Contract } from "@prisma/orm-framework/contract/types";
 import type { ContractSpace, MigrationPackage } from "@prisma/orm-framework/components/control";
 import { computeMigrationHash } from "@prisma/orm-toolchain/migration-tools/hash";
@@ -41,6 +42,8 @@ export function buildContractSpaceFixture<TContract extends Contract>(
       schema: null,
       policy: { allowedOperationClasses: ["additive", "widening", "destructive", "data"] },
       fromContract: previous,
+      origin: planOriginOf(previous),
+      statements: [],
       frameworkComponents: [],
       spaceId: "app",
     });
@@ -107,6 +110,8 @@ export function buildExtensionContractSpaceFixture<TContract extends Contract>(
       schema: null,
       policy: { allowedOperationClasses: ["additive", "widening", "destructive", "data"] },
       fromContract: previous,
+      origin: planOriginOf(previous),
+      statements: [],
       frameworkComponents: [],
       spaceId,
     });

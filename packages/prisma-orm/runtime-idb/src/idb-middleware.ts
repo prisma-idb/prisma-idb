@@ -25,6 +25,13 @@ import type { IdbLoweredPlan } from "@prisma-idb/adapter-idb/runtime";
  *   exit from `onRow`.
  * - Observation-only hooks (telemetry, cache population, logging) work
  *   correctly — they just receive rows from an already-complete scan.
+ *
+ * ## Which statements middleware sees
+ *
+ * Only top-level `query()` and `execute()` calls run as activities.
+ * `IdbTransactionScope.execute()` bypasses middleware, so `activityStarted`,
+ * `beforeEncode` and `activityEnded` never fire for statements inside a
+ * transaction, and `ctx.scope` is always `"runtime"`.
  */
 export interface IdbMiddleware extends RuntimeMiddleware<IdbLoweredPlan> {
   readonly familyId?: "idb";

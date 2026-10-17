@@ -63,7 +63,7 @@ When the app calls `db.orm.user.where({ active: true }).all()`:
 2. **`runtime-idb` receives the plan** through `query(plan)` and asks the adapter to lower it before running query middleware.
 3. **`adapter-idb` lowers the plan.** It preserves `plan.idbPlan` and adds canonical `queryIdentity` strings for structured filters and comparators. Middleware receives this lowered plan. Every IDB codec stores values as they are; encoding would happen here if a codec ever needed it.
 4. **`driver-idb` runs the plan.** It opens a transaction, walks a cursor or calls `get`, `getAll`, `count` or `getKey`, and collects every matching row before the transaction ends ([ADR 006](adrs/ADR%20006%20-%20Collect%20then%20Yield%20Full%20Row%20Materialization.md)). Requests are chained through IndexedDB callbacks, never `await`, so the transaction stays active ([ADR 005](adrs/ADR%20005%20-%20Event-Driven%20Execution%20No%20Async%20Await.md)).
-5. **`runtime-idb` yields the rows,** calling each middleware's `onRow` and then `afterQuery`.
+5. **`runtime-idb` yields the rows,** calling each middleware's `onRow` and then `activityEnded`.
 
 Most writes take a different route: they need to read and write several stores in one transaction. `client-idb`'s mutation executor calls `withMutationScope`, which opens one multi-store transaction through the runtime's `transaction()`. It then runs driver plans directly on the returned `IdbTransactionScope` to check foreign keys, apply referential actions and write the rows ([ADR 007](adrs/ADR%20007%20-%20Two%20Transaction%20APIs.md), [ADR 009](adrs/ADR%20009%20-%20FK%20Validation%20and%20Referential%20Action%20Enforcement.md)). Middleware doesn't see these steps.
 

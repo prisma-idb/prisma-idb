@@ -6,7 +6,7 @@
  * - `verifyMarker()`: all marker states (match, mismatch, missing store, missing key)
  * - `lower()` threads contract through via `IdbLowererContext`
  * - `close()` delegates to the driver
- * - Constructor builds `RuntimeMiddlewareContext` from contract (no explicit ctx)
+ * - Constructor builds `ActivityContextFields` from contract (no explicit ctx)
  * - Constructor uses the provided ctx when given
  * - `query()` calls through the RuntimeCore chain (adapter → driver), rows out
  * - `execute()` calls through the same chain but resolves `{ affectedRows }`
@@ -137,7 +137,7 @@ describe("createIdbRuntime", () => {
     const mw: IdbMiddleware = {
       name: "test-mw",
       familyId: "idb",
-      beforeExecute: vi.fn(),
+      beforeEncode: vi.fn(),
     };
 
     const runtime = createIdbRuntime({
@@ -154,7 +154,7 @@ describe("createIdbRuntime", () => {
     const mw = {
       name: "wrong-family",
       familyId: "sql",
-      beforeExecute: vi.fn(),
+      beforeEncode: vi.fn(),
     } as unknown as IdbMiddleware;
 
     expect(() =>
@@ -171,7 +171,6 @@ describe("createIdbRuntime", () => {
     const customCtx = {
       contract: { custom: true },
       mode: "permissive" as const,
-      planExecutionId: "test-plan-exec",
       now: () => 0,
       log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
       contentHash: async () => "",
@@ -371,7 +370,7 @@ describe("query", () => {
     expect(lowerSpy).toHaveBeenCalledTimes(1);
   });
 
-  it("middleware beforeQuery is called before the driver runs", async () => {
+  it("middleware beforeEncode is called before the driver runs", async () => {
     const callOrder: string[] = [];
 
     const adapter = makeMockAdapter({
@@ -391,8 +390,8 @@ describe("query", () => {
     const mw: IdbMiddleware = {
       name: "before-query-mw",
       familyId: "idb",
-      beforeQuery: async () => {
-        callOrder.push("beforeQuery");
+      beforeEncode: async () => {
+        callOrder.push("beforeEncode");
       },
     };
 
@@ -411,8 +410,8 @@ describe("query", () => {
       rows.push(row as Record<string, unknown>);
     }
 
-    // lower() runs first (plan lowering), then beforeQuery, then execute
-    expect(callOrder).toEqual(["lower", "beforeQuery", "execute"]);
+    // lower() runs first (plan lowering), then beforeEncode, then execute
+    expect(callOrder).toEqual(["lower", "beforeEncode", "execute"]);
     expect(rows).toHaveLength(1);
   });
 
@@ -526,7 +525,7 @@ describe("execute", () => {
     expect(result).toEqual({ affectedRows: 0 });
   });
 
-  it("runs the beforeExecute/afterExecute middleware chain, not beforeQuery/onRow", async () => {
+  it("runs beforeEncode and activityEnded around execute(), not onRow", async () => {
     const callOrder: string[] = [];
 
     const driver = makeMockDriver({
@@ -539,14 +538,14 @@ describe("execute", () => {
     const mw: IdbMiddleware = {
       name: "before-exec-mw",
       familyId: "idb",
-      beforeQuery: () => {
-        callOrder.push("beforeQuery"); // must NOT fire on execute()
+      beforeEncode: async () => {
+        callOrder.push("beforeEncode");
       },
-      beforeExecute: async () => {
-        callOrder.push("beforeExecute");
+      onRow: async () => {
+        callOrder.push("onRow"); // must NOT fire on execute()
       },
-      afterExecute: async () => {
-        callOrder.push("afterExecute");
+      activityEnded: async (_activity, result) => {
+        callOrder.push(`activityEnded:${result.kind === "statement" ? result.returns : result.kind}`);
       },
     };
 
@@ -559,7 +558,7 @@ describe("execute", () => {
 
     const result = await runtime.execute(makeQueryPlan());
 
-    expect(callOrder).toEqual(["beforeExecute", "driver", "afterExecute"]);
+    expect(callOrder).toEqual(["beforeEncode", "driver", "activityEnded:stats"]);
     expect(result).toEqual({ affectedRows: 1 });
   });
 });
@@ -567,7 +566,7 @@ describe("execute", () => {
 // ── constructor middleware context ────────────────────────────────────────────
 
 describe("constructor middleware context", () => {
-  it("builds RuntimeMiddlewareContext from contract when ctx is not provided", async () => {
+  it("builds ActivityContextFields from contract when ctx is not provided", async () => {
     // We verify this indirectly: since the runtime was created without an
     // explicit ctx, query() works (meaning the built ctx is valid).
     const runtime = createIdbRuntime({
@@ -589,7 +588,6 @@ describe("constructor middleware context", () => {
     const customCtx = {
       contract: { custom: true },
       mode: "permissive" as const,
-      planExecutionId: "test-plan-exec",
       now: () => 42,
       log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
       contentHash: async () => "",
@@ -624,7 +622,7 @@ describe("constructor middleware context", () => {
     const mw: IdbMiddleware = {
       name: "hash-capture",
       familyId: "idb",
-      beforeQuery: async (_plan, ctx) => {
+      beforeEncode: async (_plan, ctx) => {
         // Call contentHash on a known plan shape
         capturedHash = await ctx.contentHash({
           kind: "cursorScan",
@@ -659,7 +657,7 @@ describe("constructor middleware context", () => {
     const mw: IdbMiddleware = {
       name: "hash-determinism",
       familyId: "idb",
-      beforeQuery: async (_plan, ctx) => {
+      beforeEncode: async (_plan, ctx) => {
         const planShape = {
           kind: "keyGet",
           storeName: "posts",
@@ -692,7 +690,7 @@ describe("constructor middleware context", () => {
     const mw: IdbMiddleware = {
       name: "hash-distinct",
       familyId: "idb",
-      beforeQuery: async (_plan, ctx) => {
+      beforeEncode: async (_plan, ctx) => {
         hashes.push(
           await ctx.contentHash({
             kind: "cursorScan",
@@ -737,7 +735,7 @@ describe("built-in contentHash plan identity", () => {
     const mw: IdbMiddleware = {
       name: "hash-capture",
       familyId: "idb",
-      beforeQuery: async (_plan, ctx) => {
+      beforeEncode: async (_plan, ctx) => {
         hash = ctx.contentHash;
       },
     };

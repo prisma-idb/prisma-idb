@@ -13,7 +13,7 @@ import type {
 } from "@prisma/orm-postgres/contract/types";
 
 export type StorageHash = StorageHashBase<"7498e3634f22784f51916bb783fe23a341bd9031bce60cb8201fc37b97e39624">;
-export type ExecutionHash = ExecutionHashBase<"1ccd214e2c572bf6e165a7da549585dba6d39694a151e2695a9109ed7899d4dd">;
+export type ExecutionHash = ExecutionHashBase<"34d252ca4f406082d776d201d66ced321c881c5b2921b84290f66f1799b35e6f">;
 export type ProfileHash = ProfileHashBase<"40329830af4e39e0774683fbebcdc24dcf983a5da02c5fe6079a2a57579f861c">;
 
 export type CodecTypes = IdbCodecTypes;
@@ -409,17 +409,17 @@ type ContractBase = Omit<
             readonly params: {};
           };
           readonly ref: {
-            readonly column: "emailVerified";
+            readonly entry: "user";
+            readonly field: "emailVerified";
             readonly namespace: "__unbound__";
-            readonly table: "user";
           };
         },
         {
           readonly onCreate: { readonly id: "timestampNow"; readonly kind: "generator" };
           readonly ref: {
-            readonly column: "createdAt";
+            readonly entry: "user";
+            readonly field: "createdAt";
             readonly namespace: "__unbound__";
-            readonly table: "user";
           };
         },
         {
@@ -429,9 +429,9 @@ type ContractBase = Omit<
             readonly params: {};
           };
           readonly ref: {
-            readonly column: "isAnonymous";
+            readonly entry: "user";
+            readonly field: "isAnonymous";
             readonly namespace: "__unbound__";
-            readonly table: "user";
           };
         },
       ];

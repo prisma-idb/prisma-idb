@@ -12,7 +12,7 @@ import { buildContractSpaceFixture } from "./_contract-space-fixture";
 
 function contract(schema: string) {
   const { document, sources } = parse(schema, "test.prisma");
-  const { symbolTable } = buildSymbolTable({ documents: [document], sources, pslBlockDescriptors: {} });
+  const { symbolTable } = buildSymbolTable({ documents: [document], sources, defaultNamespaceId: "__unbound__" });
   const result = interpretPslDocumentToIdbContract(symbolTable, "test.prisma");
   if (!result.ok) throw new Error(JSON.stringify(result));
   return result.value;
@@ -166,7 +166,7 @@ it("reads nullable embedded additions as null after an operation-free migration"
                 profiles: {
                   type: { kind: "valueObject" as const, name: "Profile" },
                   nullable: false,
-                  many: true as const,
+                  many: { elementNullable: false } as const,
                 },
               },
             },
@@ -190,7 +190,7 @@ it("reads nullable embedded additions as null after an operation-free migration"
               profiles: {
                 type: { kind: "valueObject" as const, name: "Profile", fields: profileFields },
                 nullable: false,
-                many: true as const,
+                many: { elementNullable: false } as const,
               },
             },
           },

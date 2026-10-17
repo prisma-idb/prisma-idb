@@ -1,4 +1,5 @@
 import { emptyCodecLookup } from "@prisma/orm-framework/components/codec";
+import type { ActivityContext } from "@prisma/orm-framework/components/runtime";
 import {
   evaluateFilter,
   fieldFilter,
@@ -24,27 +25,36 @@ afterEach(async () => {
   await Promise.all(runtimes.splice(0).map((runtime) => runtime.close()));
 });
 
+/** The cache key and rows of the read an activity is running. */
+interface PendingRead {
+  readonly key: string;
+  readonly rows: Record<string, unknown>[];
+}
+
 /** Cache complete query results by the runtime's content hash, including real interception on hits. */
 function readCache(): IdbMiddleware {
   const entries = new Map<string, Record<string, unknown>[]>();
-  const pending = new Map<string, { key: string; rows: Record<string, unknown>[] }>();
+  const pendingRead = Symbol("read-cache.pending");
+  const pendingOf = (ctx: ActivityContext) => ctx.state(pendingRead)["read"] as PendingRead;
   return {
     name: "read-cache",
     familyId: "idb",
-    async beforeQuery(plan, ctx) {
-      pending.set(ctx.planExecutionId, { key: await ctx.contentHash(plan), rows: [] });
+    async beforeEncode(plan, ctx) {
+      ctx.state(pendingRead)["read"] = { key: await ctx.contentHash(plan), rows: [] };
     },
-    async interceptQuery(_plan, ctx) {
-      const rows = entries.get(pending.get(ctx.planExecutionId)!.key);
-      return rows === undefined ? undefined : { rows };
+    intercept: {
+      async onQuery(_plan, ctx) {
+        const rows = entries.get(pendingOf(ctx).key);
+        return rows === undefined ? undefined : { rows };
+      },
     },
     async onRow(row, _plan, ctx) {
-      pending.get(ctx.planExecutionId)!.rows.push(row);
+      pendingOf(ctx).rows.push(row);
     },
-    async afterQuery(_plan, result, ctx) {
-      const entry = pending.get(ctx.planExecutionId)!;
-      if (result.completed) entries.set(entry.key, entry.rows);
-      pending.delete(ctx.planExecutionId);
+    async activityEnded(_activity, result, ctx) {
+      if (result.kind !== "statement") return;
+      const entry = pendingOf(ctx);
+      if (result.outcome === "succeeded") entries.set(entry.key, entry.rows);
     },
   };
 }

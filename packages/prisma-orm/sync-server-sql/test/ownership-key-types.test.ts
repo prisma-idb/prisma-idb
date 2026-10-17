@@ -120,7 +120,7 @@ describe("ownership lock key casts", () => {
         table: {
           ['mapped"board']: {
             primaryKey: { columns: ['mapped"key'] },
-            columns: { ['mapped"key']: { nativeType: "text" } },
+            columns: { ['mapped"key']: { dataType: "pg/text" } },
           },
         },
       },

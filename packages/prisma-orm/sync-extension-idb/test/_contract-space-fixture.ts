@@ -22,6 +22,8 @@ export function buildContractSpaceFixture<TContract extends Contract>(contract: 
     schema: null,
     policy: { allowedOperationClasses: ["additive", "widening", "destructive", "data"] },
     fromContract: null,
+    origin: null,
+    statements: [],
     frameworkComponents: [],
     spaceId: "app",
   });

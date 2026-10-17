@@ -81,6 +81,7 @@ export interface PrismaIdbContractOptions {
 export function prismaIdbContract(schemaPath: string, options?: PrismaIdbContractOptions): ContractConfig {
   return {
     source: {
+      format: "psl",
       inputs: [schemaPath],
       load: async (context) => {
         const [absoluteSchemaPath] = context.resolvedInputs;
@@ -117,7 +118,7 @@ export function prismaIdbContract(schemaPath: string, options?: PrismaIdbContrac
         const { symbolTable: table, diagnostics: symbolDiagnostics } = buildSymbolTable({
           documents: [document],
           sources,
-          pslBlockDescriptors: {},
+          defaultNamespaceId: context.defaultNamespaceId,
         });
 
         // Do not short-circuit on provider-level diagnostics — the fault-tolerant
@@ -129,11 +130,10 @@ export function prismaIdbContract(schemaPath: string, options?: PrismaIdbContrac
         ];
 
         const interpreted = withSeedDiagnostics(
-          interpretPslDocumentToIdbContract(
-            table,
-            schemaPath,
-            options?.projection !== undefined ? { projection: options.projection } : undefined
-          ),
+          interpretPslDocumentToIdbContract(table, schemaPath, {
+            sources,
+            ...(options?.projection !== undefined ? { projection: options.projection } : {}),
+          }),
           seedDiagnostics
         );
         // Return the full Result so seed diagnostics (parse + symbol-table

@@ -8,6 +8,7 @@ import {
   deletedDataWarning,
   renderMigrationTs,
 } from "@prisma-idb/target-idb/migration";
+import { planOriginOf } from "@prisma/orm-framework/components/control";
 import { keepInternalSpecifiers } from "@prisma/orm-framework/components/emission";
 import { computeMigrationHash } from "@prisma/orm-toolchain/migration-tools/hash";
 import { formatMigrationDirName } from "@prisma/orm-toolchain/migration-tools/io";
@@ -144,6 +145,8 @@ async function planGreenfield(ctx: SharedCtx): Promise<number> {
     schema: null,
     policy: { allowedOperationClasses: ["additive", "widening", "destructive", "data"] },
     fromContract: null,
+    origin: null,
+    statements: [],
     frameworkComponents: [],
     spaceId: ctx.spaceId,
   });
@@ -283,6 +286,8 @@ async function planIncremental(ctx: SharedCtx, existingDirs: readonly string[]):
     schema: fromSchema,
     policy: { allowedOperationClasses: ["additive", "widening", "destructive", "data"] },
     fromContract: fromContractJson as Contract,
+    origin: planOriginOf(fromContractJson as Contract),
+    statements: [],
     frameworkComponents: [],
     spaceId: ctx.spaceId,
   });

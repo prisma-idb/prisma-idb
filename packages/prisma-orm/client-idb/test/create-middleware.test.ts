@@ -1,9 +1,9 @@
 /**
  * `create()` runs the full middleware lifecycle.
  *
- * The runtime fires `afterQuery` only after the result has been read to its
- * end. A `create()` that returned from inside the read loop skipped the hook,
- * so telemetry and audit middleware saw a write start and never finish.
+ * The runtime calls `activityEnded` when the result is fully read or the caller
+ * stops reading. Reading to the end reports `succeeded`; returning early from
+ * the read loop reports `stopped` even though the row was stored.
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { defineContract } from "@prisma-idb/family-idb/contract-ts";
@@ -54,18 +54,17 @@ describe("create() and middleware", () => {
       {
         name: "recorder",
         familyId: "idb",
-        async beforeExecute() {},
-        async beforeQuery(plan) {
-          events.push(`beforeQuery:${plan.kind}`);
+        async beforeEncode(plan) {
+          events.push(`beforeEncode:${plan.kind}`);
         },
-        async afterQuery(plan) {
-          events.push(`afterQuery:${plan.kind}`);
+        async activityEnded(_activity, result) {
+          if (result.kind === "statement") events.push(`activityEnded:${result.outcome}`);
         },
       } as IdbMiddleware,
     ]);
   });
 
-  it("fires afterQuery once the stored row has been returned", async () => {
+  it("ends the activity once the stored row has been returned", async () => {
     const users = client!.orm["users"] as unknown as IdbStoreAccessor<never, never> & {
       create(data: Record<string, unknown>): Promise<Record<string, unknown>>;
     };
@@ -73,6 +72,6 @@ describe("create() and middleware", () => {
     const created = await users.create({ id: "u1", email: "a@example.com" });
 
     expect(created).toMatchObject({ id: "u1", email: "a@example.com" });
-    expect(events).toEqual(["beforeQuery:add", "afterQuery:add"]);
+    expect(events).toEqual(["beforeEncode:add", "activityEnded:succeeded"]);
   });
 });

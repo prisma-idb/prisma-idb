@@ -76,10 +76,10 @@ export function applyCreateDefaults(
   if (!defaults || defaults.length === 0) return data;
   let result = data;
   for (const d of defaults) {
-    if (d.ref.table !== storeName || !d.onCreate) continue;
-    if (result[d.ref.column] !== undefined) continue;
+    if (d.ref.entry !== storeName || !d.onCreate) continue;
+    if (result[d.ref.field] !== undefined) continue;
     if (result === data) result = { ...data };
-    result[d.ref.column] = resolveGeneratedValue(d.onCreate, cache);
+    result[d.ref.field] = resolveGeneratedValue(d.onCreate, cache);
   }
   return result;
 }
@@ -123,10 +123,10 @@ export function applyUpdateDefaults(
   if (!defaults || defaults.length === 0) return patch;
   let result = patch;
   for (const d of defaults) {
-    if (d.ref.table !== storeName || !d.onUpdate) continue;
-    if (result[d.ref.column] !== undefined) continue;
+    if (d.ref.entry !== storeName || !d.onUpdate) continue;
+    if (result[d.ref.field] !== undefined) continue;
     if (result === patch) result = { ...patch };
-    result[d.ref.column] = resolveGeneratedValue(d.onUpdate, cache);
+    result[d.ref.field] = resolveGeneratedValue(d.onUpdate, cache);
   }
   return result;
 }

@@ -41,7 +41,7 @@ const syncPostgresAdapter: typeof postgresAdapter = {
       DateTime: {
         kind: "typeConstructor",
         documentation: "An instant stored as PostgreSQL timestamptz and represented as a JavaScript Date.",
-        output: { codecId: PG_TIMESTAMPTZ_DATE_CODEC_ID, nativeType: "timestamptz" },
+        output: { codecId: PG_TIMESTAMPTZ_DATE_CODEC_ID },
       },
     },
   },

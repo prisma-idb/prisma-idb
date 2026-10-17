@@ -44,7 +44,7 @@ const contract: IdbContract = {
                 ...sample,
                 fields: {
                   ...sample.fields,
-                  list: { ...sample.fields["integer"]!, many: true },
+                  list: { ...sample.fields["integer"]!, many: { elementNullable: false } },
                   dict: { ...sample.fields["integer"]!, dict: true },
                 },
               },

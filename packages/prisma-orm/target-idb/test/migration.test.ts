@@ -1,3 +1,4 @@
+import { planOriginOf } from "@prisma/orm-framework/components/control";
 /**
  * Migration infrastructure tests.
  *
@@ -223,9 +224,9 @@ describe("migration-factories", () => {
     expect(op.operationClass).toBe("additive");
   });
 
-  it("dropIndexOp is destructive", () => {
+  it("dropIndexOp is widening", () => {
     const op = dropIndexOp("users", "email_idx");
-    expect(op.operationClass).toBe("destructive");
+    expect(op.operationClass).toBe("widening");
     expect(op.id).toBe("index.users.email_idx.drop");
   });
 });
@@ -247,6 +248,8 @@ describe("IdbMigrationPlanner", () => {
       schema: null,
       policy: ALLOW_ALL,
       fromContract: null,
+      origin: planOriginOf(null),
+      statements: [],
       frameworkComponents: [],
       spaceId: "app",
     });
@@ -272,6 +275,8 @@ describe("IdbMigrationPlanner", () => {
       schema: null,
       policy: ALLOW_ALL,
       fromContract: from as never,
+      origin: planOriginOf(from as never),
+      statements: [],
       frameworkComponents: [],
       spaceId: "app",
     });
@@ -280,20 +285,22 @@ describe("IdbMigrationPlanner", () => {
     expect(result.plan.origin).toMatchObject({ storageHash: "old-hash" });
   });
 
-  it('plan(): uses "unknown" for a storage hash the contract does not carry', () => {
-    const from = { storage: { stores: { users: { keyPath: "id" } } } };
+  it('plan(): uses "unknown" for a destination storage hash the contract does not carry', () => {
+    const from = { storage: { storageHash: "old-hash", stores: { users: { keyPath: "id" } } } };
     const to = { storage: { stores: { users: { keyPath: "id" }, posts: { keyPath: "id" } } } };
     const result = planner.plan({
       contract: to,
       schema: null,
       policy: ALLOW_ALL,
       fromContract: from as never,
+      origin: planOriginOf(from as never),
+      statements: [],
       frameworkComponents: [],
       spaceId: "app",
     });
     expect(result.kind).toBe("success");
     if (result.kind !== "success") return;
-    expect(result.plan.origin).toEqual({ storageHash: "unknown" });
+    expect(result.plan.origin).toEqual({ storageHash: "old-hash" });
     expect(result.plan.destination).toEqual({ storageHash: "unknown" });
   });
 
@@ -304,6 +311,8 @@ describe("IdbMigrationPlanner", () => {
       schema: null,
       policy: ALLOW_ALL,
       fromContract: contract as never,
+      origin: planOriginOf(contract as never),
+      statements: [],
       frameworkComponents: [],
       spaceId: "app",
     });
@@ -318,6 +327,8 @@ describe("IdbMigrationPlanner", () => {
       schema: null,
       policy: ALLOW_ALL,
       fromContract: null,
+      origin: planOriginOf(null),
+      statements: [],
       frameworkComponents: [],
       spaceId: "app",
     });
@@ -331,6 +342,8 @@ describe("IdbMigrationPlanner", () => {
       schema: null,
       policy: ALLOW_ALL,
       fromContract: null,
+      origin: planOriginOf(null),
+      statements: [],
       frameworkComponents: [],
       spaceId: "app",
     });
@@ -387,6 +400,8 @@ describe("IdbMigrationPlanner", () => {
       schema: null,
       policy: ALLOW_ALL,
       fromContract: null,
+      origin: planOriginOf(null),
+      statements: [],
       frameworkComponents: [],
       spaceId: "app",
     });

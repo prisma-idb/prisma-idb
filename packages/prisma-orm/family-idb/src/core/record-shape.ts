@@ -63,7 +63,7 @@ function buildFields(
           {
             type: buildType(field.type, definitions, ancestors, `${owner} field "${name}"`),
             nullable: field.nullable,
-            ...(field.many ? { many: true as const } : {}),
+            ...(field.many ? { many: { elementNullable: field.many.elementNullable } } : {}),
             ...(field.dict ? { dict: true as const } : {}),
             ...(valueSet ? { valueSet } : {}),
           },

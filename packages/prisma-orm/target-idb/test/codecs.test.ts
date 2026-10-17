@@ -1,6 +1,6 @@
 import type { Codec, CodecCallContext } from "@prisma/orm-framework/components/codec";
 import { describe, expect, it } from "vitest";
-import { codecDescriptors } from "../src/core/codecs";
+import { codecDescriptors, idbCodecLookup } from "../src/core/codecs";
 import { idbTargetDescriptorMeta } from "../src/core/descriptor-meta";
 
 // Instantiate a codec from its descriptor's factory.
@@ -262,10 +262,10 @@ describe("codec registry", () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 
-  it("every descriptor has traits and targetTypes", () => {
+  it("every descriptor has traits and application types", () => {
     for (const desc of codecDescriptors) {
       expect(desc.traits.length).toBeGreaterThan(0);
-      expect(desc.targetTypes.length).toBeGreaterThan(0);
+      expect(idbCodecLookup.targetTypesFor(desc.codecId)?.length).toBeGreaterThan(0);
     }
   });
 

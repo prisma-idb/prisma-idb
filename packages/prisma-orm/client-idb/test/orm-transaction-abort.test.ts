@@ -68,7 +68,7 @@ describe("db.transaction() — validation failures the callback catches", () => 
     "enum Role {\n USER\n ADMIN\n}\nmodel Member {\n id String @id\n role Role\n}",
     "s.prisma"
   );
-  const { symbolTable } = buildSymbolTable({ documents: [document], sources, pslBlockDescriptors: {} });
+  const { symbolTable } = buildSymbolTable({ documents: [document], sources, defaultNamespaceId: "__unbound__" });
   const result = interpretPslDocumentToIdbContract(symbolTable, "s.prisma");
   if (!result.ok) throw new Error(JSON.stringify(result.failure.diagnostics));
   const enumContract = result.value as IdbContract;
