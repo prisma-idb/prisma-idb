@@ -14,6 +14,8 @@ describe("migration and runtime marker compatibility", () => {
       schema: null,
       policy: { allowedOperationClasses: ["additive"] },
       fromContract: null,
+      origin: null,
+      statements: [],
       frameworkComponents: [],
       spaceId: "app",
     });

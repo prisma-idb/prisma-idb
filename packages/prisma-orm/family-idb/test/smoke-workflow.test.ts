@@ -77,7 +77,7 @@ function emitContract(schema: string, sourceId = "schema.prisma"): ContractArtif
   const { symbolTable: table } = buildSymbolTable({
     documents: [document],
     sources,
-    pslBlockDescriptors: {},
+    defaultNamespaceId: "__unbound__",
   });
   const result = interpretPslDocumentToIdbContract(table, sourceId);
   if (!result.ok) {

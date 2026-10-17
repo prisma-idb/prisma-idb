@@ -14,7 +14,7 @@ For structured queries, the adapter carries canonical filter values and comparat
 
 A raw closure without a corresponding structured identity gets a fresh nonce on every `contentHash` call. Repeated calls produce different hashes, even for the same function reference. This prevents stale cache hits when captured state changes. Function source text is never used as identity. Structured values unsupported by the canonical serializer also use this policy.
 
-Middleware that populates a cache in a later hook should compute the hash once per operation and retain it using `ctx.planExecutionId`. Custom context overrides supply their own `contentHash` implementation and must preserve these correctness guarantees.
+Middleware that populates a cache in a later hook should compute the hash once per operation and retain it in `ctx.state(key)`, which holds one object per statement. Custom context overrides supply their own `contentHash` implementation and must preserve these correctness guarantees.
 
 ## License
 

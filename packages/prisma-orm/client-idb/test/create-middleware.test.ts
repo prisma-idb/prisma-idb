@@ -1,8 +1,8 @@
 /**
  * `create()` runs the full middleware lifecycle.
  *
- * The runtime fires `afterQuery` only after the result has been read to its
- * end. A `create()` that returned from inside the read loop skipped the hook,
+ * The runtime ends the statement's activity (`activityEnded`) only after the
+ * result has been read to its end. A `create()` that returned from inside the read loop skipped the hook,
  * so telemetry and audit middleware saw a write start and never finish.
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -54,18 +54,17 @@ describe("create() and middleware", () => {
       {
         name: "recorder",
         familyId: "idb",
-        async beforeExecute() {},
-        async beforeQuery(plan) {
-          events.push(`beforeQuery:${plan.kind}`);
+        async beforeEncode(plan) {
+          events.push(`beforeEncode:${plan.kind}`);
         },
-        async afterQuery(plan) {
-          events.push(`afterQuery:${plan.kind}`);
+        async activityEnded(_activity, result) {
+          if (result.kind === "statement") events.push(`activityEnded:${result.outcome}`);
         },
       } as IdbMiddleware,
     ]);
   });
 
-  it("fires afterQuery once the stored row has been returned", async () => {
+  it("ends the activity once the stored row has been returned", async () => {
     const users = client!.orm["users"] as unknown as IdbStoreAccessor<never, never> & {
       create(data: Record<string, unknown>): Promise<Record<string, unknown>>;
     };
@@ -73,6 +72,6 @@ describe("create() and middleware", () => {
     const created = await users.create({ id: "u1", email: "a@example.com" });
 
     expect(created).toMatchObject({ id: "u1", email: "a@example.com" });
-    expect(events).toEqual(["beforeQuery:add", "afterQuery:add"]);
+    expect(events).toEqual(["beforeEncode:add", "activityEnded:succeeded"]);
   });
 });

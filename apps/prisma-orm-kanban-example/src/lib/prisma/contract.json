@@ -416,7 +416,7 @@
     }
   },
   "execution": {
-    "executionHash": "1ccd214e2c572bf6e165a7da549585dba6d39694a151e2695a9109ed7899d4dd",
+    "executionHash": "34d252ca4f406082d776d201d66ced321c881c5b2921b84290f66f1799b35e6f",
     "mutations": {
       "defaults": [
         {
@@ -426,9 +426,9 @@
             "params": {}
           },
           "ref": {
-            "column": "emailVerified",
-            "namespace": "__unbound__",
-            "table": "user"
+            "entry": "user",
+            "field": "emailVerified",
+            "namespace": "__unbound__"
           }
         },
         {
@@ -437,9 +437,9 @@
             "kind": "generator"
           },
           "ref": {
-            "column": "createdAt",
-            "namespace": "__unbound__",
-            "table": "user"
+            "entry": "user",
+            "field": "createdAt",
+            "namespace": "__unbound__"
           }
         },
         {
@@ -449,9 +449,9 @@
             "params": {}
           },
           "ref": {
-            "column": "isAnonymous",
-            "namespace": "__unbound__",
-            "table": "user"
+            "entry": "user",
+            "field": "isAnonymous",
+            "namespace": "__unbound__"
           }
         }
       ]

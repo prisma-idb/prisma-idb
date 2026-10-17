@@ -3,9 +3,9 @@ import {
   AsyncIterableResult,
   checkMiddlewareCompatibility,
   RuntimeCore,
+  type ActivityContextFields,
   type ExecutionPlan,
   type RuntimeExecuteOptions,
-  type RuntimeMiddlewareContext,
   type RuntimeStatementStats,
 } from "@prisma/orm-framework/components/runtime";
 import { canonicalStringify } from "@prisma/orm-framework/utils/canonical-stringify";
@@ -33,7 +33,7 @@ export interface IdbRuntimeOptions {
    * Threaded through to the adapter's `lower()` as part of
    * {@link IdbLowererContext} so per-field codec encoding can
    * resolve field→codec mappings from the storage schema. Also used
-   * to build the real {@link RuntimeMiddlewareContext} so middleware
+   * to build the real {@link ActivityContextFields} so middleware
    * can inspect contract data.
    */
   readonly contract: Record<string, unknown>;
@@ -44,7 +44,7 @@ export interface IdbRuntimeOptions {
    *
    * When omitted, a real context is derived from `contract`.
    */
-  readonly ctx?: RuntimeMiddlewareContext;
+  readonly ctx?: ActivityContextFields;
 }
 
 /**
@@ -89,7 +89,7 @@ export interface IdbRuntime {
 }
 
 /**
- * Build a real {@link RuntimeMiddlewareContext} from the contract
+ * Build the {@link ActivityContextFields} every activity's context starts from, using the contract
  * so middleware can inspect contract data (plan meta hashes, model
  * names, storage layout) and compute content hashes for cache keys.
  *
@@ -101,13 +101,10 @@ export interface IdbRuntime {
  * Opaque closures get a fresh nonce on every hash call: their captured state
  * may change even when the function reference stays the same.
  */
-function buildMiddlewareContext(contract: Record<string, unknown>): RuntimeMiddlewareContext {
+function buildMiddlewareContext(contract: Record<string, unknown>): ActivityContextFields {
   return {
     contract,
     mode: "permissive",
-    // Initial correlation id for the default context. RuntimeCore replaces it
-    // with a new id on every query() and execute() call.
-    planExecutionId: crypto.randomUUID(),
     now: () => Date.now(),
     log: {
       info: () => undefined,

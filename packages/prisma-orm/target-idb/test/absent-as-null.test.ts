@@ -103,7 +103,11 @@ const embeddedContract: ContractWithDomain = {
             fields: {
               id: field(false),
               profile: { type: { kind: "valueObject", name: "Profile" }, nullable: true },
-              profiles: { type: { kind: "valueObject", name: "Profile" }, nullable: true, many: true },
+              profiles: {
+                type: { kind: "valueObject", name: "Profile" },
+                nullable: true,
+                many: { elementNullable: false },
+              },
               dictionary: { type: { kind: "valueObject", name: "Wrapper" }, nullable: false, dict: true },
               json: { type: { kind: "scalar", codecId: "idb/json@1" }, nullable: false },
             },

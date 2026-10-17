@@ -11,7 +11,7 @@ import type { ExecutionMutationDefault } from "@prisma/orm-framework/contract/ty
 import { applyCreateDefaults, applyUpdateDefaults, createMutationDefaultsCache } from "../src/core/mutation-defaults";
 
 const updatedAtDefault: ExecutionMutationDefault = {
-  ref: { namespace: "__unbound__", table: "post", column: "updatedAt" },
+  ref: { namespace: "__unbound__", entry: "post", field: "updatedAt" },
   onCreate: { kind: "generator", id: "timestampNow" },
   onUpdate: { kind: "generator", id: "timestampNow" },
 };
@@ -70,27 +70,27 @@ describe("applyCreateDefaults", () => {
 });
 
 const publishedDefault: ExecutionMutationDefault = {
-  ref: { namespace: "__unbound__", table: "post", column: "published" },
+  ref: { namespace: "__unbound__", entry: "post", field: "published" },
   onCreate: { kind: "generator", id: "literal", params: { value: false } },
 };
 
 const featuredDefault: ExecutionMutationDefault = {
-  ref: { namespace: "__unbound__", table: "post", column: "featured" },
+  ref: { namespace: "__unbound__", entry: "post", field: "featured" },
   onCreate: { kind: "generator", id: "literal", params: { value: true } },
 };
 
 const idUuidV4Default: ExecutionMutationDefault = {
-  ref: { namespace: "__unbound__", table: "post", column: "id" },
+  ref: { namespace: "__unbound__", entry: "post", field: "id" },
   onCreate: { kind: "generator", id: "uuidv4" },
 };
 
 const idUuidV7Default: ExecutionMutationDefault = {
-  ref: { namespace: "__unbound__", table: "post", column: "id" },
+  ref: { namespace: "__unbound__", entry: "post", field: "id" },
   onCreate: { kind: "generator", id: "uuidv7" },
 };
 
 const idCuid2Default: ExecutionMutationDefault = {
-  ref: { namespace: "__unbound__", table: "post", column: "id" },
+  ref: { namespace: "__unbound__", entry: "post", field: "id" },
   onCreate: { kind: "generator", id: "cuid2" },
 };
 

@@ -21,7 +21,7 @@ function interpret(schema: string, projection?: ContractProjection) {
   const { symbolTable: table } = buildSymbolTable({
     documents: [document],
     sources,
-    pslBlockDescriptors: {},
+    defaultNamespaceId: "__unbound__",
   });
   return interpretPslDocumentToIdbContract(table, "test.prisma", projection !== undefined ? { projection } : undefined);
 }
@@ -158,9 +158,9 @@ describe("interpretPslDocumentToIdbContract", () => {
         valueSet: { plane: "domain", entityKind: "enum", namespaceId: NS, entityName: "Role" },
       });
       expect(ns.models["User"]!.fields["invitedAs"]).toMatchObject({ nullable: true });
-      expect(ns.models["User"]!.fields["previousRoles"]).toMatchObject({ many: true });
+      expect(ns.models["User"]!.fields["previousRoles"]).toMatchObject({ many: { elementNullable: false } });
       expect(result.value.execution?.mutations.defaults).toContainEqual({
-        ref: { namespace: NS, table: "user", column: "role" },
+        ref: { namespace: NS, entry: "user", field: "role" },
         onCreate: { kind: "generator", id: "literal", params: { value: "USER" } },
       });
       expect(JSON.parse(JSON.stringify(result.value)).domain.namespaces[NS].enum.Role.members).toEqual([
@@ -242,7 +242,7 @@ describe("interpretPslDocumentToIdbContract", () => {
         { name: "ADMIN", value: "admin" },
       ]);
       expect(result.value.execution?.mutations.defaults).toContainEqual({
-        ref: { namespace: NS, table: "user", column: "role" },
+        ref: { namespace: NS, entry: "user", field: "role" },
         onCreate: { kind: "generator", id: "literal", params: { value: "user" } },
       });
     });
@@ -1222,7 +1222,7 @@ describe("interpretPslDocumentToIdbContract", () => {
       expect(typeof result.value.execution?.executionHash).toBe("string");
       expect(result.value.execution?.mutations.defaults).toEqual([
         {
-          ref: { namespace: NS, table: "post", column: "updatedAt" },
+          ref: { namespace: NS, entry: "post", field: "updatedAt" },
           onCreate: { kind: "generator", id: "timestampNow" },
           onUpdate: { kind: "generator", id: "timestampNow" },
         },
@@ -1249,7 +1249,7 @@ describe("interpretPslDocumentToIdbContract", () => {
       `);
       expect(result.ok).toBe(true);
       if (!result.ok) return;
-      const tables = result.value.execution?.mutations.defaults.map((d) => d.ref.table).sort();
+      const tables = result.value.execution?.mutations.defaults.map((d) => d.ref.entry).sort();
       expect(tables).toEqual(["post", "user"]);
     });
 
@@ -1320,7 +1320,7 @@ describe("interpretPslDocumentToIdbContract", () => {
       });
       expect(result.value.execution?.mutations.defaults).toEqual([
         {
-          ref: { namespace: NS, table: "post", column: "updatedAt" },
+          ref: { namespace: NS, entry: "post", field: "updatedAt" },
           onCreate: { kind: "generator", id: "timestampNow" },
           onUpdate: { kind: "generator", id: "timestampNow" },
         },
@@ -1390,15 +1390,15 @@ describe("interpretPslDocumentToIdbContract", () => {
       expect(result.value.execution?.mutations.defaults).toEqual(
         expect.arrayContaining([
           {
-            ref: { namespace: NS, table: "post", column: "published" },
+            ref: { namespace: NS, entry: "post", field: "published" },
             onCreate: { kind: "generator", id: "literal", params: { value: false } },
           },
           {
-            ref: { namespace: NS, table: "post", column: "views" },
+            ref: { namespace: NS, entry: "post", field: "views" },
             onCreate: { kind: "generator", id: "literal", params: { value: 0 } },
           },
           {
-            ref: { namespace: NS, table: "post", column: "title" },
+            ref: { namespace: NS, entry: "post", field: "title" },
             onCreate: { kind: "generator", id: "literal", params: { value: "untitled" } },
           },
         ])
@@ -1486,7 +1486,7 @@ describe("interpretPslDocumentToIdbContract", () => {
       if (!result.ok) return;
       expect(result.value.execution?.mutations.defaults).toEqual([
         {
-          ref: { namespace: NS, table: "post", column: "createdAt" },
+          ref: { namespace: NS, entry: "post", field: "createdAt" },
           onCreate: { kind: "generator", id: "timestampNow" },
         },
       ]);
@@ -1519,8 +1519,8 @@ describe("interpretPslDocumentToIdbContract", () => {
       const defaults = result.value.execution?.mutations.defaults;
       expect(defaults).toEqual(
         expect.arrayContaining([
-          { ref: { namespace: NS, table: "post", column: "a" }, onCreate: { kind: "generator", id: "uuidv4" } },
-          { ref: { namespace: NS, table: "post", column: "b" }, onCreate: { kind: "generator", id: "uuidv4" } },
+          { ref: { namespace: NS, entry: "post", field: "a" }, onCreate: { kind: "generator", id: "uuidv4" } },
+          { ref: { namespace: NS, entry: "post", field: "b" }, onCreate: { kind: "generator", id: "uuidv4" } },
         ])
       );
     });
@@ -1534,7 +1534,7 @@ describe("interpretPslDocumentToIdbContract", () => {
       expect(result.ok).toBe(true);
       if (!result.ok) return;
       expect(result.value.execution?.mutations.defaults).toEqual([
-        { ref: { namespace: NS, table: "post", column: "id" }, onCreate: { kind: "generator", id: "uuidv7" } },
+        { ref: { namespace: NS, entry: "post", field: "id" }, onCreate: { kind: "generator", id: "uuidv7" } },
       ]);
     });
 
@@ -1560,7 +1560,7 @@ describe("interpretPslDocumentToIdbContract", () => {
       expect(result.ok).toBe(true);
       if (!result.ok) return;
       expect(result.value.execution?.mutations.defaults).toEqual([
-        { ref: { namespace: NS, table: "post", column: "id" }, onCreate: { kind: "generator", id: "cuid2" } },
+        { ref: { namespace: NS, entry: "post", field: "id" }, onCreate: { kind: "generator", id: "cuid2" } },
       ]);
     });
 

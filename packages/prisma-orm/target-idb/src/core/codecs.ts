@@ -10,12 +10,17 @@ import {
   idbJson,
   idbString,
 } from "./data-types";
-import type { AnyCodecDescriptor, CodecInstanceContext, CodecLookup } from "@prisma/orm-framework/components/codec";
+import type {
+  AnyCodecDescriptor,
+  CodecInstanceContext,
+  CodecLookupWithDescriptors,
+} from "@prisma/orm-framework/components/codec";
+import type { ValidationCodecLookup } from "./validate-record";
 
 /**
  * IDB codec descriptors — the registry of type→IDB mapping metadata.
  *
- * Each descriptor declares its `codecId`, `dataType`, `traits`, `targetTypes`, and a
+ * Each descriptor declares its `codecId`, `dataType`, `traits`, and a
  * `factory` that returns a `Codec` instance. This is consumed by the
  * emitter to generate `contract.d.ts` type maps, and by the adapter at
  * runtime to resolve encode/decode per field.
@@ -25,7 +30,6 @@ export const codecDescriptors: readonly AnyCodecDescriptor[] = [
     codecId: "idb/string@1",
     dataType: idbString.id,
     traits: ["equality", "textual"],
-    targetTypes: ["string"],
     renderValueLiteral: (value) => (typeof value === "string" ? JSON.stringify(value) : undefined),
     paramsSchema: undefined as never,
     isParameterized: false,
@@ -41,7 +45,6 @@ export const codecDescriptors: readonly AnyCodecDescriptor[] = [
     codecId: "idb/double@1",
     dataType: idbDouble.id,
     traits: ["equality", "numeric", "order"],
-    targetTypes: ["number"],
     paramsSchema: undefined as never,
     isParameterized: false,
     factory: () => () => ({
@@ -56,7 +59,6 @@ export const codecDescriptors: readonly AnyCodecDescriptor[] = [
     codecId: "idb/int32@1",
     dataType: idbInt32.id,
     traits: ["equality", "numeric", "order"],
-    targetTypes: ["number"],
     paramsSchema: undefined as never,
     isParameterized: false,
     factory: () => () => ({
@@ -79,7 +81,6 @@ export const codecDescriptors: readonly AnyCodecDescriptor[] = [
     codecId: "idb/bool@1",
     dataType: idbBool.id,
     traits: ["equality", "boolean"],
-    targetTypes: ["boolean"],
     paramsSchema: undefined as never,
     isParameterized: false,
     factory: () => () => ({
@@ -94,7 +95,6 @@ export const codecDescriptors: readonly AnyCodecDescriptor[] = [
     codecId: "idb/date@1",
     dataType: idbDate.id,
     traits: ["equality", "order"],
-    targetTypes: ["Date"],
     paramsSchema: undefined as never,
     isParameterized: false,
     factory: () => () => ({
@@ -109,7 +109,6 @@ export const codecDescriptors: readonly AnyCodecDescriptor[] = [
     codecId: "idb/bigint@1",
     dataType: idbBigint.id,
     traits: ["equality", "numeric", "order"],
-    targetTypes: ["bigint"],
     paramsSchema: undefined as never,
     isParameterized: false,
     factory: () => () => ({
@@ -124,7 +123,6 @@ export const codecDescriptors: readonly AnyCodecDescriptor[] = [
     codecId: "idb/decimal@1",
     dataType: idbDecimal.id,
     traits: ["equality", "numeric"],
-    targetTypes: ["string"],
     paramsSchema: undefined as never,
     isParameterized: false,
     factory: () => () => ({
@@ -139,7 +137,6 @@ export const codecDescriptors: readonly AnyCodecDescriptor[] = [
     codecId: "idb/json@1",
     dataType: idbJson.id,
     traits: ["equality"],
-    targetTypes: ["unknown"],
     paramsSchema: undefined as never,
     isParameterized: false,
     factory: () => () => ({
@@ -154,7 +151,6 @@ export const codecDescriptors: readonly AnyCodecDescriptor[] = [
     codecId: "idb/bytes@1",
     dataType: idbBytes.id,
     traits: ["equality"],
-    targetTypes: ["Uint8Array"],
     paramsSchema: undefined as never,
     isParameterized: false,
     factory: () => () => ({
@@ -211,13 +207,32 @@ function base64ToBytes(base64: string): Uint8Array {
 // ── Codec lookup ──────────────────────────────────────────────────────────────
 
 /**
- * Pre-built CodecLookup for all IDB codecs.
+ * JavaScript application types each IDB codec accepts, by codec id.
+ *
+ * Upstream codec descriptors no longer carry target type names, so prisma-idb
+ * keeps its own table for record validation.
+ */
+const idbApplicationTypes: Readonly<Record<string, readonly string[]>> = {
+  "idb/string@1": ["string"],
+  "idb/double@1": ["number"],
+  "idb/int32@1": ["number"],
+  "idb/bool@1": ["boolean"],
+  "idb/date@1": ["Date"],
+  "idb/bigint@1": ["bigint"],
+  "idb/decimal@1": ["string"],
+  "idb/json@1": ["unknown"],
+  "idb/bytes@1": ["Uint8Array"],
+};
+
+/**
+ * Pre-built codec lookup for all IDB codecs.
  *
  * Native storage codecs preserve structured-clone values. JSON codecs convert
  * dates, bigint, and bytes to their wire representations. Both paths use the
  * same descriptor registry.
  */
-export const idbCodecLookup: CodecLookup = (() => {
+export const idbCodecLookup: CodecLookupWithDescriptors & ValidationCodecLookup = (() => {
+  const descriptorMap = new Map(codecDescriptors.map((desc) => [desc.codecId, desc] as const));
   const codecMap = new Map(
     codecDescriptors.map((desc) => {
       const ctx: CodecInstanceContext = { name: `<codec:${desc.codecId}>` };
@@ -225,7 +240,6 @@ export const idbCodecLookup: CodecLookup = (() => {
       return [desc.codecId, codec] as const;
     })
   );
-  const targetTypesMap = new Map(codecDescriptors.map((desc) => [desc.codecId, desc.targetTypes]));
   const valueLiteralRenderers = new Map(
     codecDescriptors
       .filter((desc) => "renderValueLiteral" in desc)
@@ -233,8 +247,8 @@ export const idbCodecLookup: CodecLookup = (() => {
   );
   return {
     get: (id) => codecMap.get(id),
-    targetTypesFor: (id) => targetTypesMap.get(id),
-    metaFor: () => undefined,
+    descriptorFor: (id) => descriptorMap.get(id),
+    targetTypesFor: (id) => idbApplicationTypes[id],
     renderOutputTypeFor: () => undefined,
     renderValueLiteralFor: (id, value, side) => valueLiteralRenderers.get(id)?.(value, side),
   };

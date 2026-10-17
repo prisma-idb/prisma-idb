@@ -1701,8 +1701,8 @@ const defaultedFkContract = (() => {
     execution: {
       mutations: {
         defaults: [
-          { ref: { namespace: "__unbound__", table: "posts", column: "authorId" }, onCreate: literal("system") },
-          { ref: { namespace: "__unbound__", table: "posts", column: "editorId" }, onUpdate: literal("system") },
+          { ref: { namespace: "__unbound__", entry: "posts", field: "authorId" }, onCreate: literal("system") },
+          { ref: { namespace: "__unbound__", entry: "posts", field: "editorId" }, onUpdate: literal("system") },
         ],
       },
     },

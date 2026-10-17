@@ -33,7 +33,7 @@ import type {
   StorageHashBase,
 } from "@prisma/orm-postgres/contract/types";
 
-export type StorageHash = StorageHashBase<"409c2d98e5372ee1ecbc0ba5076f2be78ac2a95d834e35ad25600732d6e2c3fc">;
+export type StorageHash = StorageHashBase<"2fae94c82cb4dceabc0e8c2c33469e27d753fa1946e2bc6e9de2624210450337">;
 export type ExecutionHash = ExecutionHashBase<"bec6305326b570a7250d923bf8ee32069321872a447fc6a71816854c76e8c098">;
 export type ProfileHash = ProfileHashBase<"3916f444a8a17ad749191acf9e08dad97d1a327b88c2f1d45d12f240296aa8b2">;
 
@@ -670,70 +670,83 @@ type ContractBase = Omit<
             readonly account: {
               columns: {
                 readonly accessToken: {
-                  readonly nativeType: "text";
+                  readonly dataType: 'pg/text';
                   readonly codecId: "pg/text@1";
                   readonly nullable: true;
+                  readonly many: false;
                 };
                 readonly accessTokenExpiresAt: {
-                  readonly nativeType: "timestamptz";
+                  readonly dataType: 'pg/timestamptz';
                   readonly codecId: "pg/timestamptz-date@1";
                   readonly nullable: true;
+                  readonly many: false;
                 };
                 readonly accountId: {
-                  readonly nativeType: "text";
+                  readonly dataType: 'pg/text';
                   readonly codecId: "pg/text@1";
                   readonly nullable: false;
+                  readonly many: false;
                 };
                 readonly createdAt: {
-                  readonly nativeType: "timestamptz";
+                  readonly dataType: 'pg/timestamptz';
                   readonly codecId: "pg/timestamptz-date@1";
                   readonly nullable: false;
                   readonly default: { readonly kind: "function"; readonly expression: "now()" };
+                  readonly many: false;
                 };
                 readonly id: {
-                  readonly nativeType: "text";
+                  readonly dataType: 'pg/text';
                   readonly codecId: "pg/text@1";
                   readonly nullable: false;
+                  readonly many: false;
                 };
                 readonly idToken: {
-                  readonly nativeType: "text";
+                  readonly dataType: 'pg/text';
                   readonly codecId: "pg/text@1";
                   readonly nullable: true;
+                  readonly many: false;
                 };
                 readonly password: {
-                  readonly nativeType: "text";
+                  readonly dataType: 'pg/text';
                   readonly codecId: "pg/text@1";
                   readonly nullable: true;
+                  readonly many: false;
                 };
                 readonly providerId: {
-                  readonly nativeType: "text";
+                  readonly dataType: 'pg/text';
                   readonly codecId: "pg/text@1";
                   readonly nullable: false;
+                  readonly many: false;
                 };
                 readonly refreshToken: {
-                  readonly nativeType: "text";
+                  readonly dataType: 'pg/text';
                   readonly codecId: "pg/text@1";
                   readonly nullable: true;
+                  readonly many: false;
                 };
                 readonly refreshTokenExpiresAt: {
-                  readonly nativeType: "timestamptz";
+                  readonly dataType: 'pg/timestamptz';
                   readonly codecId: "pg/timestamptz-date@1";
                   readonly nullable: true;
+                  readonly many: false;
                 };
                 readonly scope: {
-                  readonly nativeType: "text";
+                  readonly dataType: 'pg/text';
                   readonly codecId: "pg/text@1";
                   readonly nullable: true;
+                  readonly many: false;
                 };
                 readonly updatedAt: {
-                  readonly nativeType: "timestamptz";
+                  readonly dataType: 'pg/timestamptz';
                   readonly codecId: "pg/timestamptz-date@1";
                   readonly nullable: false;
+                  readonly many: false;
                 };
                 readonly userId: {
-                  readonly nativeType: "text";
+                  readonly dataType: 'pg/text';
                   readonly codecId: "pg/text@1";
                   readonly nullable: false;
+                  readonly many: false;
                 };
               };
               primaryKey: { readonly columns: readonly ["id"] };
@@ -764,19 +777,22 @@ type ContractBase = Omit<
             readonly AuditLog: {
               columns: {
                 readonly action: {
-                  readonly nativeType: "text";
+                  readonly dataType: 'pg/text';
                   readonly codecId: "pg/text@1";
                   readonly nullable: false;
+                  readonly many: false;
                 };
                 readonly createdAt: {
-                  readonly nativeType: "timestamptz";
+                  readonly dataType: 'pg/timestamptz';
                   readonly codecId: "pg/timestamptz-date@1";
                   readonly nullable: false;
+                  readonly many: false;
                 };
                 readonly id: {
-                  readonly nativeType: "text";
+                  readonly dataType: 'pg/text';
                   readonly codecId: "pg/text@1";
                   readonly nullable: false;
+                  readonly many: false;
                 };
               };
               primaryKey: { readonly columns: readonly ["id"] };
@@ -787,24 +803,28 @@ type ContractBase = Omit<
             readonly Board: {
               columns: {
                 readonly createdAt: {
-                  readonly nativeType: "timestamptz";
+                  readonly dataType: 'pg/timestamptz';
                   readonly codecId: "pg/timestamptz-date@1";
                   readonly nullable: false;
+                  readonly many: false;
                 };
                 readonly id: {
-                  readonly nativeType: "text";
+                  readonly dataType: 'pg/text';
                   readonly codecId: "pg/text@1";
                   readonly nullable: false;
+                  readonly many: false;
                 };
                 readonly name: {
-                  readonly nativeType: "text";
+                  readonly dataType: 'pg/text';
                   readonly codecId: "pg/text@1";
                   readonly nullable: false;
+                  readonly many: false;
                 };
                 readonly userId: {
-                  readonly nativeType: "text";
+                  readonly dataType: 'pg/text';
                   readonly codecId: "pg/text@1";
                   readonly nullable: false;
+                  readonly many: false;
                 };
               };
               primaryKey: { readonly columns: readonly ["id"] };
@@ -835,40 +855,47 @@ type ContractBase = Omit<
             readonly Changelog: {
               columns: {
                 readonly createdAt: {
-                  readonly nativeType: "timestamptz";
+                  readonly dataType: 'pg/timestamptz';
                   readonly codecId: "pg/timestamptz-date@1";
                   readonly nullable: false;
                   readonly default: { readonly kind: "function"; readonly expression: "now()" };
+                  readonly many: false;
                 };
                 readonly id: {
-                  readonly nativeType: "text";
+                  readonly dataType: 'pg/text';
                   readonly codecId: "pg/text@1";
                   readonly nullable: false;
+                  readonly many: false;
                 };
                 readonly keyPath: {
-                  readonly nativeType: "text";
+                  readonly dataType: 'pg/text';
                   readonly codecId: "pg/text@1";
                   readonly nullable: false;
+                  readonly many: false;
                 };
                 readonly model: {
-                  readonly nativeType: "text";
+                  readonly dataType: 'pg/text';
                   readonly codecId: "pg/text@1";
                   readonly nullable: false;
+                  readonly many: false;
                 };
                 readonly operation: {
-                  readonly nativeType: "text";
+                  readonly dataType: 'pg/text';
                   readonly codecId: "pg/text@1";
                   readonly nullable: false;
+                  readonly many: false;
                 };
                 readonly outboxEventId: {
-                  readonly nativeType: "text";
+                  readonly dataType: 'pg/text';
                   readonly codecId: "pg/text@1";
                   readonly nullable: false;
+                  readonly many: false;
                 };
                 readonly scopeKey: {
-                  readonly nativeType: "text";
+                  readonly dataType: 'pg/text';
                   readonly codecId: "pg/text@1";
                   readonly nullable: false;
+                  readonly many: false;
                 };
               };
               primaryKey: { readonly columns: readonly ["id"] };
@@ -886,45 +913,53 @@ type ContractBase = Omit<
             readonly session: {
               columns: {
                 readonly createdAt: {
-                  readonly nativeType: "timestamptz";
+                  readonly dataType: 'pg/timestamptz';
                   readonly codecId: "pg/timestamptz-date@1";
                   readonly nullable: false;
                   readonly default: { readonly kind: "function"; readonly expression: "now()" };
+                  readonly many: false;
                 };
                 readonly expiresAt: {
-                  readonly nativeType: "timestamptz";
+                  readonly dataType: 'pg/timestamptz';
                   readonly codecId: "pg/timestamptz-date@1";
                   readonly nullable: false;
+                  readonly many: false;
                 };
                 readonly id: {
-                  readonly nativeType: "text";
+                  readonly dataType: 'pg/text';
                   readonly codecId: "pg/text@1";
                   readonly nullable: false;
+                  readonly many: false;
                 };
                 readonly ipAddress: {
-                  readonly nativeType: "text";
+                  readonly dataType: 'pg/text';
                   readonly codecId: "pg/text@1";
                   readonly nullable: true;
+                  readonly many: false;
                 };
                 readonly token: {
-                  readonly nativeType: "text";
+                  readonly dataType: 'pg/text';
                   readonly codecId: "pg/text@1";
                   readonly nullable: false;
+                  readonly many: false;
                 };
                 readonly updatedAt: {
-                  readonly nativeType: "timestamptz";
+                  readonly dataType: 'pg/timestamptz';
                   readonly codecId: "pg/timestamptz-date@1";
                   readonly nullable: false;
+                  readonly many: false;
                 };
                 readonly userAgent: {
-                  readonly nativeType: "text";
+                  readonly dataType: 'pg/text';
                   readonly codecId: "pg/text@1";
                   readonly nullable: true;
+                  readonly many: false;
                 };
                 readonly userId: {
-                  readonly nativeType: "text";
+                  readonly dataType: 'pg/text';
                   readonly codecId: "pg/text@1";
                   readonly nullable: false;
+                  readonly many: false;
                 };
               };
               primaryKey: { readonly columns: readonly ["id"] };
@@ -955,34 +990,40 @@ type ContractBase = Omit<
             readonly Todo: {
               columns: {
                 readonly boardId: {
-                  readonly nativeType: "text";
+                  readonly dataType: 'pg/text';
                   readonly codecId: "pg/text@1";
                   readonly nullable: false;
+                  readonly many: false;
                 };
                 readonly createdAt: {
-                  readonly nativeType: "timestamptz";
+                  readonly dataType: 'pg/timestamptz';
                   readonly codecId: "pg/timestamptz-date@1";
                   readonly nullable: false;
+                  readonly many: false;
                 };
                 readonly description: {
-                  readonly nativeType: "text";
+                  readonly dataType: 'pg/text';
                   readonly codecId: "pg/text@1";
                   readonly nullable: true;
+                  readonly many: false;
                 };
                 readonly id: {
-                  readonly nativeType: "text";
+                  readonly dataType: 'pg/text';
                   readonly codecId: "pg/text@1";
                   readonly nullable: false;
+                  readonly many: false;
                 };
                 readonly isCompleted: {
-                  readonly nativeType: "bool";
+                  readonly dataType: 'pg/bool';
                   readonly codecId: "pg/bool@1";
                   readonly nullable: false;
+                  readonly many: false;
                 };
                 readonly title: {
-                  readonly nativeType: "text";
+                  readonly dataType: 'pg/text';
                   readonly codecId: "pg/text@1";
                   readonly nullable: false;
+                  readonly many: false;
                 };
               };
               primaryKey: { readonly columns: readonly ["id"] };
@@ -1013,53 +1054,61 @@ type ContractBase = Omit<
             readonly user: {
               columns: {
                 readonly createdAt: {
-                  readonly nativeType: "timestamptz";
+                  readonly dataType: 'pg/timestamptz';
                   readonly codecId: "pg/timestamptz-date@1";
                   readonly nullable: false;
                   readonly default: { readonly kind: "function"; readonly expression: "now()" };
+                  readonly many: false;
                 };
                 readonly email: {
-                  readonly nativeType: "text";
+                  readonly dataType: 'pg/text';
                   readonly codecId: "pg/text@1";
                   readonly nullable: false;
+                  readonly many: false;
                 };
                 readonly emailVerified: {
-                  readonly nativeType: "bool";
+                  readonly dataType: 'pg/bool';
                   readonly codecId: "pg/bool@1";
                   readonly nullable: false;
                   readonly default: {
                     readonly kind: "literal";
                     readonly value: DefaultLiteralValue<"pg/bool@1", false>;
                   };
+                  readonly many: false;
                 };
                 readonly id: {
-                  readonly nativeType: "text";
+                  readonly dataType: 'pg/text';
                   readonly codecId: "pg/text@1";
                   readonly nullable: false;
+                  readonly many: false;
                 };
                 readonly image: {
-                  readonly nativeType: "text";
+                  readonly dataType: 'pg/text';
                   readonly codecId: "pg/text@1";
                   readonly nullable: true;
+                  readonly many: false;
                 };
                 readonly isAnonymous: {
-                  readonly nativeType: "bool";
+                  readonly dataType: 'pg/bool';
                   readonly codecId: "pg/bool@1";
                   readonly nullable: false;
                   readonly default: {
                     readonly kind: "literal";
                     readonly value: DefaultLiteralValue<"pg/bool@1", false>;
                   };
+                  readonly many: false;
                 };
                 readonly name: {
-                  readonly nativeType: "text";
+                  readonly dataType: 'pg/text';
                   readonly codecId: "pg/text@1";
                   readonly nullable: false;
+                  readonly many: false;
                 };
                 readonly updatedAt: {
-                  readonly nativeType: "timestamptz";
+                  readonly dataType: 'pg/timestamptz';
                   readonly codecId: "pg/timestamptz-date@1";
                   readonly nullable: false;
+                  readonly many: false;
                 };
               };
               primaryKey: { readonly columns: readonly ["id"] };
@@ -1070,35 +1119,41 @@ type ContractBase = Omit<
             readonly verification: {
               columns: {
                 readonly createdAt: {
-                  readonly nativeType: "timestamptz";
+                  readonly dataType: 'pg/timestamptz';
                   readonly codecId: "pg/timestamptz-date@1";
                   readonly nullable: false;
                   readonly default: { readonly kind: "function"; readonly expression: "now()" };
+                  readonly many: false;
                 };
                 readonly expiresAt: {
-                  readonly nativeType: "timestamptz";
+                  readonly dataType: 'pg/timestamptz';
                   readonly codecId: "pg/timestamptz-date@1";
                   readonly nullable: false;
+                  readonly many: false;
                 };
                 readonly id: {
-                  readonly nativeType: "text";
+                  readonly dataType: 'pg/text';
                   readonly codecId: "pg/text@1";
                   readonly nullable: false;
+                  readonly many: false;
                 };
                 readonly identifier: {
-                  readonly nativeType: "text";
+                  readonly dataType: 'pg/text';
                   readonly codecId: "pg/text@1";
                   readonly nullable: false;
+                  readonly many: false;
                 };
                 readonly updatedAt: {
-                  readonly nativeType: "timestamptz";
+                  readonly dataType: 'pg/timestamptz';
                   readonly codecId: "pg/timestamptz-date@1";
                   readonly nullable: false;
+                  readonly many: false;
                 };
                 readonly value: {
-                  readonly nativeType: "text";
+                  readonly dataType: 'pg/text';
                   readonly codecId: "pg/text@1";
                   readonly nullable: false;
+                  readonly many: false;
                 };
               };
               primaryKey: { readonly columns: readonly ["id"] };

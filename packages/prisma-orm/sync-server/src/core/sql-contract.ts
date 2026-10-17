@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import type { ContractConfig } from "@prisma/orm-framework/config/config-types";
-import { buildSymbolTable, mapPslDiagnostics } from "@prisma/orm-framework/psl-parser";
+import { buildSymbolTable, createBinder, mapPslDiagnostics } from "@prisma/orm-framework/psl-parser";
 import { hasPslInterpreter, withSeedDiagnostics } from "@prisma/orm-framework/psl-parser/interpret";
 import { parse } from "@prisma/orm-framework/psl-parser/syntax";
 import { notOk, ok } from "@prisma/orm-framework/utils/result";
@@ -76,13 +76,17 @@ export function sqlContractWithSync(schemaPath: string, options: PrismaContractO
         const { symbolTable, diagnostics: symbolTableDiagnostics } = buildSymbolTable({
           documents,
           sources,
-          pslBlockDescriptors: context.authoringContributions.pslBlockDescriptors,
+          defaultNamespaceId: context.defaultNamespaceId,
         });
+        const { binder, diagnostics: binderDiagnostics } = createBinder({ symbolTable, sources, context });
 
-        const seedDiagnostics = mapPslDiagnostics([...parseDiagnostics, ...symbolTableDiagnostics], sources);
+        const seedDiagnostics = mapPslDiagnostics(
+          [...parseDiagnostics, ...symbolTableDiagnostics, ...binderDiagnostics],
+          sources
+        );
 
         const interpreted = withSeedDiagnostics(
-          interpret({ documents, sources, symbolTable }, context),
+          interpret({ documents, sources, symbolTable, binder }, context),
           seedDiagnostics
         );
         if (!interpreted.ok) {

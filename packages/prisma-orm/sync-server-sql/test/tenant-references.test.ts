@@ -389,7 +389,7 @@ it("rejects ORM-generated defaults on checked FKs", () => {
     defaults: [
       ...contract.execution!.mutations.defaults,
       {
-        ref: { namespace: "public", table: "FoodEntry", column: "mealId" },
+        ref: { namespace: "public", entry: "FoodEntry", field: "mealId" },
         onCreate: { kind: "generator", id: "uuidv7" },
       },
     ],

@@ -593,7 +593,7 @@ export class IdbStoreAccessorImpl<
     };
     // The IDB driver echoes the stored record back as the single result row.
     // Read the result to its end: returning early from the loop would skip the
-    // `afterQuery` middleware hook.
+    // `activityEnded` middleware hook.
     const [row] = await this.#executor.query(plan).toArray();
     return (row ?? withDefaults) as DefaultModelRow<TContract, ModelName>;
   }

@@ -1,4 +1,5 @@
 import type { Contract } from "@prisma/orm-framework/contract/types";
+import { planOriginOf } from "@prisma/orm-framework/components/control";
 import { keepInternalSpecifiers } from "@prisma/orm-framework/components/emission";
 import { describe, expect, it } from "vitest";
 import type { IdbKeyPath, IdbRecordField } from "../src/core/idb-contract-types";
@@ -20,7 +21,7 @@ function contract(
     execution: {
       mutations: {
         defaults: Object.entries(defaults).map(([column, value]) => ({
-          ref: { namespace: "default", table: "users", column },
+          ref: { namespace: "default", entry: "users", field: column },
           onCreate: { kind: "generator", id: "literal", params: { value } },
         })),
       },
@@ -30,6 +31,8 @@ function contract(
 function planResult(from: ReturnType<typeof contract>, to: ReturnType<typeof contract>) {
   return new IdbMigrationPlanner().plan({
     fromContract: from as unknown as Contract,
+    origin: planOriginOf(from as unknown as Contract),
+    statements: [],
     contract: to,
     schema: null,
     frameworkComponents: [],
@@ -206,7 +209,7 @@ describe("record shape migration planning", () => {
     // Compatibility must recurse through supported containers.
     for (const wrap of [
       (field: IdbRecordField) => field,
-      (field: IdbRecordField) => ({ ...field, many: true as const }),
+      (field: IdbRecordField) => ({ ...field, many: { elementNullable: false } as const }),
       (field: IdbRecordField) => ({ ...field, dict: true as const }),
     ]) {
       const result = plan(contract({ profile: wrap(from) }), contract({ profile: wrap(to) }));
@@ -236,7 +239,11 @@ describe("record shape migration planning", () => {
       profile({ nickname: { type: { kind: "scalar", codecId: "idb/int32@1" }, nullable: false } }),
     ],
     ["enum removal", profile({ role: enumField(["USER", "ADMIN"]) }), profile({ role: enumField(["USER"]) })],
-    ["list shape change", profile({ nickname: string }), profile({ nickname: { ...string, many: true } })],
+    [
+      "list shape change",
+      profile({ nickname: string }),
+      profile({ nickname: { ...string, many: { elementNullable: false } } }),
+    ],
     ["dict shape change", profile({ nickname: string }), profile({ nickname: { ...string, dict: true } })],
     [
       "deeper required addition",
@@ -262,7 +269,11 @@ describe("record shape migration planning", () => {
       contract({ role: string }, { role: "member" }),
     ],
     ["removed enum value", contract({ role: enumField(["USER", "ADMIN"]) }), contract({ role: enumField(["USER"]) })],
-    ["list shape change", contract({ role: string }), contract({ role: { ...string, many: true } })],
+    [
+      "list shape change",
+      contract({ role: string }),
+      contract({ role: { ...string, many: { elementNullable: false } } }),
+    ],
   ])("scaffolds a slot for %s", (_name, from, to) => {
     expectSlot(plan(from, to), "role");
   });
@@ -270,7 +281,7 @@ describe("record shape migration planning", () => {
   it.each(["cuid", "now", "uuidv4"])("scaffolds generated %s defaults instead of literal backfills", (id) => {
     const to = contract({ role: string });
     to.execution.mutations.defaults.push({
-      ref: { namespace: "default", table: "users", column: "role" },
+      ref: { namespace: "default", entry: "users", field: "role" },
       onCreate: { kind: "generator", id, params: { value: "not a literal" } },
     });
     expectSlot(plan(contract({}), to), "role");
@@ -317,6 +328,8 @@ describe("record shape migration planning", () => {
       const result = planner.plan({
         contract: to,
         fromContract: fromContract as Contract | null,
+        origin: planOriginOf(fromContract as Contract | null),
+        statements: [],
         schema: null,
         frameworkComponents: [],
         spaceId: "app",

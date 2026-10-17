@@ -40,9 +40,9 @@
   },
   "dependencies": {
     "@prisma-idb/family-idb": "workspace:*",
-    "@prisma/orm-family-sql": "8.0.0-rc.12",
-    "@prisma/orm-framework": "8.0.0-rc.12",
-    "@prisma/orm-postgres": "8.0.0-rc.12",
+    "@prisma/orm-family-sql": "8.0.0-rc.18",
+    "@prisma/orm-framework": "8.0.0-rc.18",
+    "@prisma/orm-postgres": "8.0.0-rc.18",
     "@prisma-idb/target-idb": "workspace:*"
   },
   "devDependencies": {

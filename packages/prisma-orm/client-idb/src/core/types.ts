@@ -190,7 +190,7 @@ export type KeyType<TContract, ModelName extends string> =
 
 // ── Create input ──────────────────────────────────────────────────────────────
 
-/** The object store name for a model, extracted from `contract.domain...storage.storeName` (used to match `execution.mutations.defaults[].ref.table`). */
+/** The object store name for a model, extracted from `contract.domain...storage.storeName` (used to match `execution.mutations.defaults[].ref.entry`). */
 type ModelStoreName<TContract, ModelName extends string> = ModelName extends keyof ModelsOf<TContract>
   ? ModelsOf<TContract>[ModelName] extends { readonly storage: { readonly storeName: infer S } }
     ? S extends string

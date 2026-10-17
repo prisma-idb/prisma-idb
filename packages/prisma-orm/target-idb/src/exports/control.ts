@@ -1,4 +1,4 @@
-import type { Contract } from "@prisma/orm-framework/contract/types";
+import { UNBOUND_DOMAIN_NAMESPACE_ID, type Contract } from "@prisma/orm-framework/contract/types";
 import type { TargetBoundComponentDescriptor } from "@prisma/orm-framework/components/components";
 import type {
   ContractSerializer,
@@ -46,6 +46,8 @@ const idbMigrationsCapability = {
 const idbControlTargetDescription = {
   ...idbTargetDescriptorMeta,
   contractSerializer: idbContractSerializer,
+  /** IDB stores are not namespaced, so every entity lives in the framework's unbound namespace. */
+  defaultNamespaceId: UNBOUND_DOMAIN_NAMESPACE_ID,
   migrations: idbMigrationsCapability,
   create(): ControlTargetInstance<"idb", "idb"> {
     return { familyId: "idb", targetId: "idb" };

@@ -1,4 +1,3 @@
-import type { CodecLookup } from "@prisma/orm-framework/components/codec";
 import type { ContractField, ContractFieldType, ContractWithDomain } from "@prisma/orm-framework/contract/types";
 import {
   domainModelsAtDefaultNamespace,
@@ -12,8 +11,10 @@ import { isValidIdbKey } from "./key-compare";
 /** The validation verdict, with diagnostic messages when a record or key is rejected. */
 export type ValidationResult = { readonly ok: true } | { readonly ok: false; readonly issues: readonly string[] };
 
-/** Codec application types, not SQL storage types or JSON wire types. */
-export type ValidationCodecLookup = Pick<CodecLookup, "targetTypesFor">;
+/** Maps a codec id to its JavaScript application types, not SQL storage types or JSON wire types. */
+export interface ValidationCodecLookup {
+  targetTypesFor(codecId: string): readonly string[] | undefined;
+}
 
 /** Selects native codecs and the fields a create or update input may omit. */
 export interface RecordValidationOptions {
@@ -86,8 +87,8 @@ function buildField(
     if (!values?.length) throw new Error(`Unknown or empty enum "${ref.entityName}"`);
     validator = validator.narrow((value) => values.some((allowed) => Object.is(allowed, value)));
   }
-  // Nullable applies to the container. List elements remain non-nullable.
-  if (field.many) validator = validator.array();
+  // Nullable applies to the container. List elements are nullable only when the field says so.
+  if (field.many) validator = (field.many.elementNullable ? validator.or("null") : validator).array();
   if (field.dict) validator = type({ "[string]": validator });
   // JSON null is a scalar value (Prisma JsonNull), independent of database nullability.
   const jsonScalar =

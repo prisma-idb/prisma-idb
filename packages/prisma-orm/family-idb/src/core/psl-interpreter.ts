@@ -8,7 +8,10 @@ import type {
   ExecutionMutationDefault,
 } from "@prisma/orm-framework/contract/types";
 import { UNBOUND_DOMAIN_NAMESPACE_ID, crossRef } from "@prisma/orm-framework/contract/types";
+import { nodePslSpan } from "@prisma/orm-framework/psl-parser";
 import type { FieldSymbol, ModelSymbol, SymbolTable } from "@prisma/orm-framework/psl-parser";
+import { StringLiteralExprAst } from "@prisma/orm-framework/psl-parser/syntax";
+import type { KeyValuePairAst, PslSources } from "@prisma/orm-framework/psl-parser/syntax";
 import type {
   IdbIndexDefinition,
   IdbKeyPath,
@@ -257,39 +260,45 @@ type StringContractEnum = {
   readonly members: readonly { readonly name: string; readonly value: string }[];
 };
 
+/**
+ * Reads the stored string of one enum entry: the member name when the entry
+ * has no value, or the decoded string literal. Returns `undefined` for any
+ * other value.
+ */
+function enumEntryValue(entry: KeyValuePairAst, memberName: string): string | undefined {
+  const value = entry.value();
+  if (value === undefined) return memberName;
+  return value instanceof StringLiteralExprAst ? value.value() : undefined;
+}
+
 /** Resolve declared string enum values and report invalid or duplicated members. */
 function interpretEnums(
   table: SymbolTable,
   sourceId: string,
+  sources: PslSources | undefined,
   diagnostics: ContractSourceDiagnostic[]
 ): Record<string, StringContractEnum> {
   const enums: Record<string, StringContractEnum> = {};
 
-  for (const block of Object.values(table.topLevel.blocks)) {
+  for (const block of Object.values(table.defaultNamespace.blocks)) {
     if (block.keyword !== "enum") continue;
 
     const members: Array<{ readonly name: string; readonly value: string }> = [];
     const seenValues = new Set<string>();
 
-    for (const [memberName, parameter] of Object.entries(block.block.parameters)) {
-      let value: string | undefined;
-      if (parameter.kind === "bare") {
-        value = memberName;
-      } else if (parameter.kind === "value") {
-        try {
-          const parsed: unknown = JSON.parse(parameter.raw);
-          if (typeof parsed === "string") value = parsed;
-        } catch {
-          // The diagnostic below handles malformed/non-string enum values uniformly.
-        }
-      }
+    for (const entry of block.entries) {
+      const memberName = entry.key()?.name();
+      if (memberName === undefined) continue;
+      // Without the parsed sources, a diagnostic can only point at the whole enum block.
+      const span = sources !== undefined ? nodePslSpan(entry.syntax, sources) : block.span;
+      const value = enumEntryValue(entry, memberName);
 
       if (value === undefined) {
         diagnostics.push({
           code: "IDB_ENUM_VALUE_NOT_STRING",
           message: `Enum "${block.name}" member "${memberName}" must be a string value. IDB enums are stored as strings.`,
           sourceId,
-          span: parameter.span,
+          span,
         });
         continue;
       }
@@ -298,7 +307,7 @@ function interpretEnums(
           code: "IDB_ENUM_DUPLICATE_VALUE",
           message: `Enum "${block.name}" repeats stored value "${value}". Enum values must be unique.`,
           sourceId,
-          span: parameter.span,
+          span,
         });
         continue;
       }
@@ -750,7 +759,7 @@ function interpretModel(
     contractFields[field.name] = {
       nullable: field.optional,
       type: { kind: "scalar", codecId },
-      ...(field.list ? { many: true } : {}),
+      ...(field.list ? { many: { elementNullable: false } } : {}),
       ...(enumType !== undefined
         ? {
             valueSet: {
@@ -1035,6 +1044,8 @@ function interpretModel(
 export interface InterpretPslOptions {
   /** @default "full" */
   readonly projection?: ContractProjection;
+  /** The parsed sources; with them, enum member diagnostics point at the member instead of the block. */
+  readonly sources?: PslSources;
 }
 
 /** Interpret the supported PSL subset, pair backrelations, and hash the assembled contract. */
@@ -1045,10 +1056,10 @@ export function interpretPslDocumentToIdbContract(
 ): Result<Contract<IdbStorage>, ContractSourceDiagnostics> {
   const projection: ContractProjection = options?.projection ?? "full";
   const diagnostics: ContractSourceDiagnostic[] = [];
-  const enums = interpretEnums(table, sourceId, diagnostics);
+  const enums = interpretEnums(table, sourceId, options?.sources, diagnostics);
 
   // IDB does not support namespace blocks
-  const explicitNamespaces = Object.values(table.topLevel.namespaces);
+  const explicitNamespaces = Object.values(table.namespaces).filter((ns) => ns !== table.defaultNamespace);
   for (const ns of explicitNamespaces) {
     // A namespace can be declared more than once; anchor on its first declaration.
     const span = ns.declarations[0]?.span;
@@ -1061,7 +1072,7 @@ export function interpretPslDocumentToIdbContract(
   }
 
   const allModelsUnprojected = [
-    ...Object.values(table.topLevel.models),
+    ...Object.values(table.defaultNamespace.models),
     ...explicitNamespaces.flatMap((ns) => Object.values(ns.models)),
   ];
   // Full set, including excluded models — needed so field-type checks below
@@ -1185,7 +1196,7 @@ export function interpretPslDocumentToIdbContract(
 
     for (const fd of interp.fieldExecutionDefaults) {
       executionDefaults.push({
-        ref: { namespace: ns, table: interp.storeName, column: fd.fieldName },
+        ref: { namespace: ns, entry: interp.storeName, field: fd.fieldName },
         ...(fd.onCreate ? { onCreate: fd.onCreate } : {}),
         ...(fd.onUpdate ? { onUpdate: fd.onUpdate } : {}),
       });

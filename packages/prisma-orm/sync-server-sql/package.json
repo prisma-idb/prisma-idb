@@ -36,18 +36,26 @@
   "dependencies": {
     "@prisma-idb/sync-server": "workspace:*",
     "@prisma-idb/sync-extension-idb": "workspace:*",
-    "@prisma/orm-framework": "8.0.0-rc.12",
+    "@prisma/orm-framework": "8.0.0-rc.18",
     "@prisma-idb/target-idb": "workspace:*"
   },
+  "peerDependencies": {
+    "@prisma/orm-postgres": "8.0.0-rc.18"
+  },
+  "peerDependenciesMeta": {
+    "@prisma/orm-postgres": {
+      "optional": true
+    }
+  },
   "devDependencies": {
-    "@prisma/cli-engine": "0.6.1",
-    "@prisma/orm-postgres": "8.0.0-rc.12",
-    "@prisma/orm-toolchain": "8.0.0-rc.12",
+    "@prisma/cli-engine": "0.7.0",
+    "@prisma/orm-postgres": "8.0.0-rc.18",
+    "@prisma/orm-toolchain": "8.0.0-rc.18",
     "@types/node": "^24.13.3",
     "@types/pg": "^8.21.0",
     "dotenv": "^17.4.2",
     "pg": "^8.23.0",
-    "prisma": "8.0.0-rc.17",
+    "prisma": "8.0.0-rc.23",
     "tsdown": "^0.22.14",
     "typescript": "^6.0.3",
     "vitest": "^4.1.11",

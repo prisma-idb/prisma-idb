@@ -34,13 +34,13 @@
     "format": "prettier --write ."
   },
   "dependencies": {
-    "@prisma/orm-framework": "8.0.0-rc.12",
-    "@prisma/orm-toolchain": "8.0.0-rc.12",
+    "@prisma/orm-framework": "8.0.0-rc.18",
+    "@prisma/orm-toolchain": "8.0.0-rc.18",
     "pathe": "^2.0.3",
     "arktype": "^2.2.3"
   },
   "devDependencies": {
-    "@prisma/cli-engine": "0.6.1",
+    "@prisma/cli-engine": "0.7.0",
     "@types/node": "^24.13.3",
     "fake-indexeddb": "^6.2.5",
     "tsdown": "^0.22.14",

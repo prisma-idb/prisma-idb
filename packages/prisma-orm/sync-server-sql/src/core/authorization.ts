@@ -167,8 +167,8 @@ export function assertNoParentDefaults(
     const generated = contract.execution?.mutations.defaults.some(
       ({ ref, onCreate, onUpdate }) =>
         ref.namespace === storage.namespaceId &&
-        ref.table === storage.table &&
-        ref.column === column &&
+        ref.entry === storage.table &&
+        ref.field === column &&
         (onCreate || onUpdate)
     );
     if (columns?.[column]?.default !== undefined || generated) {

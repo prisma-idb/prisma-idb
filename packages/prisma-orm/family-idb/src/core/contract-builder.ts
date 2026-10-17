@@ -417,7 +417,7 @@ function buildFields(
     result[name] = {
       nullable,
       type: { kind: "scalar" as const, codecId },
-      ...(many ? { many: true } : {}),
+      ...(many ? { many: { elementNullable: false } } : {}),
       ...(enumValues !== undefined
         ? {
             valueSet: {

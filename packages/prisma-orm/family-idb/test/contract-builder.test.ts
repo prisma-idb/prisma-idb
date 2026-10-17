@@ -50,7 +50,7 @@ describe("defineContract — enums", () => {
       },
     });
     expect(ns.models["User"]!.fields["invitedAs"]).toMatchObject({ nullable: true });
-    expect(ns.models["User"]!.fields["previousRoles"]).toMatchObject({ many: true });
+    expect(ns.models["User"]!.fields["previousRoles"]).toMatchObject({ many: { elementNullable: false } });
   });
 
   it("validates enum declarations and enum field defaults", () => {

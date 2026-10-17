@@ -4,11 +4,14 @@ import type {
   ControlDriverInstance,
   ControlFamilyInstance,
   ControlStack,
-  SignDatabaseResult,
+  MigrationPlanOperation,
+  SpaceSignature,
+  SpaceToSign,
   VerifyDatabaseResult,
   VerifyDatabaseSchemaResult,
 } from "@prisma/orm-framework/components/control";
 import { VERIFY_CODE_TARGET_MISMATCH } from "@prisma/orm-framework/components/control";
+import { isIdbDdlOp } from "@prisma-idb/target-idb/migration";
 import type { IdbSchemaIR } from "./schema-ir";
 import { verifyIdbSchema } from "./schema-verify";
 import { validateContract } from "./validate";
@@ -76,6 +79,13 @@ export function createIdbFamilyInstance(_stack: ControlStack<"idb", string>): Id
   return {
     familyId: "idb",
 
+    // ── storageNameOf (active, pure) ────────────────────────────────────────
+
+    /** Names the object store an operation acts on, which is what the CLI reports as lost. */
+    storageNameOf(operation: MigrationPlanOperation): string {
+      return isIdbDdlOp(operation) ? operation.storeName : operation.id;
+    },
+
     // ── deserializeContract (active, pure) ─────────────────────────────────
 
     deserializeContract(contractJson: unknown): Contract {
@@ -133,31 +143,14 @@ export function createIdbFamilyInstance(_stack: ControlStack<"idb", string>): Id
       return verifyIdbSchema(contract, options.schema, options.strict);
     },
 
-    // ── sign (CLI refusal) ──────────────────────────────────────────────────
+    // ── signSpaces (CLI refusal) ────────────────────────────────────────────
 
     /** Refuse live signing because a Node CLI cannot write the browser marker. */
-    async sign(options: {
+    async signSpaces(_options: {
       readonly driver: ControlDriverInstance<"idb", string>;
-      readonly contract: unknown;
-      readonly contractPath: string;
-      readonly configPath?: string;
-    }): Promise<SignDatabaseResult> {
-      const start = Date.now();
-      const contract = validateContract(options.contract);
-      const storageHash = (contract.storage as { storageHash: string }).storageHash;
-      const profileHash = (contract as { profileHash?: string }).profileHash ?? "";
-
-      return {
-        ok: false,
-        summary: refusalSummary("signed"),
-        contract: contractInfo(storageHash, profileHash),
-        target: { expected: "idb", actual: "idb" },
-        // `SignDatabaseResult.marker` is required; carry an "untouched"
-        // record so callers don't crash on null-deref.
-        marker: { created: false, updated: false },
-        meta: actionMeta(options.contractPath, options.configPath),
-        timings: { total: Date.now() - start },
-      };
+      readonly spaces: readonly SpaceToSign[];
+    }): Promise<readonly SpaceSignature[]> {
+      throw new Error(refusalSummary("signed"));
     },
 
     // ── readMarker / readAllMarkers (CLI refusal: return null/empty) ───────
@@ -206,5 +199,5 @@ export function createIdbFamilyInstance(_stack: ControlStack<"idb", string>): Id
   };
 }
 
-export type { ControlDriverInstance, SignDatabaseResult, VerifyDatabaseResult, VerifyDatabaseSchemaResult };
+export type { ControlDriverInstance, VerifyDatabaseResult, VerifyDatabaseSchemaResult };
 export type { IdbSchemaIR } from "./schema-ir";

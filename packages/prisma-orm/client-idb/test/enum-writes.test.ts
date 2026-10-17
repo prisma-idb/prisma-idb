@@ -38,7 +38,7 @@ const SCHEMA = `
 
 function contractFromPsl(schema: string): IdbContract {
   const { document, sources } = parse(schema, "schema.prisma");
-  const { symbolTable } = buildSymbolTable({ documents: [document], sources, pslBlockDescriptors: {} });
+  const { symbolTable } = buildSymbolTable({ documents: [document], sources, defaultNamespaceId: "__unbound__" });
   const result = interpretPslDocumentToIdbContract(symbolTable, "schema.prisma");
   if (!result.ok) throw new Error(JSON.stringify(result.failure.diagnostics));
   return result.value as IdbContract;

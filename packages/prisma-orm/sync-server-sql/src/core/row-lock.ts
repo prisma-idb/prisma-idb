@@ -14,12 +14,29 @@ interface RawSqlBuilder {
 /** The storage metadata needed to lock a row without decoding it. */
 interface SqlTable {
   primaryKey: { columns: string[] };
-  columns: Record<string, { nativeType: string }>;
+  columns: Record<string, { dataType: string; typeParams?: Record<string, unknown> }>;
 }
 
 /** Contract namespaces hold physical table and primary-key column names. */
 interface SqlStorage {
   namespaces: Record<string, { entries: { table: Record<string, SqlTable> } }>;
+}
+
+/**
+ * Names the Postgres type a key column is cast to, from the data type its
+ * contract column stores. Returns `undefined` for a type this package does
+ * not know, such as a user-defined enum.
+ *
+ * The Postgres target loads on demand: it is an optional peer, and SQLite
+ * servers never reach this code.
+ */
+async function castTypeOf(column: { dataType: string; typeParams?: Record<string, unknown> }) {
+  const { createPostgresBuiltinDataTypeLookup } = await import("@prisma/orm-postgres/target/data-types");
+  const { dataTypeParams, isSqlDataType, sqlBaseName } = await import("@prisma/orm-postgres/family-contract/data-type");
+  const type = createPostgresBuiltinDataTypeLookup().get(column.dataType);
+  return type !== undefined && isSqlDataType(type)
+    ? sqlBaseName(type, dataTypeParams(type, column.typeParams))
+    : undefined;
 }
 
 /** Quotes contract identifiers, including names with embedded double quotes. */
@@ -51,16 +68,17 @@ export async function lockRow(
   const table = storage && sqlStorage.namespaces[storage.namespaceId]?.entries.table[storage.table];
   const columns = table?.primaryKey.columns;
   const column = columns?.length === 1 ? columns[0] : undefined;
-  const nativeType = column && table?.columns[column]?.nativeType;
-  if (!storage || !column || !nativeType) {
-    throw new Error(`Model "${model}" has no single-column SQL primary key with a native type.`);
+  const columnSpec = column && table?.columns[column];
+  const castType = columnSpec && (await castTypeOf(columnSpec));
+  if (!storage || !column || !castType) {
+    throw new Error(`Model "${model}" has no single-column SQL primary key with a known data type.`);
   }
 
   // Only trusted contract names and types enter the SQL text. The native key
   // stays a bound parameter, including UUIDs inferred as text by the raw lane.
   const parts = [
     `SELECT 1 AS present FROM ${quoteIdentifier(storage.namespaceId)}.${quoteIdentifier(storage.table)} WHERE ${quoteIdentifier(column)} = `,
-    `::${nativeType} FOR ${strength === "update" ? "UPDATE" : "SHARE"}`,
+    `::${castType} FOR ${strength === "update" ? "UPDATE" : "SHARE"}`,
   ];
   const strings = Object.assign(parts, { raw: [...parts] }) as TemplateStringsArray;
   const { sql } = (db as { raw: { sql(strings: TemplateStringsArray, ...values: unknown[]): RawSqlBuilder } }).raw;
