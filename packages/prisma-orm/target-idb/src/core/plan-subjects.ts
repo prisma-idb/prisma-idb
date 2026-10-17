@@ -69,8 +69,9 @@ function recordTransformLosses(
 /**
  * Lists every operation of a plan that can lose rows or values, in plan order.
  *
- * The CLI asks the user about each entry before it writes or applies the
- * plan, so an operation left out here is applied without asking.
+ * Callers can use these entries to explain potential data loss. The
+ * `migration plan` command does not prompt on them; it keeps its existing
+ * warning after writing the package.
  */
 export function dataLossOf(ops: readonly IdbDdlOp[], from: IdbSchemaDiffInput | null): MigrationDataLoss[] {
   return ops.flatMap((op, operationIndex) => {
