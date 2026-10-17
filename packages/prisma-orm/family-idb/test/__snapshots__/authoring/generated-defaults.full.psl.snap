@@ -1,0 +1,174 @@
+{
+  "contract": {
+    "capabilities": {
+      "idb": {
+        "ddlOnlyInUpgrade": true,
+        "transactionalDDL": true
+      }
+    },
+    "domain": {
+      "namespaces": {
+        "__unbound__": {
+          "models": {
+            "Doc": {
+              "fields": {
+                "at": {
+                  "nullable": false,
+                  "type": {
+                    "codecId": "idb/date@1",
+                    "kind": "scalar"
+                  }
+                },
+                "c": {
+                  "nullable": false,
+                  "type": {
+                    "codecId": "idb/string@1",
+                    "kind": "scalar"
+                  }
+                },
+                "id": {
+                  "nullable": false,
+                  "type": {
+                    "codecId": "idb/string@1",
+                    "kind": "scalar"
+                  }
+                },
+                "v7": {
+                  "nullable": false,
+                  "type": {
+                    "codecId": "idb/string@1",
+                    "kind": "scalar"
+                  }
+                }
+              },
+              "relations": {},
+              "storage": {
+                "keyPath": "id",
+                "storeName": "doc"
+              }
+            }
+          }
+        }
+      }
+    },
+    "execution": {
+      "executionHash": "0abc942fa5c22f9d83f53e441c5445499ba3a49610a802cd321bd9dedaeb4e9a",
+      "mutations": {
+        "defaults": [
+          {
+            "onCreate": {
+              "id": "uuidv4",
+              "kind": "generator"
+            },
+            "ref": {
+              "entry": "doc",
+              "field": "id",
+              "namespace": "__unbound__"
+            }
+          },
+          {
+            "onCreate": {
+              "id": "uuidv7",
+              "kind": "generator"
+            },
+            "ref": {
+              "entry": "doc",
+              "field": "v7",
+              "namespace": "__unbound__"
+            }
+          },
+          {
+            "onCreate": {
+              "id": "timestampNow",
+              "kind": "generator"
+            },
+            "ref": {
+              "entry": "doc",
+              "field": "at",
+              "namespace": "__unbound__"
+            }
+          },
+          {
+            "onCreate": {
+              "id": "cuid2",
+              "kind": "generator"
+            },
+            "ref": {
+              "entry": "doc",
+              "field": "c",
+              "namespace": "__unbound__"
+            }
+          }
+        ]
+      }
+    },
+    "extensions": {},
+    "meta": {},
+    "profileHash": "40329830af4e39e0774683fbebcdc24dcf983a5da02c5fe6079a2a57579f861c",
+    "roots": {
+      "doc": {
+        "model": "Doc",
+        "namespace": "__unbound__"
+      }
+    },
+    "storage": {
+      "namespaces": {
+        "__unbound__": {
+          "entries": {},
+          "id": "__unbound__"
+        }
+      },
+      "storageHash": "3ce23492b7d10c7cea5cd4d79770bdd2361a72ab35b6c5ee08ee0e2162457736",
+      "stores": {
+        "doc": {
+          "keyPath": "id",
+          "record": {
+            "fields": {
+              "at": {
+                "nullable": false,
+                "type": {
+                  "codecId": "idb/date@1",
+                  "kind": "scalar"
+                }
+              },
+              "c": {
+                "nullable": false,
+                "type": {
+                  "codecId": "idb/string@1",
+                  "kind": "scalar"
+                }
+              },
+              "id": {
+                "nullable": false,
+                "type": {
+                  "codecId": "idb/string@1",
+                  "kind": "scalar"
+                }
+              },
+              "v7": {
+                "nullable": false,
+                "type": {
+                  "codecId": "idb/string@1",
+                  "kind": "scalar"
+                }
+              }
+            },
+            "model": "Doc"
+          }
+        }
+      }
+    },
+    "target": "idb",
+    "targetFamily": "idb"
+  },
+  "diagnostics": {
+    "interpretation": [],
+    "parse": [],
+    "symbols": []
+  },
+  "hashes": {
+    "executionHash": "0abc942fa5c22f9d83f53e441c5445499ba3a49610a802cd321bd9dedaeb4e9a",
+    "profileHash": "40329830af4e39e0774683fbebcdc24dcf983a5da02c5fe6079a2a57579f861c",
+    "storageHash": "3ce23492b7d10c7cea5cd4d79770bdd2361a72ab35b6c5ee08ee0e2162457736"
+  }
+}

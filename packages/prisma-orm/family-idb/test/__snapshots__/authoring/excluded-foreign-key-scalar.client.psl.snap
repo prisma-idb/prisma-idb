@@ -1,0 +1,44 @@
+{
+  "contract": null,
+  "diagnostics": {
+    "interpretation": [
+      {
+        "code": "IDB_CANNOT_EXCLUDE_RELATION_FIELD",
+        "message": "Field \"Post.authorId\" backs relation \"Post.author\" and cannot be excluded independently — only a whole-model @@idb.exclude can drop a relation. Exclude the whole model instead, or remove the exclusion.",
+        "sourceId": "authoring.prisma",
+        "span": {
+          "end": {
+            "column": 68,
+            "line": 9,
+            "offset": 216
+          },
+          "start": {
+            "column": 9,
+            "line": 9,
+            "offset": 157
+          }
+        }
+      },
+      {
+        "code": "IDB_UNRESOLVED_BACKRELATION",
+        "message": "Backrelation field \"User.posts\" (list of Post) has no matching @relation in \"Post\" pointing to \"User\". Add @relation(fields: [...], references: [...]) to the FK field in \"Post\".",
+        "sourceId": "authoring.prisma",
+        "span": {
+          "end": {
+            "column": 21,
+            "line": 4,
+            "offset": 62
+          },
+          "start": {
+            "column": 9,
+            "line": 4,
+            "offset": 50
+          }
+        }
+      }
+    ],
+    "parse": [],
+    "symbols": []
+  },
+  "hashes": null
+}

@@ -1,0 +1,110 @@
+{
+  "contract": {
+    "capabilities": {
+      "idb": {
+        "ddlOnlyInUpgrade": true,
+        "transactionalDDL": true
+      }
+    },
+    "domain": {
+      "namespaces": {
+        "__unbound__": {
+          "enum": {
+            "Role": {
+              "codecId": "idb/string@1",
+              "members": [
+                {
+                  "name": "A",
+                  "value": "A"
+                }
+              ]
+            }
+          },
+          "models": {
+            "User": {
+              "fields": {
+                "roles": {
+                  "many": {
+                    "elementNullable": false
+                  },
+                  "nullable": false,
+                  "type": {
+                    "codecId": "idb/string@1",
+                    "kind": "scalar"
+                  },
+                  "valueSet": {
+                    "entityKind": "enum",
+                    "entityName": "Role",
+                    "namespaceId": "__unbound__",
+                    "plane": "domain"
+                  }
+                }
+              },
+              "relations": {},
+              "storage": {
+                "keyPath": "roles",
+                "storeName": "user"
+              }
+            }
+          }
+        }
+      }
+    },
+    "extensions": {},
+    "meta": {},
+    "profileHash": "40329830af4e39e0774683fbebcdc24dcf983a5da02c5fe6079a2a57579f861c",
+    "roots": {
+      "user": {
+        "model": "User",
+        "namespace": "__unbound__"
+      }
+    },
+    "storage": {
+      "namespaces": {
+        "__unbound__": {
+          "entries": {},
+          "id": "__unbound__"
+        }
+      },
+      "storageHash": "f189f05eb0920910699ccaa077cd26d09645db065a2aaca7b82c10c0f7bb6cde",
+      "stores": {
+        "user": {
+          "keyPath": "roles",
+          "record": {
+            "fields": {
+              "roles": {
+                "many": {
+                  "elementNullable": false
+                },
+                "nullable": false,
+                "type": {
+                  "codecId": "idb/string@1",
+                  "kind": "scalar"
+                },
+                "valueSet": {
+                  "codecId": "idb/string@1",
+                  "members": [
+                    {
+                      "name": "A",
+                      "value": "A"
+                    }
+                  ],
+                  "name": "Role"
+                }
+              }
+            },
+            "model": "User"
+          }
+        }
+      }
+    },
+    "target": "idb",
+    "targetFamily": "idb"
+  },
+  "error": null,
+  "hashes": {
+    "executionHash": null,
+    "profileHash": "40329830af4e39e0774683fbebcdc24dcf983a5da02c5fe6079a2a57579f861c",
+    "storageHash": "f189f05eb0920910699ccaa077cd26d09645db065a2aaca7b82c10c0f7bb6cde"
+  }
+}

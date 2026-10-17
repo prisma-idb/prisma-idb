@@ -1,0 +1,5 @@
+{
+  "contract": null,
+  "error": "defineContract: model \"User\" excludeFields references unknown field \"posts\" — it is not declared in \"fields\".",
+  "hashes": null
+}

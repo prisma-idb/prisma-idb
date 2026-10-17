@@ -1,0 +1,5 @@
+{
+  "contract": null,
+  "error": "Unknown field type \"MissingRole\" for field \"role\"",
+  "hashes": null
+}

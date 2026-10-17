@@ -1,0 +1,177 @@
+{
+  "contract": {
+    "capabilities": {
+      "idb": {
+        "ddlOnlyInUpgrade": true,
+        "transactionalDDL": true
+      }
+    },
+    "domain": {
+      "namespaces": {
+        "__unbound__": {
+          "models": {
+            "Row": {
+              "fields": {
+                "b": {
+                  "nullable": false,
+                  "type": {
+                    "codecId": "idb/bool@1",
+                    "kind": "scalar"
+                  }
+                },
+                "id": {
+                  "nullable": false,
+                  "type": {
+                    "codecId": "idb/string@1",
+                    "kind": "scalar"
+                  }
+                },
+                "n": {
+                  "nullable": false,
+                  "type": {
+                    "codecId": "idb/int32@1",
+                    "kind": "scalar"
+                  }
+                },
+                "name": {
+                  "nullable": false,
+                  "type": {
+                    "codecId": "idb/string@1",
+                    "kind": "scalar"
+                  }
+                }
+              },
+              "relations": {},
+              "storage": {
+                "fieldDefaults": {
+                  "b": true,
+                  "n": 3,
+                  "name": "x"
+                },
+                "keyPath": "id",
+                "storeName": "row"
+              }
+            }
+          }
+        }
+      }
+    },
+    "execution": {
+      "executionHash": "5ddf65160c14f4243dc5091c385baecad85ea25e2cb65df0edef65f08ce03497",
+      "mutations": {
+        "defaults": [
+          {
+            "onCreate": {
+              "id": "literal",
+              "kind": "generator",
+              "params": {
+                "value": "x"
+              }
+            },
+            "ref": {
+              "entry": "row",
+              "field": "name",
+              "namespace": "__unbound__"
+            }
+          },
+          {
+            "onCreate": {
+              "id": "literal",
+              "kind": "generator",
+              "params": {
+                "value": 3
+              }
+            },
+            "ref": {
+              "entry": "row",
+              "field": "n",
+              "namespace": "__unbound__"
+            }
+          },
+          {
+            "onCreate": {
+              "id": "literal",
+              "kind": "generator",
+              "params": {
+                "value": true
+              }
+            },
+            "ref": {
+              "entry": "row",
+              "field": "b",
+              "namespace": "__unbound__"
+            }
+          }
+        ]
+      }
+    },
+    "extensions": {},
+    "meta": {},
+    "profileHash": "40329830af4e39e0774683fbebcdc24dcf983a5da02c5fe6079a2a57579f861c",
+    "roots": {
+      "row": {
+        "model": "Row",
+        "namespace": "__unbound__"
+      }
+    },
+    "storage": {
+      "namespaces": {
+        "__unbound__": {
+          "entries": {},
+          "id": "__unbound__"
+        }
+      },
+      "storageHash": "65f72f4ea4a09d89cdc27f76443cf7d13bd0015647bce8bfd2b2ea6c9e83288c",
+      "stores": {
+        "row": {
+          "keyPath": "id",
+          "record": {
+            "fields": {
+              "b": {
+                "nullable": false,
+                "type": {
+                  "codecId": "idb/bool@1",
+                  "kind": "scalar"
+                }
+              },
+              "id": {
+                "nullable": false,
+                "type": {
+                  "codecId": "idb/string@1",
+                  "kind": "scalar"
+                }
+              },
+              "n": {
+                "nullable": false,
+                "type": {
+                  "codecId": "idb/int32@1",
+                  "kind": "scalar"
+                }
+              },
+              "name": {
+                "nullable": false,
+                "type": {
+                  "codecId": "idb/string@1",
+                  "kind": "scalar"
+                }
+              }
+            },
+            "model": "Row"
+          }
+        }
+      }
+    },
+    "target": "idb",
+    "targetFamily": "idb"
+  },
+  "diagnostics": {
+    "interpretation": [],
+    "parse": [],
+    "symbols": []
+  },
+  "hashes": {
+    "executionHash": "5ddf65160c14f4243dc5091c385baecad85ea25e2cb65df0edef65f08ce03497",
+    "profileHash": "40329830af4e39e0774683fbebcdc24dcf983a5da02c5fe6079a2a57579f861c",
+    "storageHash": "65f72f4ea4a09d89cdc27f76443cf7d13bd0015647bce8bfd2b2ea6c9e83288c"
+  }
+}

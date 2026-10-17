@@ -1,0 +1,333 @@
+{
+  "contract": {
+    "capabilities": {
+      "idb": {
+        "ddlOnlyInUpgrade": true,
+        "transactionalDDL": true
+      }
+    },
+    "domain": {
+      "namespaces": {
+        "__unbound__": {
+          "models": {
+            "Scalar": {
+              "fields": {
+                "bigint": {
+                  "nullable": false,
+                  "type": {
+                    "codecId": "idb/bigint@1",
+                    "kind": "scalar"
+                  }
+                },
+                "boolean": {
+                  "nullable": false,
+                  "type": {
+                    "codecId": "idb/bool@1",
+                    "kind": "scalar"
+                  }
+                },
+                "bytes": {
+                  "nullable": false,
+                  "type": {
+                    "codecId": "idb/bytes@1",
+                    "kind": "scalar"
+                  }
+                },
+                "date": {
+                  "nullable": false,
+                  "type": {
+                    "codecId": "idb/date@1",
+                    "kind": "scalar"
+                  }
+                },
+                "decimal": {
+                  "nullable": false,
+                  "type": {
+                    "codecId": "idb/decimal@1",
+                    "kind": "scalar"
+                  }
+                },
+                "float": {
+                  "nullable": false,
+                  "type": {
+                    "codecId": "idb/double@1",
+                    "kind": "scalar"
+                  }
+                },
+                "id": {
+                  "nullable": false,
+                  "type": {
+                    "codecId": "idb/string@1",
+                    "kind": "scalar"
+                  }
+                },
+                "integer": {
+                  "nullable": false,
+                  "type": {
+                    "codecId": "idb/int32@1",
+                    "kind": "scalar"
+                  }
+                },
+                "json": {
+                  "nullable": false,
+                  "type": {
+                    "codecId": "idb/json@1",
+                    "kind": "scalar"
+                  }
+                },
+                "optionalBigint": {
+                  "nullable": true,
+                  "type": {
+                    "codecId": "idb/bigint@1",
+                    "kind": "scalar"
+                  }
+                },
+                "optionalBoolean": {
+                  "nullable": true,
+                  "type": {
+                    "codecId": "idb/bool@1",
+                    "kind": "scalar"
+                  }
+                },
+                "optionalBytes": {
+                  "nullable": true,
+                  "type": {
+                    "codecId": "idb/bytes@1",
+                    "kind": "scalar"
+                  }
+                },
+                "optionalDate": {
+                  "nullable": true,
+                  "type": {
+                    "codecId": "idb/date@1",
+                    "kind": "scalar"
+                  }
+                },
+                "optionalDecimal": {
+                  "nullable": true,
+                  "type": {
+                    "codecId": "idb/decimal@1",
+                    "kind": "scalar"
+                  }
+                },
+                "optionalFloat": {
+                  "nullable": true,
+                  "type": {
+                    "codecId": "idb/double@1",
+                    "kind": "scalar"
+                  }
+                },
+                "optionalInteger": {
+                  "nullable": true,
+                  "type": {
+                    "codecId": "idb/int32@1",
+                    "kind": "scalar"
+                  }
+                },
+                "optionalJson": {
+                  "nullable": true,
+                  "type": {
+                    "codecId": "idb/json@1",
+                    "kind": "scalar"
+                  }
+                },
+                "optionalText": {
+                  "nullable": true,
+                  "type": {
+                    "codecId": "idb/string@1",
+                    "kind": "scalar"
+                  }
+                },
+                "text": {
+                  "nullable": false,
+                  "type": {
+                    "codecId": "idb/string@1",
+                    "kind": "scalar"
+                  }
+                }
+              },
+              "relations": {},
+              "storage": {
+                "keyPath": "id",
+                "storeName": "scalar"
+              }
+            }
+          }
+        }
+      }
+    },
+    "extensions": {},
+    "meta": {},
+    "profileHash": "40329830af4e39e0774683fbebcdc24dcf983a5da02c5fe6079a2a57579f861c",
+    "roots": {
+      "scalar": {
+        "model": "Scalar",
+        "namespace": "__unbound__"
+      }
+    },
+    "storage": {
+      "namespaces": {
+        "__unbound__": {
+          "entries": {},
+          "id": "__unbound__"
+        }
+      },
+      "storageHash": "684ccb76972c389026c14dd5dc78f3636cc5b91ba562cd67c9effd4966c82535",
+      "stores": {
+        "scalar": {
+          "keyPath": "id",
+          "record": {
+            "fields": {
+              "bigint": {
+                "nullable": false,
+                "type": {
+                  "codecId": "idb/bigint@1",
+                  "kind": "scalar"
+                }
+              },
+              "boolean": {
+                "nullable": false,
+                "type": {
+                  "codecId": "idb/bool@1",
+                  "kind": "scalar"
+                }
+              },
+              "bytes": {
+                "nullable": false,
+                "type": {
+                  "codecId": "idb/bytes@1",
+                  "kind": "scalar"
+                }
+              },
+              "date": {
+                "nullable": false,
+                "type": {
+                  "codecId": "idb/date@1",
+                  "kind": "scalar"
+                }
+              },
+              "decimal": {
+                "nullable": false,
+                "type": {
+                  "codecId": "idb/decimal@1",
+                  "kind": "scalar"
+                }
+              },
+              "float": {
+                "nullable": false,
+                "type": {
+                  "codecId": "idb/double@1",
+                  "kind": "scalar"
+                }
+              },
+              "id": {
+                "nullable": false,
+                "type": {
+                  "codecId": "idb/string@1",
+                  "kind": "scalar"
+                }
+              },
+              "integer": {
+                "nullable": false,
+                "type": {
+                  "codecId": "idb/int32@1",
+                  "kind": "scalar"
+                }
+              },
+              "json": {
+                "nullable": false,
+                "type": {
+                  "codecId": "idb/json@1",
+                  "kind": "scalar"
+                }
+              },
+              "optionalBigint": {
+                "nullable": true,
+                "type": {
+                  "codecId": "idb/bigint@1",
+                  "kind": "scalar"
+                }
+              },
+              "optionalBoolean": {
+                "nullable": true,
+                "type": {
+                  "codecId": "idb/bool@1",
+                  "kind": "scalar"
+                }
+              },
+              "optionalBytes": {
+                "nullable": true,
+                "type": {
+                  "codecId": "idb/bytes@1",
+                  "kind": "scalar"
+                }
+              },
+              "optionalDate": {
+                "nullable": true,
+                "type": {
+                  "codecId": "idb/date@1",
+                  "kind": "scalar"
+                }
+              },
+              "optionalDecimal": {
+                "nullable": true,
+                "type": {
+                  "codecId": "idb/decimal@1",
+                  "kind": "scalar"
+                }
+              },
+              "optionalFloat": {
+                "nullable": true,
+                "type": {
+                  "codecId": "idb/double@1",
+                  "kind": "scalar"
+                }
+              },
+              "optionalInteger": {
+                "nullable": true,
+                "type": {
+                  "codecId": "idb/int32@1",
+                  "kind": "scalar"
+                }
+              },
+              "optionalJson": {
+                "nullable": true,
+                "type": {
+                  "codecId": "idb/json@1",
+                  "kind": "scalar"
+                }
+              },
+              "optionalText": {
+                "nullable": true,
+                "type": {
+                  "codecId": "idb/string@1",
+                  "kind": "scalar"
+                }
+              },
+              "text": {
+                "nullable": false,
+                "type": {
+                  "codecId": "idb/string@1",
+                  "kind": "scalar"
+                }
+              }
+            },
+            "model": "Scalar"
+          }
+        }
+      }
+    },
+    "target": "idb",
+    "targetFamily": "idb"
+  },
+  "diagnostics": {
+    "interpretation": [],
+    "parse": [],
+    "symbols": []
+  },
+  "hashes": {
+    "executionHash": null,
+    "profileHash": "40329830af4e39e0774683fbebcdc24dcf983a5da02c5fe6079a2a57579f861c",
+    "storageHash": "684ccb76972c389026c14dd5dc78f3636cc5b91ba562cd67c9effd4966c82535"
+  }
+}

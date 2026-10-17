@@ -1,0 +1,128 @@
+{
+  "contract": {
+    "capabilities": {
+      "idb": {
+        "ddlOnlyInUpgrade": true,
+        "transactionalDDL": true
+      }
+    },
+    "domain": {
+      "namespaces": {
+        "__unbound__": {
+          "enum": {
+            "Role": {
+              "codecId": "idb/string@1",
+              "members": [
+                {
+                  "name": "USER",
+                  "value": "USER"
+                }
+              ]
+            }
+          },
+          "models": {
+            "User": {
+              "fields": {
+                "id": {
+                  "nullable": false,
+                  "type": {
+                    "codecId": "idb/string@1",
+                    "kind": "scalar"
+                  }
+                },
+                "roles": {
+                  "many": {
+                    "elementNullable": false
+                  },
+                  "nullable": true,
+                  "type": {
+                    "codecId": "idb/string@1",
+                    "kind": "scalar"
+                  },
+                  "valueSet": {
+                    "entityKind": "enum",
+                    "entityName": "Role",
+                    "namespaceId": "__unbound__",
+                    "plane": "domain"
+                  }
+                }
+              },
+              "relations": {},
+              "storage": {
+                "keyPath": "id",
+                "storeName": "user"
+              }
+            }
+          }
+        }
+      }
+    },
+    "extensions": {},
+    "meta": {},
+    "profileHash": "40329830af4e39e0774683fbebcdc24dcf983a5da02c5fe6079a2a57579f861c",
+    "roots": {
+      "user": {
+        "model": "User",
+        "namespace": "__unbound__"
+      }
+    },
+    "storage": {
+      "namespaces": {
+        "__unbound__": {
+          "entries": {},
+          "id": "__unbound__"
+        }
+      },
+      "storageHash": "88dbe8572e6e6f311c4596c7331870dfffd8948f082e81966edf43e9b0516a02",
+      "stores": {
+        "user": {
+          "keyPath": "id",
+          "record": {
+            "fields": {
+              "id": {
+                "nullable": false,
+                "type": {
+                  "codecId": "idb/string@1",
+                  "kind": "scalar"
+                }
+              },
+              "roles": {
+                "many": {
+                  "elementNullable": false
+                },
+                "nullable": true,
+                "type": {
+                  "codecId": "idb/string@1",
+                  "kind": "scalar"
+                },
+                "valueSet": {
+                  "codecId": "idb/string@1",
+                  "members": [
+                    {
+                      "name": "USER",
+                      "value": "USER"
+                    }
+                  ],
+                  "name": "Role"
+                }
+              }
+            },
+            "model": "User"
+          }
+        }
+      }
+    },
+    "target": "idb",
+    "targetFamily": "idb"
+  },
+  "diagnostics": {
+    "interpretation": [],
+    "parse": [],
+    "symbols": []
+  },
+  "hashes": {
+    "executionHash": null,
+    "profileHash": "40329830af4e39e0774683fbebcdc24dcf983a5da02c5fe6079a2a57579f861c",
+    "storageHash": "88dbe8572e6e6f311c4596c7331870dfffd8948f082e81966edf43e9b0516a02"
+  }
+}

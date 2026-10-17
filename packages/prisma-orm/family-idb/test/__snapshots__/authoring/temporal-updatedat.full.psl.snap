@@ -1,0 +1,117 @@
+{
+  "contract": {
+    "capabilities": {
+      "idb": {
+        "ddlOnlyInUpgrade": true,
+        "transactionalDDL": true
+      }
+    },
+    "domain": {
+      "namespaces": {
+        "__unbound__": {
+          "models": {
+            "Row": {
+              "fields": {
+                "id": {
+                  "nullable": false,
+                  "type": {
+                    "codecId": "idb/string@1",
+                    "kind": "scalar"
+                  }
+                },
+                "t": {
+                  "nullable": false,
+                  "type": {
+                    "codecId": "idb/date@1",
+                    "kind": "scalar"
+                  }
+                }
+              },
+              "relations": {},
+              "storage": {
+                "keyPath": "id",
+                "storeName": "row"
+              }
+            }
+          }
+        }
+      }
+    },
+    "execution": {
+      "executionHash": "517c1e2aa2eed3340553e66a1268dcb29a003dad1b0fdf9503c49ffc9353f296",
+      "mutations": {
+        "defaults": [
+          {
+            "onCreate": {
+              "id": "timestampNow",
+              "kind": "generator"
+            },
+            "onUpdate": {
+              "id": "timestampNow",
+              "kind": "generator"
+            },
+            "ref": {
+              "entry": "row",
+              "field": "t",
+              "namespace": "__unbound__"
+            }
+          }
+        ]
+      }
+    },
+    "extensions": {},
+    "meta": {},
+    "profileHash": "40329830af4e39e0774683fbebcdc24dcf983a5da02c5fe6079a2a57579f861c",
+    "roots": {
+      "row": {
+        "model": "Row",
+        "namespace": "__unbound__"
+      }
+    },
+    "storage": {
+      "namespaces": {
+        "__unbound__": {
+          "entries": {},
+          "id": "__unbound__"
+        }
+      },
+      "storageHash": "649e265ad8e36e03a5744fa154ae471c2effa033a5b3c57d836d89d8546fbffd",
+      "stores": {
+        "row": {
+          "keyPath": "id",
+          "record": {
+            "fields": {
+              "id": {
+                "nullable": false,
+                "type": {
+                  "codecId": "idb/string@1",
+                  "kind": "scalar"
+                }
+              },
+              "t": {
+                "nullable": false,
+                "type": {
+                  "codecId": "idb/date@1",
+                  "kind": "scalar"
+                }
+              }
+            },
+            "model": "Row"
+          }
+        }
+      }
+    },
+    "target": "idb",
+    "targetFamily": "idb"
+  },
+  "diagnostics": {
+    "interpretation": [],
+    "parse": [],
+    "symbols": []
+  },
+  "hashes": {
+    "executionHash": "517c1e2aa2eed3340553e66a1268dcb29a003dad1b0fdf9503c49ffc9353f296",
+    "profileHash": "40329830af4e39e0774683fbebcdc24dcf983a5da02c5fe6079a2a57579f861c",
+    "storageHash": "649e265ad8e36e03a5744fa154ae471c2effa033a5b3c57d836d89d8546fbffd"
+  }
+}

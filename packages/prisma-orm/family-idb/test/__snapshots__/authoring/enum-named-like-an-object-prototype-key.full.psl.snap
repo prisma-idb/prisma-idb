@@ -1,0 +1,122 @@
+{
+  "contract": {
+    "capabilities": {
+      "idb": {
+        "ddlOnlyInUpgrade": true,
+        "transactionalDDL": true
+      }
+    },
+    "domain": {
+      "namespaces": {
+        "__unbound__": {
+          "enum": {
+            "constructor": {
+              "codecId": "idb/string@1",
+              "members": [
+                {
+                  "name": "A",
+                  "value": "A"
+                }
+              ]
+            }
+          },
+          "models": {
+            "User": {
+              "fields": {
+                "c": {
+                  "nullable": false,
+                  "type": {
+                    "codecId": "idb/string@1",
+                    "kind": "scalar"
+                  },
+                  "valueSet": {
+                    "entityKind": "enum",
+                    "entityName": "constructor",
+                    "namespaceId": "__unbound__",
+                    "plane": "domain"
+                  }
+                },
+                "id": {
+                  "nullable": false,
+                  "type": {
+                    "codecId": "idb/string@1",
+                    "kind": "scalar"
+                  }
+                }
+              },
+              "relations": {},
+              "storage": {
+                "keyPath": "id",
+                "storeName": "user"
+              }
+            }
+          }
+        }
+      }
+    },
+    "extensions": {},
+    "meta": {},
+    "profileHash": "40329830af4e39e0774683fbebcdc24dcf983a5da02c5fe6079a2a57579f861c",
+    "roots": {
+      "user": {
+        "model": "User",
+        "namespace": "__unbound__"
+      }
+    },
+    "storage": {
+      "namespaces": {
+        "__unbound__": {
+          "entries": {},
+          "id": "__unbound__"
+        }
+      },
+      "storageHash": "8e4781cdda1e0d577cd5681eaf4da9dfb25fde8aa1a3fcdfaaebdfba9847851a",
+      "stores": {
+        "user": {
+          "keyPath": "id",
+          "record": {
+            "fields": {
+              "c": {
+                "nullable": false,
+                "type": {
+                  "codecId": "idb/string@1",
+                  "kind": "scalar"
+                },
+                "valueSet": {
+                  "codecId": "idb/string@1",
+                  "members": [
+                    {
+                      "name": "A",
+                      "value": "A"
+                    }
+                  ],
+                  "name": "constructor"
+                }
+              },
+              "id": {
+                "nullable": false,
+                "type": {
+                  "codecId": "idb/string@1",
+                  "kind": "scalar"
+                }
+              }
+            },
+            "model": "User"
+          }
+        }
+      }
+    },
+    "target": "idb",
+    "targetFamily": "idb"
+  },
+  "diagnostics": {
+    "interpretation": [],
+    "parse": [],
+    "symbols": []
+  },
+  "hashes": {
+    "executionHash": null,
+    "profileHash": "40329830af4e39e0774683fbebcdc24dcf983a5da02c5fe6079a2a57579f861c",
+    "storageHash": "8e4781cdda1e0d577cd5681eaf4da9dfb25fde8aa1a3fcdfaaebdfba9847851a"
+  }
+}

@@ -1,0 +1,5 @@
+{
+  "contract": null,
+  "error": "defineContract: enum \"constructor\" conflicts with the built-in scalar type of the same name.",
+  "hashes": null
+}

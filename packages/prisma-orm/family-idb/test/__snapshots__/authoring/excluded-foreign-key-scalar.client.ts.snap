@@ -1,0 +1,5 @@
+{
+  "contract": null,
+  "error": "defineContract: model \"User\" relation \"posts\" references excluded field \"Post.authorId\" — field-level FK exclusion isn't supported (ADR 013 only handles relations pointing at a whole-model @@idb.exclude). Exclude the whole model instead, or remove the exclusion.",
+  "hashes": null
+}

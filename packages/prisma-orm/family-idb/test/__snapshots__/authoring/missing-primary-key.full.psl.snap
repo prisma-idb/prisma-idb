@@ -1,0 +1,27 @@
+{
+  "contract": null,
+  "diagnostics": {
+    "interpretation": [
+      {
+        "code": "IDB_MISSING_ID",
+        "message": "Model \"User\" has no @id field. Add @id to exactly one scalar field, or @@id([...]) for a compound key.",
+        "sourceId": "authoring.prisma",
+        "span": {
+          "end": {
+            "column": 8,
+            "line": 4,
+            "offset": 47
+          },
+          "start": {
+            "column": 7,
+            "line": 2,
+            "offset": 7
+          }
+        }
+      }
+    ],
+    "parse": [],
+    "symbols": []
+  },
+  "hashes": null
+}
