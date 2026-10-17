@@ -22,6 +22,7 @@ function contract(fields: Record<string, IdbRecordField> = {}, stores: string[] 
   };
 }
 
+/** Plans the migration from `from` to `to` with every operation class allowed, so tests see the full plan. */
 function plan(
   from: ReturnType<typeof contract>,
   to: ReturnType<typeof contract>,

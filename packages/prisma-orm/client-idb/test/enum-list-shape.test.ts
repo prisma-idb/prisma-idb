@@ -67,9 +67,29 @@ describe.each(Object.entries(SHAPES))("enum list field with a `many` of %s", (_l
     );
   });
 
+  it("rejects a null element when elements are not nullable", () => {
+    expect(() => assertEnumValues(contract, "Member", { roles: ["USER", null] })).toThrow(
+      /Invalid value null \(object\) for enum field "Member\.roles"/
+    );
+  });
+
   it("marks the field as a collection in the query catalog", () => {
     const catalog = buildCatalog(contract, "member", "Member");
     expect(catalog.fields["roles"]?.collection).toBe(true);
     expect(catalog.fields["id"]?.collection).toBe(false);
+  });
+});
+
+describe("enum list field with nullable elements", () => {
+  const contract = withManyShape(BASE, { elementNullable: true });
+
+  it("accepts null elements next to declared members", () => {
+    expect(() => assertEnumValues(contract, "Member", { roles: ["USER", null] })).not.toThrow();
+  });
+
+  it("still rejects an undeclared member", () => {
+    expect(() => assertEnumValues(contract, "Member", { roles: [null, "OWNER"] })).toThrow(
+      /Invalid value "OWNER" for enum field "Member\.roles"/
+    );
   });
 });

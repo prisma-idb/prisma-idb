@@ -18,6 +18,8 @@ type EnumFieldRule = {
   readonly values: ReadonlySet<unknown>;
   readonly nullable: boolean;
   readonly many: boolean;
+  /** Whether a list field accepts `null` elements. Always `false` for non-list fields. */
+  readonly elementNullable: boolean;
 };
 
 /** Enum validation rules keyed by model field name. */
@@ -39,6 +41,7 @@ function resolveEnumRule(contract: IdbContract, field: ContractField): EnumField
     nullable: field.nullable,
     // `many` is `true` in older contracts and an object (`{ elementNullable }`) in newer ones.
     many: Boolean(field.many),
+    elementNullable: typeof field.many === "object" && field.many.elementNullable === true,
   };
 }
 
@@ -79,7 +82,7 @@ function invalidValueError(modelName: string, fieldName: string, rule: EnumField
  * Throws if `data` sets an enum field to a value its enum doesn't declare.
  * Fields left `undefined` are not checked. `null` is accepted only on an
  * optional (`Role?`) field; a list (`Role[]`) field must be an array whose
- * every element is a declared value.
+ * every element is a declared value, or `null` when the list allows nullable elements.
  */
 export function assertEnumValues(contract: IdbContract, modelName: string, data: Record<string, unknown>): void {
   const rules = getModelEnumRules(contract, modelName);
@@ -98,6 +101,7 @@ export function assertEnumValues(contract: IdbContract, modelName: string, data:
         );
       }
       for (const element of value) {
+        if (element === null && rule.elementNullable) continue;
         if (!rule.values.has(element)) throw invalidValueError(modelName, fieldName, rule, element);
       }
       continue;

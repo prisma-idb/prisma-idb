@@ -121,6 +121,39 @@ describe("enum writes — valid values", () => {
   });
 });
 
+describe("enum writes — nullable list elements", () => {
+  /** Same schema, but `previousRoles` allows `null` elements (`many: { elementNullable: true }`). */
+  async function nullableElementMembers(): Promise<MemberAccessor> {
+    const nullable = structuredClone(contract);
+    for (const namespace of Object.values(nullable.domain.namespaces)) {
+      const field = namespace.models["Member"]?.fields["previousRoles"] as { many?: unknown } | undefined;
+      if (field) field.many = { elementNullable: true };
+    }
+    const name = `enum-writes-test-${++dbCounter}`;
+    db.close();
+    db = await openDb(name);
+    const orm = idbOrm({ contract: nullable, executor: new TestExecutor(createIDBRuntimeDriver(name).create()) });
+    return (orm as unknown as Record<string, MemberAccessor>)[STORE]!;
+  }
+
+  it("create() and update() accept null elements", async () => {
+    const nullableMembers = await nullableElementMembers();
+    await nullableMembers.create({ id: "m1", invitedAs: null, previousRoles: ["USER", null] });
+    await nullableMembers.where({ id: "m1" }).update({ previousRoles: [null, "ADMIN"] });
+    expect(await nullableMembers.findUnique("m1")).toMatchObject({ previousRoles: [null, "ADMIN"] });
+  });
+
+  it("create() and update() reject null elements by default", async () => {
+    await expect(members.create({ id: "m1", previousRoles: ["USER", null] })).rejects.toThrow(
+      /Invalid value null \(object\) for enum field "Member\.previousRoles"/
+    );
+    await members.create({ id: "m1", invitedAs: null, previousRoles: [] });
+    await expect(members.where({ id: "m1" }).update({ previousRoles: [null] })).rejects.toThrow(
+      /Invalid value null \(object\) for enum field "Member\.previousRoles"/
+    );
+  });
+});
+
 describe("enum writes — invalid values are rejected before storage", () => {
   const INVALID = /Invalid value "OWNER" for enum field "Member\.role"\. Expected one of enum "Role": "USER", "ADMIN"/;
 

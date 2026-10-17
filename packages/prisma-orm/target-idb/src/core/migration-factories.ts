@@ -36,7 +36,7 @@ export type CreateIndexOp = MigrationPlanOperation & {
   readonly def: IdbIndexDefinition;
 };
 
-/** DDL operation that drops a secondary index from an object store. Always `destructive`. */
+/** DDL operation that drops a secondary index from an object store. Always `widening`: the index holds no data of its own. */
 export type DropIndexOp = MigrationPlanOperation & {
   readonly kind: "dropIndex";
   readonly storeName: string;
