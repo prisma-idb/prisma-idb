@@ -1,5 +1,13 @@
 # @prisma-idb/driver-idb
 
+## 0.13.0
+
+### Patch Changes
+
+- [#332](https://github.com/prisma-idb/prisma-idb/pull/332) [`e9c8575`](https://github.com/prisma-idb/prisma-idb/commit/e9c8575f2e7692121d5acc2d4abe6b9f73719ab6) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Roll back transaction scopes when an object store lookup fails so earlier writes cannot commit after the error. Preserve transaction-inactive error handling.
+
+- [#346](https://github.com/prisma-idb/prisma-idb/pull/346) [`ca732f8`](https://github.com/prisma-idb/prisma-idb/commit/ca732f85663115176b2173665b58d0ff5499e663) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Build on Prisma 8 `8.0.0-rc.18`. No behavior change.
+
 ## 0.12.0
 
 ### Patch Changes

@@ -1,5 +1,23 @@
 # @prisma-idb/sync-server
 
+## 0.8.0
+
+### Minor Changes
+
+- [#346](https://github.com/prisma-idb/prisma-idb/pull/346) [`ca732f8`](https://github.com/prisma-idb/prisma-idb/commit/ca732f85663115176b2173665b58d0ff5499e663) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Build on Prisma 8 `8.0.0-rc.18`. `sqlContractWithSync` creates the PSL binder and passes the target's default namespace. The Postgres sync config declares its `DateTime` constructor by codec only, because contract columns store a data type instead of a native type.
+
+- [#326](https://github.com/prisma-idb/prisma-idb/pull/326) [`1304429`](https://github.com/prisma-idb/prisma-idb/commit/130442951ef302e18259e595847ee7a7887d741e) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Add `SyncServer.projectRecord(model, row)` to copy only top-level client-contract fields. The method preserves native values and throws for models absent from the client contract.
+
+- [#313](https://github.com/prisma-idb/prisma-idb/pull/313) [`4840683`](https://github.com/prisma-idb/prisma-idb/commit/484068399b27c5b2c3404ef1fbd5fa56cd36459e) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Expose `SyncServer.clientStorageHash` from the emitted client contract so adapters can check whether a client is on the same contract.
+
+- [#303](https://github.com/prisma-idb/prisma-idb/pull/303) [`0202333`](https://github.com/prisma-idb/prisma-idb/commit/020233367b702ea86103a4d7b0a5313185c87b72) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Add automatic tenant parent checks so adapters can reject creates and updates that reference another user's rows. Reads and deletes retain access through any matching ownership path.
+
+### Patch Changes
+
+- Updated dependencies [[`629e68b`](https://github.com/prisma-idb/prisma-idb/commit/629e68b495986ef37454d6f18946a586e8f7c67d), [`a26747e`](https://github.com/prisma-idb/prisma-idb/commit/a26747e5f037a1ef8709a0a8b8cec3bd3f870a6a), [`3892764`](https://github.com/prisma-idb/prisma-idb/commit/38927642b78dcc278276ec9ba42887fbfe233ca3), [`82bc760`](https://github.com/prisma-idb/prisma-idb/commit/82bc760e592f4ad58cbd7eb6592bee1c4d4a276d), [`75f8591`](https://github.com/prisma-idb/prisma-idb/commit/75f859119c1fefe9e1054e1e03f152d140d4ca5a), [`a27967d`](https://github.com/prisma-idb/prisma-idb/commit/a27967d50b37983ea73b7cdf407a35e5975c8eb8), [`f549768`](https://github.com/prisma-idb/prisma-idb/commit/f54976899370799e30fd9447d5cb5e9c4b6747c0), [`ee9fece`](https://github.com/prisma-idb/prisma-idb/commit/ee9feceab01cc4631218e833094dbadd54b997bf), [`e4c317d`](https://github.com/prisma-idb/prisma-idb/commit/e4c317dfe5523909c721eeaa64d0c2254f13e084), [`ca732f8`](https://github.com/prisma-idb/prisma-idb/commit/ca732f85663115176b2173665b58d0ff5499e663), [`ca732f8`](https://github.com/prisma-idb/prisma-idb/commit/ca732f85663115176b2173665b58d0ff5499e663), [`0a419f0`](https://github.com/prisma-idb/prisma-idb/commit/0a419f0fd7d2e0508bd6666fb5ff118d3fc849df), [`4840683`](https://github.com/prisma-idb/prisma-idb/commit/484068399b27c5b2c3404ef1fbd5fa56cd36459e), [`ac13083`](https://github.com/prisma-idb/prisma-idb/commit/ac13083d3b9fe0493d6212d0a16626f8263aa77f), [`15f6f9a`](https://github.com/prisma-idb/prisma-idb/commit/15f6f9a365d3b7c59c26556f5a42a27d28037901), [`629e68b`](https://github.com/prisma-idb/prisma-idb/commit/629e68b495986ef37454d6f18946a586e8f7c67d), [`a26747e`](https://github.com/prisma-idb/prisma-idb/commit/a26747e5f037a1ef8709a0a8b8cec3bd3f870a6a), [`a27967d`](https://github.com/prisma-idb/prisma-idb/commit/a27967d50b37983ea73b7cdf407a35e5975c8eb8), [`f549768`](https://github.com/prisma-idb/prisma-idb/commit/f54976899370799e30fd9447d5cb5e9c4b6747c0), [`d3c16a2`](https://github.com/prisma-idb/prisma-idb/commit/d3c16a2cd8fc72c4c73a6f88032152e24c7cb5b0), [`ee9fece`](https://github.com/prisma-idb/prisma-idb/commit/ee9feceab01cc4631218e833094dbadd54b997bf), [`9c91ff5`](https://github.com/prisma-idb/prisma-idb/commit/9c91ff5d1baa1bf43541d66e0c649d712c0f93fa), [`d46f768`](https://github.com/prisma-idb/prisma-idb/commit/d46f76881756c69e6ffa835d64ed903c4b59f4cb), [`8dafeac`](https://github.com/prisma-idb/prisma-idb/commit/8dafeacf1e7d3a70d97ab4e167d9b2a0837b414f), [`3892764`](https://github.com/prisma-idb/prisma-idb/commit/38927642b78dcc278276ec9ba42887fbfe233ca3)]:
+  - @prisma-idb/family-idb@0.13.0
+  - @prisma-idb/target-idb@0.13.0
+
 ## 0.7.2
 
 ### Patch Changes

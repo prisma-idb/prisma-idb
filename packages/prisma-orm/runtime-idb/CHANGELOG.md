@@ -1,5 +1,19 @@
 # @prisma-idb/runtime-idb
 
+## 0.13.0
+
+### Minor Changes
+
+- [#346](https://github.com/prisma-idb/prisma-idb/pull/346) [`ca732f8`](https://github.com/prisma-idb/prisma-idb/commit/ca732f85663115176b2173665b58d0ff5499e663) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Build on Prisma 8 `8.0.0-rc.18`, whose middleware hooks are activity hooks. Replace `beforeQuery` and `beforeExecute` with `beforeEncode`, `interceptQuery` and `interceptExecute` with `intercept.onQuery` and `intercept.onExecute`, and `afterQuery` and `afterExecute` with `activityEnded`. Keep per-statement state in `ctx.state(key)` instead of `ctx.planExecutionId`. `IdbRuntimeOptions.ctx` takes `ActivityContextFields`. Statements inside `transaction()` still bypass middleware.
+
+### Patch Changes
+
+- [#342](https://github.com/prisma-idb/prisma-idb/pull/342) [`5d109cb`](https://github.com/prisma-idb/prisma-idb/commit/5d109cb0411f600362210960bd77e4fd441e4060) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Prevent filtered and ordered reads from sharing incorrect middleware cache entries. Hash structured closure identity and use fresh hashes for opaque closures whose captured state cannot be determined.
+
+- Updated dependencies [[`ac13083`](https://github.com/prisma-idb/prisma-idb/commit/ac13083d3b9fe0493d6212d0a16626f8263aa77f), [`5d109cb`](https://github.com/prisma-idb/prisma-idb/commit/5d109cb0411f600362210960bd77e4fd441e4060), [`21821d3`](https://github.com/prisma-idb/prisma-idb/commit/21821d3b7209f811c836617214be78ad508ee251), [`e9c8575`](https://github.com/prisma-idb/prisma-idb/commit/e9c8575f2e7692121d5acc2d4abe6b9f73719ab6), [`ca732f8`](https://github.com/prisma-idb/prisma-idb/commit/ca732f85663115176b2173665b58d0ff5499e663), [`ca732f8`](https://github.com/prisma-idb/prisma-idb/commit/ca732f85663115176b2173665b58d0ff5499e663)]:
+  - @prisma-idb/adapter-idb@0.13.0
+  - @prisma-idb/driver-idb@0.13.0
+
 ## 0.12.0
 
 ### Patch Changes
