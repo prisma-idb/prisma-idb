@@ -1,5 +1,12 @@
 # @prisma-idb/prisma-orm-usage
 
+## 0.0.18
+
+### Patch Changes
+
+- Updated dependencies [[`0a419f0`](https://github.com/prisma-idb/prisma-idb/commit/0a419f0fd7d2e0508bd6666fb5ff118d3fc849df), [`1c9d3e7`](https://github.com/prisma-idb/prisma-idb/commit/1c9d3e7e8cf11ceda15af6ea80e520d8edaa616b), [`b4d0417`](https://github.com/prisma-idb/prisma-idb/commit/b4d041790d95dcdb6050638923d7f7bff4866706), [`627c2d4`](https://github.com/prisma-idb/prisma-idb/commit/627c2d4c8d8238d8c12cb89a0fc46b435f1b722c), [`ac13083`](https://github.com/prisma-idb/prisma-idb/commit/ac13083d3b9fe0493d6212d0a16626f8263aa77f), [`37205e1`](https://github.com/prisma-idb/prisma-idb/commit/37205e1111b6f5ddc144c84ac38e02054bc8b29f), [`7b236da`](https://github.com/prisma-idb/prisma-idb/commit/7b236da0361a22f2a2a8caa243d0a6f59e3d0686), [`e4c317d`](https://github.com/prisma-idb/prisma-idb/commit/e4c317dfe5523909c721eeaa64d0c2254f13e084), [`c320d17`](https://github.com/prisma-idb/prisma-idb/commit/c320d17c13d760544087195391f551b526f6c7cf), [`a7943d1`](https://github.com/prisma-idb/prisma-idb/commit/a7943d138f622b60e64e63729d71036f52bdf348), [`f247400`](https://github.com/prisma-idb/prisma-idb/commit/f247400abb670d8c4b41866ed51f20dc5d8d3c12), [`8b9c47f`](https://github.com/prisma-idb/prisma-idb/commit/8b9c47f721b197fd332bcb0eb07487864507ce0f), [`ca732f8`](https://github.com/prisma-idb/prisma-idb/commit/ca732f85663115176b2173665b58d0ff5499e663)]:
+  - @prisma-idb/client-idb@0.13.0
+
 ## 0.0.17
 
 ### Patch Changes

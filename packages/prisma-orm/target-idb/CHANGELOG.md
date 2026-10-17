@@ -1,5 +1,47 @@
 # @prisma-idb/target-idb
 
+## 0.13.0
+
+### Minor Changes
+
+- [#346](https://github.com/prisma-idb/prisma-idb/pull/346) [`ca732f8`](https://github.com/prisma-idb/prisma-idb/commit/ca732f85663115176b2173665b58d0ff5499e663) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Build on Prisma 8 `8.0.0-rc.18`. Execution defaults name `{ namespace, entry, field }`. Contract list fields store `many: { elementNullable }`, and record validation accepts `null` elements when the field allows them. The migration planner takes `origin` and `statements`, refuses every statement, and reports operations that lose data as `dataLoss`. The `migration plan` command does not prompt on `dataLoss`; it keeps its existing warning after writing the package. List-element nullability can widen without transforming existing records. `dropIndexOp` is now a `widening` operation because it removes no rows. The `/control` target declares `defaultNamespaceId`. `ValidationCodecLookup` keeps `targetTypesFor`, now a prisma-idb type rather than a `CodecLookup` member.
+
+- [#313](https://github.com/prisma-idb/prisma-idb/pull/313) [`0a419f0`](https://github.com/prisma-idb/prisma-idb/commit/0a419f0fd7d2e0508bd6666fb5ff118d3fc849df) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Add `absentAsNull(contract, modelName)`. It reads a stored record as the contract describes it: a nullable field the record lacks is `null`. `validateRecord` stays strict.
+
+- [#313](https://github.com/prisma-idb/prisma-idb/pull/313) [`4840683`](https://github.com/prisma-idb/prisma-idb/commit/484068399b27c5b2c3404ef1fbd5fa56cd36459e) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Use the emitted `storage.storageHash` for sync contract checks. The hash includes stores, indexes, and stored record shapes; no separate runtime hashing helper is needed.
+
+- [#305](https://github.com/prisma-idb/prisma-idb/pull/305) [`a27967d`](https://github.com/prisma-idb/prisma-idb/commit/a27967d50b37983ea73b7cdf407a35e5975c8eb8) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Add declarative record transforms to migrations and export a pure transformer for full records and patches. Apply transforms in order inside the upgrade transaction and reject key changes.
+
+- [#313](https://github.com/prisma-idb/prisma-idb/pull/313) [`ee9fece`](https://github.com/prisma-idb/prisma-idb/commit/ee9feceab01cc4631218e833094dbadd54b997bf) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Breaking change: generated IDB store definitions include record shapes in storage hashes. Export the record shape types for scalar codecs, enums, and nested value objects. DDL continues to use only store and index options. Generated baseline and added-store migrations preserve operations and migration hashes when re-emitted; marker-store scaffolds retain their factory identity.
+
+- [#305](https://github.com/prisma-idb/prisma-idb/pull/305) [`8dafeac`](https://github.com/prisma-idb/prisma-idb/commit/8dafeacf1e7d3a70d97ab4e167d9b2a0837b414f) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Add an optional `onTransformRecords` callback to `openAndUpgrade`. It runs in the upgrade transaction after each store transform, so callers can rewrite related data atomically. Call `onDone(error)` to abort the upgrade with that error.
+
+### Patch Changes
+
+- [#343](https://github.com/prisma-idb/prisma-idb/pull/343) [`ac13083`](https://github.com/prisma-idb/prisma-idb/commit/ac13083d3b9fe0493d6212d0a16626f8263aa77f) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Add exact comparison of finite Decimal strings without number conversion. Reject malformed and non-finite Decimal text during record validation while preserving valid input strings.
+
+- [#313](https://github.com/prisma-idb/prisma-idb/pull/313) [`15f6f9a`](https://github.com/prisma-idb/prisma-idb/commit/15f6f9a365d3b7c59c26556f5a42a27d28037901) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Document stored record shape as storage identity and planner-generated record transforms. Add a field-change guide covering nullable additions, backfills, placeholders, explicit renames, and sync reloads.
+
+- [#313](https://github.com/prisma-idb/prisma-idb/pull/313) [`629e68b`](https://github.com/prisma-idb/prisma-idb/commit/629e68b495986ef37454d6f18946a586e8f7c67d) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Scaffold named placeholder slots for record backfills that the planner cannot infer. Reject unfilled slots during migration emit and before applying operations.
+
+  Return a planning conflict when an incompatible field change would require transforming an existing primary key.
+
+- [#313](https://github.com/prisma-idb/prisma-idb/pull/313) [`a26747e`](https://github.com/prisma-idb/prisma-idb/commit/a26747e5f037a1ef8709a0a8b8cec3bd3f870a6a) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Normalize Decimal literal defaults to stored strings and reject incompatible codec defaults. Plan literal-default backfills and removed fields from stored record shapes. Render these operations in migration files and warn about field data loss.
+
+  Allow compatible nested record changes without operations, including nullable additions, widened nullability, and enum additions. Keep unsafe nested changes rejected for authored transforms.
+
+  Read missing nullable fields as null inside embedded value objects, lists, dictionaries, and union members without changing strict record validation.
+
+- [#322](https://github.com/prisma-idb/prisma-idb/pull/322) [`f549768`](https://github.com/prisma-idb/prisma-idb/commit/f54976899370799e30fd9447d5cb5e9c4b6747c0) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Fail closed for unsupported union fields during record validation, JSON decoding, nullable-field normalization and migration planning. Union values can no longer pass through without decoding.
+
+- [#336](https://github.com/prisma-idb/prisma-idb/pull/336) [`d3c16a2`](https://github.com/prisma-idb/prisma-idb/commit/d3c16a2cd8fc72c4c73a6f88032152e24c7cb5b0) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Split the record-shape diff in the migration planner and the version-change loop in `openAndUpgrade` into named helpers. Behavior is unchanged.
+
+- [#328](https://github.com/prisma-idb/prisma-idb/pull/328) [`9c91ff5`](https://github.com/prisma-idb/prisma-idb/commit/9c91ff5d1baa1bf43541d66e0c649d712c0f93fa) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Use the framework's structured `MIGRATION.UNFILLED_PLACEHOLDER` error when emitting or applying unfilled migration placeholders. Report all distinct slots in one error during validation. Update the migration field-change guide and ADRs to describe the structured diagnostic.
+
+- [#313](https://github.com/prisma-idb/prisma-idb/pull/313) [`d46f768`](https://github.com/prisma-idb/prisma-idb/commit/d46f76881756c69e6ffa835d64ed903c4b59f4cb) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Avoid checking every migration placeholder again for each record in a store walk. Migration application still rejects unfilled placeholders before applying operations.
+
+- [#323](https://github.com/prisma-idb/prisma-idb/pull/323) [`3892764`](https://github.com/prisma-idb/prisma-idb/commit/38927642b78dcc278276ec9ba42887fbfe233ca3) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Document the value-transform helper used for record rewrites.
+
 ## 0.12.0
 
 ## 0.11.0

@@ -1,5 +1,34 @@
 # @prisma-idb/family-idb
 
+## 0.13.0
+
+### Minor Changes
+
+- [#313](https://github.com/prisma-idb/prisma-idb/pull/313) [`ee9fece`](https://github.com/prisma-idb/prisma-idb/commit/ee9feceab01cc4631218e833094dbadd54b997bf) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Breaking change: include stored model and field shapes in IDB storage hashes. Re-emit contracts and plan a migration even when stores and indexes are unchanged. Field and enum declaration order, defaults, and documentation do not change the hash.
+
+- [#305](https://github.com/prisma-idb/prisma-idb/pull/305) [`e4c317d`](https://github.com/prisma-idb/prisma-idb/commit/e4c317dfe5523909c721eeaa64d0c2254f13e084) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Add an optional `onTransformRecords` hook to `IdbExtensionSpace`. An extension uses it to rewrite its own data when a migration transforms an app model's records.
+
+- [#346](https://github.com/prisma-idb/prisma-idb/pull/346) [`ca732f8`](https://github.com/prisma-idb/prisma-idb/commit/ca732f85663115176b2173665b58d0ff5499e663) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Build on Prisma 8 `8.0.0-rc.18`. The PSL reader uses the namespaced symbol table and reads enum members from block entries, so enum diagnostics point at the member when the provider passes the parsed `sources`. Contract sources declare `format`. The control instance implements `signSpaces` (a refusal, like `sign` before it) and `storageNameOf`. List fields are emitted as `many: { elementNullable: false }`, and execution defaults as `{ namespace, entry, field }`. `migration plan` passes `origin` and `statements` to the planner.
+
+### Patch Changes
+
+- [#313](https://github.com/prisma-idb/prisma-idb/pull/313) [`629e68b`](https://github.com/prisma-idb/prisma-idb/commit/629e68b495986ef37454d6f18946a586e8f7c67d) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Report all unfilled migration backfill slots during preflight, including slots on empty stores.
+
+- [#313](https://github.com/prisma-idb/prisma-idb/pull/313) [`a26747e`](https://github.com/prisma-idb/prisma-idb/commit/a26747e5f037a1ef8709a0a8b8cec3bd3f870a6a) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Generate record backfills and field removals in migration plans, including field data-loss warnings and explicit no-operation migrations.
+
+- [#323](https://github.com/prisma-idb/prisma-idb/pull/323) [`3892764`](https://github.com/prisma-idb/prisma-idb/commit/38927642b78dcc278276ec9ba42887fbfe233ca3) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Document the helper that reads the emitted contract's storage hash during preflight.
+
+- [#313](https://github.com/prisma-idb/prisma-idb/pull/313) [`82bc760`](https://github.com/prisma-idb/prisma-idb/commit/82bc760e592f4ad58cbd7eb6592bee1c4d4a276d) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Fail `prisma-idb migration preflight` when the emitted `contract.json` is not the target of the last migration. A contract change with no `migration plan` used to pass preflight, and the app then refused to open. The error names both hashes and the command to run.
+
+- [#328](https://github.com/prisma-idb/prisma-idb/pull/328) [`75f8591`](https://github.com/prisma-idb/prisma-idb/commit/75f859119c1fefe9e1054e1e03f152d140d4ca5a) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Preserve the structured error code and explanation in migration preflight output so unfilled placeholder diagnostics include every slot name.
+
+- [#305](https://github.com/prisma-idb/prisma-idb/pull/305) [`a27967d`](https://github.com/prisma-idb/prisma-idb/commit/a27967d50b37983ea73b7cdf407a35e5975c8eb8) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Preflight hand-authored record transforms in sequence with structural operations. Abort failed upgrades and report the original transform error.
+
+- [#322](https://github.com/prisma-idb/prisma-idb/pull/322) [`f549768`](https://github.com/prisma-idb/prisma-idb/commit/f54976899370799e30fd9447d5cb5e9c4b6747c0) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Reject unsupported union fields in models and value objects during contract validation and record-shape construction. Errors name the owning model or value object and field.
+
+- Updated dependencies [[`ca732f8`](https://github.com/prisma-idb/prisma-idb/commit/ca732f85663115176b2173665b58d0ff5499e663), [`0a419f0`](https://github.com/prisma-idb/prisma-idb/commit/0a419f0fd7d2e0508bd6666fb5ff118d3fc849df), [`4840683`](https://github.com/prisma-idb/prisma-idb/commit/484068399b27c5b2c3404ef1fbd5fa56cd36459e), [`ac13083`](https://github.com/prisma-idb/prisma-idb/commit/ac13083d3b9fe0493d6212d0a16626f8263aa77f), [`15f6f9a`](https://github.com/prisma-idb/prisma-idb/commit/15f6f9a365d3b7c59c26556f5a42a27d28037901), [`629e68b`](https://github.com/prisma-idb/prisma-idb/commit/629e68b495986ef37454d6f18946a586e8f7c67d), [`a26747e`](https://github.com/prisma-idb/prisma-idb/commit/a26747e5f037a1ef8709a0a8b8cec3bd3f870a6a), [`a27967d`](https://github.com/prisma-idb/prisma-idb/commit/a27967d50b37983ea73b7cdf407a35e5975c8eb8), [`f549768`](https://github.com/prisma-idb/prisma-idb/commit/f54976899370799e30fd9447d5cb5e9c4b6747c0), [`d3c16a2`](https://github.com/prisma-idb/prisma-idb/commit/d3c16a2cd8fc72c4c73a6f88032152e24c7cb5b0), [`ee9fece`](https://github.com/prisma-idb/prisma-idb/commit/ee9feceab01cc4631218e833094dbadd54b997bf), [`9c91ff5`](https://github.com/prisma-idb/prisma-idb/commit/9c91ff5d1baa1bf43541d66e0c649d712c0f93fa), [`d46f768`](https://github.com/prisma-idb/prisma-idb/commit/d46f76881756c69e6ffa835d64ed903c4b59f4cb), [`8dafeac`](https://github.com/prisma-idb/prisma-idb/commit/8dafeacf1e7d3a70d97ab4e167d9b2a0837b414f), [`3892764`](https://github.com/prisma-idb/prisma-idb/commit/38927642b78dcc278276ec9ba42887fbfe233ca3)]:
+  - @prisma-idb/target-idb@0.13.0
+
 ## 0.12.0
 
 ### Patch Changes
