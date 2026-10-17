@@ -1,10 +1,11 @@
 import type { IdbKeyPath, IdbMutationDefaultGeneratorId, IdbReferentialAction } from "@prisma-idb/target-idb/pack";
 
 /**
- * The plain-data description of an IDB contract that every authoring surface
- * lowers into (the PSL interpreter and the TypeScript `defineContract` DSL).
- * `buildIdbContractFromDefinition` is the only code that turns it into a
- * `Contract` and computes the contract hashes.
+ * The plain-data description of an IDB contract that authoring surfaces lower
+ * into. Today the TypeScript `defineContract` DSL does; the PSL interpreter is
+ * meant to follow. `buildIdbContractFromDefinition` is the only code in this
+ * pipeline that turns a definition into a `Contract` and computes the contract
+ * hashes.
  *
  * Mirrors upstream's `ContractDefinition` in `@prisma/orm-family-sql/contract-ts`:
  * ordered arrays of named nodes, with everything already resolved. A node holds

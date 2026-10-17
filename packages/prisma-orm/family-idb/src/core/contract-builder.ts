@@ -472,6 +472,16 @@ function lowerIndex(name: string, idx: IndexDef): IdbIndexNode {
   };
 }
 
+/**
+ * Returns the literal default declared for a field, or `undefined` when there
+ * is none. Reads own properties only, so a field named like an `Object.prototype`
+ * member (for example `toString`) never picks up an inherited value.
+ */
+function ownLiteralDefault(def: ModelDef<string>, fieldName: string): string | number | boolean | undefined {
+  const defaults = def.fieldDefaults;
+  return defaults && Object.hasOwn(defaults, fieldName) ? defaults[fieldName] : undefined;
+}
+
 /** Translate one model declaration into a model node. */
 function lowerModel(modelName: string, def: ModelDef<string>, enums: EnumDefs): IdbModelNode {
   return {
@@ -480,7 +490,9 @@ function lowerModel(modelName: string, def: ModelDef<string>, enums: EnumDefs): 
     key: def.key,
     // The TS DSL has no way to declare a key generator yet.
     autoIncrement: false,
-    fields: Object.entries(def.fields).map(([name, spec]) => lowerField(name, spec, enums, def.fieldDefaults?.[name])),
+    fields: Object.entries(def.fields).map(([name, spec]) =>
+      lowerField(name, spec, enums, ownLiteralDefault(def, name))
+    ),
     indexes: Object.entries(def.indexes ?? {}).map(([name, idx]) => lowerIndex(name, idx)),
     relations: Object.entries(def.relations ?? {}).map(([name, rel]) => lowerRelation(name, rel, def)),
   };
