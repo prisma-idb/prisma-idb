@@ -219,6 +219,41 @@ describe("record shape migration planning", () => {
     }
   });
 
+  it.each([
+    ["scalar", undefined, undefined, false],
+    ["non-nullable list", false, false, false],
+    ["nullable list", true, true, false],
+    ["list-element nullability widening", false, true, false],
+    ["list-element nullability narrowing", true, false, true],
+    ["scalar to non-nullable list", undefined, false, true],
+    ["scalar to nullable list", undefined, true, true],
+    ["non-nullable list to scalar", false, undefined, true],
+    ["nullable list to scalar", true, undefined, true],
+  ] as const)("plans %s without losing cardinality constraints", (_name, fromNullable, toNullable, needsTransform) => {
+    const from: IdbRecordField = {
+      ...string,
+      ...(fromNullable === undefined ? {} : { many: { elementNullable: fromNullable } }),
+    };
+    const to: IdbRecordField = {
+      ...string,
+      ...(toNullable === undefined ? {} : { many: { elementNullable: toNullable } }),
+    };
+    for (const [source, destination] of [
+      [from, to],
+      [profile({ tags: from }), profile({ tags: to })],
+    ] as const) {
+      const result = planResult(contract({ role: source }), contract({ role: destination }));
+      if (result.kind !== "success") throw new Error(JSON.stringify(result.conflicts));
+      if (needsTransform) {
+        expectSlot(result.plan, "role");
+        expect(result.dataLoss).toEqual([expect.objectContaining({ loss: "typeChange" })]);
+      } else {
+        expect(result.plan.operations).toEqual([]);
+        expect(result.dataLoss).toEqual([]);
+      }
+    }
+  });
+
   it("rejects legacy union metadata even when source and destination shapes match", () => {
     const union: IdbRecordField = {
       type: { kind: "union", members: [string.type] },

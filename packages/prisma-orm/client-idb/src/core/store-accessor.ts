@@ -592,8 +592,8 @@ export class IdbStoreAccessorImpl<
       idbPlan: { meta, kind: "add", storeName: this.#storeName, record: withDefaults },
     };
     // The IDB driver echoes the stored record back as the single result row.
-    // Read the result to its end: returning early from the loop would skip the
-    // `activityEnded` middleware hook.
+    // Read the result to its end so `activityEnded` reports `succeeded`.
+    // Returning early would still call the hook, but with outcome `stopped`.
     const [row] = await this.#executor.query(plan).toArray();
     return (row ?? withDefaults) as DefaultModelRow<TContract, ModelName>;
   }

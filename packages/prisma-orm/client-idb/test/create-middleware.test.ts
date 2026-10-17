@@ -1,9 +1,9 @@
 /**
  * `create()` runs the full middleware lifecycle.
  *
- * The runtime ends the statement's activity (`activityEnded`) only after the
- * result has been read to its end. A `create()` that returned from inside the read loop skipped the hook,
- * so telemetry and audit middleware saw a write start and never finish.
+ * The runtime calls `activityEnded` when the result is fully read or the caller
+ * stops reading. Reading to the end reports `succeeded`; returning early from
+ * the read loop reports `stopped` even though the row was stored.
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { defineContract } from "@prisma-idb/family-idb/contract-ts";

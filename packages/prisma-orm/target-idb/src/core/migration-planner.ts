@@ -251,7 +251,8 @@ function typeAcceptsExistingValues(from: IdbRecordFieldType, to: IdbRecordFieldT
 /** Whether existing values remain valid in the destination field. */
 function fieldAcceptsExistingValues(from: IdbRecordField, to: IdbRecordField): boolean {
   if (from.nullable && !to.nullable) return false;
-  if (from.many?.elementNullable !== to.many?.elementNullable || from.dict !== to.dict) return false;
+  if (Boolean(from.many) !== Boolean(to.many) || from.dict !== to.dict) return false;
+  if (from.many?.elementNullable && !to.many?.elementNullable) return false;
   if (!typeAcceptsExistingValues(from.type, to.type)) return false;
   if (from.valueSet === undefined) return to.valueSet === undefined;
   if (to.valueSet === undefined) return true;
