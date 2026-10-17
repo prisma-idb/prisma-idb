@@ -12,7 +12,7 @@ import type { IdbSchemaDiffInput } from "./schema-diff";
 
 const UNBOUND_NAMESPACE = asNamespaceId(UNBOUND_DOMAIN_NAMESPACE_ID);
 
-/** How to keep rows the planner is about to drop, in the words the CLI prints after the question. */
+/** Advice for preserving rows the planner is about to drop. */
 const KEEP_DATA_ADVICE =
   "Author the change in migration.ts with transformRecordsOp so the rows are rewritten instead of dropped.";
 
