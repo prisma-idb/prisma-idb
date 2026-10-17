@@ -1,0 +1,27 @@
+{
+  "contract": null,
+  "diagnostics": {
+    "interpretation": [
+      {
+        "code": "IDB_UNSUPPORTED_FIELD_TYPE",
+        "message": "Field \"User.role\" has unsupported type \"MissingRole\". Supported types: String, Int, Float, Boolean, DateTime, BigInt, Decimal, Json, Bytes.",
+        "sourceId": "authoring.prisma",
+        "span": {
+          "end": {
+            "column": 25,
+            "line": 4,
+            "offset": 66
+          },
+          "start": {
+            "column": 9,
+            "line": 4,
+            "offset": 50
+          }
+        }
+      }
+    ],
+    "parse": [],
+    "symbols": []
+  },
+  "hashes": null
+}

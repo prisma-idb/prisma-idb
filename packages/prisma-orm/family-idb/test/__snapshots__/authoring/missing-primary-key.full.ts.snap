@@ -1,0 +1,5 @@
+{
+  "contract": null,
+  "error": "defineContract: model \"User\" \"key\" must name at least one field.",
+  "hashes": null
+}

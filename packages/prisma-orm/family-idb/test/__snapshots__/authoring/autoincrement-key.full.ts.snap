@@ -1,0 +1,91 @@
+{
+  "contract": {
+    "capabilities": {
+      "idb": {
+        "ddlOnlyInUpgrade": true,
+        "transactionalDDL": true
+      }
+    },
+    "domain": {
+      "namespaces": {
+        "__unbound__": {
+          "models": {
+            "Seq": {
+              "fields": {
+                "id": {
+                  "nullable": false,
+                  "type": {
+                    "codecId": "idb/int32@1",
+                    "kind": "scalar"
+                  }
+                },
+                "name": {
+                  "nullable": false,
+                  "type": {
+                    "codecId": "idb/string@1",
+                    "kind": "scalar"
+                  }
+                }
+              },
+              "relations": {},
+              "storage": {
+                "keyPath": "id",
+                "storeName": "seq"
+              }
+            }
+          }
+        }
+      }
+    },
+    "extensions": {},
+    "meta": {},
+    "profileHash": "40329830af4e39e0774683fbebcdc24dcf983a5da02c5fe6079a2a57579f861c",
+    "roots": {
+      "seq": {
+        "model": "Seq",
+        "namespace": "__unbound__"
+      }
+    },
+    "storage": {
+      "namespaces": {
+        "__unbound__": {
+          "entries": {},
+          "id": "__unbound__"
+        }
+      },
+      "storageHash": "a08be0f6a3c000cea1dd346e59432f60d34d6ca1a0f6ebe7209f1d8c199a459a",
+      "stores": {
+        "seq": {
+          "keyPath": "id",
+          "record": {
+            "fields": {
+              "id": {
+                "nullable": false,
+                "type": {
+                  "codecId": "idb/int32@1",
+                  "kind": "scalar"
+                }
+              },
+              "name": {
+                "nullable": false,
+                "type": {
+                  "codecId": "idb/string@1",
+                  "kind": "scalar"
+                }
+              }
+            },
+            "model": "Seq"
+          }
+        }
+      }
+    },
+    "target": "idb",
+    "targetFamily": "idb"
+  },
+  "error": null,
+  "hashes": {
+    "executionHash": null,
+    "profileHash": "40329830af4e39e0774683fbebcdc24dcf983a5da02c5fe6079a2a57579f861c",
+    "storageHash": "a08be0f6a3c000cea1dd346e59432f60d34d6ca1a0f6ebe7209f1d8c199a459a"
+  }
+}

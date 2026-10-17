@@ -1,0 +1,159 @@
+{
+  "contract": {
+    "capabilities": {
+      "idb": {
+        "ddlOnlyInUpgrade": true,
+        "transactionalDDL": true
+      }
+    },
+    "domain": {
+      "namespaces": {
+        "__unbound__": {
+          "models": {
+            "Post": {
+              "fields": {
+                "authorId": {
+                  "nullable": false,
+                  "type": {
+                    "codecId": "idb/string@1",
+                    "kind": "scalar"
+                  }
+                },
+                "id": {
+                  "nullable": false,
+                  "type": {
+                    "codecId": "idb/string@1",
+                    "kind": "scalar"
+                  }
+                }
+              },
+              "relations": {
+                "author": {
+                  "cardinality": "N:1",
+                  "nullable": false,
+                  "on": {
+                    "localFields": [
+                      "authorId"
+                    ],
+                    "targetFields": [
+                      "id"
+                    ]
+                  },
+                  "to": {
+                    "model": "User",
+                    "namespace": "__unbound__"
+                  }
+                }
+              },
+              "storage": {
+                "keyPath": "id",
+                "storeName": "post"
+              }
+            },
+            "User": {
+              "fields": {
+                "id": {
+                  "nullable": false,
+                  "type": {
+                    "codecId": "idb/string@1",
+                    "kind": "scalar"
+                  }
+                }
+              },
+              "relations": {
+                "posts": {
+                  "cardinality": "1:N",
+                  "on": {
+                    "localFields": [
+                      "id"
+                    ],
+                    "targetFields": [
+                      "authorId"
+                    ]
+                  },
+                  "to": {
+                    "model": "Post",
+                    "namespace": "__unbound__"
+                  }
+                }
+              },
+              "storage": {
+                "keyPath": "id",
+                "storeName": "user"
+              }
+            }
+          }
+        }
+      }
+    },
+    "extensions": {},
+    "meta": {},
+    "profileHash": "40329830af4e39e0774683fbebcdc24dcf983a5da02c5fe6079a2a57579f861c",
+    "roots": {
+      "post": {
+        "model": "Post",
+        "namespace": "__unbound__"
+      },
+      "user": {
+        "model": "User",
+        "namespace": "__unbound__"
+      }
+    },
+    "storage": {
+      "namespaces": {
+        "__unbound__": {
+          "entries": {},
+          "id": "__unbound__"
+        }
+      },
+      "storageHash": "5ff45e7ebfbe16e52e03d5eee0d4ca62617b0c8a872179b96464eec0a5b953dc",
+      "stores": {
+        "post": {
+          "keyPath": "id",
+          "record": {
+            "fields": {
+              "authorId": {
+                "nullable": false,
+                "type": {
+                  "codecId": "idb/string@1",
+                  "kind": "scalar"
+                }
+              },
+              "id": {
+                "nullable": false,
+                "type": {
+                  "codecId": "idb/string@1",
+                  "kind": "scalar"
+                }
+              }
+            },
+            "model": "Post"
+          }
+        },
+        "user": {
+          "keyPath": "id",
+          "record": {
+            "fields": {
+              "id": {
+                "nullable": false,
+                "type": {
+                  "codecId": "idb/string@1",
+                  "kind": "scalar"
+                }
+              }
+            },
+            "model": "User"
+          }
+        }
+      }
+    },
+    "target": "idb",
+    "targetFamily": "idb"
+  },
+  "error": null,
+  "hashes": {
+    "executionHash": null,
+    "profileHash": "40329830af4e39e0774683fbebcdc24dcf983a5da02c5fe6079a2a57579f861c",
+    "storageHash": "5ff45e7ebfbe16e52e03d5eee0d4ca62617b0c8a872179b96464eec0a5b953dc"
+  }
+}

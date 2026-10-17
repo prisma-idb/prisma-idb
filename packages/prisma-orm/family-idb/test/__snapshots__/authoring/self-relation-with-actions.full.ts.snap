@@ -1,0 +1,129 @@
+{
+  "contract": {
+    "capabilities": {
+      "idb": {
+        "ddlOnlyInUpgrade": true,
+        "transactionalDDL": true
+      }
+    },
+    "domain": {
+      "namespaces": {
+        "__unbound__": {
+          "models": {
+            "Node": {
+              "fields": {
+                "id": {
+                  "nullable": false,
+                  "type": {
+                    "codecId": "idb/string@1",
+                    "kind": "scalar"
+                  }
+                },
+                "parentId": {
+                  "nullable": true,
+                  "type": {
+                    "codecId": "idb/string@1",
+                    "kind": "scalar"
+                  }
+                }
+              },
+              "relations": {
+                "children": {
+                  "cardinality": "1:N",
+                  "on": {
+                    "localFields": [
+                      "id"
+                    ],
+                    "targetFields": [
+                      "parentId"
+                    ]
+                  },
+                  "to": {
+                    "model": "Node",
+                    "namespace": "__unbound__"
+                  }
+                },
+                "parent": {
+                  "cardinality": "N:1",
+                  "nullable": true,
+                  "on": {
+                    "localFields": [
+                      "parentId"
+                    ],
+                    "targetFields": [
+                      "id"
+                    ]
+                  },
+                  "to": {
+                    "model": "Node",
+                    "namespace": "__unbound__"
+                  }
+                }
+              },
+              "storage": {
+                "keyPath": "id",
+                "relations": {
+                  "parent": {
+                    "onDelete": "setNull",
+                    "onUpdate": "cascade"
+                  }
+                },
+                "storeName": "node"
+              }
+            }
+          }
+        }
+      }
+    },
+    "extensions": {},
+    "meta": {},
+    "profileHash": "40329830af4e39e0774683fbebcdc24dcf983a5da02c5fe6079a2a57579f861c",
+    "roots": {
+      "node": {
+        "model": "Node",
+        "namespace": "__unbound__"
+      }
+    },
+    "storage": {
+      "namespaces": {
+        "__unbound__": {
+          "entries": {},
+          "id": "__unbound__"
+        }
+      },
+      "storageHash": "11db29c3c9c1244b50a21e066997392a67daf5caa82eb9527fc185c08e96e061",
+      "stores": {
+        "node": {
+          "keyPath": "id",
+          "record": {
+            "fields": {
+              "id": {
+                "nullable": false,
+                "type": {
+                  "codecId": "idb/string@1",
+                  "kind": "scalar"
+                }
+              },
+              "parentId": {
+                "nullable": true,
+                "type": {
+                  "codecId": "idb/string@1",
+                  "kind": "scalar"
+                }
+              }
+            },
+            "model": "Node"
+          }
+        }
+      }
+    },
+    "target": "idb",
+    "targetFamily": "idb"
+  },
+  "error": null,
+  "hashes": {
+    "executionHash": null,
+    "profileHash": "40329830af4e39e0774683fbebcdc24dcf983a5da02c5fe6079a2a57579f861c",
+    "storageHash": "11db29c3c9c1244b50a21e066997392a67daf5caa82eb9527fc185c08e96e061"
+  }
+}

@@ -1,0 +1,5 @@
+{
+  "contract": null,
+  "error": "Field \"roles\" has type \"Role[]?\". A list field cannot be optional.",
+  "hashes": null
+}

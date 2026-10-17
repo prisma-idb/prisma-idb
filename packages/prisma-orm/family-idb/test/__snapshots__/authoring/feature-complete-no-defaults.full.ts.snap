@@ -1,0 +1,363 @@
+{
+  "contract": {
+    "capabilities": {
+      "idb": {
+        "ddlOnlyInUpgrade": true,
+        "transactionalDDL": true
+      }
+    },
+    "domain": {
+      "namespaces": {
+        "__unbound__": {
+          "enum": {
+            "Role": {
+              "codecId": "idb/string@1",
+              "members": [
+                {
+                  "name": "USER",
+                  "value": "USER"
+                },
+                {
+                  "name": "ADMIN",
+                  "value": "ADMIN"
+                }
+              ]
+            }
+          },
+          "models": {
+            "Audit": {
+              "fields": {
+                "id": {
+                  "nullable": false,
+                  "type": {
+                    "codecId": "idb/int32@1",
+                    "kind": "scalar"
+                  }
+                },
+                "postId": {
+                  "nullable": false,
+                  "type": {
+                    "codecId": "idb/string@1",
+                    "kind": "scalar"
+                  }
+                }
+              },
+              "relations": {},
+              "storage": {
+                "keyPath": "id",
+                "storeName": "audits"
+              }
+            },
+            "Post": {
+              "fields": {
+                "authorId": {
+                  "nullable": false,
+                  "type": {
+                    "codecId": "idb/string@1",
+                    "kind": "scalar"
+                  }
+                },
+                "id": {
+                  "nullable": false,
+                  "type": {
+                    "codecId": "idb/string@1",
+                    "kind": "scalar"
+                  }
+                },
+                "secret": {
+                  "nullable": false,
+                  "type": {
+                    "codecId": "idb/string@1",
+                    "kind": "scalar"
+                  }
+                },
+                "title": {
+                  "nullable": false,
+                  "type": {
+                    "codecId": "idb/string@1",
+                    "kind": "scalar"
+                  }
+                }
+              },
+              "relations": {
+                "author": {
+                  "cardinality": "N:1",
+                  "nullable": false,
+                  "on": {
+                    "localFields": [
+                      "authorId"
+                    ],
+                    "targetFields": [
+                      "id"
+                    ]
+                  },
+                  "to": {
+                    "model": "User",
+                    "namespace": "__unbound__"
+                  }
+                }
+              },
+              "storage": {
+                "keyPath": "id",
+                "relations": {
+                  "author": {
+                    "onDelete": "cascade"
+                  }
+                },
+                "storeName": "posts"
+              }
+            },
+            "User": {
+              "fields": {
+                "email": {
+                  "nullable": false,
+                  "type": {
+                    "codecId": "idb/string@1",
+                    "kind": "scalar"
+                  }
+                },
+                "id": {
+                  "nullable": false,
+                  "type": {
+                    "codecId": "idb/string@1",
+                    "kind": "scalar"
+                  }
+                },
+                "past": {
+                  "many": {
+                    "elementNullable": false
+                  },
+                  "nullable": false,
+                  "type": {
+                    "codecId": "idb/string@1",
+                    "kind": "scalar"
+                  },
+                  "valueSet": {
+                    "entityKind": "enum",
+                    "entityName": "Role",
+                    "namespaceId": "__unbound__",
+                    "plane": "domain"
+                  }
+                },
+                "role": {
+                  "nullable": false,
+                  "type": {
+                    "codecId": "idb/string@1",
+                    "kind": "scalar"
+                  },
+                  "valueSet": {
+                    "entityKind": "enum",
+                    "entityName": "Role",
+                    "namespaceId": "__unbound__",
+                    "plane": "domain"
+                  }
+                }
+              },
+              "relations": {
+                "posts": {
+                  "cardinality": "1:N",
+                  "on": {
+                    "localFields": [
+                      "id"
+                    ],
+                    "targetFields": [
+                      "authorId"
+                    ]
+                  },
+                  "to": {
+                    "model": "Post",
+                    "namespace": "__unbound__"
+                  }
+                }
+              },
+              "storage": {
+                "keyPath": "id",
+                "storeName": "users"
+              }
+            }
+          }
+        }
+      }
+    },
+    "extensions": {},
+    "meta": {},
+    "profileHash": "40329830af4e39e0774683fbebcdc24dcf983a5da02c5fe6079a2a57579f861c",
+    "roots": {
+      "audits": {
+        "model": "Audit",
+        "namespace": "__unbound__"
+      },
+      "posts": {
+        "model": "Post",
+        "namespace": "__unbound__"
+      },
+      "users": {
+        "model": "User",
+        "namespace": "__unbound__"
+      }
+    },
+    "storage": {
+      "namespaces": {
+        "__unbound__": {
+          "entries": {},
+          "id": "__unbound__"
+        }
+      },
+      "storageHash": "de98c084b4d76af821d052764a274b38b636a64ef9ee126d553d2f6b5c0604f8",
+      "stores": {
+        "audits": {
+          "keyPath": "id",
+          "record": {
+            "fields": {
+              "id": {
+                "nullable": false,
+                "type": {
+                  "codecId": "idb/int32@1",
+                  "kind": "scalar"
+                }
+              },
+              "postId": {
+                "nullable": false,
+                "type": {
+                  "codecId": "idb/string@1",
+                  "kind": "scalar"
+                }
+              }
+            },
+            "model": "Audit"
+          }
+        },
+        "posts": {
+          "indexes": {
+            "authorId": {
+              "keyPath": "authorId",
+              "unique": false
+            },
+            "byTitleAuthor": {
+              "keyPath": [
+                "title",
+                "authorId"
+              ],
+              "unique": false
+            }
+          },
+          "keyPath": "id",
+          "record": {
+            "fields": {
+              "authorId": {
+                "nullable": false,
+                "type": {
+                  "codecId": "idb/string@1",
+                  "kind": "scalar"
+                }
+              },
+              "id": {
+                "nullable": false,
+                "type": {
+                  "codecId": "idb/string@1",
+                  "kind": "scalar"
+                }
+              },
+              "secret": {
+                "nullable": false,
+                "type": {
+                  "codecId": "idb/string@1",
+                  "kind": "scalar"
+                }
+              },
+              "title": {
+                "nullable": false,
+                "type": {
+                  "codecId": "idb/string@1",
+                  "kind": "scalar"
+                }
+              }
+            },
+            "model": "Post"
+          }
+        },
+        "users": {
+          "indexes": {
+            "email_unique": {
+              "keyPath": "email",
+              "unique": true
+            }
+          },
+          "keyPath": "id",
+          "record": {
+            "fields": {
+              "email": {
+                "nullable": false,
+                "type": {
+                  "codecId": "idb/string@1",
+                  "kind": "scalar"
+                }
+              },
+              "id": {
+                "nullable": false,
+                "type": {
+                  "codecId": "idb/string@1",
+                  "kind": "scalar"
+                }
+              },
+              "past": {
+                "many": {
+                  "elementNullable": false
+                },
+                "nullable": false,
+                "type": {
+                  "codecId": "idb/string@1",
+                  "kind": "scalar"
+                },
+                "valueSet": {
+                  "codecId": "idb/string@1",
+                  "members": [
+                    {
+                      "name": "ADMIN",
+                      "value": "ADMIN"
+                    },
+                    {
+                      "name": "USER",
+                      "value": "USER"
+                    }
+                  ],
+                  "name": "Role"
+                }
+              },
+              "role": {
+                "nullable": false,
+                "type": {
+                  "codecId": "idb/string@1",
+                  "kind": "scalar"
+                },
+                "valueSet": {
+                  "codecId": "idb/string@1",
+                  "members": [
+                    {
+                      "name": "ADMIN",
+                      "value": "ADMIN"
+                    },
+                    {
+                      "name": "USER",
+                      "value": "USER"
+                    }
+                  ],
+                  "name": "Role"
+                }
+              }
+            },
+            "model": "User"
+          }
+        }
+      }
+    },
+    "target": "idb",
+    "targetFamily": "idb"
+  },
+  "error": null,
+  "hashes": {
+    "executionHash": null,
+    "profileHash": "40329830af4e39e0774683fbebcdc24dcf983a5da02c5fe6079a2a57579f861c",
+    "storageHash": "de98c084b4d76af821d052764a274b38b636a64ef9ee126d553d2f6b5c0604f8"
+  }
+}

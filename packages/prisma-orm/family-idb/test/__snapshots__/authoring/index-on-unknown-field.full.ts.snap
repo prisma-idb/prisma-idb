@@ -1,0 +1,5 @@
+{
+  "contract": null,
+  "error": "defineContract: model \"User\" index \"unknown\" references field \"unknown\", which is not declared in \"fields\".",
+  "hashes": null
+}
