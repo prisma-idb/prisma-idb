@@ -33,7 +33,7 @@ Use `createCount()` when you only need the number of rows.
 const todo = await db.orm.todo.where({ id: todoId }).update({ done: true });
 ```
 
-`updateAll()` changes every matching row in one transaction and returns them. `updateCount()` returns how many changed.
+`updateAll()` changes every matching row in one transaction and returns them. `updateCount()` returns how many changed. Both ignore `skip()` and `take()`, and without a `where()` they change every row in the store.
 
 ```ts
 const done = await db.orm.todo.where({ userId }).updateAll({ done: true }).toArray();
@@ -67,7 +67,7 @@ const user = await db.orm.user.upsert({
 await db.orm.todo.delete(todoId);
 ```
 
-`deleteAll()` removes every matching row and returns them. `deleteCount()` returns how many were removed.
+`deleteAll()` removes every matching row and returns them. `deleteCount()` returns how many were removed. Both ignore `skip()` and `take()`, and without a `where()` they remove every row in the store.
 
 ```ts
 const removed = await db.orm.todo.where({ done: true }).deleteAll().toArray();

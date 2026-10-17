@@ -22,6 +22,8 @@ This page lists what a Prisma schema can contain when it targets IndexedDB, and 
 
 Add `?` to make a field optional. Its value is then `null` when it isn't set.
 
+List fields of scalar types, such as `tags String[]`, aren't supported. The schema reader leaves them out of the client's contract without a warning, so writes that include them fail validation. Store the values in a related model or in a `Json` field.
+
 Decimal values stay as the strings you supply. Accepted forms include `"-12.50"`, `".5"` and `"1.25e3"`. Empty strings, whitespace, hexadecimal values, `NaN` and infinities are invalid. Creates and updates reject invalid Decimal values. Numeric filter operands must also be valid decimal text, even when the query would return no rows. A numeric comparison that encounters invalid text in existing records throws; repair those records before filtering or sorting them.
 
 Decimal equality, membership, range filters and `orderBy` compare exact numeric values without converting them to JavaScript numbers. For example, `"10"`, `"10.00"` and `"1e1"` compare equal. Primary-key lookups and unique constraints use the same numeric equality, including in compound keys.
