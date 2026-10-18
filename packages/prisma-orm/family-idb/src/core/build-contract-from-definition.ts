@@ -90,32 +90,37 @@ function buildRelations(model: IdbModelNode): {
   relations: BuiltModel["relations"];
   relationActions: Record<string, { onDelete?: IdbReferentialAction; onUpdate?: IdbReferentialAction }>;
 } {
-  const relations: BuiltModel["relations"] = {};
-  const relationActions: Record<string, { onDelete?: IdbReferentialAction; onUpdate?: IdbReferentialAction }> = {};
-  for (const node of model.relations) {
-    relations[node.name] = {
-      to: crossRef(node.to),
-      cardinality: node.cardinality,
-      on: { localFields: node.localFields, targetFields: node.targetFields },
-      ...(node.nullable !== undefined ? { nullable: node.nullable } : {}),
-    };
-    if (node.onDelete !== undefined || node.onUpdate !== undefined) {
-      relationActions[node.name] = {
-        ...(node.onDelete !== undefined ? { onDelete: node.onDelete } : {}),
-        ...(node.onUpdate !== undefined ? { onUpdate: node.onUpdate } : {}),
-      };
-    }
-  }
+  const relations: BuiltModel["relations"] = Object.fromEntries(
+    model.relations.map((node) => [
+      node.name,
+      {
+        to: crossRef(node.to),
+        cardinality: node.cardinality,
+        on: { localFields: node.localFields, targetFields: node.targetFields },
+        ...(node.nullable !== undefined ? { nullable: node.nullable } : {}),
+      },
+    ])
+  );
+  const relationActions: Record<string, { onDelete?: IdbReferentialAction; onUpdate?: IdbReferentialAction }> =
+    Object.fromEntries(
+      model.relations
+        .filter((node) => node.onDelete !== undefined || node.onUpdate !== undefined)
+        .map((node) => [
+          node.name,
+          {
+            ...(node.onDelete !== undefined ? { onDelete: node.onDelete } : {}),
+            ...(node.onUpdate !== undefined ? { onUpdate: node.onUpdate } : {}),
+          },
+        ])
+    );
   return { relations, relationActions };
 }
 
 /** Collect the literal defaults that back the `setDefault` referential action. */
 function buildFieldDefaults(fields: readonly IdbFieldNode[]): Record<string, string | number | boolean> {
-  const defaults: Record<string, string | number | boolean> = {};
-  for (const node of fields) {
-    if (node.literalDefault !== undefined) defaults[node.name] = node.literalDefault;
-  }
-  return defaults;
+  return Object.fromEntries(
+    fields.flatMap((node) => (node.literalDefault !== undefined ? [[node.name, node.literalDefault]] : []))
+  );
 }
 
 /** Build a model's domain entry from its node. */
@@ -203,14 +208,15 @@ export function buildIdbContractFromDefinition(definition: IdbContractDefinition
   const enums = buildEnums(definition.enums);
   const builtModels = definition.models.map((model) => [model, buildModel(model)] as const);
 
-  const stores: Record<string, IdbStoreDefinition> = {};
-  const roots: Record<string, CrossReference> = {};
-  const domainModels: Record<string, BuiltModel> = {};
-  for (const [model, built] of builtModels) {
-    stores[model.storeName] = buildStore(model, built, enums);
-    roots[model.storeName] = crossRef(model.modelName);
-    domainModels[model.modelName] = built;
-  }
+  const stores: Record<string, IdbStoreDefinition> = Object.fromEntries(
+    builtModels.map(([model, built]) => [model.storeName, buildStore(model, built, enums)])
+  );
+  const roots: Record<string, CrossReference> = Object.fromEntries(
+    builtModels.map(([model]) => [model.storeName, crossRef(model.modelName)])
+  );
+  const domainModels: Record<string, BuiltModel> = Object.fromEntries(
+    builtModels.map(([model, built]) => [model.modelName, built])
+  );
 
   // Mirrors the capability surface that `prisma contract emit` writes into the
   // JSON contract, so every authoring path agrees on the capabilities block.

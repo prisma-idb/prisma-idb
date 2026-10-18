@@ -58,6 +58,83 @@ describe("buildIdbContractFromDefinition", () => {
     expect(contract.execution).toBeUndefined();
   });
 
+  it("preserves __proto__ stores, roots and domain models as own entries", () => {
+    const contract = build({ models: [model("Before"), model("__proto__"), model("After")] });
+    const models = contract.domain.namespaces["__unbound__"]!.models;
+
+    for (const map of [contract.storage.stores, contract.roots, models]) {
+      expect(Object.hasOwn(map, "__proto__")).toBe(true);
+      expect(Object.getPrototypeOf(map)).toBe(Object.prototype);
+    }
+    expect(Object.keys(contract.storage.stores)).toEqual(["before", "__proto__", "after"]);
+    expect(Object.keys(contract.roots)).toEqual(["before", "__proto__", "after"]);
+    expect(Object.keys(models)).toEqual(["Before", "__proto__", "After"]);
+    expect(contract.storage.stores["__proto__"]!.keyPath).toBe("id");
+    expect(contract.roots["__proto__"]).toEqual({ namespace: "__unbound__", model: "__proto__" });
+    expect(models["__proto__"]!.storage["storeName"]).toBe("__proto__");
+  });
+
+  it("preserves __proto__ relations and their referential actions as own entries", () => {
+    const contract = build({
+      models: [
+        model("User", {
+          relations: [
+            { name: "plain", to: "User", cardinality: "1:1", localFields: ["id"], targetFields: ["id"] },
+            {
+              name: "__proto__",
+              to: "User",
+              cardinality: "1:1",
+              localFields: ["id"],
+              targetFields: ["id"],
+              nullable: false,
+              onDelete: "cascade",
+              onUpdate: "restrict",
+            },
+          ],
+        }),
+      ],
+    });
+    const user = contract.domain.namespaces["__unbound__"]!.models["User"]!;
+    const actions = user.storage["relations"] as Record<string, unknown>;
+
+    for (const map of [user.relations, actions]) {
+      expect(Object.hasOwn(map, "__proto__")).toBe(true);
+      expect(Object.getPrototypeOf(map)).toBe(Object.prototype);
+    }
+    expect(Object.keys(user.relations)).toEqual(["plain", "__proto__"]);
+    expect(user.relations["__proto__"]).toEqual({
+      to: { namespace: "__unbound__", model: "User" },
+      cardinality: "1:1",
+      on: { localFields: ["id"], targetFields: ["id"] },
+      nullable: false,
+    });
+    expect(actions).toEqual({ ["__proto__"]: { onDelete: "cascade", onUpdate: "restrict" } });
+  });
+
+  it("preserves __proto__ and falsy literal defaults as own entries", () => {
+    const contract = build({
+      models: [
+        model("User", {
+          fields: [
+            field("id", STRING),
+            field("__proto__", STRING, { literalDefault: "free" }),
+            field("empty", STRING, { literalDefault: "" }),
+            field("zero", INT, { literalDefault: 0 }),
+            field("disabled", "idb/bool@1", { literalDefault: false }),
+          ],
+        }),
+      ],
+    });
+    const defaults = contract.domain.namespaces["__unbound__"]!.models["User"]!.storage["fieldDefaults"] as Record<
+      string,
+      unknown
+    >;
+
+    expect(Object.hasOwn(defaults, "__proto__")).toBe(true);
+    expect(Object.getPrototypeOf(defaults)).toBe(Object.prototype);
+    expect(defaults).toEqual({ ["__proto__"]: "free", empty: "", zero: 0, disabled: false });
+  });
+
   it("changes the storage hash when the stored shape changes and keeps it otherwise", () => {
     const base = build({ models: [model("User")] });
     const same = build({ models: [model("User")] });
