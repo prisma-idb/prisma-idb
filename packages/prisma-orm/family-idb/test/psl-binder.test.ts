@@ -4,6 +4,7 @@ import type { FieldSymbol, ModelSymbol } from "@prisma/orm-framework/psl-parser"
 import { parse } from "@prisma/orm-framework/psl-parser/syntax";
 import { describe, expect, it } from "vitest";
 import { IDB_EXCLUDE_ATTR, createIdbAttributeBinder, idbAttributeSpecs } from "../src/core/psl-binder";
+import type { ContractProjection } from "../src/core/psl-interpreter";
 import { interpretPslDocumentToIdbContract } from "../src/core/psl-interpreter";
 
 /** Parses `schema` and binds it, with or without the parsed sources. */
@@ -217,11 +218,65 @@ describe("interpretPslDocumentToIdbContract with malformed attributes", () => {
 });
 
 /** Interprets a complete schema and returns the result. */
-function interpret(schema: string) {
+function interpret(schema: string, projection?: ContractProjection) {
   const { document, sources } = parse(schema, "schema.prisma");
   const { symbolTable } = buildSymbolTable({ documents: [document], sources, defaultNamespaceId: "__unbound__" });
-  return interpretPslDocumentToIdbContract(symbolTable, "schema.prisma", { sources });
+  return interpretPslDocumentToIdbContract(symbolTable, "schema.prisma", {
+    sources,
+    ...(projection !== undefined ? { projection } : {}),
+  });
 }
+
+describe("excluded scalar attribute binding", () => {
+  it.each(["secret Json @default([now()]) @idb.exclude", "secret ServerOnly @default() @updatedAt(1) @idb.exclude"])(
+    "skips server-only attributes in the client projection: %s",
+    (field) => {
+      const schema = `model Post {\n  id String @id\n  ${field}\n}`;
+      const client = interpret(schema, "client");
+
+      expect(client.ok).toBe(true);
+      if (!client.ok) return;
+      const model = client.value.domain.namespaces["__unbound__"]!.models["Post"];
+      expect(model).toHaveProperty("fields.id");
+      expect(model).not.toHaveProperty("fields.secret");
+      expect(client.value.execution?.mutations.defaults ?? []).toEqual([]);
+      expect(interpret(schema, "full").ok).toBe(false);
+    }
+  );
+
+  it.each([
+    ["id String @id(sort: [Desc]) @default() @idb.exclude", "IDB_CANNOT_EXCLUDE_KEY_FIELD", "@id(sort: [Desc])"],
+    ["id String @id\n secret String @id @default() @idb.exclude", "IDB_MULTIPLE_ID_FIELDS", undefined],
+    ["id String @id @default() @idb.exclude\n @@id([id])", "IDB_INVALID_ID", undefined],
+    [
+      "id String @id\n secret String @unique(sort: [Desc]) @default() @idb.exclude",
+      "IDB_INDEX_ON_EXCLUDED_FIELD",
+      "@unique(sort: [Desc])",
+    ],
+  ])("retains key/index presence for exclusion validation: %s", (fields, code, attribute) => {
+    const schema = `model Post {\n ${fields}\n}`;
+    const result = interpret(schema, "client");
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.failure.diagnostics.map((diagnostic) => diagnostic.code)).toEqual([code]);
+    if (attribute) {
+      const span = result.failure.diagnostics[0]!.span!;
+      expect(schema.slice(span.start.offset, span.end.offset)).toBe(attribute);
+    }
+  });
+
+  it.each(["full", "client"] as const)("validates every field exclusion marker in the %s projection", (projection) => {
+    const result = interpret(
+      "model Post {\n id String @id\n secret String @idb.exclude @idb.exclude(1)\n}",
+      projection
+    );
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.failure.diagnostics).toHaveLength(1);
+  });
+});
 
 describe("interpretPslDocumentToIdbContract with portable attribute arguments", () => {
   it.each([

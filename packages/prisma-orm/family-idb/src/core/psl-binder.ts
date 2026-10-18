@@ -316,6 +316,8 @@ export interface IdbAttributeBinder {
   model(model: ModelSymbol): BoundModelAttributes;
   /** Binds a field's `@id`, `@unique`, `@updatedAt`, `@default` and `@relation`, reporting failures once. */
   field(model: ModelSymbol, field: FieldSymbol): BoundFieldAttributes;
+  /** Validates exclusion markers and retains only key/index presence for a projected-out scalar. */
+  excludedField(model: ModelSymbol, field: FieldSymbol): Pick<BoundFieldAttributes, "id" | "unique">;
   /**
    * Whether `@@idb.exclude` is present. Only the exclusion attribute is bound, and a malformed one is reported,
    * so an excluded model's other attributes go unread.
@@ -484,6 +486,15 @@ export function createIdbAttributeBinder(input: IdbAttributeBinderInput): IdbAtt
   return {
     model: bindModel,
     field: bindField,
+    excludedField: (model, field) => {
+      for (const marker of field.attributes.filter(({ name }) => name === IDB_EXCLUDE_ATTR)) {
+        interpret(excludeFieldSpec, marker, { ...base, selfModel: model, field });
+      }
+      return {
+        id: field.attributes.find(({ name }) => name === "id")?.span,
+        unique: field.attributes.find(({ name }) => name === "unique")?.span,
+      };
+    },
     isModelExcluded: (model) => {
       const markers = model.attributes.filter(({ name }) => name === IDB_EXCLUDE_ATTR);
       // Validate every marker, not just the first, so a repeated malformed exclusion cannot hide in either projection.

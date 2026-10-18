@@ -212,6 +212,13 @@ function interpretModel(
   const excludedFieldNames = new Set(
     projection === "client" ? modelFields.filter((f) => attributes.isFieldExcluded(f)).map((f) => f.name) : []
   );
+  // Server-only scalars need no attribute binding beyond exclusion validation.
+  // Retain key/index markers so projection cannot hide an invalid exclusion.
+  const excludedScalarAttributes = new Map(
+    modelFields
+      .filter((field) => excludedFieldNames.has(field.name) && !modelNames.has(field.typeName))
+      .map((field) => [field, attributes.excludedField(model, field)])
+  );
   // Derive store name from @@map or lowerFirst(modelName)
   const mapAttr = modelAttributes.map;
   const storeName = mapAttr?.value.name ?? lowerFirst(model.name);
@@ -231,7 +238,9 @@ function interpretModel(
     keyPath = fields.length === 1 ? fields[0]! : fields;
   }
 
-  const idFields = modelFields.filter((f) => attributes.field(model, f).id !== undefined);
+  const idFields = modelFields.filter(
+    (f) => (excludedScalarAttributes.get(f) ?? attributes.field(model, f)).id !== undefined
+  );
   if (idFields.length > 1) {
     diagnostics.push({
       code: "IDB_MULTIPLE_ID_FIELDS",
@@ -259,7 +268,10 @@ function interpretModel(
   idFieldNames ??= [];
   sourceMap.set(
     ["models", model.name, "key"],
-    idModelAttr?.span ?? (idFields[0] ? attributes.field(model, idFields[0]).id! : model.span)
+    idModelAttr?.span ??
+      (idFields[0]
+        ? (excludedScalarAttributes.get(idFields[0]) ?? attributes.field(model, idFields[0])).id!
+        : model.span)
   );
   sourceMap.set(["models", model.name, "storeName"], mapAttr?.span ?? model.span);
 
@@ -287,6 +299,15 @@ function interpretModel(
   const autoIncrementFields: string[] = [];
 
   for (const field of modelFields) {
+    const excludedAttributes = excludedScalarAttributes.get(field);
+    if (excludedAttributes) {
+      if (excludedAttributes.unique) {
+        indexes[`${field.name}_unique`] = { keyPath: field.name, unique: true };
+        sourceMap.set(["models", model.name, "indexes", `${field.name}_unique`], excludedAttributes.unique);
+      }
+      // Its type and other attributes belong to the server projection.
+      continue;
+    }
     const fieldAttributes = attributes.field(model, field);
     if (fieldAttributes.failed) continue;
 
@@ -385,18 +406,6 @@ function interpretModel(
     }
 
     const enumType = enums[field.typeName];
-
-    // Scalar field
-    if (excludedFieldNames.has(field.name)) {
-      if (fieldAttributes.unique) {
-        indexes[`${field.name}_unique`] = { keyPath: field.name, unique: true };
-        sourceMap.set(["models", model.name, "indexes", `${field.name}_unique`], fieldAttributes.unique);
-      }
-      // Dropped from the client contract. Its type isn't validated here —
-      // a server-only field is free to use a type IDB doesn't support at
-      // all, since the client interpreter never needs to represent it.
-      continue;
-    }
 
     // `temporal.updatedAt()` — a namespaced type-constructor call in the type
     // position (no plain type name), shared framework-level PSL grammar
