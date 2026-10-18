@@ -2,10 +2,9 @@ import type { IdbKeyPath, IdbMutationDefaultGeneratorId, IdbReferentialAction } 
 
 /**
  * The plain-data description of an IDB contract that authoring surfaces lower
- * into. Today the TypeScript `defineContract` DSL does; the PSL interpreter is
- * meant to follow. `buildIdbContractFromDefinition` is the only code in this
- * pipeline that turns a definition into a `Contract` and computes the contract
- * hashes.
+ * into. Both the TypeScript `defineContract` DSL and the PSL interpreter use it.
+ * `buildIdbContractFromDefinition` turns a definition into a `Contract` and
+ * computes its hashes for both surfaces.
  *
  * Mirrors upstream's `ContractDefinition` in `@prisma/orm-family-sql/contract-ts`:
  * ordered arrays of named nodes, with everything already resolved. A node holds
@@ -19,6 +18,14 @@ export interface IdbContractDefinition {
   readonly enums: readonly IdbEnumNode[];
   readonly models: readonly IdbModelNode[];
 }
+
+/**
+ * A definition coordinate uses declaration names rather than array offsets so
+ * projection and backrelation resolution cannot invalidate it. Attributes use
+ * their names on fields and their declaration offsets on models, where an
+ * attribute such as `@@index` can occur more than once.
+ */
+export type IdbDefinitionPath = readonly (string | number)[];
 
 /** A named enum. IDB stores every enum member as a string. */
 export interface IdbEnumNode {

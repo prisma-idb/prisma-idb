@@ -197,9 +197,8 @@ function buildExecutionDefaults(models: readonly IdbModelNode[]): ExecutionMutat
  *
  * This is the only place in the definition pipeline that builds the contract's
  * storage, models, roots and enums, and that hashes. `defineContract` goes
- * through it, so equivalent definitions produce the same hashes. The PSL
- * interpreter still assembles and hashes on its own until it lowers into a
- * definition too. Mirrors upstream's `buildSqlContractFromDefinition`.
+ * through it, as does the PSL interpreter, so equivalent definitions produce
+ * the same hashes. Mirrors upstream's `buildSqlContractFromDefinition`.
  *
  * @throws When the assembled contract fails `validateContract`.
  */
