@@ -1,7 +1,7 @@
 import type { ContractSourceDiagnostic, ContractSourceDiagnostics } from "@prisma/orm-framework/config/config-types";
 import type { Contract } from "@prisma/orm-framework/contract/types";
 import { nodePslSpan } from "@prisma/orm-framework/psl-parser";
-import type { FieldSymbol, ModelSymbol, SymbolTable } from "@prisma/orm-framework/psl-parser";
+import type { ModelSymbol, SymbolTable } from "@prisma/orm-framework/psl-parser";
 import { StringLiteralExprAst } from "@prisma/orm-framework/psl-parser/syntax";
 import type { KeyValuePairAst, PslSources } from "@prisma/orm-framework/psl-parser/syntax";
 import type {
@@ -22,6 +22,8 @@ import type {
   IdbModelNode,
   IdbRelationNode,
 } from "./contract-definition";
+import { createIdbAttributeBinder } from "./psl-binder";
+import type { IdbAttributeBinder, IdbDefaultValue } from "./psl-binder";
 import { PslDefinitionSourceMap } from "./psl-definition-source-map";
 import { validateIdbContractDefinition } from "./validate-definition";
 
@@ -37,27 +39,11 @@ const LITERAL_GENERATOR_ID: IdbMutationDefaultGeneratorId = "literal";
 /** A resolved field default before it is attached to its definition field. */
 type FieldExecutionDefault = IdbExecutionDefaultNode & { readonly fieldName: string };
 
-/** Parses `@default(...)`'s positional argument as a literal value: `true`/`false`/a number/a quoted string. */
-function parseDefaultLiteralValue(raw: string): { readonly value: string | number | boolean } | undefined {
-  const t = raw.trim();
-  if (t === "true") return { value: true };
-  if (t === "false") return { value: false };
-  if (/^-?\d+(\.\d+)?$/.test(t)) return { value: Number(t) };
-  const str = parseStringArg(t);
-  if (str !== undefined) return { value: str };
-  return undefined;
-}
-
-/** Parses `@default(...)`'s positional argument as a function call: `name(...)` or bare `name()`. */
-function parseDefaultFunctionCall(raw: string): { readonly name: string; readonly arg?: string } | undefined {
-  const trimmed = raw.trim();
-  const openParen = trimmed.indexOf("(");
-  const closeParen = trimmed.lastIndexOf(")");
-  if (openParen <= 0 || closeParen !== trimmed.length - 1) return undefined;
-  const name = trimmed.slice(0, openParen).trim();
-  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) return undefined;
-  const arg = trimmed.slice(openParen + 1, closeParen).trim();
-  return arg ? { name, arg } : { name };
+/** The literal an `@default(...)` argument spells, or `undefined` when it is an identifier or a call. */
+function defaultLiteralValue(form: IdbDefaultValue["form"]): { readonly value: string | number | boolean } | undefined {
+  return form.kind === "string" || form.kind === "number" || form.kind === "boolean"
+    ? { value: form.value }
+    : undefined;
 }
 
 /** A supported default generator or the reason its declaration was rejected. */
@@ -136,61 +122,9 @@ export function warnDroppedRelation(modelName: string, relationName: string, tar
   );
 }
 
-// ── Attribute arg helpers ──────────────────────────────────────────────────────
-
-/** The raw positional or named argument supplied by a parsed PSL attribute. */
-type AttributeArg = { kind: string; name?: string; value: string };
-
-function findPositionalArg(args: readonly AttributeArg[]): string | undefined {
-  return args.find((a) => a.kind === "positional")?.value;
-}
-
-function findNamedArg(args: readonly AttributeArg[], name: string): string | undefined {
-  return (args.find((a) => a.kind === "named" && a.name === name) as AttributeArg | undefined)?.value;
-}
-
-/** Read a quoted string argument, leaving other argument forms unresolved. */
-function parseStringArg(raw: string | undefined): string | undefined {
-  if (raw === undefined) return undefined;
-  const t = raw.trim();
-  if ((t.startsWith('"') && t.endsWith('"')) || (t.startsWith("'") && t.endsWith("'"))) {
-    return t.slice(1, -1);
-  }
-  return undefined;
-}
-
-/** Read an ordered field-name list from an attribute argument. */
-function parseFieldList(raw: string | undefined): string[] | undefined {
-  if (raw === undefined) return undefined;
-  const t = raw.trim();
-  if (!t.startsWith("[") || !t.endsWith("]")) return undefined;
-  const inner = t.slice(1, -1).trim();
-  if (inner === "") return [];
-  return inner
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
-}
-
 function lowerFirst(s: string): string {
   return s.charAt(0).toLowerCase() + s.slice(1);
 }
-
-// ── Field helpers ──────────────────────────────────────────────────────────────
-
-function hasFieldAttribute(field: FieldSymbol, name: string): boolean {
-  return field.attributes.some((a) => a.name === name);
-}
-
-function getFieldAttribute(field: FieldSymbol, name: string) {
-  return field.attributes.find((a) => a.name === name);
-}
-
-function hasModelAttribute(model: ModelSymbol, name: string): boolean {
-  return model.attributes.some((a) => a.name === name);
-}
-
-const IDB_EXCLUDE_ATTR = "idb.exclude";
 
 /**
  * Reads the stored string of one enum entry: the member name when the entry
@@ -265,18 +199,29 @@ function interpretModel(
   diagnostics: ContractSourceDiagnostic[],
   projection: ContractProjection,
   excludedModelNames: ReadonlySet<string>,
-  sourceMap: PslDefinitionSourceMap
+  sourceMap: PslDefinitionSourceMap,
+  attributes: IdbAttributeBinder
 ): InterpretedModel | undefined {
   sourceMap.recordModel(model);
+  const modelAttributes = attributes.model(model);
+  // The binder already reported why; interpreting past it would only add noise.
+  if (modelAttributes.failed) return undefined;
   const modelFields = Object.values(model.fields);
   // Fields marked `@idb.exclude`. Empty (no-op) in "full" projection — the
   // attribute only takes effect when projecting the client contract.
   const excludedFieldNames = new Set(
-    projection === "client" ? modelFields.filter((f) => hasFieldAttribute(f, IDB_EXCLUDE_ATTR)).map((f) => f.name) : []
+    projection === "client" ? modelFields.filter((f) => attributes.isFieldExcluded(f)).map((f) => f.name) : []
+  );
+  // Server-only scalars need no attribute binding beyond exclusion validation.
+  // Retain key/index markers so projection cannot hide an invalid exclusion.
+  const excludedScalarAttributes = new Map(
+    modelFields
+      .filter((field) => excludedFieldNames.has(field.name) && !modelNames.has(field.typeName))
+      .map((field) => [field, attributes.excludedField(model, field)])
   );
   // Derive store name from @@map or lowerFirst(modelName)
-  const mapAttr = model.attributes.find((a) => a.name === "map");
-  const storeName = parseStringArg(findPositionalArg(mapAttr?.args ?? [])) ?? lowerFirst(model.name);
+  const mapAttr = modelAttributes.map;
+  const storeName = mapAttr?.value.name ?? lowerFirst(model.name);
 
   // Find the keyPath: @id field-level attribute OR @@id([field, ...]) model-level.
   // `idFieldNames` is always the ordered list of key member fields (length 1
@@ -286,23 +231,16 @@ function interpretModel(
   let keyPath: IdbKeyPath | undefined;
   let idFieldNames: string[] | undefined;
 
-  const idModelAttr = model.attributes.find((a) => a.name === "id");
+  const idModelAttr = modelAttributes.id;
   if (idModelAttr) {
-    const fields = parseFieldList(findPositionalArg(idModelAttr.args));
-    if (!fields) {
-      diagnostics.push({
-        code: "IDB_INVALID_ID",
-        message: `Model "${model.name}" @@id([…]) is missing a field list.`,
-        sourceId,
-        span: idModelAttr.span,
-      });
-      return undefined;
-    }
+    const fields = [...idModelAttr.value.fields];
     idFieldNames = fields;
     keyPath = fields.length === 1 ? fields[0]! : fields;
   }
 
-  const idFields = modelFields.filter((f) => hasFieldAttribute(f, "id"));
+  const idFields = modelFields.filter(
+    (f) => (excludedScalarAttributes.get(f) ?? attributes.field(model, f)).id !== undefined
+  );
   if (idFields.length > 1) {
     diagnostics.push({
       code: "IDB_MULTIPLE_ID_FIELDS",
@@ -330,7 +268,10 @@ function interpretModel(
   idFieldNames ??= [];
   sourceMap.set(
     ["models", model.name, "key"],
-    idModelAttr?.span ?? (idFields[0] ? getFieldAttribute(idFields[0], "id")!.span : model.span)
+    idModelAttr?.span ??
+      (idFields[0]
+        ? (excludedScalarAttributes.get(idFields[0]) ?? attributes.field(model, idFields[0])).id!
+        : model.span)
   );
   sourceMap.set(["models", model.name, "storeName"], mapAttr?.span ?? model.span);
 
@@ -339,26 +280,13 @@ function interpretModel(
 
   // @@index([fields]) / @@unique([fields]) model attribute — `fields` may be
   // a single field or an ordered list for a compound (multi-field) index.
-  for (const attr of model.attributes) {
-    if (attr.name !== "index" && attr.name !== "unique") continue;
-    const isUnique = attr.name === "unique";
-    const fieldListRaw = findPositionalArg(attr.args);
-    const fields = parseFieldList(fieldListRaw);
-    if (!fields) {
-      diagnostics.push({
-        code: "IDB_INVALID_INDEX",
-        message: `Model "${model.name}" @@${attr.name} is missing a field list.`,
-        sourceId,
-        span: attr.span,
-      });
-      continue;
-    }
-    const nameRaw = findNamedArg(attr.args, "name") ?? findNamedArg(attr.args, "map");
+  for (const index of modelAttributes.indexes) {
+    const fields = [...index.fields];
     const defaultName = fields.length === 1 ? fields[0]! : fields.join("_");
-    const indexName = parseStringArg(nameRaw) ?? (isUnique ? `${defaultName}_unique` : defaultName);
+    const indexName = index.name ?? (index.unique ? `${defaultName}_unique` : defaultName);
     const keyPath: IdbKeyPath = fields.length === 1 ? fields[0]! : fields;
-    indexes[indexName] = { keyPath, unique: isUnique };
-    sourceMap.set(["models", model.name, "indexes", indexName], attr.span);
+    indexes[indexName] = { keyPath, unique: index.unique };
+    sourceMap.set(["models", model.name, "indexes", indexName], index.span);
   }
 
   // ── Walk fields ──────────────────────────────────────────────────────────────
@@ -371,6 +299,18 @@ function interpretModel(
   const autoIncrementFields: string[] = [];
 
   for (const field of modelFields) {
+    const excludedAttributes = excludedScalarAttributes.get(field);
+    if (excludedAttributes) {
+      if (excludedAttributes.unique) {
+        indexes[`${field.name}_unique`] = { keyPath: field.name, unique: true };
+        sourceMap.set(["models", model.name, "indexes", `${field.name}_unique`], excludedAttributes.unique);
+      }
+      // Its type and other attributes belong to the server projection.
+      continue;
+    }
+    const fieldAttributes = attributes.field(model, field);
+    if (fieldAttributes.failed) continue;
+
     // Relation list field (backrelation) — skip for now, resolved in second pass
     if (field.list && modelNames.has(field.typeName)) {
       if (excludedModelNames.has(field.typeName)) {
@@ -382,7 +322,7 @@ function interpretModel(
     }
 
     // FK-side relation field: non-list, type is a model, has @relation
-    const relationAttr = getFieldAttribute(field, "relation");
+    const relationAttr = fieldAttributes.relation;
     if (!field.list && modelNames.has(field.typeName) && relationAttr) {
       if (excludedModelNames.has(field.typeName)) {
         // Same reasoning as the backrelation case above: drop the relation
@@ -391,11 +331,9 @@ function interpretModel(
         warnDroppedRelation(model.name, field.name, field.typeName);
         continue;
       }
-      const args = relationAttr.args;
-      const localFieldsRaw = findNamedArg(args, "fields");
-      const targetFieldsRaw = findNamedArg(args, "references");
-      const localFields = parseFieldList(localFieldsRaw);
-      const targetFields = parseFieldList(targetFieldsRaw);
+      const { references, onDelete: onDeleteRaw, onUpdate: onUpdateRaw } = relationAttr.value;
+      const localFields = relationAttr.value.fields?.slice();
+      const targetFields = references?.slice();
 
       if (!localFields || !targetFields) {
         diagnostics.push({
@@ -406,8 +344,7 @@ function interpretModel(
         });
         continue;
       }
-      const onDeleteRaw = findNamedArg(args, "onDelete");
-      const onDelete = onDeleteRaw ? REFERENTIAL_ACTION_MAP[onDeleteRaw.trim()] : undefined;
+      const onDelete = onDeleteRaw ? REFERENTIAL_ACTION_MAP[onDeleteRaw] : undefined;
 
       if (onDeleteRaw && onDelete === undefined) {
         diagnostics.push({
@@ -418,8 +355,7 @@ function interpretModel(
         });
       }
 
-      const onUpdateRaw = findNamedArg(args, "onUpdate");
-      const onUpdate = onUpdateRaw ? REFERENTIAL_ACTION_MAP[onUpdateRaw.trim()] : undefined;
+      const onUpdate = onUpdateRaw ? REFERENTIAL_ACTION_MAP[onUpdateRaw] : undefined;
 
       if (onUpdateRaw && onUpdate === undefined) {
         diagnostics.push({
@@ -470,21 +406,6 @@ function interpretModel(
     }
 
     const enumType = enums[field.typeName];
-
-    // Scalar field
-    if (excludedFieldNames.has(field.name)) {
-      if (hasFieldAttribute(field, "unique")) {
-        indexes[`${field.name}_unique`] = { keyPath: field.name, unique: true };
-        sourceMap.set(
-          ["models", model.name, "indexes", `${field.name}_unique`],
-          getFieldAttribute(field, "unique")!.span
-        );
-      }
-      // Dropped from the client contract. Its type isn't validated here —
-      // a server-only field is free to use a type IDB doesn't support at
-      // all, since the client interpreter never needs to represent it.
-      continue;
-    }
 
     // `temporal.updatedAt()` — a namespaced type-constructor call in the type
     // position (no plain type name), shared framework-level PSL grammar
@@ -542,8 +463,8 @@ function interpretModel(
     // `@updatedAt` (classic Prisma spelling) — same runtime semantics as
     // `temporal.updatedAt()` above, just a different PSL surface for the
     // same "fires on both create and update" mutation default.
-    const updatedAtAttr = getFieldAttribute(field, "updatedAt");
-    const defaultAttr = getFieldAttribute(field, "default");
+    const updatedAtAttr = fieldAttributes.updatedAt;
+    const defaultAttr = fieldAttributes.default;
     if (defaultAttr) {
       sourceMap.set(["models", model.name, "fields", field.name, "literalDefault"], defaultAttr.span);
       sourceMap.set(["models", model.name, "fields", field.name, "executionDefault"], defaultAttr.span);
@@ -566,16 +487,7 @@ function interpretModel(
         onUpdate: { id: TIMESTAMP_NOW_GENERATOR_ID },
       });
     } else if (defaultAttr) {
-      const raw = findPositionalArg(defaultAttr.args);
-      if (raw === undefined) {
-        diagnostics.push({
-          code: "IDB_INVALID_DEFAULT_VALUE",
-          message: `Field "${model.name}.${field.name}" @default(...) requires a positional argument.`,
-          sourceId,
-          span: defaultAttr.span,
-        });
-        continue;
-      }
+      const { raw, form } = defaultAttr.value;
 
       const enumMember = enumType === undefined ? undefined : enumType.members.find((member) => raw === member.name);
 
@@ -587,7 +499,7 @@ function interpretModel(
         });
         fieldDefaults[field.name] = value;
       } else {
-        const literal = parseDefaultLiteralValue(raw);
+        const literal = defaultLiteralValue(form);
         if (literal) {
           fieldExecutionDefaults.push({
             fieldName: field.name,
@@ -599,8 +511,7 @@ function interpretModel(
           // that `SetDefault` may only target a scalar/literal default.
           fieldDefaults[field.name] = literal.value;
         } else {
-          const call = parseDefaultFunctionCall(raw);
-          if (!call) {
+          if (form.kind !== "call") {
             diagnostics.push({
               code: "IDB_INVALID_DEFAULT_VALUE",
               message: `Field "${model.name}.${field.name}" has unsupported default value "${raw}".`,
@@ -610,13 +521,14 @@ function interpretModel(
             continue;
           }
 
-          if (call.name === "autoincrement") {
+          if (form.name === "autoincrement") {
             autoIncrementFields.push(field.name);
             autoIncrement = true;
             continue;
           }
 
-          const resolution = resolveDefaultFunctionGeneratorId(call.name, call.arg);
+          const callArg = form.args.length > 0 ? form.args.join(", ") : undefined;
+          const resolution = resolveDefaultFunctionGeneratorId(form.name, callArg);
           if (!resolution.ok) {
             diagnostics.push({
               code:
@@ -625,8 +537,8 @@ function interpretModel(
                   : "IDB_INVALID_DEFAULT_FUNCTION_ARGUMENT",
               message:
                 resolution.reason === "unknown-function"
-                  ? `Field "${model.name}.${field.name}" uses unsupported default function "${call.name}(...)". Supported: now(), uuid(), uuid(7), cuid(), autoincrement().`
-                  : `Field "${model.name}.${field.name}" — @default(${call.name}(${call.arg ?? ""})) has an unsupported argument.`,
+                  ? `Field "${model.name}.${field.name}" uses unsupported default function "${form.name}(...)". Supported: now(), uuid(), uuid(7), cuid(), autoincrement().`
+                  : `Field "${model.name}.${field.name}" — @default(${form.name}(${callArg ?? ""})) has an unsupported argument.`,
               sourceId,
               span: defaultAttr.span,
             });
@@ -642,16 +554,13 @@ function interpretModel(
     }
 
     // @unique field attribute → unique index
-    if (hasFieldAttribute(field, "unique")) {
+    if (fieldAttributes.unique) {
       const existingKey = Object.entries(indexes).find(([, idx]) => idx.keyPath === field.name)?.[0];
       if (existingKey && !indexes[existingKey]!.unique)
         indexes[existingKey] = { ...indexes[existingKey]!, unique: true };
       if (!existingKey) {
         indexes[`${field.name}_unique`] = { keyPath: field.name, unique: true };
-        sourceMap.set(
-          ["models", model.name, "indexes", `${field.name}_unique`],
-          getFieldAttribute(field, "unique")!.span
-        );
+        sourceMap.set(["models", model.name, "indexes", `${field.name}_unique`], fieldAttributes.unique);
       }
     }
   }
@@ -729,6 +638,7 @@ export function lowerPslDocumentToIdbContractDefinition(
   const diagnostics: ContractSourceDiagnostic[] = [];
   const sourceMap = new PslDefinitionSourceMap();
   const enums = interpretEnums(table, sourceId, options?.sources, diagnostics, sourceMap);
+  const attributes = createIdbAttributeBinder({ table, sourceId, sources: options?.sources, diagnostics });
 
   // IDB does not support namespace blocks
   const explicitNamespaces = Object.values(table.namespaces).filter((ns) => ns !== table.defaultNamespace);
@@ -757,9 +667,7 @@ export function lowerPslDocumentToIdbContractDefinition(
   // set (ADR 013 §"Why we don't cascade on requiredness"); a surviving
   // model's relation into this set is dropped, not cascaded.
   const excludedModelNames = new Set(
-    projection === "client"
-      ? allModelsUnprojected.filter((m) => hasModelAttribute(m, IDB_EXCLUDE_ATTR)).map((m) => m.name)
-      : []
+    projection === "client" ? allModelsUnprojected.filter((m) => attributes.isModelExcluded(m)).map((m) => m.name) : []
   );
 
   // The models actually interpreted — excluded models are dropped entirely
@@ -781,7 +689,8 @@ export function lowerPslDocumentToIdbContractDefinition(
       diagnostics,
       projection,
       excludedModelNames,
-      sourceMap
+      sourceMap,
+      attributes
     );
     if (result) {
       interpretedByName.set(model.name, result);
