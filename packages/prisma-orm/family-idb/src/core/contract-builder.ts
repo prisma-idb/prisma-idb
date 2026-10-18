@@ -1,6 +1,5 @@
 import type { Contract } from "@prisma/orm-framework/contract/types";
 import type { IdbKeyPath, IdbReferentialAction, IdbStorage } from "@prisma-idb/target-idb/pack";
-import { keyPathFields } from "@prisma-idb/target-idb/pack";
 import { buildIdbContractFromDefinition } from "./build-contract-from-definition";
 import type {
   IdbContractDefinition,
@@ -11,7 +10,9 @@ import type {
   IdbRelationNode,
 } from "./contract-definition";
 import type { ContractProjection } from "./psl-interpreter";
-import { isValidIdbKeyCodec, literalValueMatchesCodec, warnDroppedRelation } from "./psl-interpreter";
+import { warnDroppedRelation } from "./psl-interpreter";
+import { IdbContractError } from "./contract-error";
+import { validateIdbContractDefinition } from "./validate-definition";
 
 // ── Field type system ─────────────────────────────────────────────────────────
 
@@ -118,6 +119,12 @@ export type DefineContractOptions = {
   readonly projection?: ContractProjection;
 };
 
+/** Internal source names survive projection so the shared validator can check exclusions. */
+type ProjectedModelDef = ModelDef<string> & {
+  readonly declaredFields?: readonly string[];
+  readonly relationFields?: readonly string[];
+};
+
 /**
  * Drops `exclude: true` models and `excludeFields` entries for the client
  * projection (ADR 012). Any relation a survivor still has to an excluded
@@ -126,64 +133,24 @@ export type DefineContractOptions = {
  * don't cascade on requiredness"). The underlying FK scalar field (if any)
  * is kept, orphaned but inert.
  */
-function projectModelsForClient(models: Record<string, ModelDef<string>>): Record<string, ModelDef<string>> {
+function projectModelsForClient(models: Record<string, ModelDef<string>>): Record<string, ProjectedModelDef> {
   const excludedModelNames = new Set(
     Object.entries(models)
       .filter(([, def]) => def.exclude === true)
       .map(([name]) => name)
   );
 
-  const result: Record<string, ModelDef<string>> = {};
+  const result: Record<string, ProjectedModelDef> = {};
 
   for (const [modelName, def] of Object.entries(models)) {
     if (excludedModelNames.has(modelName)) continue;
 
     const excludedFields = new Set(def.excludeFields ?? []);
-    const keyFields = keyPathFields(def.key);
-
-    const excludedKeyField = keyFields.find((f) => excludedFields.has(f));
-    if (excludedKeyField !== undefined) {
-      throw new Error(
-        `defineContract: model "${modelName}" excludes its own key field "${excludedKeyField}" — the client contract needs a primary key for every included model.`
-      );
-    }
-
-    for (const excludedField of excludedFields) {
-      if (keyFields.includes(excludedField)) continue;
-      if (!(excludedField in def.fields)) {
-        throw new Error(
-          `defineContract: model "${modelName}" excludeFields references unknown field "${excludedField}" — it is not declared in "fields".`
-        );
-      }
-    }
-
-    for (const [indexName, idx] of Object.entries(def.indexes ?? {})) {
-      const excludedIndexField = keyPathFields(idx.keyPath).find((f) => excludedFields.has(f));
-      if (excludedIndexField !== undefined) {
-        throw new Error(
-          `defineContract: model "${modelName}" index "${indexName}" references excluded field "${excludedIndexField}". Remove the index or the exclusion.`
-        );
-      }
-    }
-
     const relations: Record<string, RelationDef> = {};
     for (const [relName, rel] of Object.entries(def.relations ?? {})) {
       if (excludedModelNames.has(rel.to)) {
         warnDroppedRelation(modelName, relName, rel.to);
         continue;
-      }
-      const excludedLocalField = rel.on.local.find((f) => excludedFields.has(f));
-      if (excludedLocalField !== undefined) {
-        throw new Error(
-          `defineContract: model "${modelName}" field "${excludedLocalField}" backs relation "${relName}" and cannot be excluded independently — field-level FK exclusion isn't supported (ADR 013 only handles relations pointing at a whole-model @@idb.exclude). Exclude the whole model instead, or remove the exclusion.`
-        );
-      }
-      const targetExcludedFields = new Set(models[rel.to]?.excludeFields ?? []);
-      const excludedTargetField = rel.on.target.find((f) => targetExcludedFields.has(f));
-      if (excludedTargetField !== undefined) {
-        throw new Error(
-          `defineContract: model "${modelName}" relation "${relName}" references excluded field "${rel.to}.${excludedTargetField}" — field-level FK exclusion isn't supported (ADR 013 only handles relations pointing at a whole-model @@idb.exclude). Exclude the whole model instead, or remove the exclusion.`
-        );
       }
       relations[relName] = rel;
     }
@@ -194,7 +161,13 @@ function projectModelsForClient(models: Record<string, ModelDef<string>>): Recor
       fields[fieldName] = spec;
     }
 
-    result[modelName] = { ...def, fields, relations };
+    result[modelName] = {
+      ...def,
+      fields,
+      relations,
+      declaredFields: Object.keys(def.fields),
+      relationFields: Object.keys(def.relations ?? {}),
+    };
   }
 
   return result;
@@ -221,186 +194,20 @@ function parseFieldSpec(spec: string): ParsedFieldSpec {
   };
 }
 
-/** Resolve scalar or enum field declarations to their stored codec. */
-function resolveFieldCodecId(def: ModelDef<string>, fieldName: string, enums: EnumDefs): string | undefined {
-  const spec = def.fields[fieldName];
-  if (spec === undefined) return undefined;
-  const { typeName } = parseFieldSpec(spec);
-  return typeName in enums ? SCALAR_TO_CODEC_ID.String : SCALAR_TO_CODEC_ID[typeName as PrismaScalarType];
-}
-
-/**
- * Mirrors `psl-interpreter.ts`'s `IDB_INVALID_KEY_TYPE`/`IDB_INVALID_INDEX_KEY_TYPE`
- * diagnostics for the TS authoring surface, which has no diagnostics array —
- * this DSL fails fast via `throw`, matching every other check in this file.
- *
- * `multiEntry` indexes are skipped: their key-validity depends on the
- * *elements* of an array value, which this scalar-type system can't express
- * (a `multiEntry` index only makes sense over a `Json`-typed field holding an
- * array — the one case this file can't statically validate either way).
- */
-function validateModelKeyAndIndexes(modelName: string, def: ModelDef<string>, enums: EnumDefs): void {
-  const keyFields = keyPathFields(def.key);
-  if (keyFields.length === 0) {
-    throw new Error(`defineContract: model "${modelName}" "key" must name at least one field.`);
-  }
-  if (new Set(keyFields).size !== keyFields.length) {
-    throw new Error(`defineContract: model "${modelName}" "key" [${keyFields.join(", ")}] repeats a field name.`);
-  }
-
-  for (const keyField of keyFields) {
-    if (!(keyField in def.fields)) {
-      throw new Error(`defineContract: model "${modelName}" key field "${keyField}" is not declared in "fields".`);
-    }
-    if (def.fields[keyField] !== undefined && parseFieldSpec(def.fields[keyField]).nullable) {
-      throw new Error(
-        `defineContract: model "${modelName}" key field "${keyField}" is nullable ("${def.fields[keyField]}") — the primary key cannot be nullable.`
-      );
-    }
-    const keyCodec = resolveFieldCodecId(def, keyField, enums);
-    if (keyCodec !== undefined && !isValidIdbKeyCodec(keyCodec)) {
-      throw new Error(
-        `defineContract: model "${modelName}" key field "${keyField}" has type "${keyCodec}", which IndexedDB cannot use as a key. Every write would throw (DataError extracting the primary key). Use String, Int, Float, DateTime, Decimal, or Bytes instead.`
-      );
-    }
-  }
-
-  for (const [indexName, idx] of Object.entries(def.indexes ?? {})) {
-    const indexFields = keyPathFields(idx.keyPath);
-    if (indexFields.length === 0) {
-      throw new Error(
-        `defineContract: model "${modelName}" index "${indexName}" "keyPath" must name at least one field.`
-      );
-    }
-    if (new Set(indexFields).size !== indexFields.length) {
-      throw new Error(
-        `defineContract: model "${modelName}" index "${indexName}" "keyPath" [${indexFields.join(", ")}] repeats a field name.`
-      );
-    }
-    if (idx.multiEntry && indexFields.length > 1) {
-      throw new Error(
-        `defineContract: model "${modelName}" index "${indexName}" combines "multiEntry: true" with a compound "keyPath" [${indexFields.join(", ")}] — IndexedDB rejects this combination (InvalidAccessError). multiEntry only applies to a single array-valued field.`
-      );
-    }
-    for (const indexField of indexFields) {
-      if (!(indexField in def.fields)) {
-        throw new Error(
-          `defineContract: model "${modelName}" index "${indexName}" references field "${indexField}", which is not declared in "fields".`
-        );
-      }
-      if (idx.multiEntry) continue;
-      const fieldCodec = resolveFieldCodecId(def, indexField, enums);
-      if (fieldCodec === undefined || isValidIdbKeyCodec(fieldCodec)) continue;
-      throw new Error(
-        `defineContract: model "${modelName}" index "${indexName}" is keyed on "${indexField}" (type "${fieldCodec}"), which IndexedDB cannot use as an index key. Records are silently omitted from the index on write, and any query against it throws at runtime. Use String, Int, Float, DateTime, Decimal, or Bytes instead.`
-      );
-    }
-  }
-
-  for (const [fieldName, value] of Object.entries(def.fieldDefaults ?? {})) {
-    if (!(fieldName in def.fields)) {
-      throw new Error(
-        `defineContract: model "${modelName}" fieldDefaults references field "${fieldName}", which is not declared in "fields".`
-      );
-    }
-    // Mirrors PSL's `literalValueMatchesCodec` check on `@default(...)` — a
-    // literal default's JS type must match the field's declared type, and
-    // only String/Int/Float/Decimal/Boolean fields accept a literal default
-    // at all (matching `ModelDef.fieldDefaults`'s own `string | number |
-    // boolean` value type).
-    const codec = resolveFieldCodecId(def, fieldName, enums);
-    if (codec !== undefined && !literalValueMatchesCodec(value, codec)) {
-      throw new Error(
-        `defineContract: model "${modelName}" fieldDefaults["${fieldName}"] is a ${typeof value} value, but field "${fieldName}" has type "${def.fields[fieldName]}" — the literal default's JS type must match the field's declared type.`
-      );
-    }
-    const spec = def.fields[fieldName];
-    if (spec !== undefined) {
-      const parsedSpec = parseFieldSpec(spec);
-      const enumValues = enums[parsedSpec.typeName];
-      if (enumValues !== undefined) {
-        if (parsedSpec.many) {
-          throw new Error(
-            `defineContract: model "${modelName}" fieldDefaults["${fieldName}"] is an enum list; list defaults are not supported by IDB.`
-          );
-        }
-        if (typeof value !== "string" || !enumValues.includes(value)) {
-          throw new Error(
-            `defineContract: model "${modelName}" fieldDefaults["${fieldName}"] is not a declared value of enum "${parsedSpec.typeName}".`
-          );
-        }
-      }
-    }
-  }
-}
-
-// ── Validate no conflicting reciprocal relation-action declarations ───────────
-
-function sameFieldList(a: readonly string[], b: readonly string[]): boolean {
-  return a.length === b.length && a.every((field, index) => field === b[index]);
-}
-
-/**
- * `onDelete`/`onUpdate` may be declared on either side of a relation — unlike
- * PSL (which only permits it on the FK-owning/`N:1` side), TS-DSL relation
- * entries are self-contained and don't require a paired reciprocal
- * declaration at all (see the `posts`-only test below). But if BOTH a
- * relation and its reciprocal declare the *same* kind of action, only the
- * side enforcement actually walks from is ever read at runtime
- * (`getReferentialActionForRelation` in `client-idb/src/core/mutation-executor.ts`
- * checks the direct side first and only falls back to the inverse when the
- * direct side is silent) — so the other side's declaration would be silently
- * ignored. That's a footgun, not a legitimate "pick one" scenario, so it's
- * rejected here instead.
- */
-function validateNoConflictingRelationActions(models: Record<string, ModelDef<string>>): void {
-  for (const [modelName, def] of Object.entries(models)) {
-    for (const [relName, rel] of Object.entries(def.relations ?? {})) {
-      const relatedDef = models[rel.to];
-      if (!relatedDef) continue;
-      for (const [inverseRelName, inverseRel] of Object.entries(relatedDef.relations ?? {})) {
-        if (inverseRel.to !== modelName) continue;
-        // Mirrors the reciprocal-match predicate in `getReferentialActionForRelation`
-        // (client-idb/src/core/mutation-executor.ts) — keep these in sync. Matching on
-        // fields (not just `to`) is required: two distinct relations to the same model
-        // (e.g. `Message.sender` / `Message.recipient` both -> `User`) are not reciprocals
-        // of each other and must not be flagged.
-        if (!sameFieldList(inverseRel.on.local, rel.on.target)) continue;
-        if (!sameFieldList(inverseRel.on.target, rel.on.local)) continue;
-
-        for (const kind of ["onDelete", "onUpdate"] as const) {
-          if (rel[kind] !== undefined && inverseRel[kind] !== undefined) {
-            throw new Error(
-              `defineContract: relation "${modelName}.${relName}" and its reciprocal "${rel.to}.${inverseRelName}" ` +
-                `both declare "${kind}". Only one side is ever read at runtime (whichever side enforcement's cascade ` +
-                `walk starts from — the "1:N" side, or the non-owning "1:1" side); the other declaration would be ` +
-                `silently ignored. Declare "${kind}" on one side only.`
-            );
-          }
-        }
-      }
-    }
-  }
-}
-
 // ── Lowering into the shared contract definition ──────────────────────────────
 
 /**
- * Validate named string enum members and lower them to enum nodes. Runs on
+ * Lower named string enum members and check TS-only input shapes. Runs on
  * the complete enum map, so a client projection still rejects an invalid enum
  * that only excluded models use.
  */
 function lowerEnums(enums: EnumDefs): IdbEnumNode[] {
   return Object.entries(enums).map(([name, values]) => {
-    if (name in SCALAR_TO_CODEC_ID) {
+    // Preserve the existing TS input restriction on inherited object keys.
+    if (name in SCALAR_TO_CODEC_ID && !Object.hasOwn(SCALAR_TO_CODEC_ID, name)) {
       throw new Error(`defineContract: enum "${name}" conflicts with the built-in scalar type of the same name.`);
     }
-    if (values.length === 0) {
-      throw new Error(`defineContract: enum "${name}" must declare at least one value.`);
-    }
-    if (new Set(values).size !== values.length) {
-      throw new Error(`defineContract: enum "${name}" repeats a value. Enum values must be unique.`);
-    }
+    if (!Array.isArray(values)) new Set(values);
     return { name, members: values.map((value) => ({ name: value, value })) };
   });
 }
@@ -424,20 +231,12 @@ function lowerField(
   literalDefault: string | number | boolean | undefined
 ): IdbFieldNode {
   const { typeName, nullable, many } = parseFieldSpec(spec);
-  const isEnum = enums[typeName] !== undefined;
+  const isEnum = Object.hasOwn(enums, typeName);
   const codecId = isEnum ? SCALAR_TO_CODEC_ID.String : SCALAR_TO_CODEC_ID[typeName as PrismaScalarType];
-  if (codecId === undefined) {
-    throw new Error(`Unknown field type "${typeName}" for field "${name}"`);
-  }
-  if (many && !isEnum) {
-    throw new Error(`Field "${name}" has list type "${spec}". Only enum fields can be lists.`);
-  }
-  if (many && nullable) {
-    throw new Error(`Field "${name}" has type "${spec}". A list field cannot be optional.`);
-  }
   return {
     name,
-    codecId,
+    codecId: codecId ?? "",
+    ...(codecId === undefined ? { unsupportedType: typeName } : {}),
     nullable,
     list: many,
     ...(isEnum ? { enumName: typeName } : {}),
@@ -483,10 +282,30 @@ function ownLiteralDefault(def: ModelDef<string>, fieldName: string): string | n
 }
 
 /** Translate one model declaration into a model node. */
-function lowerModel(modelName: string, def: ModelDef<string>, enums: EnumDefs): IdbModelNode {
+function lowerModel(modelName: string, def: ProjectedModelDef, enums: EnumDefs): IdbModelNode {
+  for (const name of Object.keys(def.fieldDefaults ?? {})) {
+    if (!Object.hasOwn(def.fields, name) && !def.excludeFields?.includes(name)) {
+      throw new IdbContractError([
+        {
+          code: "IDB_INVALID_DEFAULT_VALUE",
+          message: `Model "${modelName}" fieldDefaults references field "${name}", which is not declared in "fields".`,
+          at: ["models", modelName, "fields", name, "literalDefault"],
+        },
+      ]);
+    }
+  }
   return {
     modelName,
     storeName: def.store,
+    ...(def.declaredFields
+      ? {
+          exclusions: {
+            fields: def.excludeFields ?? [],
+            declaredFields: def.declaredFields,
+            relationFields: def.relationFields ?? [],
+          },
+        }
+      : {}),
     key: def.key,
     // The TS DSL has no way to declare a key generator yet.
     autoIncrement: false,
@@ -506,7 +325,7 @@ function lowerModel(modelName: string, def: ModelDef<string>, enums: EnumDefs): 
  * Applies the client projection first, so every check and the definition see
  * only the models and fields the projected contract keeps.
  *
- * @throws On the first invalid enum, key, index, default, relation or field.
+ * @throws {IdbContractError} With every shared diagnostic. TS input shape errors stay in this front end.
  */
 export function buildIdbContractDefinition(
   input: DefineContractInput<EnumDefs>,
@@ -514,27 +333,28 @@ export function buildIdbContractDefinition(
 ): IdbContractDefinition {
   const projection: ContractProjection = options?.projection ?? "full";
   const enums: EnumDefs = input.enums ?? {};
-  const models: Record<string, ModelDef<string>> = projection === "client"
-    ? projectModelsForClient(input.models)
-    : input.models;
+  const models: Record<string, ProjectedModelDef> =
+    projection === "client" ? projectModelsForClient(input.models) : input.models;
 
   const enumNodes = lowerEnums(enums);
 
-  for (const [modelName, def] of Object.entries(models)) {
-    validateModelKeyAndIndexes(modelName, def, enums);
-  }
-  validateNoConflictingRelationActions(models);
-
-  return {
-    enums: projection === "client" ? keepReferencedEnums(enumNodes, models) : enumNodes,
+  const definition = {
+    enums: enumNodes,
     models: Object.entries(models).map(([modelName, def]) => lowerModel(modelName, def, enums)),
   };
+  const diagnostics = validateIdbContractDefinition(definition);
+  if (diagnostics.length > 0) throw new IdbContractError(diagnostics);
+  return { ...definition, enums: projection === "client" ? keepReferencedEnums(enumNodes, models) : enumNodes };
 }
 
 // ── defineContract ────────────────────────────────────────────────────────────
 
 /**
  * Builds a typed IDB contract from a developer-friendly model definition.
+ *
+ * @throws {IdbContractError} Lists every shared diagnostic with its `IDB_*` code.
+ * Unlike upstream TS authoring, which throws the first `CONTRACT.*` error,
+ * IDB collects all definition diagnostics before throwing.
  *
  * This is the TypeScript-first (no-emit) authoring path per ADR 006. The
  * returned contract object can be passed directly to `createIdbClient()` or

@@ -1,5 +1,5 @@
 {
   "contract": null,
-  "error": "defineContract: model \"User\" excludeFields references unknown field \"posts\" — it is not declared in \"fields\".",
+  "error": "IDB_EXCLUDE_ON_RELATION_FIELD_UNSUPPORTED: Field \"User.posts\" is a relation field and cannot be marked @idb.exclude directly. Exclude the target model with @@idb.exclude to drop the relation, or exclude a plain scalar field.",
   "hashes": null
 }

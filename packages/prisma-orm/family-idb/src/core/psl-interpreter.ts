@@ -23,6 +23,7 @@ import type {
   IdbRelationNode,
 } from "./contract-definition";
 import { PslDefinitionSourceMap } from "./psl-definition-source-map";
+import { validateIdbContractDefinition } from "./validate-definition";
 
 /** The one `temporal.*` type-constructor path IDB currently understands. */
 const TEMPORAL_UPDATED_AT_PATH = ["temporal", "updatedAt"] as const;
@@ -45,30 +46,6 @@ function parseDefaultLiteralValue(raw: string): { readonly value: string | numbe
   const str = parseStringArg(t);
   if (str !== undefined) return { value: str };
   return undefined;
-}
-
-/**
- * `true` if a parsed `@default(<literal>)` value's JS type matches what
- * `codecId` expects (a literal's JS type must match the field's declared
- * type — a string literal on an Int field, or vice versa, is a mismatch).
- * Declared as a function (not a `codecId → JS type` const lookup) since
- * `SCALAR_TO_CODEC_ID` — which every `codecId` here is sourced from — is
- * declared further down this module; a top-level const initializer would hit
- * the temporal dead zone, but a function body only evaluates when called.
- */
-export function literalValueMatchesCodec(value: string | number | boolean, codecId: string): boolean {
-  switch (codecId) {
-    case SCALAR_TO_CODEC_ID["String"]:
-      return typeof value === "string";
-    case SCALAR_TO_CODEC_ID["Int"]:
-    case SCALAR_TO_CODEC_ID["Float"]:
-    case SCALAR_TO_CODEC_ID["Decimal"]:
-      return typeof value === "number";
-    case SCALAR_TO_CODEC_ID["Boolean"]:
-      return typeof value === "boolean";
-    default:
-      return false;
-  }
 }
 
 /** Parses `@default(...)`'s positional argument as a function call: `name(...)` or bare `name()`. */
@@ -119,32 +96,6 @@ export const SCALAR_TO_CODEC_ID: Record<string, string> = {
   Json: "idb/json@1",
   Bytes: "idb/bytes@1",
 };
-
-// ── IDB valid-key codec set ─────────────────────────────────────────────────────
-
-/**
- * Codecs excluded from IndexedDB's "valid key" algorithm
- * (https://w3c.github.io/IndexedDB/#key-construct: number, string, Date,
- * buffer source, or Array — nothing else).
- *
- * - `idb/bool@1` — boolean is not, and has never been, a valid IDB key type.
- * - `idb/bigint@1` — bigint round-trips fine as a stored *value* (structured
- *   clone supports it), but is explicitly absent from the key-type algorithm.
- * - `idb/json@1` — arbitrary shape (object, array, or primitive); can't be
- *   statically guaranteed to be a valid key.
- *
- * Using any of these as a model's `@id`/key throws on every write
- * (`DataError` extracting the primary key). Using one as an index `keyPath`
- * doesn't throw on write — the record is just silently omitted from that
- * index — but throws the first time anyone queries it via `IDBKeyRange`
- * (see ADR 016's Context: `OutboxEvent.synced`, `idb/bool@1`, exactly this).
- */
-const IDB_INVALID_KEY_CODEC_IDS = new Set(["idb/bool@1", "idb/bigint@1", "idb/json@1"]);
-
-/** `true` if `codecId`'s runtime representation is a valid IndexedDB key. */
-export function isValidIdbKeyCodec(codecId: string): boolean {
-  return !IDB_INVALID_KEY_CODEC_IDS.has(codecId);
-}
 
 // PSL PascalCase referential actions → IDB lowercase
 const REFERENTIAL_ACTION_MAP: Record<string, IdbReferentialAction> = {
@@ -267,7 +218,6 @@ function interpretEnums(
 
     sourceMap.set(["enums", block.name], block.span);
     const members: Array<{ readonly name: string; readonly value: string }> = [];
-    const seenValues = new Set<string>();
 
     for (const entry of block.entries) {
       const memberName = entry.key()?.name();
@@ -286,27 +236,7 @@ function interpretEnums(
         });
         continue;
       }
-      if (seenValues.has(value)) {
-        diagnostics.push({
-          code: "IDB_ENUM_DUPLICATE_VALUE",
-          message: `Enum "${block.name}" repeats stored value "${value}". Enum values must be unique.`,
-          sourceId,
-          span,
-        });
-        continue;
-      }
-      seenValues.add(value);
       members.push({ name: memberName, value });
-    }
-
-    if (members.length === 0) {
-      diagnostics.push({
-        code: "IDB_ENUM_EMPTY",
-        message: `Enum "${block.name}" must declare at least one member.`,
-        sourceId,
-        span: block.span,
-      });
-      continue;
     }
 
     enums[block.name] = { name: block.name, members };
@@ -335,7 +265,6 @@ function interpretModel(
   diagnostics: ContractSourceDiagnostic[],
   projection: ContractProjection,
   excludedModelNames: ReadonlySet<string>,
-  excludedFieldNamesByModel: ReadonlyMap<string, ReadonlySet<string>>,
   sourceMap: PslDefinitionSourceMap
 ): InterpretedModel | undefined {
   sourceMap.recordModel(model);
@@ -360,19 +289,10 @@ function interpretModel(
   const idModelAttr = model.attributes.find((a) => a.name === "id");
   if (idModelAttr) {
     const fields = parseFieldList(findPositionalArg(idModelAttr.args));
-    if (!fields || fields.length === 0) {
+    if (!fields) {
       diagnostics.push({
         code: "IDB_INVALID_ID",
         message: `Model "${model.name}" @@id([…]) is missing a field list.`,
-        sourceId,
-        span: idModelAttr.span,
-      });
-      return undefined;
-    }
-    if (new Set(fields).size !== fields.length) {
-      diagnostics.push({
-        code: "IDB_INVALID_ID",
-        message: `Model "${model.name}" @@id([${fields.join(", ")}]) repeats a field name.`,
         sourceId,
         span: idModelAttr.span,
       });
@@ -406,28 +326,12 @@ function interpretModel(
     keyPath = idFields[0]!.name;
   }
 
-  if (keyPath === undefined || idFieldNames === undefined) {
-    diagnostics.push({
-      code: "IDB_MISSING_ID",
-      message: `Model "${model.name}" has no @id field. Add @id to exactly one scalar field, or @@id([...]) for a compound key.`,
-      sourceId,
-      span: model.span,
-    });
-    return undefined;
-  }
-
-  const excludedKeyField = idFieldNames.find((f) => excludedFieldNames.has(f));
-  if (excludedKeyField !== undefined) {
-    diagnostics.push({
-      code: "IDB_CANNOT_EXCLUDE_KEY_FIELD",
-      message: `Field "${model.name}.${excludedKeyField}" is part of the model's primary key and cannot be marked @idb.exclude — the client contract needs a primary key for every included model.`,
-      sourceId,
-      span: model.span,
-    });
-    return undefined;
-  }
-
-  sourceMap.set(["models", model.name, "key"], idModelAttr?.span ?? getFieldAttribute(idFields[0]!, "id")!.span);
+  keyPath ??= [];
+  idFieldNames ??= [];
+  sourceMap.set(
+    ["models", model.name, "key"],
+    idModelAttr?.span ?? (idFields[0] ? getFieldAttribute(idFields[0], "id")!.span : model.span)
+  );
   sourceMap.set(["models", model.name, "storeName"], mapAttr?.span ?? model.span);
 
   // ── Build indexes ────────────────────────────────────────────────────────────
@@ -440,29 +344,10 @@ function interpretModel(
     const isUnique = attr.name === "unique";
     const fieldListRaw = findPositionalArg(attr.args);
     const fields = parseFieldList(fieldListRaw);
-    if (!fields || fields.length === 0) {
+    if (!fields) {
       diagnostics.push({
         code: "IDB_INVALID_INDEX",
         message: `Model "${model.name}" @@${attr.name} is missing a field list.`,
-        sourceId,
-        span: attr.span,
-      });
-      continue;
-    }
-    if (new Set(fields).size !== fields.length) {
-      diagnostics.push({
-        code: "IDB_INVALID_INDEX",
-        message: `Model "${model.name}" @@${attr.name}([${fields.join(", ")}]) repeats a field name.`,
-        sourceId,
-        span: attr.span,
-      });
-      continue;
-    }
-    const excludedField = fields.find((f) => excludedFieldNames.has(f));
-    if (excludedField !== undefined) {
-      diagnostics.push({
-        code: "IDB_INDEX_ON_EXCLUDED_FIELD",
-        message: `Model "${model.name}" @@${attr.name}([${fields.join(", ")}]) references "${excludedField}", which is marked @idb.exclude. Remove the index or the exclusion.`,
         sourceId,
         span: attr.span,
       });
@@ -483,18 +368,9 @@ function interpretModel(
   const fksByTarget = new Map<string, { fieldName: string; localFields: string[]; targetFields: string[] }>();
   const fieldExecutionDefaults: FieldExecutionDefault[] = [];
   let autoIncrement = false;
+  const autoIncrementFields: string[] = [];
 
   for (const field of modelFields) {
-    // Skip the @id field's optional marker — keyPath fields cannot be nullable in IDB
-    if (idFieldNames.includes(field.name) && field.optional) {
-      diagnostics.push({
-        code: "IDB_NULLABLE_ID",
-        message: `Field "${model.name}.${field.name}" is marked as @id but is optional (?). The primary key cannot be nullable.`,
-        sourceId,
-        span: field.span,
-      });
-    }
-
     // Relation list field (backrelation) — skip for now, resolved in second pass
     if (field.list && modelNames.has(field.typeName)) {
       if (excludedModelNames.has(field.typeName)) {
@@ -508,15 +384,6 @@ function interpretModel(
     // FK-side relation field: non-list, type is a model, has @relation
     const relationAttr = getFieldAttribute(field, "relation");
     if (!field.list && modelNames.has(field.typeName) && relationAttr) {
-      if (excludedFieldNames.has(field.name)) {
-        diagnostics.push({
-          code: "IDB_EXCLUDE_ON_RELATION_FIELD_UNSUPPORTED",
-          message: `Field "${model.name}.${field.name}" is a relation field and cannot be marked @idb.exclude directly. Exclude the target model with @@idb.exclude to drop the relation, or exclude a plain scalar field.`,
-          sourceId,
-          span: field.span,
-        });
-        continue;
-      }
       if (excludedModelNames.has(field.typeName)) {
         // Same reasoning as the backrelation case above: drop the relation
         // (required or not), keep the model, keep the FK scalar field (it's
@@ -530,7 +397,7 @@ function interpretModel(
       const localFields = parseFieldList(localFieldsRaw);
       const targetFields = parseFieldList(targetFieldsRaw);
 
-      if (!localFields || localFields.length === 0 || !targetFields || targetFields.length === 0) {
+      if (!localFields || !targetFields) {
         diagnostics.push({
           code: "IDB_INVALID_RELATION",
           message: `Relation field "${model.name}.${field.name}" must declare both fields and references in @relation.`,
@@ -539,41 +406,6 @@ function interpretModel(
         });
         continue;
       }
-      if (localFields.length !== targetFields.length) {
-        diagnostics.push({
-          code: "IDB_INVALID_RELATION",
-          message: `Relation field "${model.name}.${field.name}" must have the same number of fields and references.`,
-          sourceId,
-          span: field.span,
-        });
-        continue;
-      }
-
-      const excludedLocalField = localFields.find((f) => excludedFieldNames.has(f));
-      if (excludedLocalField !== undefined) {
-        diagnostics.push({
-          code: "IDB_CANNOT_EXCLUDE_RELATION_FIELD",
-          message: `Field "${model.name}.${excludedLocalField}" backs relation "${model.name}.${field.name}" and cannot be excluded independently — only a whole-model @@idb.exclude can drop a relation. Exclude the whole model instead, or remove the exclusion.`,
-          sourceId,
-          span: field.span,
-        });
-        continue;
-      }
-
-      const targetExcludedFields = excludedFieldNamesByModel.get(field.typeName);
-      const excludedTargetField = targetExcludedFields
-        ? targetFields.find((f) => targetExcludedFields.has(f))
-        : undefined;
-      if (excludedTargetField !== undefined) {
-        diagnostics.push({
-          code: "IDB_CANNOT_EXCLUDE_RELATION_FIELD",
-          message: `Field "${field.typeName}.${excludedTargetField}" is referenced by relation "${model.name}.${field.name}" and cannot be excluded independently — only a whole-model @@idb.exclude can drop a relation. Exclude the whole model instead, or remove the exclusion.`,
-          sourceId,
-          span: field.span,
-        });
-        continue;
-      }
-
       const onDeleteRaw = findNamedArg(args, "onDelete");
       const onDelete = onDeleteRaw ? REFERENTIAL_ACTION_MAP[onDeleteRaw.trim()] : undefined;
 
@@ -618,7 +450,7 @@ function interpretModel(
 
       // Also create a default index on the FK field(s) if not already indexed
       for (const fkField of localFields) {
-        if (!(fkField in indexes)) {
+        if (!(fkField in indexes) && !excludedFieldNames.has(fkField)) {
           indexes[fkField] = { keyPath: fkField, unique: false };
           sourceMap.set(["models", model.name, "indexes", fkField], relationAttr.span);
         }
@@ -639,22 +471,14 @@ function interpretModel(
 
     const enumType = enums[field.typeName];
 
-    // Non-model scalar lists remain unsupported. Enum lists are represented
-    // by the string codec plus ContractField.many, so they continue below.
-    if (field.list && enumType === undefined) {
-      // Only model-type lists are backrelations; non-model lists are not supported in IDB.
-      continue;
-    }
-
     // Scalar field
     if (excludedFieldNames.has(field.name)) {
       if (hasFieldAttribute(field, "unique")) {
-        diagnostics.push({
-          code: "IDB_INDEX_ON_EXCLUDED_FIELD",
-          message: `Field "${model.name}.${field.name}" is marked @unique but also @idb.exclude. Remove the @unique attribute or the exclusion.`,
-          sourceId,
-          span: field.span,
-        });
+        indexes[`${field.name}_unique`] = { keyPath: field.name, unique: true };
+        sourceMap.set(
+          ["models", model.name, "indexes", `${field.name}_unique`],
+          getFieldAttribute(field, "unique")!.span
+        );
       }
       // Dropped from the client contract. Its type isn't validated here —
       // a server-only field is free to use a type IDB doesn't support at
@@ -691,16 +515,6 @@ function interpretModel(
         });
         continue;
       }
-      if (idFieldNames.includes(field.name)) {
-        diagnostics.push({
-          code: "IDB_TEMPORAL_UPDATED_AT_ON_KEY_FIELD",
-          message: `Field "${model.name}.${field.name}" is part of the model's primary key and cannot be temporal.updatedAt() — an auto-managed timestamp cannot also be (part of) the primary key.`,
-          sourceId,
-          span: field.span,
-        });
-        continue;
-      }
-
       fields[field.name] = {
         name: field.name,
         nullable: field.optional,
@@ -716,20 +530,11 @@ function interpretModel(
     }
 
     const codecId = enumType !== undefined ? SCALAR_TO_CODEC_ID["String"]! : SCALAR_TO_CODEC_ID[field.typeName];
-    if (codecId === undefined) {
-      diagnostics.push({
-        code: "IDB_UNSUPPORTED_FIELD_TYPE",
-        message: `Field "${model.name}.${field.name}" has unsupported type "${field.typeName}". Supported types: ${Object.keys(SCALAR_TO_CODEC_ID).join(", ")}.`,
-        sourceId,
-        span: field.span,
-      });
-      continue;
-    }
-
     fields[field.name] = {
       name: field.name,
       nullable: field.optional,
-      codecId,
+      codecId: codecId ?? "",
+      ...(codecId === undefined ? { unsupportedType: field.typeName } : {}),
       list: field.list,
       ...(enumType !== undefined ? { enumName: field.typeName } : {}),
     };
@@ -739,6 +544,10 @@ function interpretModel(
     // same "fires on both create and update" mutation default.
     const updatedAtAttr = getFieldAttribute(field, "updatedAt");
     const defaultAttr = getFieldAttribute(field, "default");
+    if (defaultAttr) {
+      sourceMap.set(["models", model.name, "fields", field.name, "literalDefault"], defaultAttr.span);
+      sourceMap.set(["models", model.name, "fields", field.name, "executionDefault"], defaultAttr.span);
+    }
 
     if (updatedAtAttr && defaultAttr) {
       diagnostics.push({
@@ -751,33 +560,6 @@ function interpretModel(
     }
 
     if (updatedAtAttr) {
-      if (idFieldNames.includes(field.name)) {
-        diagnostics.push({
-          code: "IDB_TEMPORAL_UPDATED_AT_ON_KEY_FIELD",
-          message: `Field "${model.name}.${field.name}" is part of the model's primary key and cannot be @updatedAt — an auto-managed timestamp cannot also be (part of) the primary key.`,
-          sourceId,
-          span: field.span,
-        });
-        continue;
-      }
-      if (field.optional) {
-        diagnostics.push({
-          code: "IDB_EXECUTION_DEFAULT_ON_OPTIONAL_FIELD",
-          message: `Field "${model.name}.${field.name}" cannot be both optional and @updatedAt — an omitted value would be ambiguous between "generate one" and "store null". Remove "?" or the attribute.`,
-          sourceId,
-          span: field.span,
-        });
-        continue;
-      }
-      if (codecId !== SCALAR_TO_CODEC_ID["DateTime"]) {
-        diagnostics.push({
-          code: "IDB_UPDATED_AT_NOT_DATETIME",
-          message: `Field "${model.name}.${field.name}" is marked @updatedAt but has type "${field.typeName}", not DateTime.`,
-          sourceId,
-          span: field.span,
-        });
-        continue;
-      }
       fieldExecutionDefaults.push({
         fieldName: field.name,
         onCreate: { id: TIMESTAMP_NOW_GENERATOR_ID },
@@ -797,42 +579,16 @@ function interpretModel(
 
       const enumMember = enumType === undefined ? undefined : enumType.members.find((member) => raw === member.name);
 
-      if (enumType !== undefined && field.list) {
-        diagnostics.push({
-          code: "IDB_ENUM_LIST_DEFAULT_UNSUPPORTED",
-          message: `Field "${model.name}.${field.name}" is an enum list; list defaults are not supported by IDB.`,
-          sourceId,
-          span: defaultAttr.span,
-        });
-        continue;
-      }
-
-      if (enumType !== undefined && enumMember !== undefined) {
+      if (enumType !== undefined) {
+        const value = enumMember?.value ?? raw;
         fieldExecutionDefaults.push({
           fieldName: field.name,
-          onCreate: { id: LITERAL_GENERATOR_ID, params: { value: enumMember.value } },
+          onCreate: { id: LITERAL_GENERATOR_ID, params: { value } },
         });
-        fieldDefaults[field.name] = enumMember.value;
-      } else if (enumType !== undefined) {
-        diagnostics.push({
-          code: "IDB_INVALID_ENUM_DEFAULT",
-          message: `Field "${model.name}.${field.name}" @default(${raw}) does not name a member of enum "${field.typeName}".`,
-          sourceId,
-          span: defaultAttr.span,
-        });
-        continue;
+        fieldDefaults[field.name] = value;
       } else {
         const literal = parseDefaultLiteralValue(raw);
         if (literal) {
-          if (!literalValueMatchesCodec(literal.value, codecId)) {
-            diagnostics.push({
-              code: "IDB_INVALID_DEFAULT_VALUE",
-              message: `Field "${model.name}.${field.name}" has type "${field.typeName}" but @default(${raw}) is a ${typeof literal.value} literal.`,
-              sourceId,
-              span: defaultAttr.span,
-            });
-            continue;
-          }
           fieldExecutionDefaults.push({
             fieldName: field.name,
             onCreate: { id: LITERAL_GENERATOR_ID, params: { value: literal.value } },
@@ -855,44 +611,8 @@ function interpretModel(
           }
 
           if (call.name === "autoincrement") {
-            if (!idFieldNames.includes(field.name)) {
-              diagnostics.push({
-                code: "IDB_AUTOINCREMENT_NOT_ON_KEY_FIELD",
-                message: `Field "${model.name}.${field.name}" uses @default(autoincrement()) but is not the model's @id key. IndexedDB only generates keys for the primary key field.`,
-                sourceId,
-                span: defaultAttr.span,
-              });
-              continue;
-            }
-            if (idFieldNames.length > 1) {
-              diagnostics.push({
-                code: "IDB_AUTOINCREMENT_ON_COMPOUND_KEY",
-                message: `Field "${model.name}.${field.name}" uses @default(autoincrement()) but is part of a compound primary key (@@id([${idFieldNames.join(", ")}])). IndexedDB rejects autoIncrement combined with a compound key (InvalidAccessError) — use a single-field @id if you need autoincrement().`,
-                sourceId,
-                span: defaultAttr.span,
-              });
-              continue;
-            }
-            if (codecId !== SCALAR_TO_CODEC_ID["Int"]) {
-              diagnostics.push({
-                code: "IDB_AUTOINCREMENT_NOT_INT",
-                message: `Field "${model.name}.${field.name}" uses @default(autoincrement()) but has type "${field.typeName}", not Int. IndexedDB key generators only produce numbers.`,
-                sourceId,
-                span: defaultAttr.span,
-              });
-              continue;
-            }
+            autoIncrementFields.push(field.name);
             autoIncrement = true;
-            continue;
-          }
-
-          if (field.optional) {
-            diagnostics.push({
-              code: "IDB_EXECUTION_DEFAULT_ON_OPTIONAL_FIELD",
-              message: `Field "${model.name}.${field.name}" cannot be both optional and @default(${call.name}(...)) — an omitted value would be ambiguous between "generate one" and "store null". Remove "?" or the default.`,
-              sourceId,
-              span: defaultAttr.span,
-            });
             continue;
           }
 
@@ -924,6 +644,8 @@ function interpretModel(
     // @unique field attribute → unique index
     if (hasFieldAttribute(field, "unique")) {
       const existingKey = Object.entries(indexes).find(([, idx]) => idx.keyPath === field.name)?.[0];
+      if (existingKey && !indexes[existingKey]!.unique)
+        indexes[existingKey] = { ...indexes[existingKey]!, unique: true };
       if (!existingKey) {
         indexes[`${field.name}_unique`] = { keyPath: field.name, unique: true };
         sourceMap.set(
@@ -931,35 +653,6 @@ function interpretModel(
           getFieldAttribute(field, "unique")!.span
         );
       }
-    }
-  }
-
-  // ── Validate key/index field types against IDB's valid-key algorithm ───────
-  // A field that already failed type resolution should not get a second diagnostic.
-  const scalarCodecOf = (fieldName: string): string | undefined => fields[fieldName]?.codecId;
-
-  for (const keyField of idFieldNames) {
-    const keyFieldCodec = scalarCodecOf(keyField);
-    if (keyFieldCodec === undefined || isValidIdbKeyCodec(keyFieldCodec)) continue;
-    diagnostics.push({
-      code: "IDB_INVALID_KEY_TYPE",
-      message: `Model "${model.name}" @id field "${keyField}" has type "${keyFieldCodec}", which IndexedDB cannot use as a key. Every write would throw (DataError extracting the primary key). Use String, Int, Float, DateTime, Decimal, or Bytes instead.`,
-      sourceId,
-      span: modelFields.find((f) => f.name === keyField)?.span ?? model.span,
-    });
-  }
-
-  for (const [indexName, idx] of Object.entries(indexes)) {
-    const idxFields = typeof idx.keyPath === "string" ? [idx.keyPath] : idx.keyPath;
-    for (const idxField of idxFields) {
-      const fieldCodec = scalarCodecOf(idxField);
-      if (fieldCodec === undefined || isValidIdbKeyCodec(fieldCodec)) continue;
-      diagnostics.push({
-        code: "IDB_INVALID_INDEX_KEY_TYPE",
-        message: `Model "${model.name}" index "${indexName}" is keyed on "${idxField}" (type "${fieldCodec}"), which IndexedDB cannot use as an index key. Records are silently omitted from the index on write, and any query against it throws at runtime. Use String, Int, Float, DateTime, Decimal, or Bytes instead.`,
-        sourceId,
-        span: modelFields.find((f) => f.name === idxField)?.span ?? model.span,
-      });
     }
   }
 
@@ -977,6 +670,16 @@ function interpretModel(
       })),
       relations: Object.values(relations),
       autoIncrement,
+      ...(autoIncrementFields.length > 0 ? { autoIncrementFields } : {}),
+      ...(projection === "client"
+        ? {
+            exclusions: {
+              fields: [...excludedFieldNames],
+              declaredFields: modelFields.map((field) => field.name),
+              relationFields: modelFields.filter((field) => modelNames.has(field.typeName)).map((field) => field.name),
+            },
+          }
+        : {}),
     },
     fksByTarget,
   };
@@ -1066,23 +769,6 @@ export function lowerPslDocumentToIdbContractDefinition(
       ? allModelsUnprojected.filter((m) => !excludedModelNames.has(m.name))
       : allModelsUnprojected;
 
-  // Field-level exclusions, keyed by model name, so a relation's `references:`
-  // fields can be checked against the *target* model's exclusions (a model
-  // may not itself be excluded but still have an excluded field a relation
-  // points at).
-  const excludedFieldNamesByModel = new Map<string, ReadonlySet<string>>(
-    projection === "client"
-      ? allModelsUnprojected.map((m) => [
-          m.name,
-          new Set(
-            Object.values(m.fields)
-              .filter((f) => hasFieldAttribute(f, IDB_EXCLUDE_ATTR))
-              .map((f) => f.name)
-          ),
-        ])
-      : []
-  );
-
   const interpretedByName = new Map<string, InterpretedModel>();
 
   // First pass: interpret each model individually
@@ -1095,7 +781,6 @@ export function lowerPslDocumentToIdbContractDefinition(
       diagnostics,
       projection,
       excludedModelNames,
-      excludedFieldNamesByModel,
       sourceMap
     );
     if (result) {
@@ -1120,11 +805,13 @@ export function lowerPslDocumentToIdbContractDefinition(
       // Find the FK in the target model that points back to this model
       const fk = targetInterp.fksByTarget.get(model.name);
       if (!fk) {
-        diagnostics.push({
-          code: "IDB_UNRESOLVED_BACKRELATION",
-          message: `Backrelation field "${model.name}.${field.name}" (list of ${field.typeName}) has no matching @relation in "${field.typeName}" pointing to "${model.name}". Add @relation(fields: [...], references: [...]) to the FK field in "${field.typeName}".`,
-          sourceId,
-          span: field.span,
+        interp.definition.relations.push({
+          name: field.name,
+          to: field.typeName,
+          cardinality: "1:N",
+          localFields: [],
+          targetFields: [],
+          unresolvedBackrelation: true,
         });
         continue;
       }
@@ -1141,14 +828,18 @@ export function lowerPslDocumentToIdbContractDefinition(
     }
   }
 
+  const models = [...interpretedByName.values()].map((model) => model.definition);
+  const sharedDiagnostics = validateIdbContractDefinition({ models, enums: Object.values(enums) });
+  diagnostics.push(
+    ...sharedDiagnostics.map(({ code, message, at }) => {
+      const span = sourceMap.resolve(at);
+      return { code, message, sourceId, ...(span !== undefined ? { span } : {}) };
+    })
+  );
   if (diagnostics.length > 0) {
-    return notOk({
-      summary: "PSL to IDB contract interpretation failed",
-      diagnostics,
-    });
+    return notOk({ summary: "PSL to IDB contract interpretation failed", diagnostics });
   }
 
-  const models = [...interpretedByName.values()].map((model) => model.definition);
   // Enum declarations are validated before projection; only referenced enums reach a client contract.
   const keptEnums = Object.values(enums).filter(
     (node) =>

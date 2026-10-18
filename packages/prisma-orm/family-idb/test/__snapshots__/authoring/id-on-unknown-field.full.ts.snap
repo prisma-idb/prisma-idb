@@ -1,5 +1,5 @@
 {
   "contract": null,
-  "error": "defineContract: model \"User\" key field \"unknown\" is not declared in \"fields\".",
+  "error": "IDB_INVALID_ID: Model \"User\" key field \"unknown\" is not declared in \"fields\".",
   "hashes": null
 }

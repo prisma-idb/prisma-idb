@@ -1,5 +1,5 @@
 {
   "contract": null,
-  "error": "defineContract: model \"User\" \"key\" must name at least one field.",
+  "error": "IDB_MISSING_ID: Model \"User\" has no @id field. Add @id to exactly one scalar field, or @@id([...]) for a compound key.",
   "hashes": null
 }

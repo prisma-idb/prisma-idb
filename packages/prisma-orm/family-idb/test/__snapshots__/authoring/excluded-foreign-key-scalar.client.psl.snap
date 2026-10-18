@@ -4,7 +4,7 @@
     "interpretation": [
       {
         "code": "IDB_CANNOT_EXCLUDE_RELATION_FIELD",
-        "message": "Field \"Post.authorId\" backs relation \"Post.author\" and cannot be excluded independently — only a whole-model @@idb.exclude can drop a relation. Exclude the whole model instead, or remove the exclusion.",
+        "message": "Relation \"Post.author\" uses a local field that cannot be excluded independently. Remove the exclusion or exclude the whole model.",
         "sourceId": "authoring.prisma",
         "span": {
           "end": {

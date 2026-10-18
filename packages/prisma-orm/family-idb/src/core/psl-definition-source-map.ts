@@ -10,6 +10,15 @@ export class PslDefinitionSourceMap {
     return this.spans.get(JSON.stringify(path));
   }
 
+  /** Semantic subpaths fall back to their closest recorded field, attribute, or model. */
+  resolve(path: IdbDefinitionPath): PslSpan | undefined {
+    for (let length = path.length; length > 0; length--) {
+      const span = this.get(path.slice(0, length));
+      if (span) return span;
+    }
+    return undefined;
+  }
+
   /** Encode segments separately so names containing punctuation cannot collide. */
   set(path: IdbDefinitionPath, span: PslSpan): void {
     this.spans.set(JSON.stringify(path), span);

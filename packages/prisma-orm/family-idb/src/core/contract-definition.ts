@@ -47,7 +47,15 @@ export interface IdbModelNode {
   readonly key: IdbKeyPath;
   /** `true` when the store generates its single-field key with IndexedDB's key generator. */
   readonly autoIncrement: boolean;
+  /** Source fields requesting a storage key generator, retained until validation. */
+  readonly autoIncrementFields?: readonly string[];
   readonly fields: readonly IdbFieldNode[];
+  /** Source field names and exclusions retained to validate a client projection. */
+  readonly exclusions?: {
+    readonly fields: readonly string[];
+    readonly declaredFields: readonly string[];
+    readonly relationFields: readonly string[];
+  };
   readonly indexes: readonly IdbIndexNode[];
   /** Relations in the order they appear on the model. */
   readonly relations: readonly IdbRelationNode[];
@@ -70,6 +78,8 @@ export interface IdbFieldNode {
   readonly name: string;
   /** The stored codec. Enum fields use the string codec. */
   readonly codecId: string;
+  /** An unresolved source type retained so validation can report it alongside other errors. */
+  readonly unsupportedType?: string;
   readonly nullable: boolean;
   /** `true` for a list field. Only enum fields can be lists. */
   readonly list: boolean;
@@ -99,6 +109,8 @@ export interface IdbRelationNode {
   /** The related model's name. */
   readonly to: string;
   readonly cardinality: "1:1" | "1:N" | "N:1";
+  /** No owning relation could supply this PSL backrelation's join fields. */
+  readonly unresolvedBackrelation?: boolean;
   /** Fields on this model that the relation joins on. */
   readonly localFields: readonly string[];
   /** Fields on the related model that `localFields` match. */

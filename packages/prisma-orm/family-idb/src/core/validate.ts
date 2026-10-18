@@ -2,20 +2,8 @@ import type { Contract } from "@prisma/orm-framework/contract/types";
 import { domainModelsAtDefaultNamespace } from "@prisma/orm-framework/contract/types";
 import { ContractValidationError } from "@prisma/orm-framework/contract/contract-validation-error";
 import { validateContractDomain } from "@prisma/orm-framework/contract/validate-domain";
-import type { IdbKeyPath, IdbModelStorage, IdbStorage } from "@prisma-idb/target-idb/pack";
-
-/**
- * `true` if `keyPath` is a well-formed {@link IdbKeyPath}: a non-empty string,
- * or a non-empty array of non-empty, pairwise-distinct field names (a
- * compound key can't repeat a field, and every member must actually name a
- * field — an empty string in the list is never valid).
- */
-function isWellFormedKeyPath(keyPath: unknown): keyPath is IdbKeyPath {
-  if (typeof keyPath === "string") return keyPath !== "";
-  if (!Array.isArray(keyPath) || keyPath.length === 0) return false;
-  if (!keyPath.every((f) => typeof f === "string" && f !== "")) return false;
-  return new Set(keyPath).size === keyPath.length;
-}
+import type { IdbModelStorage, IdbStorage } from "@prisma-idb/target-idb/pack";
+import { isWellFormedKeyPath } from "./validate-definition";
 
 /** Fully-typed IDB contract after validation. */
 export type IdbContract = Contract<IdbStorage>;
