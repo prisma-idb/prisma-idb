@@ -1,0 +1,62 @@
+---
+title: Adopt Foreign-Key Indexes
+description: Migrate an existing TypeScript contract to implicit foreign-key indexes, or opt out
+icon: ListTree
+---
+
+Use this guide when upgrading an existing TypeScript-authored contract to the foreign-key index default. You need a configured `prisma.config.ts`, an emitted contract, and the project's existing migration chain. For a new project, follow the [Quick Start](/docs/prisma-8/getting-started).
+
+## 1. Choose whether to add indexes
+
+Keep the default to add an index for each foreign-key field of a to-one relation. IndexedDB relation reads use these indexes. A compound foreign key adds separate indexes for its fields.
+
+To keep a relation unindexed, add `index: false` to that relation in your `defineContract` input. For example, this property belongs in the `Todo` model's `relations` map:
+
+```ts
+const relations = {
+  user: {
+    to: "User",
+    cardinality: "N:1",
+    on: { local: ["userId"], target: ["id"] },
+    index: false,
+  },
+} as const;
+```
+
+Repeat the opt-out for every owning relation whose implicit indexes you want to suppress. If several relations share a field, all of them must opt out. Declared indexes remain in place. Use the opt-out for foreign-key types that IndexedDB cannot index, such as `Boolean`, `BigInt`, or `Json`.
+
+A declared index replaces the implicit one only when its name matches the foreign-key field and its key path contains that field alone. Check differently named and compound indexes before assuming that no new indexes will be added. See the [index reference](/docs/prisma-8/contract-authoring#foreign-key-indexes) for the exact rules.
+
+## 2. Emit and inspect the contract
+
+```bash
+npx prisma@latest contract emit
+```
+
+Compare the emitted `contract.json` with the previous version. Check `storage.stores.<store>.indexes` for new entries, such as a `userId` index with `keyPath: "userId"` and `unique: false`.
+
+New indexes change `storage.storageHash`. This identifies a new storage schema; it does not mean that existing records need new field values. For a change limited to these indexes, `profileHash` and any `execution.executionHash` stay the same.
+
+If you opted out of every new implicit index and made no other changes, the storage hash should stay the same. Keep the existing migration chain in that case. If the hash changes unexpectedly, compare the stores and indexes before proceeding.
+
+## 3. Plan and verify the migration
+
+When the storage hash changes, run:
+
+```bash
+npx prisma-idb migration plan --name add-foreign-key-indexes
+npx prisma-idb migration contract-space
+npx prisma-idb migration preflight
+```
+
+Review the generated migration under `migrations/app/`. An upgrade limited to the new defaults should add indexes to existing stores. It should not drop stores or rewrite records. Keep the previous migrations and snapshots so existing browser databases can advance to the new hash.
+
+`migration preflight` replays the chain in memory and checks the resulting stores and indexes against the head snapshot. Resolve any mismatch before shipping.
+
+## 4. Ship the updated chain
+
+Commit the authored contract, emitted contract files, new migration package, new snapshot, and regenerated contract-space module. Use your project's existing generated-file policy.
+
+Deploy the app with those artifacts. Its existing `createAutoMigratingIdbClient` setup applies the pending migration when the browser opens the database. IndexedDB builds the new indexes from existing records during the upgrade.
+
+Verify the upgrade against a browser database created by the previous app version, then check relation reads. The [Migrations guide](/docs/prisma-8/migrations) covers migration artifacts and browser application in more detail.

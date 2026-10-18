@@ -28,6 +28,16 @@ All three read `prisma.config.ts`. See [Migrations](https://prisma-idb.dev/docs/
 | `@prisma-idb/family-idb/contract-ts`  | `defineContract()`: write a contract in TypeScript instead.          |
 | `@prisma-idb/family-idb/cli`          | The `prisma-idb` commands, for embedding in another CLI.             |
 
+## Contract authoring
+
+Author a contract in PSL with `prismaIdbContract(path, options?)`, or in TypeScript with `defineContract(input, options?)`. Both surfaces lower into one internal `IdbContractDefinition` and use the same validation and hash builder. Equivalent definitions produce the same storage, profile, and execution hashes.
+
+TypeScript models use a `defaults` map for create-time literals and helpers: `autoincrement()`, `now()`, `uuidv4()`, `uuidv7()`, `cuid2()`, and `updatedAt()`. Import the helpers from `@prisma-idb/family-idb/contract-ts`. The older `fieldDefaults` map only supplies values for the `setDefault` referential action.
+
+Both surfaces index each foreign-key field by default. TypeScript relations can set `index: false` to opt out. Existing TypeScript contracts may get a new `storageHash` and need an index migration. See [Adopt Foreign-Key Indexes](https://prisma-idb.dev/docs/prisma-8/foreign-key-indexes).
+
+Invalid shared definitions throw `IdbContractError` from the TypeScript entry point. Its `diagnostics` array lists `IDB_*` codes, messages, and definition paths. PSL reports the corresponding diagnostics with source spans. See [Contract Authoring](https://prisma-idb.dev/docs/prisma-8/contract-authoring) for attribute mappings, defaults, indexes, and diagnostic codes.
+
 ## Documentation
 
 - [Quick Start](https://prisma-idb.dev/docs/prisma-8/getting-started)
