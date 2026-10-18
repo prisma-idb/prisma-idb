@@ -12,6 +12,10 @@
       "model": "RandomStore",
       "namespace": "__unbound__"
     },
+    "scalar_list_samples": {
+      "model": "ScalarListSample",
+      "namespace": "__unbound__"
+    },
     "tags": {
       "model": "Tag",
       "namespace": "__unbound__"
@@ -126,6 +130,52 @@
             "storage": {
               "keyPath": "id",
               "storeName": "random_store"
+            }
+          },
+          "ScalarListSample": {
+            "fields": {
+              "dates": {
+                "many": {
+                  "elementNullable": false
+                },
+                "nullable": false,
+                "type": {
+                  "codecId": "idb/date@1",
+                  "kind": "scalar"
+                }
+              },
+              "decimals": {
+                "many": {
+                  "elementNullable": false
+                },
+                "nullable": false,
+                "type": {
+                  "codecId": "idb/decimal@1",
+                  "kind": "scalar"
+                }
+              },
+              "id": {
+                "nullable": false,
+                "type": {
+                  "codecId": "idb/string@1",
+                  "kind": "scalar"
+                }
+              },
+              "tags": {
+                "many": {
+                  "elementNullable": false
+                },
+                "nullable": false,
+                "type": {
+                  "codecId": "idb/string@1",
+                  "kind": "scalar"
+                }
+              }
+            },
+            "relations": {},
+            "storage": {
+              "keyPath": "id",
+              "storeName": "scalar_list_samples"
             }
           },
           "Tag": {
@@ -257,7 +307,7 @@
         "id": "__unbound__"
       }
     },
-    "storageHash": "ba5e70fb3c7b0b9acd469fe1fe80d172e8b04319f53365c2107baac46ec41926",
+    "storageHash": "8e2267b235c95e5e2f0ea8ae67fabfac6f84a393224b811a2de007e303fecc83",
     "stores": {
       "posts": {
         "indexes": {
@@ -334,6 +384,51 @@
             }
           },
           "model": "RandomStore"
+        }
+      },
+      "scalar_list_samples": {
+        "keyPath": "id",
+        "record": {
+          "fields": {
+            "dates": {
+              "many": {
+                "elementNullable": false
+              },
+              "nullable": false,
+              "type": {
+                "codecId": "idb/date@1",
+                "kind": "scalar"
+              }
+            },
+            "decimals": {
+              "many": {
+                "elementNullable": false
+              },
+              "nullable": false,
+              "type": {
+                "codecId": "idb/decimal@1",
+                "kind": "scalar"
+              }
+            },
+            "id": {
+              "nullable": false,
+              "type": {
+                "codecId": "idb/string@1",
+                "kind": "scalar"
+              }
+            },
+            "tags": {
+              "many": {
+                "elementNullable": false
+              },
+              "nullable": false,
+              "type": {
+                "codecId": "idb/string@1",
+                "kind": "scalar"
+              }
+            }
+          },
+          "model": "ScalarListSample"
         }
       },
       "tags": {
@@ -436,6 +531,55 @@
           "model": "User"
         }
       }
+    }
+  },
+  "execution": {
+    "executionHash": "208fa13e88e07d0c9f2fdf4e901847144c74b80d9e57bbed80ea404c7d69741d",
+    "mutations": {
+      "defaults": [
+        {
+          "onCreate": {
+            "id": "literal",
+            "kind": "generator",
+            "params": {
+              "value": []
+            }
+          },
+          "ref": {
+            "entry": "scalar_list_samples",
+            "field": "tags",
+            "namespace": "__unbound__"
+          }
+        },
+        {
+          "onCreate": {
+            "id": "literal",
+            "kind": "generator",
+            "params": {
+              "value": []
+            }
+          },
+          "ref": {
+            "entry": "scalar_list_samples",
+            "field": "dates",
+            "namespace": "__unbound__"
+          }
+        },
+        {
+          "onCreate": {
+            "id": "literal",
+            "kind": "generator",
+            "params": {
+              "value": []
+            }
+          },
+          "ref": {
+            "entry": "scalar_list_samples",
+            "field": "decimals",
+            "namespace": "__unbound__"
+          }
+        }
+      ]
     }
   },
   "capabilities": {

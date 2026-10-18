@@ -1,5 +1,97 @@
 {
-  "contract": null,
-  "error": "IDB_UNSUPPORTED_FIELD_TYPE: Field \"User.tags\" is a scalar list. Only enum fields can be lists.",
-  "hashes": null
+  "contract": {
+    "capabilities": {
+      "idb": {
+        "ddlOnlyInUpgrade": true,
+        "transactionalDDL": true
+      }
+    },
+    "domain": {
+      "namespaces": {
+        "__unbound__": {
+          "models": {
+            "User": {
+              "fields": {
+                "id": {
+                  "nullable": false,
+                  "type": {
+                    "codecId": "idb/string@1",
+                    "kind": "scalar"
+                  }
+                },
+                "tags": {
+                  "many": {
+                    "elementNullable": false
+                  },
+                  "nullable": false,
+                  "type": {
+                    "codecId": "idb/string@1",
+                    "kind": "scalar"
+                  }
+                }
+              },
+              "relations": {},
+              "storage": {
+                "keyPath": "id",
+                "storeName": "user"
+              }
+            }
+          }
+        }
+      }
+    },
+    "extensions": {},
+    "meta": {},
+    "profileHash": "40329830af4e39e0774683fbebcdc24dcf983a5da02c5fe6079a2a57579f861c",
+    "roots": {
+      "user": {
+        "model": "User",
+        "namespace": "__unbound__"
+      }
+    },
+    "storage": {
+      "namespaces": {
+        "__unbound__": {
+          "entries": {},
+          "id": "__unbound__"
+        }
+      },
+      "storageHash": "86642cccdc5f638ca02dca6849b9cac531210e3c67dd06b1341e07036ec9d291",
+      "stores": {
+        "user": {
+          "keyPath": "id",
+          "record": {
+            "fields": {
+              "id": {
+                "nullable": false,
+                "type": {
+                  "codecId": "idb/string@1",
+                  "kind": "scalar"
+                }
+              },
+              "tags": {
+                "many": {
+                  "elementNullable": false
+                },
+                "nullable": false,
+                "type": {
+                  "codecId": "idb/string@1",
+                  "kind": "scalar"
+                }
+              }
+            },
+            "model": "User"
+          }
+        }
+      }
+    },
+    "target": "idb",
+    "targetFamily": "idb"
+  },
+  "error": null,
+  "hashes": {
+    "executionHash": null,
+    "profileHash": "40329830af4e39e0774683fbebcdc24dcf983a5da02c5fe6079a2a57579f861c",
+    "storageHash": "86642cccdc5f638ca02dca6849b9cac531210e3c67dd06b1341e07036ec9d291"
+  }
 }

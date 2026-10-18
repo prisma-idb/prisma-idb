@@ -1,7 +1,7 @@
 import type { IdbFilterExpr } from "@prisma-idb/adapter-idb/runtime";
 import { andExpr } from "@prisma-idb/adapter-idb/runtime";
 import type { IdbRowComparator } from "@prisma-idb/driver-idb/runtime";
-import { compareDecimalValues, compareFieldValues } from "@prisma-idb/target-idb/runtime";
+import { compareDecimalValues, compareFieldValues, compareListValues } from "@prisma-idb/target-idb/runtime";
 import type { CatalogField } from "./planner/catalog";
 
 /**
@@ -37,7 +37,11 @@ export function buildRowComparator(
       const decimal = metadata?.codecId === "idb/decimal@1" && !metadata.collection;
       const present = a[field] != null && b[field] != null;
       const cmp =
-        decimal && present ? compareDecimalValues(a[field], b[field]) : compareFieldValues(a[field], b[field]);
+        metadata?.collection && !metadata.dict && Array.isArray(a[field]) && Array.isArray(b[field])
+          ? compareListValues(metadata.codecId, a[field] as unknown[], b[field] as unknown[])
+          : decimal && present
+            ? compareDecimalValues(a[field], b[field])
+            : compareFieldValues(a[field], b[field]);
       if (cmp === 0) continue;
       return dir === "desc" ? -cmp : cmp;
     }

@@ -1,0 +1,12 @@
+[
+  {
+    "kind": "createObjectStore",
+    "id": "object-store.scalar_list_samples.create",
+    "label": "Create object store \"scalar_list_samples\"",
+    "operationClass": "additive",
+    "storeName": "scalar_list_samples",
+    "def": {
+      "keyPath": "id"
+    }
+  }
+]

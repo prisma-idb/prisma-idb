@@ -49,9 +49,9 @@ function transformValue(transform: IdbValueTransform, value: unknown, mode: Reco
     case "placeholder":
       throw errorUnfilledPlaceholder(transform.slot);
     case "defaultIfMissing":
-      return mode === "full" && value === undefined ? transform.value : value;
+      return mode === "full" && value === undefined ? structuredClone(transform.value) : value;
     case "setLiteral":
-      return mode === "full" ? transform.value : value;
+      return mode === "full" ? structuredClone(transform.value) : value;
     case "pipe":
       return transform.steps.reduce((current, step) => transformValue(step, current, mode), value);
     case "coerce": {

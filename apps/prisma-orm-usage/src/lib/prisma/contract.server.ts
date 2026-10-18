@@ -58,7 +58,7 @@ export const contract = defineContract({
         byAuthorId: { keyPath: "authorId", unique: false },
       },
       relations: {
-        author: { to: "User", cardinality: "N:1", on: { local: ["authorId"], target: ["id"] } },
+        author: { to: "User", cardinality: "N:1", on: { local: ["authorId"], target: ["id"] }, index: false },
         tags: { to: "Tag", cardinality: "1:N", on: { local: ["id"], target: ["postId"] }, onDelete: "cascade" },
       },
     },
@@ -74,8 +74,14 @@ export const contract = defineContract({
         byPostId: { keyPath: "postId", unique: false },
       },
       relations: {
-        post: { to: "Post", cardinality: "N:1", on: { local: ["postId"], target: ["id"] } },
+        post: { to: "Post", cardinality: "N:1", on: { local: ["postId"], target: ["id"] }, index: false },
       },
+    },
+    ScalarListSample: {
+      store: "scalar_list_samples",
+      key: "id",
+      fields: { id: "String", tags: "String[]", dates: "DateTime[]", decimals: "Decimal[]" },
+      defaults: { tags: [], dates: [], decimals: [] },
     },
     RandomStore: {
       store: "random_store",

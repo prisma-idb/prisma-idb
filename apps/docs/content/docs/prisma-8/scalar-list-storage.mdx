@@ -1,0 +1,14 @@
+---
+title: Why missing lists stay missing
+description: How explicit migration keeps list reads, filters, and sync consistent.
+---
+
+An empty array is a stored value. A missing field means that no value was stored. Treating both as `[]` would make old records match `eq([])` without updating the data those records send to a sync server.
+
+The Prisma 8 IDB client keeps that distinction. A required list must be supplied on create unless its contract declares an empty-list default. Reads preserve a missing required field. Projection only includes or removes fields; it does not repair records.
+
+A planned migration repairs existing records. Adding a list changes the contract's storage hash, so clients and sync servers can detect incompatible storage shapes. When the list declares `[]`, the planner can backfill it. Without a default, the planner leaves an explicit placeholder for the author to resolve. It cannot know which values belong in each record.
+
+After that migration runs, required lists are arrays in stored rows and queued creates. Sparse update patches stay sparse: adding a list to every queued patch would overwrite a server value that the original edit never touched.
+
+This follows [ADR 024: Record shape is IDB storage](https://github.com/prisma-idb/prisma-idb/blob/main/packages/prisma-orm/docs/adrs/ADR%20024%20-%20Record%20Shape%20Is%20IDB%20Storage.md) and [ADR 025: Scalar lists](https://github.com/prisma-idb/prisma-idb/blob/main/packages/prisma-orm/docs/adrs/ADR%20025%20-%20Scalar%20Lists.md). See the [list reference](/docs/prisma-8/scalar-list-reference) for exact migration and comparison rules.

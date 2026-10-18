@@ -480,7 +480,23 @@ function interpretModel(
 
       const enumMember = enumType === undefined ? undefined : enumType.members.find((member) => raw === member.name);
 
-      if (enumType !== undefined) {
+      if (form.kind === "list") {
+        if (!field.list || raw.replace(/\s/g, "") !== "[]") {
+          diagnostics.push({
+            code: field.list ? "IDB_LIST_DEFAULT_UNSUPPORTED" : "IDB_INVALID_DEFAULT_VALUE",
+            message: field.list
+              ? `Field "${model.name}.${field.name}": Only an empty list default ([]) is supported.`
+              : `Field "${model.name}.${field.name}": A scalar field cannot have a list default.`,
+            sourceId,
+            span: defaultAttr.span,
+          });
+          continue;
+        }
+        fieldExecutionDefaults.push({
+          fieldName: field.name,
+          onCreate: { id: LITERAL_GENERATOR_ID, params: { value: [] } },
+        });
+      } else if (enumType !== undefined) {
         const value = enumMember?.value ?? raw;
         fieldExecutionDefaults.push({
           fieldName: field.name,

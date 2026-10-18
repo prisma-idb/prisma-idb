@@ -10,12 +10,16 @@
     "migrations",
     "field-changes",
     "foreign-key-indexes",
+    "scalar-lists",
     "---Reference---",
     "schema",
     "contract-authoring",
+    "scalar-list-reference",
     "...api",
     "---Sync---",
-    "...sync"
+    "...sync",
+    "---Explanation---",
+    "scalar-list-storage"
   ],
   "root": true,
   "title": "Prisma 8",

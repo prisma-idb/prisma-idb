@@ -47,7 +47,7 @@ Both `onDelete` and `onUpdate` default to `Restrict` in PSL and `"restrict"` in 
 
 TypeScript uses `"1:N"` for a backrelation and `"1:1"` or `"N:1"` for a to-one relation. For a backrelation, `on.local` names the parent key and `on.target` names the child's foreign key. To-one nullability defaults to whether any local field is nullable. The optional `nullable` property overrides it.
 
-Only enum fields can be lists. Lists cannot be optional. The [Schema & Config reference](/docs/prisma-8/schema) lists scalar types and IndexedDB key restrictions.
+Scalar and enum fields can be lists. Lists cannot be optional. An empty-list default makes the field optional on create. See the [scalar-list reference](/docs/prisma-8/scalar-list-reference). The [Schema & Config reference](/docs/prisma-8/schema) lists scalar types and IndexedDB key restrictions.
 
 ## Equivalent contracts
 
@@ -180,14 +180,14 @@ export function buildContract(input: DefineContractInput) {
 
 | Code                                      | Meaning                                                                             |
 | ----------------------------------------- | ----------------------------------------------------------------------------------- |
-| `IDB_UNSUPPORTED_FIELD_TYPE`              | A field has an unsupported type or is a scalar list.                                |
+| `IDB_UNSUPPORTED_FIELD_TYPE`              | A field has an unsupported type.                                                    |
 | `IDB_OPTIONAL_LIST`                       | A list field is optional.                                                           |
 | `IDB_ENUM_SCALAR_NAME_CONFLICT`           | An enum uses a built-in scalar's name.                                              |
 | `IDB_ENUM_EMPTY`                          | An enum has no members.                                                             |
 | `IDB_ENUM_DUPLICATE_VALUE`                | Enum members share a stored value.                                                  |
 | `IDB_ENUM_VALUE_NOT_STRING`               | A PSL enum member maps to a non-string value.                                       |
 | `IDB_INVALID_ENUM_DEFAULT`                | An enum default is not a declared value.                                            |
-| `IDB_ENUM_LIST_DEFAULT_UNSUPPORTED`       | An enum list declares a default.                                                    |
+| `IDB_LIST_DEFAULT_UNSUPPORTED`            | A list declares a default other than `[]`.                                          |
 | `IDB_INVALID_DEFAULT_VALUE`               | A default does not match its field, or a TypeScript default declaration is invalid. |
 | `IDB_UNKNOWN_DEFAULT_FUNCTION`            | A PSL default calls an unsupported function.                                        |
 | `IDB_INVALID_DEFAULT_FUNCTION_ARGUMENT`   | A PSL default function has invalid arguments.                                       |

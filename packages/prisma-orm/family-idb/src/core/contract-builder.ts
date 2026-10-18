@@ -21,12 +21,12 @@ import { validateIdbContractDefinition } from "./validate-definition";
 /** Scalar names supported by the TypeScript IDB contract builder. */
 type PrismaScalarType = "String" | "Int" | "Float" | "Boolean" | "DateTime" | "BigInt" | "Decimal" | "Json" | "Bytes";
 
-/** A required or nullable scalar field declaration. */
-type PrismaScalarFieldSpec = PrismaScalarType | `${PrismaScalarType}?`;
+/** A required scalar, nullable scalar, or required scalar-list declaration. */
+type PrismaScalarFieldSpec = PrismaScalarType | `${PrismaScalarType}?` | `${PrismaScalarType}[]`;
 
 /**
  * A field spec string: the Prisma scalar type name, optionally suffixed with
- * `?` to indicate the field is nullable (e.g. `"String"`, `"Int?"`, `"DateTime?"`).
+ * `?` for a nullable scalar or `[]` for a required list (e.g. `"String"`, `"Int?"`, `"DateTime[]"`).
  */
 export type FieldSpec<EnumName extends string = never> =
   PrismaScalarFieldSpec | EnumName | `${EnumName}?` | `${EnumName}[]`;
@@ -105,7 +105,7 @@ export type ModelDef<EnumName extends string = never> = {
    * A literal fills the field on `create()` and also feeds the `setDefault`
    * referential action, like PSL `@default("x")`.
    */
-  readonly defaults?: Record<string, FieldDefault | string | number | boolean>;
+  readonly defaults?: Record<string, FieldDefault | string | number | boolean | readonly unknown[]>;
   /**
    * Literal default values, keyed by field name — feeds only the `setDefault`
    * referential action (a child's FK field is reset to its own declared
@@ -292,11 +292,12 @@ function lowerIndex(name: string, idx: IndexDef): IdbIndexNode {
 }
 
 /** A `defaults` entry: a helper's result or a literal value. */
-type DeclaredDefault = FieldDefault | string | number | boolean;
+type DeclaredDefault = FieldDefault | string | number | boolean | readonly unknown[];
 
 /** Runtime callers must supply a scalar literal or one of this package's helper shapes. */
 function isDeclaredDefault(value: unknown): value is DeclaredDefault {
-  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return true;
+  if (Array.isArray(value) || typeof value === "string" || typeof value === "number" || typeof value === "boolean")
+    return true;
   if (typeof value !== "object" || value === null) return false;
   const helper = value as FieldDefault;
   if (helper.kind === "autoincrement") return true;
@@ -326,9 +327,19 @@ function ownEntry<T>(map: Record<string, T> | undefined, fieldName: string): T |
   return map && Object.hasOwn(map, fieldName) ? map[fieldName] : undefined;
 }
 
+/** Recognize readonly list defaults separately from helper objects. */
+function isListDefault(value: DeclaredDefault): value is readonly unknown[] {
+  return Array.isArray(value);
+}
+
 /** `true` for `autoincrement()`, which sets a store property and no field default. */
 function isAutoincrement(declared: DeclaredDefault | undefined): boolean {
-  return declared !== null && typeof declared === "object" && declared.kind === "autoincrement";
+  return (
+    declared !== undefined &&
+    typeof declared === "object" &&
+    !isListDefault(declared) &&
+    declared.kind === "autoincrement"
+  );
 }
 
 /**
@@ -343,10 +354,16 @@ function lowerFieldDefaults(
   if (declared === undefined || isAutoincrement(declared)) {
     return setDefaultLiteral !== undefined ? { literalDefault: setDefaultLiteral } : {};
   }
+  if (isListDefault(declared)) {
+    return { executionDefault: { onCreate: { id: "literal", params: { value: [...declared] } } } };
+  }
   if (typeof declared === "object") {
     return declared.kind === "execution" ? { executionDefault: declared.execution } : {};
   }
-  return { literalDefault: declared, executionDefault: { onCreate: { id: "literal", params: { value: declared } } } };
+  return {
+    literalDefault: declared,
+    executionDefault: { onCreate: { id: "literal", params: { value: declared } } },
+  };
 }
 
 /**

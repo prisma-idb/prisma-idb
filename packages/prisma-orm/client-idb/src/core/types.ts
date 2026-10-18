@@ -248,8 +248,8 @@ type ExecutionDefaultsOf<TContract> = TContract extends {
  */
 type FieldsWithCreateDefault<TContract, ModelName extends string> = Extract<
   ExecutionDefaultsOf<TContract>,
-  { readonly ref: { readonly table: ModelStoreName<TContract, ModelName> }; readonly onCreate: unknown }
->["ref"]["column"];
+  { readonly ref: { readonly entry: ModelStoreName<TContract, ModelName> }; readonly onCreate: unknown }
+>["ref"]["field"];
 
 /** {@link FieldsWithCreateDefault}, narrowed to keys that actually exist on the resolved input row (may be absent for models with no typed maps). */
 type DefaultedInputField<TContract, ModelName extends string> = FieldsWithCreateDefault<TContract, ModelName> &

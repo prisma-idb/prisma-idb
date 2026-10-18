@@ -147,3 +147,11 @@ describe.each(["full", "patch"] as const)("transformRecord in %s mode", (mode) =
     expect(Object.hasOwn(result, "constructor")).toBe(mode === "full");
   });
 });
+
+it("clones empty-list backfills for each transformed record", () => {
+  const op = transformRecordsOp("sample", { fields: { tags: defaultIfMissing([]) } });
+  const first = transformRecord(op, {}, "full");
+  (first["tags"] as unknown[]).push("local");
+  expect(transformRecord(op, {}, "full")).toEqual({ tags: [] });
+  expect(transformRecord(op, {}, "patch")).toEqual({});
+});

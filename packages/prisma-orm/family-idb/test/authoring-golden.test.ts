@@ -100,7 +100,6 @@ for (const scenario of authoringScenarios) {
 const sharedInvalidScenarios = new Set([
   "optional enum list",
   "enum named like a scalar",
-  "scalar list",
   "index on unknown field",
   "id on unknown field",
   "exclude back-relation list",

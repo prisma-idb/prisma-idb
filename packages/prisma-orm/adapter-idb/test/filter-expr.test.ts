@@ -1,3 +1,4 @@
+import { assertValidDecimalFilter } from "../src/core/filter-eval";
 /**
  * Filter expression AST + evaluator unit tests.
  *
@@ -284,4 +285,12 @@ describe("evaluateFilter — SQL membership", () => {
     expect(evaluateFilter(notExpr(included), row)).toBe(result === false);
     expect(evaluateFilter(notExpr(excluded), row)).toBe(result === true);
   });
+});
+
+it("keeps dictionary metadata out of list operand validation", () => {
+  expect(() =>
+    assertValidDecimalFilter(fieldFilter("attributes", "eq", { a: "value" }), {
+      attributes: { codecId: "idb/string@1", collection: true, dict: true },
+    })
+  ).not.toThrow();
 });

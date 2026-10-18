@@ -80,3 +80,10 @@ export { runOrmTransaction, IdbTransactionCommittedEarlyError } from "../core/or
 export type { IdbOrmTransaction } from "../core/orm-transaction";
 
 export { IdbDecimalIdentityConflictError } from "../core/decimal-identity";
+
+export type {
+  IdbFieldOperation,
+  IdbFieldExpression,
+  IdbUpdateAccessor,
+  IdbUpdateCallback,
+} from "../core/field-updates";
