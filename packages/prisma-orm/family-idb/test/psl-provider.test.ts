@@ -1,10 +1,16 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { assembleAuthoringContributions } from "@prisma/orm-framework/components/control";
+import { EMPTY_DATA_TYPES, buildSymbolTable, createBinder } from "@prisma/orm-framework/psl-parser";
+import { hasPslInterpreter } from "@prisma/orm-framework/psl-parser/interpret";
+import { parse } from "@prisma/orm-framework/psl-parser/syntax";
 import type { ContractSourceContext } from "@prisma/orm-framework/config/config-types";
 import type { IdbStorage } from "@prisma-idb/target-idb/pack";
 import { prismaIdbContract, stripIdbExcludeAttributes } from "../src/core/psl-provider";
+import { idbAttributeSpecs } from "../src/core/psl-binder";
+import { authoringScenarios } from "./authoring-scenarios";
 
 let dir: string;
 
@@ -113,6 +119,70 @@ describe("prismaIdbContract", () => {
     expect(diagnostic).toBeDefined();
     expect(diagnostic!.sourceId).toBe(join(dir, "schema.prisma"));
     expect(diagnostic!.span?.start.line).toBe(3);
+  });
+});
+
+/** Build the cached artifacts the language server hands to a PSL source. */
+function editorInput(schema: string, sourceId = "authoring.prisma") {
+  const { document, sources } = parse(schema, sourceId);
+  const context = {
+    authoringContributions: assembleAuthoringContributions([{ authoring: { attributeSpecs: idbAttributeSpecs } }]),
+    dataTypes: EMPTY_DATA_TYPES,
+    controlMutationDefaults: { defaultFunctionRegistry: new Map() },
+    defaultNamespaceId: "__unbound__",
+    resolvedInputs: [],
+  } as unknown as ContractSourceContext;
+  const { symbolTable } = buildSymbolTable({
+    documents: [document],
+    sources,
+    defaultNamespaceId: context.defaultNamespaceId,
+  });
+  const { binder } = createBinder({ symbolTable, sources, context });
+  return { input: { documents: [document], sources, symbolTable, binder }, context };
+}
+
+describe("PSL editor interpretation", () => {
+  it.each([
+    { name: "scalar list", projection: "full" as const },
+    { name: "optional enum list", projection: "full" as const },
+    { name: "index on unknown field", projection: "full" as const },
+    { name: "exclude back-relation list", projection: "client" as const },
+  ])("matches golden diagnostics for $name ($projection)", async ({ name, projection }) => {
+    const scenario = authoringScenarios.find((scenario) => scenario.name === name)!;
+    const { input, context } = editorInput(scenario.psl);
+    const { source } = prismaIdbContract("missing.prisma", { projection });
+    expect(hasPslInterpreter(source)).toBe(true);
+    if (!hasPslInterpreter(source)) throw new Error("Expected a PSL interpreter");
+
+    const result = source.interpret(input, context);
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("Expected invalid PSL to fail");
+    const filename = name.replaceAll(" ", "-");
+    const golden = JSON.parse(
+      await readFile(new URL(`./__snapshots__/authoring/${filename}.${projection}.psl.snap`, import.meta.url), "utf-8")
+    );
+    expect(result.failure.diagnostics).toEqual(golden.diagnostics.interpretation);
+  });
+
+  it("builds a contract from cached text without loading or injecting schema text", () => {
+    const { input, context } = editorInput(
+      `model User {
+  id String @id
+}
+`,
+      "unsaved.prisma"
+    );
+    const { source } = prismaIdbContract("missing.prisma", {
+      injectSchemaText: () => {
+        throw new Error("Editor interpretation must use cached text");
+      },
+    });
+    if (!hasPslInterpreter(source)) throw new Error("Expected a PSL interpreter");
+
+    const result = source.interpret(input, context);
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error(result.failure.summary);
+    expect((result.value.storage as IdbStorage).stores).toHaveProperty("user");
   });
 });
 
