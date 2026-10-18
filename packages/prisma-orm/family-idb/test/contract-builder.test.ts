@@ -1067,3 +1067,28 @@ describe("defineContract — conflicting reciprocal relation actions", () => {
     ).not.toThrow();
   });
 });
+
+describe("defineContract — literal defaults", () => {
+  it("ignores Object.prototype members when a field shares their name", () => {
+    const contract = defineContract({
+      family: idbFamilyPack,
+      target: idbTargetPack,
+      models: {
+        Thing: {
+          store: "things",
+          key: "id",
+          // Built with `fromEntries` because an object literal types `toString` as a method.
+          fields: Object.fromEntries([
+            ["id", "String"],
+            ["toString", "String"],
+            ["constructor", "String"],
+          ] as const),
+          fieldDefaults: {},
+        },
+      },
+    });
+
+    const models = domainModelsAtDefaultNamespace(contract.domain) as Record<string, { storage: object }>;
+    expect(models["Thing"]!.storage).not.toHaveProperty("fieldDefaults");
+  });
+});

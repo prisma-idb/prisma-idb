@@ -1,25 +1,17 @@
-import { computeProfileHash, computeStorageHash } from "@prisma/orm-framework/contract/hashing";
-import type {
-  ApplicationDomain,
-  Contract,
-  ContractEnum,
-  ContractField,
-  CrossReference,
-} from "@prisma/orm-framework/contract/types";
-import { UNBOUND_DOMAIN_NAMESPACE_ID, crossRef } from "@prisma/orm-framework/contract/types";
-import type {
-  IdbIndexDefinition,
-  IdbKeyPath,
-  IdbModelStorage,
-  IdbReferentialAction,
-  IdbStorage,
-  IdbStoreDefinition,
-} from "@prisma-idb/target-idb/pack";
+import type { Contract } from "@prisma/orm-framework/contract/types";
+import type { IdbKeyPath, IdbReferentialAction, IdbStorage } from "@prisma-idb/target-idb/pack";
 import { keyPathFields } from "@prisma-idb/target-idb/pack";
+import { buildIdbContractFromDefinition } from "./build-contract-from-definition";
+import type {
+  IdbContractDefinition,
+  IdbEnumNode,
+  IdbFieldNode,
+  IdbIndexNode,
+  IdbModelNode,
+  IdbRelationNode,
+} from "./contract-definition";
 import type { ContractProjection } from "./psl-interpreter";
 import { isValidIdbKeyCodec, literalValueMatchesCodec, warnDroppedRelation } from "./psl-interpreter";
-import { validateContract } from "./validate";
-import { buildRecordShape } from "./record-shape";
 
 // ── Field type system ─────────────────────────────────────────────────────────
 
@@ -391,52 +383,15 @@ function validateNoConflictingRelationActions(models: Record<string, ModelDef<st
   }
 }
 
-// ── Helper: build ContractField entries from field specs ──────────────────────
+// ── Lowering into the shared contract definition ──────────────────────────────
 
-/** Translate supported field declarations into domain fields and enum references. */
-function buildFields(
-  fields: Record<string, FieldSpec<string>>,
-  enums: EnumDefs,
-  namespaceId: string
-): Record<string, ContractField> {
-  const result: Record<string, ContractField> = {};
-  for (const [name, spec] of Object.entries(fields)) {
-    const { typeName, nullable, many } = parseFieldSpec(spec);
-    const enumValues = enums[typeName];
-    const codecId =
-      enumValues === undefined ? SCALAR_TO_CODEC_ID[typeName as PrismaScalarType] : SCALAR_TO_CODEC_ID.String;
-    if (codecId === undefined) {
-      throw new Error(`Unknown field type "${typeName}" for field "${name}"`);
-    }
-    if (many && enumValues === undefined) {
-      throw new Error(`Field "${name}" has list type "${spec}". Only enum fields can be lists.`);
-    }
-    if (many && nullable) {
-      throw new Error(`Field "${name}" has type "${spec}". A list field cannot be optional.`);
-    }
-    result[name] = {
-      nullable,
-      type: { kind: "scalar" as const, codecId },
-      ...(many ? { many: { elementNullable: false } } : {}),
-      ...(enumValues !== undefined
-        ? {
-            valueSet: {
-              plane: "domain",
-              entityKind: "enum",
-              namespaceId,
-              entityName: typeName,
-            },
-          }
-        : {}),
-    };
-  }
-  return result;
-}
-
-/** Validate named string enum members and construct their stored values. */
-function buildEnums(enums: EnumDefs): Record<string, ContractEnum> {
-  const result: Record<string, ContractEnum> = {};
-  for (const [name, values] of Object.entries(enums)) {
+/**
+ * Validate named string enum members and lower them to enum nodes. Runs on
+ * the complete enum map, so a client projection still rejects an invalid enum
+ * that only excluded models use.
+ */
+function lowerEnums(enums: EnumDefs): IdbEnumNode[] {
+  return Object.entries(enums).map(([name, values]) => {
     if (name in SCALAR_TO_CODEC_ID) {
       throw new Error(`defineContract: enum "${name}" conflicts with the built-in scalar type of the same name.`);
     }
@@ -446,123 +401,134 @@ function buildEnums(enums: EnumDefs): Record<string, ContractEnum> {
     if (new Set(values).size !== values.length) {
       throw new Error(`defineContract: enum "${name}" repeats a value. Enum values must be unique.`);
     }
-    result[name] = {
-      codecId: SCALAR_TO_CODEC_ID.String,
-      members: values.map((value) => ({ name: value, value })),
-    };
-  }
-  return result;
+    return { name, members: values.map((value) => ({ name: value, value })) };
+  });
 }
 
 /**
  * Client projection: drop enums that no remaining field uses, so an enum that
  * only excluded models or fields reference doesn't reach the client contract.
- * Runs after `buildEnums` has validated the complete map.
  */
-function keepReferencedEnums(
-  enums: Record<string, ContractEnum>,
-  models: Record<string, ModelDef<string>>
-): Record<string, ContractEnum> {
+function keepReferencedEnums(enums: readonly IdbEnumNode[], models: Record<string, ModelDef<string>>): IdbEnumNode[] {
   const referenced = new Set(
     Object.values(models).flatMap((def) => Object.values(def.fields).map((spec) => parseFieldSpec(spec).typeName))
   );
-  return Object.fromEntries(Object.entries(enums).filter(([name]) => referenced.has(name)));
+  return enums.filter((node) => referenced.has(node.name));
 }
 
-// ── Helper: derive the `roots` map (storeName → model CrossReference) ─────────
-
-/** Expose each model under its declared object-store root. */
-function buildRoots(models: Record<string, ModelDef<string>>): Record<string, CrossReference> {
-  const roots: Record<string, CrossReference> = {};
-  for (const modelName of Object.keys(models)) {
-    const def = models[modelName]!;
-    // v0.12.0: roots values are CrossReference `{ namespace, model }`, not bare
-    // model-name strings. IDB has a single (unbound) namespace.
-    roots[def.store] = crossRef(modelName);
-  }
-  return roots;
-}
-
-// ── Helper: derive storage.stores from model definitions ─────────────────────
-
-/** Build store metadata and canonical record shapes before computing the storage hash. */
-function buildStores(
-  models: Record<string, ModelDef<string>>,
-  domainModels: Record<string, ContractModelEntry>,
-  enums: Record<string, ContractEnum>
-): Record<string, IdbStoreDefinition> {
-  const stores: Record<string, IdbStoreDefinition> = {};
-  for (const [modelName, def] of Object.entries(models)) {
-    const indexes: Record<string, IdbIndexDefinition> = {};
-    for (const [indexName, idx] of Object.entries(def.indexes ?? {})) {
-      indexes[indexName] = {
-        keyPath: idx.keyPath,
-        unique: idx.unique ?? false,
-        ...(idx.multiEntry !== undefined ? { multiEntry: idx.multiEntry } : {}),
-      };
-    }
-    stores[def.store] = {
-      record: buildRecordShape(modelName, domainModels[modelName]!.fields, { enum: enums }),
-      keyPath: def.key,
-      ...(Object.keys(indexes).length > 0 ? { indexes } : {}),
-    };
-  }
-  return stores;
-}
-
-// ── Helper: build the models section ─────────────────────────────────────────
-
-/** The domain fields, join metadata, and storage binding of a built model. */
-type ContractModelEntry = {
-  readonly fields: Record<string, ContractField>;
-  readonly relations: Record<
-    string,
-    {
-      readonly to: CrossReference;
-      readonly cardinality: "1:1" | "1:N" | "N:1";
-      readonly on: { readonly localFields: readonly string[]; readonly targetFields: readonly string[] };
-      readonly nullable?: boolean;
-    }
-  >;
-  readonly storage: IdbModelStorage;
-};
-
-/** Build domain relations and keep referential actions in IDB storage metadata. */
-function buildModels(
-  models: Record<string, ModelDef<string>>,
+/** Translate one field declaration, and its literal default if it has one, into a field node. */
+function lowerField(
+  name: string,
+  spec: FieldSpec<string>,
   enums: EnumDefs,
-  namespaceId: string
-): Record<string, ContractModelEntry> {
-  const result: Record<string, ContractModelEntry> = {};
-  for (const [modelName, def] of Object.entries(models)) {
-    const relations: ContractModelEntry["relations"] = {};
-    const relationsStorage: Record<string, { onDelete?: IdbReferentialAction; onUpdate?: IdbReferentialAction }> = {};
-    for (const [relName, rel] of Object.entries(def.relations ?? {})) {
-      relations[relName] = {
-        to: crossRef(rel.to),
-        cardinality: rel.cardinality,
-        on: { localFields: rel.on.local, targetFields: rel.on.target },
-        // The emitter rejects a to-one relation without a boolean `nullable`.
-        ...(rel.cardinality === "1:N"
-          ? {}
-          : { nullable: rel.nullable ?? rel.on.local.some((f) => def.fields[f]?.endsWith("?") === true) }),
-      };
-      if (rel.onDelete !== undefined || rel.onUpdate !== undefined) {
-        relationsStorage[relName] = {
-          ...(rel.onDelete !== undefined ? { onDelete: rel.onDelete } : {}),
-          ...(rel.onUpdate !== undefined ? { onUpdate: rel.onUpdate } : {}),
-        };
-      }
-    }
-    const storage: IdbModelStorage = {
-      storeName: def.store,
-      keyPath: def.key,
-      ...(Object.keys(relationsStorage).length > 0 ? { relations: relationsStorage } : {}),
-      ...(def.fieldDefaults && Object.keys(def.fieldDefaults).length > 0 ? { fieldDefaults: def.fieldDefaults } : {}),
-    };
-    result[modelName] = { fields: buildFields(def.fields, enums, namespaceId), relations, storage };
+  literalDefault: string | number | boolean | undefined
+): IdbFieldNode {
+  const { typeName, nullable, many } = parseFieldSpec(spec);
+  const isEnum = enums[typeName] !== undefined;
+  const codecId = isEnum ? SCALAR_TO_CODEC_ID.String : SCALAR_TO_CODEC_ID[typeName as PrismaScalarType];
+  if (codecId === undefined) {
+    throw new Error(`Unknown field type "${typeName}" for field "${name}"`);
   }
-  return result;
+  if (many && !isEnum) {
+    throw new Error(`Field "${name}" has list type "${spec}". Only enum fields can be lists.`);
+  }
+  if (many && nullable) {
+    throw new Error(`Field "${name}" has type "${spec}". A list field cannot be optional.`);
+  }
+  return {
+    name,
+    codecId,
+    nullable,
+    list: many,
+    ...(isEnum ? { enumName: typeName } : {}),
+    ...(literalDefault !== undefined ? { literalDefault } : {}),
+  };
+}
+
+/** Translate one relation declaration into a relation node, resolving whether a to-one relation is nullable. */
+function lowerRelation(name: string, rel: RelationDef, def: ModelDef<string>): IdbRelationNode {
+  return {
+    name,
+    to: rel.to,
+    cardinality: rel.cardinality,
+    localFields: rel.on.local,
+    targetFields: rel.on.target,
+    // The emitter rejects a to-one relation without a boolean `nullable`.
+    ...(rel.cardinality === "1:N"
+      ? {}
+      : { nullable: rel.nullable ?? rel.on.local.some((f) => def.fields[f]?.endsWith("?") === true) }),
+    ...(rel.onDelete !== undefined ? { onDelete: rel.onDelete } : {}),
+    ...(rel.onUpdate !== undefined ? { onUpdate: rel.onUpdate } : {}),
+  };
+}
+
+/** Translate one index declaration into an index node. */
+function lowerIndex(name: string, idx: IndexDef): IdbIndexNode {
+  return {
+    name,
+    keyPath: idx.keyPath,
+    unique: idx.unique ?? false,
+    ...(idx.multiEntry !== undefined ? { multiEntry: idx.multiEntry } : {}),
+  };
+}
+
+/**
+ * Returns the literal default declared for a field, or `undefined` when there
+ * is none. Reads own properties only, so a field named like an `Object.prototype`
+ * member (for example `toString`) never picks up an inherited value.
+ */
+function ownLiteralDefault(def: ModelDef<string>, fieldName: string): string | number | boolean | undefined {
+  const defaults = def.fieldDefaults;
+  return defaults && Object.hasOwn(defaults, fieldName) ? defaults[fieldName] : undefined;
+}
+
+/** Translate one model declaration into a model node. */
+function lowerModel(modelName: string, def: ModelDef<string>, enums: EnumDefs): IdbModelNode {
+  return {
+    modelName,
+    storeName: def.store,
+    key: def.key,
+    // The TS DSL has no way to declare a key generator yet.
+    autoIncrement: false,
+    fields: Object.entries(def.fields).map(([name, spec]) =>
+      lowerField(name, spec, enums, ownLiteralDefault(def, name))
+    ),
+    indexes: Object.entries(def.indexes ?? {}).map(([name, idx]) => lowerIndex(name, idx)),
+    relations: Object.entries(def.relations ?? {}).map(([name, rel]) => lowerRelation(name, rel, def)),
+  };
+}
+
+/**
+ * Validates a `defineContract` input and lowers it into the shared
+ * {@link IdbContractDefinition}. Mirrors upstream's `buildContractDefinition`
+ * in `@prisma/orm-family-sql/contract-ts`.
+ *
+ * Applies the client projection first, so every check and the definition see
+ * only the models and fields the projected contract keeps.
+ *
+ * @throws On the first invalid enum, key, index, default, relation or field.
+ */
+export function buildIdbContractDefinition(
+  input: DefineContractInput<EnumDefs>,
+  options?: DefineContractOptions
+): IdbContractDefinition {
+  const projection: ContractProjection = options?.projection ?? "full";
+  const enums: EnumDefs = input.enums ?? {};
+  const models: Record<string, ModelDef<string>> = projection === "client"
+    ? projectModelsForClient(input.models)
+    : input.models;
+
+  const enumNodes = lowerEnums(enums);
+
+  for (const [modelName, def] of Object.entries(models)) {
+    validateModelKeyAndIndexes(modelName, def, enums);
+  }
+  validateNoConflictingRelationActions(models);
+
+  return {
+    enums: projection === "client" ? keepReferencedEnums(enumNodes, models) : enumNodes,
+    models: Object.entries(models).map(([modelName, def]) => lowerModel(modelName, def, enums)),
+  };
 }
 
 // ── defineContract ────────────────────────────────────────────────────────────
@@ -598,79 +564,5 @@ export function defineContract<const TEnums extends EnumDefs = Record<never, nev
   input: DefineContractInput<TEnums>,
   options?: DefineContractOptions
 ): Contract<IdbStorage> {
-  const projection: ContractProjection = options?.projection ?? "full";
-  const enums: EnumDefs = input.enums ?? {};
-  const models: Record<string, ModelDef<string>> = projection === "client"
-    ? projectModelsForClient(input.models)
-    : input.models;
-
-  const validatedEnums = buildEnums(enums);
-  const domainEnums = projection === "client" ? keepReferencedEnums(validatedEnums, models) : validatedEnums;
-
-  for (const [modelName, def] of Object.entries(models)) {
-    validateModelKeyAndIndexes(modelName, def, enums);
-  }
-  validateNoConflictingRelationActions(models);
-
-  const ns = UNBOUND_DOMAIN_NAMESPACE_ID;
-  const domainModels = buildModels(models, enums, ns);
-  const stores = buildStores(models, domainModels, domainEnums);
-
-  // Mirror the capability surface that `prisma contract emit` writes
-  // into the JSON contract — keeps the two authoring paths byte-equivalent
-  // for the capabilities block.
-  const capabilities = {
-    idb: {
-      ddlOnlyInUpgrade: true,
-      transactionalDDL: true,
-    },
-  };
-
-  // Both planes are namespace-keyed. IDB has no namespace
-  // concept, so everything lives under the single unbound namespace.
-  const storageBlock = {
-    stores,
-    namespaces: { [ns]: { id: ns, entries: {} } },
-  };
-
-  const storageHash = computeStorageHash({
-    target: "idb",
-    targetFamily: "idb",
-    storage: storageBlock,
-  });
-
-  const profileHash = computeProfileHash({
-    target: "idb",
-    targetFamily: "idb",
-    capabilities,
-  });
-
-  const storage: IdbStorage = { ...storageBlock, storageHash };
-
-  // v0.12.0: models live under `domain.namespaces.<ns>.models`, not a top-level
-  // `models` field.
-  const domain = {
-    namespaces: {
-      [ns]: {
-        models: domainModels,
-        ...(Object.keys(domainEnums).length > 0 ? { enum: domainEnums } : {}),
-      },
-    },
-  } as unknown as ApplicationDomain;
-
-  const contract: Contract<IdbStorage> = {
-    target: "idb",
-    targetFamily: "idb",
-    roots: buildRoots(models),
-    domain,
-    storage,
-    capabilities,
-    extensions: {},
-    meta: {},
-    profileHash,
-  };
-
-  validateContract(contract);
-
-  return contract;
+  return buildIdbContractFromDefinition(buildIdbContractDefinition(input, options));
 }
