@@ -162,16 +162,28 @@ function validateExecutionDefault(model: IdbModelNode, field: IdbFieldNode, repo
       [...at, "executionDefault"]
     );
   }
-  if (execution.onUpdate?.id === "timestampNow") {
-    if (keyPathFields(model.key).includes(field.name)) {
-      report(
-        "IDB_TEMPORAL_UPDATED_AT_ON_KEY_FIELD",
-        `${label} is part of the model's primary key and cannot have an auto-managed update timestamp.`,
-        at
-      );
-    }
-    if (field.codecId !== "idb/date@1") {
-      report("IDB_UPDATED_AT_NOT_DATETIME", `${label} has an auto-managed update timestamp but is not DateTime.`, at);
+  if (execution.onUpdate?.id === "timestampNow" && keyPathFields(model.key).includes(field.name)) {
+    report(
+      "IDB_TEMPORAL_UPDATED_AT_ON_KEY_FIELD",
+      `${label} is part of the model's primary key and cannot have an auto-managed update timestamp.`,
+      at
+    );
+  }
+  for (const phase of ["onUpdate", "onCreate"] as const) {
+    const generator = execution[phase];
+    if (!generator || generator.id === "literal") continue;
+    const isTimestamp = generator.id === "timestampNow";
+    const expectedCodec = isTimestamp ? "idb/date@1" : "idb/string@1";
+    if (field.codecId !== expectedCodec || field.enumName !== undefined || field.list) {
+      if (phase === "onUpdate" && isTimestamp) {
+        report("IDB_UPDATED_AT_NOT_DATETIME", `${label} has an auto-managed update timestamp but is not DateTime.`, at);
+      } else {
+        report(
+          "IDB_INVALID_DEFAULT_VALUE",
+          `${label} uses generator "${generator.id}" on ${phase}, which requires a ${isTimestamp ? "DateTime" : "String"} scalar field with codec "${expectedCodec}".`,
+          [...at, "executionDefault", phase]
+        );
+      }
     }
   }
 }

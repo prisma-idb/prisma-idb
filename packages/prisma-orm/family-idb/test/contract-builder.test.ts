@@ -1290,6 +1290,30 @@ describe("defineContract — execution defaults", () => {
     expect(entry?.onUpdate?.id).toBe("timestampNow");
   });
 
+  it.each([
+    { helper: "now", makeDefault: now, spec: "String" },
+    { helper: "now", makeDefault: now, spec: "Int" },
+    ...[uuidv4, uuidv7, cuid2].flatMap((makeDefault) =>
+      (["Int", "DateTime", "Role", "Role[]"] as const).map((spec) => ({ helper: makeDefault.name, makeDefault, spec }))
+    ),
+  ] as const)("rejects $helper() on a $spec field", ({ makeDefault, spec }) => {
+    expect(() =>
+      defineContract({
+        family: idbFamilyPack,
+        target: idbTargetPack,
+        enums: { Role: ["USER", "ADMIN"] },
+        models: {
+          Row: {
+            store: "rows",
+            key: "id",
+            fields: { id: "Int", value: spec },
+            defaults: { value: makeDefault() },
+          },
+        },
+      })
+    ).toThrow(/IDB_INVALID_DEFAULT_VALUE/);
+  });
+
   it("turns autoincrement() into the store's key generator and no execution default", () => {
     const contract = rowContract({ id: autoincrement() });
     expect(contract.storage.stores["rows"]?.autoIncrement).toBe(true);
