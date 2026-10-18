@@ -387,7 +387,11 @@ function interpretModel(
       });
 
       for (const fkField of localFields) {
-        if (!excludedFieldNames.has(fkField)) foreignKeyFields.add(fkField);
+        if (excludedFieldNames.has(fkField)) continue;
+        foreignKeyFields.add(fkField);
+        // Points a diagnostic on the builder's foreign-key index at the relation.
+        if (!Object.hasOwn(indexes, fkField))
+          sourceMap.set(["models", model.name, "indexes", fkField], relationAttr.span);
       }
       continue;
     }
@@ -560,7 +564,7 @@ function interpretModel(
         // A unique foreign key that follows its `@relation` takes the name the builder's
         // foreign-key index would have, so the store keeps one unique index and the
         // builder adds no plain duplicate. Changing this changes `storageHash`.
-        const takesForeignKeyIndexName = foreignKeyFields.has(field.name) && !(field.name in indexes);
+        const takesForeignKeyIndexName = foreignKeyFields.has(field.name) && !Object.hasOwn(indexes, field.name);
         const indexName = takesForeignKeyIndexName ? field.name : `${field.name}_unique`;
         indexes[indexName] = { keyPath: field.name, unique: true };
         sourceMap.set(["models", model.name, "indexes", indexName], fieldAttributes.unique);

@@ -598,6 +598,43 @@ describe("interpretPslDocumentToIdbContract", () => {
       expect(result.failure.diagnostics.some((d) => d.code === "IDB_INVALID_INDEX_KEY_TYPE")).toBe(true);
     });
 
+    it("rejects a relation whose foreign-key field is not declared, pointing at the relation", () => {
+      const result = interpret(`
+        model User {
+          id String @id
+        }
+        model Post {
+          id   String @id
+          user User   @relation(fields: [missing], references: [id])
+        }
+      `);
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      const diagnostic = result.failure.diagnostics.find((d) => d.code === "IDB_INVALID_INDEX");
+      expect(diagnostic?.message).toContain('references field "missing"');
+      expect(diagnostic?.span).toBeDefined();
+    });
+
+    it("indexes a foreign key named like an inherited object key", () => {
+      // The previous `in` check treated "constructor" as an existing index and skipped it, leaving
+      // the foreign key unindexed. Such a contract now gets the index, so its storageHash changes.
+      const result = interpret(`
+        model User {
+          id String @id
+        }
+        model Post {
+          id          String @id
+          constructor String
+          user        User   @relation(fields: [constructor], references: [id])
+        }
+      `);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value.storage.stores["post"]!.indexes).toEqual({
+        constructor: { keyPath: "constructor", unique: false },
+      });
+    });
+
     it("accepts String, Int, Float, DateTime, Decimal, and Bytes as @id or index types", () => {
       const result = interpret(`
         model Types {

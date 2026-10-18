@@ -331,6 +331,7 @@ function lowerFieldDefaults(
  * projection drops them from `fields` but they are still declared.
  */
 function checkDeclaredDefaults(modelName: string, def: ProjectedModelDef): void {
+  /** Throws an `IDB_INVALID_DEFAULT_VALUE` error located at the named field's default. */
   const fail = (name: string, message: string): never => {
     throw new IdbContractError([
       {

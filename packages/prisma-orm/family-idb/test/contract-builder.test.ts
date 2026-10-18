@@ -1197,6 +1197,7 @@ describe("defineContract — foreign-key indexes", () => {
   });
 
   it("rejects a foreign key whose type IndexedDB cannot index, unless the relation opts out", () => {
+    /** Builds the contract with the relation's `index` option set to `index`. */
     const build = (index?: boolean) =>
       defineContract({
         family: idbFamilyPack,
