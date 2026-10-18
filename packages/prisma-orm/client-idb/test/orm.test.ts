@@ -154,7 +154,7 @@ const USERS_STORE: StoreSpec = { name: "users", keyPath: "id" };
 const POSTS_STORE: StoreSpec = {
   name: "posts",
   keyPath: "id",
-  indexes: [{ name: "byAuthorId", keyPath: "authorId" }],
+  indexes: [{ name: "authorId", keyPath: "authorId" }],
 };
 
 const USER_FIELDS = { name: "String", email: "String" } as const;
@@ -471,6 +471,7 @@ describe("IdbStoreAccessor — include (relations)", () => {
         Post: {
           storeName: "posts",
           keyPath: "id",
+          fields: { authorId: "String" },
           relations: {
             author: {
               to: "User",
@@ -522,6 +523,7 @@ function usersWithPostsContract() {
       Post: {
         storeName: "posts",
         keyPath: "id",
+        fields: { authorId: "String" },
         relations: {
           author: { to: "User", cardinality: "N:1", on: { localFields: ["authorId"], targetFields: ["id"] } },
         },
