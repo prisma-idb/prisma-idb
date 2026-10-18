@@ -1,0 +1,210 @@
+---
+title: Contract Authoring
+description: PSL attributes, TypeScript contract definitions, defaults, indexes, and diagnostics
+icon: FileCode
+---
+
+An IndexedDB contract describes models, object stores, indexes, relations, and execution defaults. You can author it in Prisma Schema Language (PSL) or TypeScript.
+
+Both surfaces lower into the same internal `IdbContractDefinition`. One validator checks the definition, and `buildIdbContractFromDefinition` assembles the contract and computes its hashes. These internal types and functions are not authoring entry points. Equivalent definitions produce the same `storageHash`, `profileHash`, and `executionHash`, regardless of the authoring surface.
+
+## Entry points
+
+| Entry point                                                                                                     | Purpose                                                                                                 |
+| --------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `prismaIdbContract(path, options?)` from `@prisma-idb/family-idb/contract-psl`                                  | Supplies a `.prisma` file as the config's `contract` source. Options include `output` and `projection`. |
+| `interpretPslDocumentToIdbContract(symbolTable, sourceId, options?)` from `@prisma-idb/family-idb/contract-psl` | Interprets a parsed PSL symbol table. Returns a result with either a contract or diagnostics.           |
+| `defineContract(input, options?)` from `@prisma-idb/family-idb/contract-ts`                                     | Builds a contract from TypeScript data. Invalid shared definitions throw `IdbContractError`.            |
+
+Both surfaces accept `projection: "full"` (the default) or `projection: "client"`. Client projection removes excluded models and fields. See [Client Contracts](/docs/prisma-8/sync/client-contracts) for the exclusion rules.
+
+## Attributes and TypeScript declarations
+
+The TypeScript input contains `family`, `target`, optional `enums`, and `models`. Each model declares its `store`, `key`, and scalar or enum `fields`. Relations are separate from fields.
+
+| PSL                                             | TypeScript model declaration                                                                         |
+| ----------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `model Todo`                                    | `models: { Todo: { ... } }`                                                                          |
+| `@@map("todos")`                                | `store: "todos"`                                                                                     |
+| `id String @id`                                 | `key: "id"`, with `fields: { id: "String" }`                                                         |
+| `@@id([orgId, id])`                             | `key: ["orgId", "id"]`                                                                               |
+| `title String?`                                 | `fields: { title: "String?" }`                                                                       |
+| `email String @unique`                          | `indexes: { email_unique: { keyPath: "email", unique: true } }`                                      |
+| `@@unique([orgId, email])`                      | `indexes: { orgId_email_unique: { keyPath: ["orgId", "email"], unique: true } }`                     |
+| `@@index([userId], name: "byUser")`             | `indexes: { byUser: { keyPath: "userId" } }`                                                         |
+| `@relation(fields: [userId], references: [id])` | `relations: { user: { to: "User", cardinality: "N:1", on: { local: ["userId"], target: ["id"] } } }` |
+| `onDelete: Cascade`, `onUpdate: SetNull`        | `onDelete: "cascade"`, `onUpdate: "setNull"` on the relation                                         |
+| `enum Role { USER ADMIN }`                      | Top-level `enums: { Role: ["USER", "ADMIN"] }`                                                       |
+| `role Role`, `roles Role[]`                     | `fields: { role: "Role", roles: "Role[]" }`                                                          |
+| `@idb.exclude` on a scalar field                | `excludeFields: ["secret"]` on the model                                                             |
+| `@@idb.exclude`                                 | `exclude: true` on the model                                                                         |
+
+PSL uses a model name with its first letter lowercased as the default store name. TypeScript requires an explicit `store`. Index names default to the joined field names, with `_unique` for unique indexes. TypeScript uses the keys of `indexes` as names.
+
+Both `onDelete` and `onUpdate` default to `Restrict` in PSL and `"restrict"` in TypeScript. The other actions are `SetDefault` / `"setDefault"` and `NoAction` / `"noAction"`. `NoAction` behaves like `Restrict`.
+
+TypeScript uses `"1:N"` for a backrelation and `"1:1"` or `"N:1"` for a to-one relation. For a backrelation, `on.local` names the parent key and `on.target` names the child's foreign key. To-one nullability defaults to whether any local field is nullable. The optional `nullable` property overrides it.
+
+Only enum fields can be lists. Lists cannot be optional. The [Schema & Config reference](/docs/prisma-8/schema) lists scalar types and IndexedDB key restrictions.
+
+## Equivalent contracts
+
+These definitions produce the same contract, including the implicit `userId` index and execution defaults.
+
+```prisma
+model User {
+  id    String @id
+  todos Todo[]
+}
+
+model Todo {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  title     String   @default("Untitled")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+```
+
+```ts
+import family from "@prisma-idb/family-idb/pack";
+import target from "@prisma-idb/target-idb/pack";
+import { defineContract, now, updatedAt, uuidv4 } from "@prisma-idb/family-idb/contract-ts";
+
+export default defineContract({
+  family,
+  target,
+  models: {
+    User: {
+      store: "user",
+      key: "id",
+      fields: { id: "String" },
+      relations: {
+        todos: { to: "Todo", cardinality: "1:N", on: { local: ["id"], target: ["userId"] } },
+      },
+    },
+    Todo: {
+      store: "todo",
+      key: "id",
+      fields: { id: "String", userId: "String", title: "String", createdAt: "DateTime", updatedAt: "DateTime" },
+      defaults: { id: uuidv4(), title: "Untitled", createdAt: now(), updatedAt: updatedAt() },
+      relations: {
+        user: { to: "User", cardinality: "N:1", on: { local: ["userId"], target: ["id"] } },
+      },
+    },
+  },
+});
+```
+
+## Execution defaults
+
+TypeScript helpers come from `@prisma-idb/family-idb/contract-ts` and appear in the model's `defaults` map.
+
+| PSL                                                   | TypeScript `defaults` entry                                       | Behavior                                                                                                     |
+| ----------------------------------------------------- | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `@default("Untitled")`                                | `title: "Untitled"`                                               | Fills an omitted field on create. Numeric and Boolean literals are also supported for matching scalar types. |
+| `@default(USER)` on a `Role` field                    | `role: "USER"`                                                    | Fills an omitted enum field with a declared stored value.                                                    |
+| `@default(now())`                                     | `createdAt: now()`                                                | Supplies the current time on create. Requires `DateTime`.                                                    |
+| `@default(uuid())` or `@default(uuid(4))`             | `id: uuidv4()`                                                    | Supplies a UUID v4 on create. Requires `String`.                                                             |
+| `@default(uuid(7))`                                   | `id: uuidv7()`                                                    | Supplies a UUID v7 on create. Requires `String`.                                                             |
+| `@default(cuid())`                                    | `id: cuid2()`                                                     | Supplies a CUID2 on create. Requires `String`.                                                               |
+| `@updatedAt` or the `temporal.updatedAt()` field type | `updatedAt: updatedAt()` with `fields: { updatedAt: "DateTime" }` | Supplies the current time on create and on updates that write a value. Cannot be a primary-key field.        |
+| `@default(autoincrement())`                           | `id: autoincrement()`                                             | Enables IndexedDB's key generator. Requires a single-field `Int` primary key.                                |
+
+Generated defaults require non-nullable fields. A field cannot combine `@updatedAt` with `@default(...)`. Enum-list defaults are unsupported.
+
+Create defaults apply when the field is omitted. An explicitly supplied value takes precedence. `updatedAt()` also supplies an omitted timestamp during updates. A defaulted foreign key still undergoes referential-integrity checks.
+
+A literal in `defaults` also supplies the value for the `setDefault` referential action. The older `fieldDefaults` map supplies only that referential-action value; it does not fill omitted fields on create. A field cannot appear in both maps.
+
+Runtime defaults contribute to `contract.execution.executionHash`. `autoincrement()` changes storage metadata instead, so it contributes to `storageHash`. `profileHash` describes target capabilities.
+
+## Foreign-key indexes
+
+Both surfaces add a non-unique, single-field index for every foreign-key field of a to-one relation. The index is named after the field. A compound foreign key gets one index per field. Backrelations (`"1:N"`) do not add indexes on the parent.
+
+A declared index with the same name and the same single-field key path replaces the implicit index, including its uniqueness setting. A differently named index or a compound index does not replace it. A conflicting index name produces `IDB_INVALID_INDEX`.
+
+TypeScript relations accept `index: false` to suppress their implicit indexes. This does not remove declared indexes. If several relations share a foreign-key field, each owning relation must opt out to suppress its implicit index. PSL has no opt-out.
+
+An implicit index has the same key-type restrictions as a declared index. A TypeScript relation with a `Boolean`, `BigInt`, or `Json` foreign key needs `index: false` to avoid an invalid index.
+
+The default can change the `storageHash` of an existing TypeScript contract. See [Adopt foreign-key indexes](/docs/prisma-8/foreign-key-indexes) for the migration procedure.
+
+## Diagnostics and errors
+
+Shared validation reports the same `IDB_*` codes and messages on both surfaces. PSL diagnostics retain source spans. The PSL provider and editor also report parser and binder diagnostics, which can use codes outside `IDB_*`.
+
+`defineContract` throws `IdbContractError` for shared validation failures. Its `diagnostics` array contains `code`, `message`, and `at`, a path of definition names and attribute coordinates. Its message lists the codes and messages. TypeScript input-shape checks can fail before shared validation, so callers should handle other errors too.
+
+```ts
+import { defineContract, IdbContractError, type DefineContractInput } from "@prisma-idb/family-idb/contract-ts";
+
+/** Builds an authored contract and reports structured validation failures. */
+export function buildContract(input: DefineContractInput) {
+  try {
+    return defineContract(input);
+  } catch (error) {
+    if (error instanceof IdbContractError) {
+      for (const diagnostic of error.diagnostics) {
+        console.error(diagnostic.code, diagnostic.message, diagnostic.at);
+      }
+    }
+    throw error;
+  }
+}
+```
+
+### Keys and indexes
+
+| Code                                 | Meaning                                                                                                  |
+| ------------------------------------ | -------------------------------------------------------------------------------------------------------- |
+| `IDB_MISSING_ID`                     | A model has no primary key.                                                                              |
+| `IDB_MULTIPLE_ID_FIELDS`             | A PSL model declares more than one field-level `@id`.                                                    |
+| `IDB_INVALID_ID`                     | A primary-key declaration is malformed or references an unknown field.                                   |
+| `IDB_NULLABLE_ID`                    | A primary-key field is optional.                                                                         |
+| `IDB_INVALID_KEY_TYPE`               | IndexedDB cannot use the primary-key field's type as a key.                                              |
+| `IDB_INVALID_INDEX`                  | An index has an invalid key path, unknown field, conflicting name, or compound `multiEntry` declaration. |
+| `IDB_INVALID_INDEX_KEY_TYPE`         | IndexedDB cannot index the field's type.                                                                 |
+| `IDB_INDEX_ON_EXCLUDED_FIELD`        | An index references a field removed by client projection.                                                |
+| `IDB_AUTOINCREMENT_NOT_ON_KEY_FIELD` | A non-key field requests autoincrement.                                                                  |
+| `IDB_AUTOINCREMENT_ON_COMPOUND_KEY`  | A compound key requests autoincrement.                                                                   |
+| `IDB_AUTOINCREMENT_NOT_INT`          | An autoincrement key is not `Int`.                                                                       |
+
+### Fields, enums, and defaults
+
+| Code                                      | Meaning                                                                             |
+| ----------------------------------------- | ----------------------------------------------------------------------------------- |
+| `IDB_UNSUPPORTED_FIELD_TYPE`              | A field has an unsupported type or is a scalar list.                                |
+| `IDB_OPTIONAL_LIST`                       | A list field is optional.                                                           |
+| `IDB_ENUM_SCALAR_NAME_CONFLICT`           | An enum uses a built-in scalar's name.                                              |
+| `IDB_ENUM_EMPTY`                          | An enum has no members.                                                             |
+| `IDB_ENUM_DUPLICATE_VALUE`                | Enum members share a stored value.                                                  |
+| `IDB_ENUM_VALUE_NOT_STRING`               | A PSL enum member maps to a non-string value.                                       |
+| `IDB_INVALID_ENUM_DEFAULT`                | An enum default is not a declared value.                                            |
+| `IDB_ENUM_LIST_DEFAULT_UNSUPPORTED`       | An enum list declares a default.                                                    |
+| `IDB_INVALID_DEFAULT_VALUE`               | A default does not match its field, or a TypeScript default declaration is invalid. |
+| `IDB_UNKNOWN_DEFAULT_FUNCTION`            | A PSL default calls an unsupported function.                                        |
+| `IDB_INVALID_DEFAULT_FUNCTION_ARGUMENT`   | A PSL default function has invalid arguments.                                       |
+| `IDB_EXECUTION_DEFAULT_ON_OPTIONAL_FIELD` | An optional field has a generated default.                                          |
+| `IDB_UPDATED_AT_NOT_DATETIME`             | An update timestamp is not a `DateTime` field.                                      |
+| `IDB_UPDATED_AT_AND_DEFAULT_CONFLICT`     | A PSL field combines an update timestamp with `@default(...)`.                      |
+| `IDB_TEMPORAL_UPDATED_AT_ON_KEY_FIELD`    | A primary-key field has an update timestamp.                                        |
+| `IDB_TEMPORAL_UPDATED_AT_TAKES_NO_ARGS`   | `temporal.updatedAt()` has arguments.                                               |
+| `IDB_UNSUPPORTED_TYPE_CONSTRUCTOR`        | A field uses an unsupported type constructor.                                       |
+| `IDB_UNSUPPORTED_NAMESPACE_BLOCK`         | A schema declares a namespace block; IDB supports a single unbound namespace.       |
+
+### Relations and client projection
+
+| Code                                        | Meaning                                                             |
+| ------------------------------------------- | ------------------------------------------------------------------- |
+| `IDB_INVALID_RELATION`                      | A relation declaration is malformed or references an unknown model. |
+| `IDB_MISSING_RELATION_ATTRIBUTE`            | A PSL to-one relation has no `@relation` declaration.               |
+| `IDB_UNKNOWN_REFERENTIAL_ACTION`            | A PSL relation names an unsupported referential action.             |
+| `IDB_CONFLICTING_RELATION_ACTIONS`          | Reciprocal relations both declare the same referential action.      |
+| `IDB_UNRESOLVED_BACKRELATION`               | A backrelation has no matching owning relation after projection.    |
+| `IDB_CANNOT_EXCLUDE_KEY_FIELD`              | Client projection removes a model's primary-key field.              |
+| `IDB_CANNOT_EXCLUDE_RELATION_FIELD`         | Client projection removes a field needed by a surviving relation.   |
+| `IDB_EXCLUDE_ON_RELATION_FIELD_UNSUPPORTED` | Client projection attempts to exclude a relation field directly.    |
+| `IDB_UNKNOWN_EXCLUDED_FIELD`                | A TypeScript exclusion names an undeclared field.                   |

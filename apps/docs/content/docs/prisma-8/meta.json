@@ -8,8 +8,10 @@
     "client",
     "migrations",
     "field-changes",
+    "foreign-key-indexes",
     "---Reference---",
     "schema",
+    "contract-authoring",
     "...api",
     "---Sync---",
     "...sync"
