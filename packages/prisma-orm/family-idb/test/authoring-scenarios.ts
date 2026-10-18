@@ -1,3 +1,4 @@
+import { autoincrement, cuid2, now, updatedAt, uuidv4, uuidv7 } from "../src/exports/contract-ts";
 import type { DefineContractInput, EnumDefs } from "../src/exports/contract-ts";
 
 /** Model and enum declarations shared with the current TypeScript authoring API. */
@@ -10,9 +11,10 @@ export type AuthoringScenario = {
   ts: AuthoringTsInput;
   /** Also record client projection where exclusion can change the result. */
   clientProjection?: boolean;
+  /** Why the surfaces intentionally build different results. The parity suite asserts they still differ. */
+  divergence?: string;
 };
 
-// Execution-default scenarios pair the same fields; TS cannot express the PSL generators yet.
 // Casts below deliberately exercise declarations outside the TS type system.
 export const authoringScenarios: AuthoringScenario[] = [
   {
@@ -61,11 +63,7 @@ export const authoringScenarios: AuthoringScenario[] = [
           store: "posts",
           key: "id",
           fields: { id: "String", title: "String", authorId: "String", secret: "String" },
-          // PSL adds the per-field FK index implicitly.
-          indexes: {
-            byTitleAuthor: { keyPath: ["title", "authorId"] },
-            authorId: { keyPath: "authorId" },
-          },
+          indexes: { byTitleAuthor: { keyPath: ["title", "authorId"] } },
           relations: {
             author: {
               to: "User",
@@ -150,6 +148,7 @@ export const authoringScenarios: AuthoringScenario[] = [
   },
   {
     name: "enum named like an Object.prototype key",
+    divergence: "The TS API keeps rejecting an enum named like an inherited object key.",
     psl: `
       enum constructor {
         A
@@ -178,6 +177,7 @@ export const authoringScenarios: AuthoringScenario[] = [
   },
   {
     name: "enum with mapped values and a default",
+    divergence: "The TS API declares enums as plain member lists and has no mapped values.",
     psl: `
       enum Status {
         ACTIVE = "active"
@@ -217,7 +217,7 @@ export const authoringScenarios: AuthoringScenario[] = [
           store: "doc",
           key: "id",
           fields: { id: "String", v7: "String", at: "DateTime", c: "String" },
-          // Execution generators currently exist only on the PSL surface.
+          defaults: { id: uuidv4(), v7: uuidv7(), at: now(), c: cuid2() },
         },
       },
     },
@@ -236,13 +236,12 @@ export const authoringScenarios: AuthoringScenario[] = [
           store: "seq",
           key: "id",
           fields: { id: "Int", name: "String" },
-          // Autoincrement currently exists only on the PSL surface.
+          defaults: { id: autoincrement() },
         },
       },
     },
   },
   {
-    // The TS counterpart has the same fields but no execution default.
     name: "updatedAt",
     psl: `
       model Row {
@@ -250,7 +249,11 @@ export const authoringScenarios: AuthoringScenario[] = [
         t  DateTime @updatedAt
       }
     `,
-    ts: { models: { Row: { store: "row", key: "id", fields: { id: "String", t: "DateTime" } } } },
+    ts: {
+      models: {
+        Row: { store: "row", key: "id", fields: { id: "String", t: "DateTime" }, defaults: { t: updatedAt() } },
+      },
+    },
   },
   {
     name: "literal defaults",
@@ -268,7 +271,7 @@ export const authoringScenarios: AuthoringScenario[] = [
           store: "row",
           key: "id",
           fields: { id: "String", name: "String", n: "Int", b: "Boolean" },
-          fieldDefaults: { name: "x", n: 3, b: true },
+          defaults: { name: "x", n: 3, b: true },
         },
       },
     },
@@ -432,7 +435,7 @@ export const authoringScenarios: AuthoringScenario[] = [
           relations: {
             user: {
               to: "User",
-              cardinality: "1:1",
+              cardinality: "N:1",
               on: { local: ["userId"], target: ["id"] },
               onDelete: "setNull",
               onUpdate: "cascade",
@@ -461,11 +464,12 @@ export const authoringScenarios: AuthoringScenario[] = [
           store: "profile",
           key: "id",
           fields: { id: "String", userId: "String" },
-          indexes: { userId_unique: { keyPath: "userId", unique: true } },
+          // PSL names the unique index after the field when `@unique` follows its `@relation`.
+          indexes: { userId: { keyPath: "userId", unique: true } },
           relations: {
             user: {
               to: "User",
-              cardinality: "1:1",
+              cardinality: "N:1",
               on: { local: ["userId"], target: ["id"] },
               onDelete: "restrict",
               onUpdate: "noAction",
@@ -569,8 +573,11 @@ export const authoringScenarios: AuthoringScenario[] = [
         t temporal.updatedAt()
       }
     `,
-    // TS cannot express this execution default yet.
-    ts: { models: { Row: { store: "row", key: "id", fields: { id: "String", t: "DateTime" } } } },
+    ts: {
+      models: {
+        Row: { store: "row", key: "id", fields: { id: "String", t: "DateTime" }, defaults: { t: updatedAt() } },
+      },
+    },
   },
   {
     name: "optional temporal updatedAt",
@@ -580,7 +587,11 @@ export const authoringScenarios: AuthoringScenario[] = [
         t temporal.updatedAt()?
       }
     `,
-    ts: { models: { Row: { store: "row", key: "id", fields: { id: "String", t: "DateTime?" } } } },
+    ts: {
+      models: {
+        Row: { store: "row", key: "id", fields: { id: "String", t: "DateTime?" }, defaults: { t: updatedAt() } },
+      },
+    },
   },
   {
     name: "excluded foreign-key scalar",

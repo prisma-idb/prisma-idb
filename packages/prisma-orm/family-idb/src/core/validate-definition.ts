@@ -1,5 +1,6 @@
 import { keyPathFields } from "@prisma-idb/target-idb/pack";
 import type { IdbKeyPath } from "@prisma-idb/target-idb/pack";
+import { foreignKeyIndexes } from "./foreign-key-indexes";
 import type {
   IdbContractDefinition,
   IdbDefinitionPath,
@@ -228,7 +229,8 @@ function validateIndexes(model: IdbModelNode, report: Report): void {
   const at = ["models", model.modelName];
   const fields = new Map(model.fields.map((field) => [field.name, field]));
   const excluded = new Set(model.exclusions?.fields);
-  for (const index of model.indexes) {
+  // The builder indexes foreign keys, so the validator checks those indexes too.
+  for (const index of [...model.indexes, ...foreignKeyIndexes(model)]) {
     const indexAt = [...at, "indexes", index.name];
     const names = keyPathFields(index.keyPath);
     if (!isWellFormedKeyPath(index.keyPath)) {

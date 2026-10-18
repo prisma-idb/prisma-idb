@@ -106,9 +106,15 @@
           "id": "__unbound__"
         }
       },
-      "storageHash": "5ff45e7ebfbe16e52e03d5eee0d4ca62617b0c8a872179b96464eec0a5b953dc",
+      "storageHash": "6242f310b376c60e853f577be336f031c2c771d4cd90fc74ba08088423215be8",
       "stores": {
         "post": {
+          "indexes": {
+            "authorId": {
+              "keyPath": "authorId",
+              "unique": false
+            }
+          },
           "keyPath": "id",
           "record": {
             "fields": {
@@ -154,6 +160,6 @@
   "hashes": {
     "executionHash": null,
     "profileHash": "40329830af4e39e0774683fbebcdc24dcf983a5da02c5fe6079a2a57579f861c",
-    "storageHash": "5ff45e7ebfbe16e52e03d5eee0d4ca62617b0c8a872179b96464eec0a5b953dc"
+    "storageHash": "6242f310b376c60e853f577be336f031c2c771d4cd90fc74ba08088423215be8"
   }
 }

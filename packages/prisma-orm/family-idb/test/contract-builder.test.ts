@@ -1,7 +1,9 @@
 import { UNBOUND_DOMAIN_NAMESPACE_ID, domainModelsAtDefaultNamespace } from "@prisma/orm-framework/contract/types";
 import type { MockInstance } from "vitest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { IndexDef, ModelDef, RelationDef } from "../src/core/contract-builder";
 import { defineContract } from "../src/core/contract-builder";
+import { autoincrement, cuid2, now, updatedAt, uuidv4, uuidv7 } from "../src/core/field-defaults";
 import idbFamilyPack from "../src/exports/pack";
 import idbTargetPack from "@prisma-idb/target-idb/pack";
 
@@ -1127,5 +1129,186 @@ describe("defineContract — structured diagnostics", () => {
         expect(diagnostic.at.length).toBeGreaterThan(0);
       }
     }
+  });
+});
+
+describe("defineContract — foreign-key indexes", () => {
+  /** A `Post` store whose `author` relation takes the given overrides. */
+  function postStoreIndexes(
+    relation: Partial<RelationDef> = {},
+    postIndexes: Record<string, IndexDef> = {},
+    cardinality: RelationDef["cardinality"] = "N:1"
+  ) {
+    const contract = defineContract({
+      family: idbFamilyPack,
+      target: idbTargetPack,
+      models: {
+        User: {
+          store: "users",
+          key: "id",
+          fields: { id: "String" },
+          relations: { posts: { to: "Post", cardinality: "1:N", on: { local: ["id"], target: ["authorId"] } } },
+        },
+        Post: {
+          store: "posts",
+          key: "id",
+          fields: { id: "String", authorId: "String" },
+          indexes: postIndexes,
+          relations: {
+            author: { to: "User", cardinality, on: { local: ["authorId"], target: ["id"] }, ...relation },
+          },
+        },
+      },
+    });
+    return {
+      posts: contract.storage.stores["posts"]?.indexes,
+      users: contract.storage.stores["users"]?.indexes,
+      storageHash: contract.storage.storageHash,
+    };
+  }
+
+  it("indexes the foreign key of a to-one relation and not the 1:N side", () => {
+    const { posts, users } = postStoreIndexes();
+    expect(posts).toEqual({ authorId: { keyPath: "authorId", unique: false } });
+    expect(users).toBeUndefined();
+  });
+
+  it("indexes the foreign key of a 1:1 relation", () => {
+    expect(postStoreIndexes({}, {}, "1:1").posts).toEqual({ authorId: { keyPath: "authorId", unique: false } });
+  });
+
+  it("skips the index when the relation sets index: false, and changes the storage hash back", () => {
+    const optedOut = postStoreIndexes({ index: false });
+    expect(optedOut.posts).toBeUndefined();
+    expect(optedOut.storageHash).not.toBe(postStoreIndexes().storageHash);
+  });
+
+  it("lets a declared index named like the foreign key replace the implicit one", () => {
+    const { posts } = postStoreIndexes({}, { authorId: { keyPath: "authorId", unique: true } });
+    expect(posts).toEqual({ authorId: { keyPath: "authorId", unique: true } });
+  });
+
+  it("adds the foreign-key index beside a declared index with another name", () => {
+    const { posts } = postStoreIndexes({}, { byAuthor: { keyPath: "authorId", unique: true } });
+    expect(posts).toEqual({
+      byAuthor: { keyPath: "authorId", unique: true },
+      authorId: { keyPath: "authorId", unique: false },
+    });
+  });
+
+  it("rejects a foreign key whose type IndexedDB cannot index, unless the relation opts out", () => {
+    const build = (index?: boolean) =>
+      defineContract({
+        family: idbFamilyPack,
+        target: idbTargetPack,
+        models: {
+          User: { store: "users", key: "id", fields: { id: "String" } },
+          Post: {
+            store: "posts",
+            key: "id",
+            fields: { id: "String", authorId: "Boolean" },
+            relations: {
+              author: {
+                to: "User",
+                cardinality: "N:1",
+                on: { local: ["authorId"], target: ["id"] },
+                ...(index === undefined ? {} : { index }),
+              },
+            },
+          },
+        },
+      });
+    expect(() => build()).toThrow(/IDB_INVALID_INDEX_KEY_TYPE/);
+    expect(() => build(false)).not.toThrow();
+  });
+});
+
+describe("defineContract — execution defaults", () => {
+  /** A `Row` model with the given defaults on top of `id: Int`, `s: String`, `t: DateTime` fields. */
+  function rowContract(defaults: ModelDef["defaults"], overrides: Partial<ModelDef> = {}) {
+    return defineContract({
+      family: idbFamilyPack,
+      target: idbTargetPack,
+      models: {
+        Row: {
+          store: "rows",
+          key: "id",
+          fields: { id: "Int", s: "String", t: "DateTime" },
+          ...(defaults ? { defaults } : {}),
+          ...overrides,
+        },
+      },
+    });
+  }
+
+  const ref = { namespace: "__unbound__", entry: "rows" } as const;
+
+  it("lowers each helper to its generator and emits an executionHash", () => {
+    const contract = rowContract({ s: uuidv7(), t: now() });
+    expect(contract.execution?.mutations.defaults).toEqual([
+      { ref: { ...ref, field: "s" }, onCreate: { kind: "generator", id: "uuidv7" } },
+      { ref: { ...ref, field: "t" }, onCreate: { kind: "generator", id: "timestampNow" } },
+    ]);
+    expect(contract.execution?.executionHash).toEqual(expect.any(String));
+  });
+
+  it("lowers uuidv4() and cuid2() to their generator ids", () => {
+    const contract = defineContract({
+      family: idbFamilyPack,
+      target: idbTargetPack,
+      models: {
+        Row: {
+          store: "rows",
+          key: "id",
+          fields: { id: "String", s: "String" },
+          defaults: { id: uuidv4(), s: cuid2() },
+        },
+      },
+    });
+    expect(contract.execution?.mutations.defaults.map((entry) => entry.onCreate?.id)).toEqual(["uuidv4", "cuid2"]);
+  });
+
+  it("fills updatedAt() on create and on update", () => {
+    const [entry] = rowContract({ t: updatedAt() }).execution?.mutations.defaults ?? [];
+    expect(entry?.onCreate?.id).toBe("timestampNow");
+    expect(entry?.onUpdate?.id).toBe("timestampNow");
+  });
+
+  it("turns autoincrement() into the store's key generator and no execution default", () => {
+    const contract = rowContract({ id: autoincrement() });
+    expect(contract.storage.stores["rows"]?.autoIncrement).toBe(true);
+    expect(contract.execution).toBeUndefined();
+  });
+
+  it("keeps a literal in defaults as both a create default and the setDefault literal", () => {
+    const contract = rowContract({ s: "x" });
+    expect(contract.execution?.mutations.defaults).toEqual([
+      { ref: { ...ref, field: "s" }, onCreate: { kind: "generator", id: "literal", params: { value: "x" } } },
+    ]);
+    const rowStorage = domainModelsAtDefaultNamespace(contract.domain)["Row"]?.storage as {
+      fieldDefaults?: Record<string, unknown>;
+    };
+    expect(rowStorage.fieldDefaults).toEqual({ s: "x" });
+  });
+
+  it("keeps a fieldDefaults literal out of the execution defaults", () => {
+    expect(rowContract(undefined, { fieldDefaults: { s: "x" } }).execution).toBeUndefined();
+  });
+
+  it("reports autoincrement() off the key, on a non-Int key and updatedAt() off DateTime with shared codes", () => {
+    expect(() => rowContract({ s: autoincrement() })).toThrow(/IDB_AUTOINCREMENT_NOT_ON_KEY_FIELD/);
+    expect(() => rowContract({ s: updatedAt() })).toThrow(/IDB_UPDATED_AT_NOT_DATETIME/);
+    expect(() =>
+      defineContract({
+        family: idbFamilyPack,
+        target: idbTargetPack,
+        models: { Row: { store: "rows", key: "id", fields: { id: "String" }, defaults: { id: autoincrement() } } },
+      })
+    ).toThrow(/IDB_AUTOINCREMENT_NOT_INT/);
+  });
+
+  it("rejects a default on an undeclared field and a field listed in both default maps", () => {
+    expect(() => rowContract({ missing: "x" })).toThrow(/defaults references field "missing"/);
+    expect(() => rowContract({ s: "x" }, { fieldDefaults: { s: "y" } })).toThrow(/both "defaults" and "fieldDefaults"/);
   });
 });

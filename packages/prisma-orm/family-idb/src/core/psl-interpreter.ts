@@ -277,6 +277,8 @@ function interpretModel(
 
   // ── Build indexes ────────────────────────────────────────────────────────────
   const indexes: Record<string, Omit<IdbIndexNode, "name">> = {};
+  // Foreign-key fields of the relations seen so far. The builder indexes them (it has no opt-out in PSL).
+  const foreignKeyFields = new Set<string>();
 
   // @@index([fields]) / @@unique([fields]) model attribute — `fields` may be
   // a single field or an ordered list for a compound (multi-field) index.
@@ -384,12 +386,8 @@ function interpretModel(
         targetFields,
       });
 
-      // Also create a default index on the FK field(s) if not already indexed
       for (const fkField of localFields) {
-        if (!(fkField in indexes) && !excludedFieldNames.has(fkField)) {
-          indexes[fkField] = { keyPath: fkField, unique: false };
-          sourceMap.set(["models", model.name, "indexes", fkField], relationAttr.span);
-        }
+        if (!excludedFieldNames.has(fkField)) foreignKeyFields.add(fkField);
       }
       continue;
     }
@@ -559,8 +557,13 @@ function interpretModel(
       if (existingKey && !indexes[existingKey]!.unique)
         indexes[existingKey] = { ...indexes[existingKey]!, unique: true };
       if (!existingKey) {
-        indexes[`${field.name}_unique`] = { keyPath: field.name, unique: true };
-        sourceMap.set(["models", model.name, "indexes", `${field.name}_unique`], fieldAttributes.unique);
+        // A unique foreign key that follows its `@relation` takes the name the builder's
+        // foreign-key index would have, so the store keeps one unique index and the
+        // builder adds no plain duplicate. Changing this changes `storageHash`.
+        const takesForeignKeyIndexName = foreignKeyFields.has(field.name) && !(field.name in indexes);
+        const indexName = takesForeignKeyIndexName ? field.name : `${field.name}_unique`;
+        indexes[indexName] = { keyPath: field.name, unique: true };
+        sourceMap.set(["models", model.name, "indexes", indexName], fieldAttributes.unique);
       }
     }
   }

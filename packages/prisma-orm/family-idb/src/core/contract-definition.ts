@@ -119,4 +119,10 @@ export interface IdbRelationNode {
   readonly nullable?: boolean;
   readonly onDelete?: IdbReferentialAction;
   readonly onUpdate?: IdbReferentialAction;
+  /**
+   * `false` stops the builder from indexing this relation's foreign-key fields.
+   * Absent means it indexes them. A `1:N` relation is never indexed, because
+   * its `localFields` are not foreign keys.
+   */
+  readonly index?: boolean;
 }

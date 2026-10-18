@@ -38,7 +38,7 @@ function lower(schema = SCHEMA, options: InterpretPslOptions = {}) {
 }
 
 describe("PSL definition lowering", () => {
-  it("resolves defaults, mapped stores, enum lists, relations and FK indexes into plain nodes", () => {
+  it("resolves defaults, mapped stores, enum lists, and relations into plain nodes", () => {
     const { definition } = lower();
     expect(definition.enums).toEqual([
       {
@@ -75,10 +75,8 @@ describe("PSL definition lowering", () => {
         onUpdate: "restrict",
       },
     ]);
-    expect(user!.indexes).toEqual([
-      { name: "membership", keyPath: ["teamId", "id"], unique: true },
-      { name: "teamId", keyPath: "teamId", unique: false },
-    ]);
+    // The builder adds the foreign-key index, so the definition lists declared indexes only.
+    expect(user!.indexes).toEqual([{ name: "membership", keyPath: ["teamId", "id"], unique: true }]);
     expect(user!.fields.find((field) => field.name === "role")).toEqual({
       name: "role",
       codecId: "idb/string@1",
@@ -134,7 +132,6 @@ describe("PSL definition lowering", () => {
     expect(sourceMap.get(["models", "Team", "indexes", "lookup"])).toEqual(team.attributes[1]!.span);
     expect(sourceMap.get(["models", "Team", "indexes", "alternate"])).toEqual(team.attributes[2]!.span);
     expect(sourceMap.get(["models", "User", "indexes", "membership"])).toEqual(user.attributes[0]!.span);
-    expect(sourceMap.get(["models", "User", "indexes", "teamId"])).toEqual(user.fields["team"]!.attributes[0]!.span);
     expect(sourceMap.get(["models", "User", "relations", "team"])).toEqual(user.fields["team"]!.attributes[0]!.span);
     expect(sourceMap.get(["models", "Team", "relations", "users"])).toEqual(team.fields["users"]!.span);
     expect(sourceMap.get(["models", "missing"])).toBeUndefined();

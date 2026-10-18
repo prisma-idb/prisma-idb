@@ -95,7 +95,10 @@ const userPostContract = defineContract({
       store: "posts",
       key: "id",
       fields: { id: "String", authorId: "String?", title: "String" },
-      relations: { author: { to: "User", cardinality: "N:1", on: { local: ["authorId"], target: ["id"] } } },
+      // These tests build their stores by hand, without the foreign-key index.
+      relations: {
+        author: { to: "User", cardinality: "N:1", on: { local: ["authorId"], target: ["id"] }, index: false },
+      },
     },
   },
 });

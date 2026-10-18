@@ -75,6 +75,7 @@ function createStores(name: string): Promise<void> {
     const req = indexedDB.open(name, 1);
     req.onupgradeneeded = () => {
       for (const store of STORES) req.result.createObjectStore(store, { keyPath: "id" });
+      req.transaction!.objectStore("posts").createIndex("authorId", "authorId");
     };
     req.onsuccess = () => {
       req.result.close();

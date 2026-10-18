@@ -29,7 +29,7 @@
               },
               "relations": {
                 "user": {
-                  "cardinality": "1:1",
+                  "cardinality": "N:1",
                   "nullable": true,
                   "on": {
                     "localFields": [
@@ -96,10 +96,14 @@
           "id": "__unbound__"
         }
       },
-      "storageHash": "c6f4eb4ee5720f768712687da20924b5a7ea2f82343053cdd8418c646e1dc3de",
+      "storageHash": "18c37ab812c42560ae5bab3623284c6542f6c0e14ea82ff06eb05ba2e93294af",
       "stores": {
         "profile": {
           "indexes": {
+            "userId": {
+              "keyPath": "userId",
+              "unique": false
+            },
             "userId_unique": {
               "keyPath": "userId",
               "unique": true
@@ -150,6 +154,6 @@
   "hashes": {
     "executionHash": null,
     "profileHash": "40329830af4e39e0774683fbebcdc24dcf983a5da02c5fe6079a2a57579f861c",
-    "storageHash": "c6f4eb4ee5720f768712687da20924b5a7ea2f82343053cdd8418c646e1dc3de"
+    "storageHash": "18c37ab812c42560ae5bab3623284c6542f6c0e14ea82ff06eb05ba2e93294af"
   }
 }
