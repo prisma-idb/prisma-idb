@@ -99,7 +99,13 @@ function contractFor(members: StoreSpec, posts: StoreSpec) {
         fields: { id: "String", orgId: "String", handle: "String?", title: "String" },
         indexes: indexes(posts),
         relations: {
-          author: { to: "Member", cardinality: "N:1", on: { local: ["handle", "orgId"], target: ["handle", "orgId"] } },
+          // Each variant chooses its own indexes, so the default foreign-key indexes would hide the difference.
+          author: {
+            to: "Member",
+            cardinality: "N:1",
+            on: { local: ["handle", "orgId"], target: ["handle", "orgId"] },
+            index: false,
+          },
         },
       },
     },

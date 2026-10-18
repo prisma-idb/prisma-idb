@@ -201,6 +201,8 @@ const fkSideCascadeContract = defineContract({
           cardinality: "N:1",
           on: { local: ["authorId"], target: ["id"] },
           onDelete: "cascade",
+          // These tests build their stores by hand, without the foreign-key index.
+          index: false,
         },
       },
     },
@@ -1690,7 +1692,8 @@ const defaultedFkContract = (() => {
         key: "id",
         fields: { id: "String", postId: "String" },
         relations: {
-          post: { to: "Post", cardinality: "N:1", on: { local: ["postId"], target: ["id"] } },
+          // These tests build their stores by hand, without the foreign-key index.
+          post: { to: "Post", cardinality: "N:1", on: { local: ["postId"], target: ["id"] }, index: false },
         },
       },
     },

@@ -53,9 +53,10 @@
           "id": "__unbound__"
         }
       },
-      "storageHash": "a08be0f6a3c000cea1dd346e59432f60d34d6ca1a0f6ebe7209f1d8c199a459a",
+      "storageHash": "0eb31140e1ee0073fe1a28c436f9912349da2436ca98b6930530f33275c4ebe9",
       "stores": {
         "seq": {
+          "autoIncrement": true,
           "keyPath": "id",
           "record": {
             "fields": {
@@ -86,6 +87,6 @@
   "hashes": {
     "executionHash": null,
     "profileHash": "40329830af4e39e0774683fbebcdc24dcf983a5da02c5fe6079a2a57579f861c",
-    "storageHash": "a08be0f6a3c000cea1dd346e59432f60d34d6ca1a0f6ebe7209f1d8c199a459a"
+    "storageHash": "0eb31140e1ee0073fe1a28c436f9912349da2436ca98b6930530f33275c4ebe9"
   }
 }

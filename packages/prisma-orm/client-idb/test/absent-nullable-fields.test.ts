@@ -58,7 +58,7 @@ function seed(name: string): Promise<void> {
     request.onupgradeneeded = () => {
       const db = request.result;
       db.createObjectStore("users", { keyPath: "id" }).createIndex("byNickname", "nickname");
-      db.createObjectStore("posts", { keyPath: "id" });
+      db.createObjectStore("posts", { keyPath: "id" }).createIndex("authorId", "authorId");
     };
     request.onsuccess = () => {
       const db = request.result;

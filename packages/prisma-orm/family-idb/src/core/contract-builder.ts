@@ -4,6 +4,7 @@ import { buildIdbContractFromDefinition } from "./build-contract-from-definition
 import type {
   IdbContractDefinition,
   IdbEnumNode,
+  IdbExecutionDefaultNode,
   IdbFieldNode,
   IdbIndexNode,
   IdbModelNode,
@@ -12,6 +13,7 @@ import type {
 import type { ContractProjection } from "./psl-interpreter";
 import { warnDroppedRelation } from "./psl-interpreter";
 import { IdbContractError } from "./contract-error";
+import type { FieldDefault } from "./field-defaults";
 import { validateIdbContractDefinition } from "./validate-definition";
 
 // ── Field type system ─────────────────────────────────────────────────────────
@@ -65,6 +67,14 @@ export type RelationDef = {
    * otherwise. Ignored for `1:N`.
    */
   readonly nullable?: boolean;
+  /**
+   * Whether the contract indexes this relation's foreign-key fields (`on.local`).
+   * Defaults to `true`, because IndexedDB has no joins and a relation read is an
+   * index lookup on the foreign key. Set `false` to skip the index. A declared
+   * index with the same name and single-field keyPath also replaces it.
+   * Ignored for `1:N`.
+   */
+  readonly index?: boolean;
 };
 
 /** The key fields and flags of one secondary index. */
@@ -85,16 +95,23 @@ export type ModelDef<EnumName extends string = never> = {
   readonly indexes?: Record<string, IndexDef>;
   readonly relations?: Record<string, RelationDef>;
   /**
-   * Literal default values, keyed by field name — feeds the `setDefault`
-   * referential action (a child's FK field is reset to its own declared
-   * default when its parent is deleted/updated with `onDelete`/`onUpdate:
-   * "setDefault"`). A sibling map to `fields`, deliberately not folded into
+   * Defaults keyed by field name, the TypeScript counterpart of PSL `@default(...)`
+   * and `@updatedAt`. A sibling map to `fields`, deliberately not folded into
    * `FieldSpec` (a bare type string) to avoid widening that type.
    *
-   * Does NOT feed `create()`'s default-filling — the TS-DSL authoring path
-   * has no `execution.mutations.defaults` support at all yet (a separate,
-   * larger, pre-existing gap). Use the PSL authoring path's `@default(...)`
-   * if you need create-time defaults; this map only backs `setDefault`.
+   * A helper from this package fills the field on `create()`: `now()`, `uuidv4()`,
+   * `uuidv7()`, `cuid2()`, or `updatedAt()` (also on `update()`). `autoincrement()`
+   * asks IndexedDB's key generator to assign the store's single `Int` key.
+   * A literal fills the field on `create()` and also feeds the `setDefault`
+   * referential action, like PSL `@default("x")`.
+   */
+  readonly defaults?: Record<string, FieldDefault | string | number | boolean>;
+  /**
+   * Literal default values, keyed by field name — feeds only the `setDefault`
+   * referential action (a child's FK field is reset to its own declared
+   * default when its parent is deleted/updated with `onDelete`/`onUpdate:
+   * "setDefault"`). Does NOT fill the field on `create()`; declare a literal in
+   * `defaults` for that. Do not list a field in both maps.
    */
   readonly fieldDefaults?: Record<string, string | number | boolean>;
   /** Server-only model — dropped when `defineContract` runs with `{ projection: "client" }`. See ADR 012. */
@@ -228,7 +245,8 @@ function lowerField(
   name: string,
   spec: FieldSpec<string>,
   enums: EnumDefs,
-  literalDefault: string | number | boolean | undefined
+  literalDefault: string | number | boolean | undefined,
+  executionDefault: IdbExecutionDefaultNode | undefined
 ): IdbFieldNode {
   const { typeName, nullable, many } = parseFieldSpec(spec);
   const isEnum = Object.hasOwn(enums, typeName);
@@ -241,6 +259,7 @@ function lowerField(
     list: many,
     ...(isEnum ? { enumName: typeName } : {}),
     ...(literalDefault !== undefined ? { literalDefault } : {}),
+    ...(executionDefault !== undefined ? { executionDefault } : {}),
   };
 }
 
@@ -258,6 +277,7 @@ function lowerRelation(name: string, rel: RelationDef, def: ModelDef<string>): I
       : { nullable: rel.nullable ?? rel.on.local.some((f) => def.fields[f]?.endsWith("?") === true) }),
     ...(rel.onDelete !== undefined ? { onDelete: rel.onDelete } : {}),
     ...(rel.onUpdate !== undefined ? { onUpdate: rel.onUpdate } : {}),
+    ...(rel.index !== undefined ? { index: rel.index } : {}),
   };
 }
 
@@ -271,29 +291,107 @@ function lowerIndex(name: string, idx: IndexDef): IdbIndexNode {
   };
 }
 
+/** A `defaults` entry: a helper's result or a literal value. */
+type DeclaredDefault = FieldDefault | string | number | boolean;
+
+/** Runtime callers must supply a scalar literal or one of this package's helper shapes. */
+function isDeclaredDefault(value: unknown): value is DeclaredDefault {
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return true;
+  if (typeof value !== "object" || value === null) return false;
+  const helper = value as FieldDefault;
+  if (helper.kind === "autoincrement") return true;
+  if (helper.kind !== "execution" || typeof helper.execution !== "object" || helper.execution === null) return false;
+  const { onCreate, onUpdate } = helper.execution;
+  if (
+    typeof onCreate !== "object" ||
+    onCreate === null ||
+    !["timestampNow", "uuidv4", "uuidv7", "cuid2"].includes(onCreate.id)
+  )
+    return false;
+  return (
+    onUpdate === undefined ||
+    (onCreate.id === "timestampNow" &&
+      typeof onUpdate === "object" &&
+      onUpdate !== null &&
+      onUpdate.id === "timestampNow")
+  );
+}
+
 /**
- * Returns the literal default declared for a field, or `undefined` when there
- * is none. Reads own properties only, so a field named like an `Object.prototype`
- * member (for example `toString`) never picks up an inherited value.
+ * Returns an own entry of a defaults map, or `undefined` when there is none.
+ * Reads own properties only, so a field named like an `Object.prototype` member
+ * (for example `toString`) never picks up an inherited value.
  */
-function ownLiteralDefault(def: ModelDef<string>, fieldName: string): string | number | boolean | undefined {
-  const defaults = def.fieldDefaults;
-  return defaults && Object.hasOwn(defaults, fieldName) ? defaults[fieldName] : undefined;
+function ownEntry<T>(map: Record<string, T> | undefined, fieldName: string): T | undefined {
+  return map && Object.hasOwn(map, fieldName) ? map[fieldName] : undefined;
+}
+
+/** `true` for `autoincrement()`, which sets a store property and no field default. */
+function isAutoincrement(declared: DeclaredDefault | undefined): boolean {
+  return declared !== null && typeof declared === "object" && declared.kind === "autoincrement";
+}
+
+/**
+ * Lowers one field's declared defaults. A `defaults` literal fills the field on
+ * `create()` and feeds `setDefault`, as PSL `@default("x")` does. A `fieldDefaults`
+ * literal feeds `setDefault` only.
+ */
+function lowerFieldDefaults(
+  declared: DeclaredDefault | undefined,
+  setDefaultLiteral: string | number | boolean | undefined
+): { literalDefault?: string | number | boolean; executionDefault?: IdbExecutionDefaultNode } {
+  if (declared === undefined || isAutoincrement(declared)) {
+    return setDefaultLiteral !== undefined ? { literalDefault: setDefaultLiteral } : {};
+  }
+  if (typeof declared === "object") {
+    return declared.kind === "execution" ? { executionDefault: declared.execution } : {};
+  }
+  return { literalDefault: declared, executionDefault: { onCreate: { id: "literal", params: { value: declared } } } };
+}
+
+/**
+ * Rejects invalid default values, entries that name an undeclared field,
+ * and fields listed in both maps. Excluded fields stay allowed: a client
+ * projection drops them from `fields` but they are still declared.
+ */
+function checkDeclaredDefaults(modelName: string, def: ProjectedModelDef): void {
+  /** Throws an `IDB_INVALID_DEFAULT_VALUE` error located at the named field's default. */
+  const fail = (name: string, message: string): never => {
+    throw new IdbContractError([
+      {
+        code: "IDB_INVALID_DEFAULT_VALUE",
+        message,
+        at: ["models", modelName, "fields", name, "literalDefault"],
+      },
+    ]);
+  };
+  for (const [mapName, map] of [
+    ["defaults", def.defaults],
+    ["fieldDefaults", def.fieldDefaults],
+  ] as const) {
+    for (const [name, value] of Object.entries(map ?? {})) {
+      if (!Object.hasOwn(def.fields, name) && !def.excludeFields?.includes(name)) {
+        fail(name, `Model "${modelName}" ${mapName} references field "${name}", which is not declared in "fields".`);
+      }
+      if (!isDeclaredDefault(value) || (mapName === "fieldDefaults" && typeof value === "object")) {
+        fail(
+          name,
+          `Model "${modelName}" ${mapName} field "${name}" must be a scalar literal${mapName === "defaults" ? " or a recognized default helper result" : ""}.`
+        );
+      }
+    }
+  }
+  for (const name of Object.keys(def.defaults ?? {})) {
+    if (Object.hasOwn(def.fieldDefaults ?? {}, name)) {
+      fail(name, `Model "${modelName}" declares a default for field "${name}" in both "defaults" and "fieldDefaults".`);
+    }
+  }
 }
 
 /** Translate one model declaration into a model node. */
 function lowerModel(modelName: string, def: ProjectedModelDef, enums: EnumDefs): IdbModelNode {
-  for (const name of Object.keys(def.fieldDefaults ?? {})) {
-    if (!Object.hasOwn(def.fields, name) && !def.excludeFields?.includes(name)) {
-      throw new IdbContractError([
-        {
-          code: "IDB_INVALID_DEFAULT_VALUE",
-          message: `Model "${modelName}" fieldDefaults references field "${name}", which is not declared in "fields".`,
-          at: ["models", modelName, "fields", name, "literalDefault"],
-        },
-      ]);
-    }
-  }
+  checkDeclaredDefaults(modelName, def);
+  const autoIncrementFields = Object.keys(def.fields).filter((name) => isAutoincrement(ownEntry(def.defaults, name)));
   return {
     modelName,
     storeName: def.store,
@@ -307,11 +405,16 @@ function lowerModel(modelName: string, def: ProjectedModelDef, enums: EnumDefs):
         }
       : {}),
     key: def.key,
-    // The TS DSL has no way to declare a key generator yet.
-    autoIncrement: false,
-    fields: Object.entries(def.fields).map(([name, spec]) =>
-      lowerField(name, spec, enums, ownLiteralDefault(def, name))
-    ),
+    // Same as PSL: the request is retained so validation can reject a misplaced one.
+    autoIncrement: autoIncrementFields.length > 0,
+    ...(autoIncrementFields.length > 0 ? { autoIncrementFields } : {}),
+    fields: Object.entries(def.fields).map(([name, spec]) => {
+      const { literalDefault, executionDefault } = lowerFieldDefaults(
+        ownEntry(def.defaults, name),
+        ownEntry(def.fieldDefaults, name)
+      );
+      return lowerField(name, spec, enums, literalDefault, executionDefault);
+    }),
     indexes: Object.entries(def.indexes ?? {}).map(([name, idx]) => lowerIndex(name, idx)),
     relations: Object.entries(def.relations ?? {}).map(([name, rel]) => lowerRelation(name, rel, def)),
   };

@@ -56,6 +56,55 @@
         }
       }
     },
+    "execution": {
+      "executionHash": "5ddf65160c14f4243dc5091c385baecad85ea25e2cb65df0edef65f08ce03497",
+      "mutations": {
+        "defaults": [
+          {
+            "onCreate": {
+              "id": "literal",
+              "kind": "generator",
+              "params": {
+                "value": "x"
+              }
+            },
+            "ref": {
+              "entry": "row",
+              "field": "name",
+              "namespace": "__unbound__"
+            }
+          },
+          {
+            "onCreate": {
+              "id": "literal",
+              "kind": "generator",
+              "params": {
+                "value": 3
+              }
+            },
+            "ref": {
+              "entry": "row",
+              "field": "n",
+              "namespace": "__unbound__"
+            }
+          },
+          {
+            "onCreate": {
+              "id": "literal",
+              "kind": "generator",
+              "params": {
+                "value": true
+              }
+            },
+            "ref": {
+              "entry": "row",
+              "field": "b",
+              "namespace": "__unbound__"
+            }
+          }
+        ]
+      }
+    },
     "extensions": {},
     "meta": {},
     "profileHash": "40329830af4e39e0774683fbebcdc24dcf983a5da02c5fe6079a2a57579f861c",
@@ -117,7 +166,7 @@
   },
   "error": null,
   "hashes": {
-    "executionHash": null,
+    "executionHash": "5ddf65160c14f4243dc5091c385baecad85ea25e2cb65df0edef65f08ce03497",
     "profileHash": "40329830af4e39e0774683fbebcdc24dcf983a5da02c5fe6079a2a57579f861c",
     "storageHash": "65f72f4ea4a09d89cdc27f76443cf7d13bd0015647bce8bfd2b2ea6c9e83288c"
   }

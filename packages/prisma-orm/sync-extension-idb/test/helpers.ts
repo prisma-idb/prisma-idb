@@ -26,7 +26,7 @@ export const USERS_STORE: StoreSpec = { name: "users", keyPath: "id" };
 export const POSTS_STORE: StoreSpec = {
   name: "posts",
   keyPath: "id",
-  indexes: [{ name: "byAuthorId", keyPath: "authorId" }],
+  indexes: [{ name: "authorId", keyPath: "authorId" }],
 };
 export const OUTBOX_STORE: StoreSpec = {
   name: "_idb_sync_outbox",

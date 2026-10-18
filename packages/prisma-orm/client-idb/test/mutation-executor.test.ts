@@ -87,7 +87,7 @@ function openTestDb(name: string): Promise<IDBDatabase> {
     req.onupgradeneeded = () => {
       const db = req.result;
       db.createObjectStore("users", { keyPath: "id" });
-      db.createObjectStore("posts", { keyPath: "id" });
+      db.createObjectStore("posts", { keyPath: "id" }).createIndex("authorId", "authorId");
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);

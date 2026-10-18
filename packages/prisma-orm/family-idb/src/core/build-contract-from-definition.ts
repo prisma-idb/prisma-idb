@@ -24,6 +24,7 @@ import type {
   IdbIndexNode,
   IdbModelNode,
 } from "./contract-definition";
+import { foreignKeyIndexes } from "./foreign-key-indexes";
 import { buildRecordShape } from "./record-shape";
 import { validateContract } from "./validate";
 
@@ -155,7 +156,7 @@ function buildIndexes(indexes: readonly IdbIndexNode[]): Record<string, IdbIndex
 
 /** Build one object store, including the canonical record shape that feeds the storage hash. */
 function buildStore(model: IdbModelNode, built: BuiltModel, enums: Record<string, ContractEnum>): IdbStoreDefinition {
-  const indexes = buildIndexes(model.indexes);
+  const indexes = buildIndexes([...model.indexes, ...foreignKeyIndexes(model)]);
   return {
     record: buildRecordShape(model.modelName, built.fields, { enum: enums }),
     keyPath: model.key,
