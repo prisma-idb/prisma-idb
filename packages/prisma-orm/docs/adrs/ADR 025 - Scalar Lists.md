@@ -12,4 +12,6 @@ The fluent mutation surface follows the pinned [Prisma 8 field accessor](https:/
 
 The pinned Mongo [filter AST](https://github.com/prisma/orm/blob/34f77c24695e5b6154d8d0721dd80f985cbbc186/packages/2-mongo-family/4-query/query-ast/src/filter-expressions.ts) defines equality, ordering, and membership predicates. The old stable client's `has`, `hasEvery`, `hasSome`, and `isEmpty` surface is not part of this API. The pinned [collection](https://github.com/prisma/orm/blob/34f77c24695e5b6154d8d0721dd80f985cbbc186/packages/2-mongo-family/5-query-builders/orm/src/collection.ts) permits ordering on model fields, including lists. IDB compares lists lexicographically by element, with numeric Decimal comparison and structural JSON comparison. List queries scan; this change creates no indexes or `multiEntry` indexes.
 
+Contract validation rejects list fields in primary keys (`IDB_LIST_ID`) and indexes (`IDB_LIST_INDEX`) because list queries scan and `multiEntry` indexes would change filter results.
+
 Silently interpreting missing lists as `[]` would hide unmigrated records and change query results. Explicit migration keeps stored data, filters, and sync payloads consistent. On migrated stores, every included required list is an array. Projection removes fields without synthesizing values.

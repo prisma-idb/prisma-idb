@@ -2,7 +2,7 @@ import { expectTypeOf, it } from "vitest";
 import type { NamespaceId } from "@prisma/orm-framework/contract/types";
 import type { IdbContractWithTypeMaps, IdbTypeMaps } from "@prisma-idb/target-idb/pack";
 import type { IdbClient } from "../src/exports/client";
-import type { CreateInput, DefaultModelRow, IdbContract } from "../src/exports/orm";
+import type { CreateInput, DefaultModelRow, IdbContract, IdbUpdateAccessor } from "../src/exports/orm";
 
 type Row = {
   id: string;
@@ -69,6 +69,9 @@ it("keeps list element types in create, updates, filters, ordering and projectio
     const { roles: _roles, ...required } = row;
     expectTypeOf<CreateInput<Contract, "Sample">>().toMatchTypeOf<Omit<Row, "roles"> & { roles?: Row["roles"] }>();
     expectTypeOf<DefaultModelRow<Contract, "Sample">>().toEqualTypeOf<Row>();
+    expectTypeOf<keyof IdbUpdateAccessor<IdbContract, "Sample">["strings"]>().toEqualTypeOf<
+      "set" | "push" | "pull" | "addToSet" | "pop"
+    >();
     db.orm.samples.create(required);
     db.orm.samples.createAll([row]);
     db.orm.samples.createCount([row]);

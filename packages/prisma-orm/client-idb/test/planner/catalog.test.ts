@@ -13,7 +13,7 @@ const contract = defineContract({
       store: "items",
       key: "id",
       fields: { id: "String", a: "String", b: "String?", count: "Int", tags: "Tag[]" },
-      indexes: { ab: { keyPath: ["a", "b"], unique: true }, tags: { keyPath: "tags", multiEntry: true } },
+      indexes: { ab: { keyPath: ["a", "b"], unique: true } },
     },
     Pair: { store: "pairs", key: ["a", "b"], fields: { a: "String", b: "Int" } },
   },
@@ -25,7 +25,6 @@ describe("buildCatalog", () => {
     expect(c.primaryKey).toEqual({ keyPath: "id", fields: ["id"], unique: true, multiEntry: false });
     expect(c.indexes).toEqual([
       { indexName: "ab", keyPath: ["a", "b"], fields: ["a", "b"], unique: true, multiEntry: false },
-      { indexName: "tags", keyPath: "tags", fields: ["tags"], unique: false, multiEntry: true },
     ]);
     expect(c.fields).toMatchObject({
       a: { codecId: "idb/string@1", nullable: false, collection: false },

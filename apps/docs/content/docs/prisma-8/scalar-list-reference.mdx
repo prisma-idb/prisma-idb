@@ -39,7 +39,7 @@ Update callbacks work in `update`, `updateAll`, `updateCount`, and the update ar
 
 The pinned Prisma 8 surface does not define `has`, `hasEvery`, `hasSome`, or `isEmpty`. Use `eq([])` to match an explicitly empty list. Text predicates such as `contains` are rejected for lists. `select` includes only named fields. It never adds missing fields or replaces them with `[]`.
 
-Equality preserves order and duplicates. DateTime and Bytes use value equality. Decimal elements compare numerically, so `"1.0"` equals `"1.00"`. JSON elements use structural equality with canonical object-key order. Ordering compares elements from left to right; if all shared elements tie, the shorter list comes first. List filters use scans. No indexes are created for lists.
+Equality preserves order and duplicates. DateTime and Bytes use value equality. Decimal elements compare numerically, so `"1.0"` equals `"1.00"`. JSON elements use structural equality with canonical object-key order. Ordering compares elements from left to right; if all shared elements tie, the shorter list comes first. List filters use scans. List fields cannot be primary-key fields (`IDB_LIST_ID`) or index fields (`IDB_LIST_INDEX`), including in compound keys and `multiEntry` indexes.
 
 ## Migration compatibility
 
