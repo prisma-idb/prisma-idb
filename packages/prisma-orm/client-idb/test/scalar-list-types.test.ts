@@ -15,6 +15,8 @@ type Row = {
   dates: readonly Date[];
   bytes: readonly Uint8Array[];
   json: readonly unknown[];
+  scalarJson: unknown;
+  label: string;
   roles: readonly ("ADMIN" | "USER")[];
 };
 type Base = Omit<IdbContract, "domain" | "roots" | "execution"> & {
@@ -28,7 +30,9 @@ type Base = Omit<IdbContract, "domain" | "roots" | "execution"> & {
               readonly [K in keyof Row]: {
                 readonly nullable: false;
                 readonly type: { readonly kind: "scalar"; readonly codecId: "idb/string@1" };
-              };
+              } & (Row[K] extends readonly unknown[]
+                ? { readonly many: { readonly elementNullable: false } }
+                : unknown);
             };
             readonly relations: Record<never, never>;
             readonly storage: { readonly storeName: "samples"; readonly keyPath: "id" };
@@ -94,6 +98,17 @@ it("keeps list element types in create, updates, filters, ordering and projectio
     db.orm.samples.update((u) => [u.dates.push("2026-01-01")]);
     // @ts-expect-error Enum membership stays narrow in list updates.
     db.orm.samples.update((u) => [u.roles.addToSet("OWNER")]);
+    db.orm.samples.update((u) => [u.scalarJson.set({ a: 1 }), u.scalarJson.set([1]), u.label.set("a")]);
+    // @ts-expect-error Scalar JSON fields do not support list operations.
+    db.orm.samples.update((u) => [u.scalarJson.push(1)]);
+    // @ts-expect-error Scalar JSON fields do not support list operations.
+    db.orm.samples.update((u) => [u.scalarJson.pull(1)]);
+    // @ts-expect-error Scalar JSON fields do not support list operations.
+    db.orm.samples.update((u) => [u.scalarJson.addToSet(1)]);
+    // @ts-expect-error Scalar JSON fields do not support list operations.
+    db.orm.samples.update((u) => [u.scalarJson.pop(1)]);
+    // @ts-expect-error Scalar strings do not support list operations.
+    db.orm.samples.update((u) => [u.label.push("a")]);
     // @ts-expect-error Primary keys are immutable.
     db.orm.samples.update((u) => [u.id.set("b")]);
     // @ts-expect-error Required lists cannot be unset.

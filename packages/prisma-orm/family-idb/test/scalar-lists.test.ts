@@ -43,9 +43,9 @@ function contract(spec?: FieldSpec<"Role">, defaults?: { values: readonly unknow
 }
 
 /** Interpret a scalar-list PSL schema through the public binder and validator. */
-function psl(spec: string, defaultExpression = "") {
+function psl(spec: string, defaultExpression = "", key = "@id") {
   const { document, sources } = parse(
-    `enum Role {\n USER\n ADMIN\n}\nmodel Sample {\n id String @id\n values ${spec} ${defaultExpression}\n}`,
+    `enum Role {\n USER\n ADMIN\n}\nmodel Sample {\n id String ${key}\n values ${spec} ${defaultExpression}\n}`,
     "test.prisma"
   );
   const { symbolTable } = buildSymbolTable({ documents: [document], sources, defaultNamespaceId: "__unbound__" });
@@ -82,6 +82,67 @@ describe("scalar lists", () => {
     expect(psl(`${scalar}[]?`).ok).toBe(false);
     expect(psl(`${scalar}[]`, '@default(["x"])').ok).toBe(false);
     expect(() => contract(`${scalar}[]`, { values: ["x"] })).toThrow(/Only an empty list default/);
+  });
+
+  it.each(scalars)("rejects %s lists in single and compound primary keys", (scalar) => {
+    for (const key of ["values", ["id", "values"]] as const) {
+      expect(() =>
+        defineContract({
+          family: idbFamily,
+          target: idbTarget,
+          enums: { Role: ["USER", "ADMIN"] },
+          models: { Sample: { store: "sample", key, fields: { id: "String", values: `${scalar}[]` } } },
+        })
+      ).toThrow(/IDB_LIST_ID/);
+    }
+    for (const declaration of ["@id", "\n @@id([id, values])"]) {
+      const result = psl(`${scalar}[]`, declaration, "");
+      expect(result.ok).toBe(false);
+      if (!result.ok)
+        expect(result.failure.diagnostics).toEqual(
+          expect.arrayContaining([expect.objectContaining({ code: "IDB_LIST_ID" })])
+        );
+    }
+  });
+
+  it.each(scalars)("rejects %s lists in every index form", (scalar) => {
+    for (const index of [
+      { keyPath: "values" },
+      { keyPath: "values", unique: true },
+      { keyPath: ["id", "values"] },
+      { keyPath: ["id", "values"], unique: true },
+      { keyPath: "values", multiEntry: true },
+    ] as const) {
+      expect(() =>
+        defineContract({
+          family: idbFamily,
+          target: idbTarget,
+          enums: { Role: ["USER", "ADMIN"] },
+          models: {
+            Sample: {
+              store: "sample",
+              key: "id",
+              fields: { id: "String", values: `${scalar}[]` },
+              indexes: { byValues: index },
+            },
+          },
+        })
+      ).toThrow(/IDB_LIST_INDEX/);
+    }
+    for (const declaration of [
+      "@unique",
+      "\n @@index([values])",
+      "\n @@unique([values])",
+      "\n @@index([id, values])",
+      "\n @@unique([id, values])",
+    ]) {
+      const result = psl(`${scalar}[]`, declaration);
+      expect(result.ok).toBe(false);
+      if (!result.ok)
+        expect(result.failure.diagnostics).toEqual(
+          expect.arrayContaining([expect.objectContaining({ code: "IDB_LIST_INDEX" })])
+        );
+    }
   });
 
   it("emits input and output arrays for every scalar codec", () => {

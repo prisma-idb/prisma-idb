@@ -99,6 +99,7 @@ for (const scenario of authoringScenarios) {
 // These scenarios have invalid definitions that both APIs can express today.
 const sharedInvalidScenarios = new Set([
   "optional enum list",
+  "enum list as @id",
   "enum named like a scalar",
   "index on unknown field",
   "id on unknown field",

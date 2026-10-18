@@ -37,6 +37,19 @@ type ModelsOf<TContract> = TContract extends { readonly domain: { readonly names
     : Record<string, ContractModelBase>
   : Record<string, ContractModelBase>;
 
+/** Resolve list metadata from the contract, including optional metadata on untyped contracts. */
+export type ModelFieldMany<
+  TContract,
+  ModelName extends string,
+  FieldName extends PropertyKey,
+> = ModelName extends keyof ModelsOf<TContract>
+  ? FieldName extends keyof ModelsOf<TContract>[ModelName]["fields"]
+    ? "many" extends keyof ModelsOf<TContract>[ModelName]["fields"][FieldName]
+      ? ModelsOf<TContract>[ModelName]["fields"][FieldName]["many"]
+      : undefined
+    : undefined
+  : undefined;
+
 // ── IdbContract convenience alias ─────────────────────────────────────────────
 
 /**

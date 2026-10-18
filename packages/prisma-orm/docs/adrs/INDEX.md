@@ -38,6 +38,7 @@ For an overview of how the packages fit together, see [ARCHITECTURE.md](../ARCHI
 | 022 | [Rejected pushes reconcile to the server row](ADR%20022%20-%20Rejected%20Pushes%20Reconcile%20to%20the%20Server%20Row.md) | Accepted   | When the server rejects a push for good, the client replaces its local row with the server row from the push result. Rejected events stay in the outbox.                                           |
 | 023 | [Migrations rewrite pending outbox payloads](ADR%20023%20-%20Migrations%20Rewrite%20Pending%20Outbox%20Payloads.md)       | Accepted   | A `transformRecords` migration rewrites the model's queued outbox payloads in the same upgrade transaction, so unsent edits survive the migration.                                                 |
 | 024 | [Record shape is IDB storage](ADR%20024%20-%20Record%20Shape%20Is%20IDB%20Storage.md)                                     | Accepted   | Include stored fields in `storageHash`; require field migrations, normalize absent nullable reads, and never infer renames.                                                                        |
+| 025 | [Scalar lists](ADR%20025%20-%20Scalar%20Lists.md)                                                                         | Accepted   | Store native arrays with per-element codecs, explicit backfills, and Prisma 8 operations.                                                                                                          |
 
 ## Reading order for sync
 
@@ -68,5 +69,3 @@ These are ADRs from the upstream Prisma framework.
 | ADR 104: PSL Extension Namespacing            | The `@namespace.attribute` syntax in schemas               | `@idb.exclude` and `@@idb.exclude` use it ([ADR 012](ADR%20012%20-%20Client%20Contract%20Subsetting.md)).                                                                                                                             |
 | ADR 177: Ownership Replaces Relation Strategy | `model.owner`, for storing data together                   | Deliberately not used for sync authorization ([ADR 014](ADR%20014%20-%20Sync%20Ownership%20DAG.md)).                                                                                                                                  |
 | ADR 212: Contract Spaces                      | Separate migration histories per extension                 | Apps and extensions each have their own migration chain ([ADR 010](ADR%20010%20-%20Combined%20Single-Transaction%20Multi-Space%20Apply.md), [ADR 011](ADR%20011%20-%20No%20Migration%20Materialization%20for%20IDB%20Extensions.md)). |
-
-- [ADR 025: Scalar lists](ADR%20025%20-%20Scalar%20Lists.md) — native arrays, per-element codecs, explicit backfills, and Prisma 8 operations.

@@ -229,6 +229,12 @@ function validateKeys(model: IdbModelNode, report: Report): void {
         "key",
       ]);
     } else {
+      if (field.list)
+        report("IDB_LIST_ID", `Field "${model.modelName}.${name}" is a list and cannot be part of a primary key.`, [
+          ...at,
+          "fields",
+          name,
+        ]);
       if (field.nullable)
         report("IDB_NULLABLE_ID", `Field "${model.modelName}.${name}" is a key field and cannot be nullable.`, [
           ...at,
@@ -289,6 +295,12 @@ function validateIndexes(model: IdbModelNode, report: Report): void {
         report(
           "IDB_INVALID_INDEX",
           `Model "${model.modelName}" index "${index.name}" references field "${name}", which is not declared in "fields".`,
+          indexAt
+        );
+      else if (field.list)
+        report(
+          "IDB_LIST_INDEX",
+          `Model "${model.modelName}" index "${index.name}" references list field "${name}". Indexes on list fields are not supported.`,
           indexAt
         );
       else if (!index.multiEntry && !isValidIdbKeyCodec(field.codecId)) {

@@ -3,7 +3,7 @@ import { keyPathFields } from "@prisma-idb/target-idb/pack";
 import { compareListElement } from "@prisma-idb/target-idb/runtime";
 import { assertValidRecord } from "./record-validation";
 import { assertEnumValues } from "./enum-validation";
-import { getKeyPath, type DefaultModelRow, type IdbContract, type ModelKeyPath } from "./types";
+import { getKeyPath, type DefaultModelRow, type IdbContract, type ModelKeyPath, type ModelFieldMany } from "./types";
 
 /** A fluent field update, following the Prisma 8 Mongo field-operation shape. */
 export interface IdbFieldOperation {
@@ -12,14 +12,12 @@ export interface IdbFieldOperation {
   readonly value?: unknown;
 }
 
-/** Operations on a required list; unset is rejected because stored lists must remain present. */
-export type IdbFieldExpression<T> = {
+/** Set any field; expose element operations only when the contract allows a list. */
+export type IdbFieldExpression<T, Many = undefined> = {
   set(value: T): IdbFieldOperation;
-} & (unknown extends T
-  ? IdbListExpression<unknown>
-  : T extends readonly (infer Element)[]
-    ? IdbListExpression<Element>
-    : unknown);
+} & (Extract<Many, { readonly elementNullable: boolean }> extends never
+  ? unknown
+  : IdbListExpression<T extends readonly (infer Element)[] ? Element : unknown>);
 
 /** Element operations shared by typed lists and dynamically built contracts. */
 type IdbListExpression<Element> = {
@@ -33,7 +31,7 @@ type IdbListExpression<Element> = {
 export type IdbUpdateAccessor<TContract, ModelName extends string> = {
   readonly [
     K in Exclude<keyof DefaultModelRow<TContract, ModelName>, ModelKeyPath<TContract, ModelName>>
-  ]-?: IdbFieldExpression<DefaultModelRow<TContract, ModelName>[K]>;
+  ]-?: IdbFieldExpression<DefaultModelRow<TContract, ModelName>[K], ModelFieldMany<TContract, ModelName, K>>;
 };
 
 /** A callback is evaluated once, before the transaction, and returns declarative field operations. */
