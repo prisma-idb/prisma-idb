@@ -71,7 +71,8 @@ export type RelationDef = {
    * Whether the contract indexes this relation's foreign-key fields (`on.local`).
    * Defaults to `true`, because IndexedDB has no joins and a relation read is an
    * index lookup on the foreign key. Set `false` to skip the index. A declared
-   * index named like the foreign-key field also replaces it. Ignored for `1:N`.
+   * index with the same name and single-field keyPath also replaces it.
+   * Ignored for `1:N`.
    */
   readonly index?: boolean;
 };
@@ -293,6 +294,29 @@ function lowerIndex(name: string, idx: IndexDef): IdbIndexNode {
 /** A `defaults` entry: a helper's result or a literal value. */
 type DeclaredDefault = FieldDefault | string | number | boolean;
 
+/** Runtime callers must supply a scalar literal or one of this package's helper shapes. */
+function isDeclaredDefault(value: unknown): value is DeclaredDefault {
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return true;
+  if (typeof value !== "object" || value === null) return false;
+  const helper = value as FieldDefault;
+  if (helper.kind === "autoincrement") return true;
+  if (helper.kind !== "execution" || typeof helper.execution !== "object" || helper.execution === null) return false;
+  const { onCreate, onUpdate } = helper.execution;
+  if (
+    typeof onCreate !== "object" ||
+    onCreate === null ||
+    !["timestampNow", "uuidv4", "uuidv7", "cuid2"].includes(onCreate.id)
+  )
+    return false;
+  return (
+    onUpdate === undefined ||
+    (onCreate.id === "timestampNow" &&
+      typeof onUpdate === "object" &&
+      onUpdate !== null &&
+      onUpdate.id === "timestampNow")
+  );
+}
+
 /**
  * Returns an own entry of a defaults map, or `undefined` when there is none.
  * Reads own properties only, so a field named like an `Object.prototype` member
@@ -304,7 +328,7 @@ function ownEntry<T>(map: Record<string, T> | undefined, fieldName: string): T |
 
 /** `true` for `autoincrement()`, which sets a store property and no field default. */
 function isAutoincrement(declared: DeclaredDefault | undefined): boolean {
-  return typeof declared === "object" && declared.kind === "autoincrement";
+  return declared !== null && typeof declared === "object" && declared.kind === "autoincrement";
 }
 
 /**
@@ -326,7 +350,7 @@ function lowerFieldDefaults(
 }
 
 /**
- * Rejects `defaults` and `fieldDefaults` entries that name an undeclared field,
+ * Rejects invalid default values, entries that name an undeclared field,
  * and fields listed in both maps. Excluded fields stay allowed: a client
  * projection drops them from `fields` but they are still declared.
  */
@@ -345,9 +369,15 @@ function checkDeclaredDefaults(modelName: string, def: ProjectedModelDef): void 
     ["defaults", def.defaults],
     ["fieldDefaults", def.fieldDefaults],
   ] as const) {
-    for (const name of Object.keys(map ?? {})) {
+    for (const [name, value] of Object.entries(map ?? {})) {
       if (!Object.hasOwn(def.fields, name) && !def.excludeFields?.includes(name)) {
         fail(name, `Model "${modelName}" ${mapName} references field "${name}", which is not declared in "fields".`);
+      }
+      if (!isDeclaredDefault(value) || (mapName === "fieldDefaults" && typeof value === "object")) {
+        fail(
+          name,
+          `Model "${modelName}" ${mapName} field "${name}" must be a scalar literal${mapName === "defaults" ? " or a recognized default helper result" : ""}.`
+        );
       }
     }
   }

@@ -230,8 +230,17 @@ function validateIndexes(model: IdbModelNode, report: Report): void {
   const fields = new Map(model.fields.map((field) => [field.name, field]));
   const excluded = new Set(model.exclusions?.fields);
   // The builder indexes foreign keys, so the validator checks those indexes too.
+  const seen = new Set<string>();
   for (const index of [...model.indexes, ...foreignKeyIndexes(model)]) {
     const indexAt = [...at, "indexes", index.name];
+    if (seen.has(index.name)) {
+      report(
+        "IDB_INVALID_INDEX",
+        `Model "${model.modelName}" index name "${index.name}" is declared more than once. An index named for a foreign-key field must index that field alone.`,
+        indexAt
+      );
+    }
+    seen.add(index.name);
     const names = keyPathFields(index.keyPath);
     if (!isWellFormedKeyPath(index.keyPath)) {
       report(

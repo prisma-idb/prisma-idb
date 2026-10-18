@@ -3,6 +3,7 @@ import type { MockInstance } from "vitest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { IndexDef, ModelDef, RelationDef } from "../src/core/contract-builder";
 import { defineContract } from "../src/core/contract-builder";
+import { IdbContractError } from "../src/core/contract-error";
 import { autoincrement, cuid2, now, updatedAt, uuidv4, uuidv7 } from "../src/core/field-defaults";
 import idbFamilyPack from "../src/exports/pack";
 import idbTargetPack from "@prisma-idb/target-idb/pack";
@@ -1188,6 +1189,20 @@ describe("defineContract — foreign-key indexes", () => {
     expect(posts).toEqual({ authorId: { keyPath: "authorId", unique: true } });
   });
 
+  it.each([{ keyPath: "id" }, { keyPath: ["id"] }, { keyPath: ["authorId", "id"] }])(
+    "rejects a foreign-key index name taken by an incompatible keyPath: $keyPath",
+    ({ keyPath }) => {
+      expect(() => postStoreIndexes({}, { authorId: { keyPath } })).toThrow(/IDB_INVALID_INDEX/);
+      expect(() => postStoreIndexes({ index: false }, { authorId: { keyPath } })).not.toThrow();
+    }
+  );
+
+  it("reuses a declared foreign-key index with a single-element array keyPath", () => {
+    expect(postStoreIndexes({}, { authorId: { keyPath: ["authorId"], unique: true } }).posts).toEqual({
+      authorId: { keyPath: ["authorId"], unique: true },
+    });
+  });
+
   it("adds the foreign-key index beside a declared index with another name", () => {
     const { posts } = postStoreIndexes({}, { byAuthor: { keyPath: "authorId", unique: true } });
     expect(posts).toEqual({
@@ -1311,5 +1326,52 @@ describe("defineContract — execution defaults", () => {
   it("rejects a default on an undeclared field and a field listed in both default maps", () => {
     expect(() => rowContract({ missing: "x" })).toThrow(/defaults references field "missing"/);
     expect(() => rowContract({ s: "x" }, { fieldDefaults: { s: "y" } })).toThrow(/both "defaults" and "fieldDefaults"/);
+  });
+
+  it.each(
+    [
+      null,
+      undefined,
+      {},
+      [],
+      { kind: "unknown" },
+      { kind: "execution" },
+      { kind: "execution", execution: null },
+      { kind: "execution", execution: {} },
+      { kind: "execution", execution: { onCreate: null } },
+      { kind: "execution", execution: { onCreate: { id: "unknown" } } },
+      { kind: "execution", execution: { onCreate: { id: "uuidv4" }, onUpdate: { id: "uuidv4" } } },
+      1n,
+      Symbol("invalid"),
+      () => now(),
+    ].map((value) => ({ value }))
+  )("reports invalid defaults as contract diagnostics: $value", ({ value }) => {
+    expect(() => rowContract({ s: value as never })).toThrow(IdbContractError);
+    expect(() => rowContract({ s: value as never })).toThrow(/IDB_INVALID_DEFAULT_VALUE/);
+  });
+
+  it("validates defaults on fields removed by client projection", () => {
+    expect(() =>
+      defineContract(
+        {
+          family: idbFamilyPack,
+          target: idbTargetPack,
+          models: {
+            Row: {
+              store: "rows",
+              key: "id",
+              fields: { id: "Int", s: "String" },
+              excludeFields: ["s"],
+              defaults: { s: {} as never },
+            },
+          },
+        },
+        { projection: "client" }
+      )
+    ).toThrow(/IDB_INVALID_DEFAULT_VALUE/);
+  });
+
+  it.each([null, undefined, {}, now()])("requires fieldDefaults entries to be scalar literals: %j", (value) => {
+    expect(() => rowContract(undefined, { fieldDefaults: { s: value as never } })).toThrow(/IDB_INVALID_DEFAULT_VALUE/);
   });
 });
