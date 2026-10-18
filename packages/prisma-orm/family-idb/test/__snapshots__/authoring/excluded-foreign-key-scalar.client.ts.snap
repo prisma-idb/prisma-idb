@@ -1,5 +1,5 @@
 {
   "contract": null,
-  "error": "defineContract: model \"User\" relation \"posts\" references excluded field \"Post.authorId\" — field-level FK exclusion isn't supported (ADR 013 only handles relations pointing at a whole-model @@idb.exclude). Exclude the whole model instead, or remove the exclusion.",
+  "error": "IDB_CANNOT_EXCLUDE_RELATION_FIELD: Relation \"Post.author\" uses a local field that cannot be excluded independently. Remove the exclusion or exclude the whole model.\nIDB_UNRESOLVED_BACKRELATION: Backrelation field \"User.posts\" (list of Post) has no matching @relation in \"Post\" pointing to \"User\". Add @relation(fields: [...], references: [...]) to the FK field in \"Post\".",
   "hashes": null
 }

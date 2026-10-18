@@ -95,3 +95,37 @@ for (const scenario of authoringScenarios) {
     });
   }
 }
+
+// These scenarios have invalid definitions that both APIs can express today.
+const sharedInvalidScenarios = new Set([
+  "optional enum list",
+  "enum named like a scalar",
+  "scalar list",
+  "index on unknown field",
+  "id on unknown field",
+  "exclude back-relation list",
+  "excluded foreign-key scalar",
+  "excluded relation field",
+  "unknown field type",
+  "missing primary key",
+]);
+
+for (const scenario of authoringScenarios.filter((scenario) => sharedInvalidScenarios.has(scenario.name))) {
+  it(`shares diagnostic codes and wording for ${scenario.name}`, async () => {
+    const { IdbContractError } = await import("../src/exports/contract-ts");
+    const projection = scenario.clientProjection ? "client" : "full";
+    const psl = pslSnapshot(scenario.psl, projection);
+    const diagnostics = psl.diagnostics.interpretation;
+    expect(diagnostics.length).toBeGreaterThan(0);
+    try {
+      defineContract({ family: idbFamilyPack, target: idbTargetPack, ...scenario.ts }, { projection });
+      expect.fail("expected invalid TS definition");
+    } catch (error) {
+      expect(error).toBeInstanceOf(IdbContractError);
+      if (!(error instanceof IdbContractError)) throw error;
+      expect(diagnostics.map(({ code, message }) => ({ code, message }))).toEqual(
+        error.diagnostics.map(({ code, message }) => ({ code, message }))
+      );
+    }
+  });
+}

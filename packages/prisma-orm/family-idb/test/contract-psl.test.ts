@@ -1626,3 +1626,86 @@ describe("interpretPslDocumentToIdbContract", () => {
     });
   });
 });
+
+/** Compare shared diagnostics through the two public authoring surfaces. */
+async function sharedDiagnostics(
+  schema: string,
+  models: Record<string, import("../src/exports/contract-ts").ModelDef<string>>,
+  enums: import("../src/exports/contract-ts").EnumDefs = {}
+) {
+  const { defineContract, IdbContractError } = await import("../src/exports/contract-ts");
+  const { default: family } = await import("../src/exports/pack");
+  const { default: target } = await import("@prisma-idb/target-idb/pack");
+  const psl = interpret(schema);
+  expect(psl.ok).toBe(false);
+  if (psl.ok) throw new Error("expected invalid PSL contract");
+  try {
+    defineContract({ family, target, models, enums });
+    expect.fail("expected invalid TS contract");
+  } catch (error) {
+    expect(error).toBeInstanceOf(IdbContractError);
+    if (!(error instanceof IdbContractError)) throw error;
+    expect(psl.failure.diagnostics.map(({ code, message }) => ({ code, message }))).toEqual(
+      error.diagnostics.map(({ code, message }) => ({ code, message }))
+    );
+  }
+  return psl.failure.diagnostics;
+}
+
+describe("shared definition diagnostics", () => {
+  it.each([
+    { type: "Role[]?", enums: { Role: ["A"] }, enumPsl: "enum Role {\n A\n}\n", code: "IDB_OPTIONAL_LIST" },
+    { type: "String[]", enums: {}, enumPsl: "", code: "IDB_UNSUPPORTED_FIELD_TYPE" },
+    { type: "Unsupported", enums: {}, enumPsl: "", code: "IDB_UNSUPPORTED_FIELD_TYPE" },
+  ])("matches $code for $type and points at the field", async ({ type, enums, enumPsl, code }) => {
+    const schema = `${enumPsl}model User {\n id String @id\n value ${type}\n}`;
+    const diagnostics = await sharedDiagnostics(
+      schema,
+      { User: { store: "user", key: "id", fields: { id: "String", value: type } } },
+      enums
+    );
+    expect(diagnostics.map((diagnostic) => diagnostic.code)).toEqual([code]);
+    expect(schema.slice(diagnostics[0]!.span!.start.offset, diagnostics[0]!.span!.end.offset)).toBe(`value ${type}`);
+  });
+
+  it.each(["index", "unique", "id"])("anchors an unknown @@%s field at its declaration", async (attribute) => {
+    const schema = `model User {\n ${attribute === "id" ? "name String" : "id String @id"}\n @@${attribute}([unknown])\n}`;
+    const diagnostics = await sharedDiagnostics(schema, {
+      User: {
+        store: "user",
+        key: attribute === "id" ? "unknown" : "id",
+        fields: attribute === "id" ? { name: "String" } : { id: "String" },
+        ...(attribute === "id"
+          ? {}
+          : {
+              indexes: {
+                [attribute === "unique" ? "unknown_unique" : "unknown"]: {
+                  keyPath: "unknown",
+                  unique: attribute === "unique",
+                },
+              },
+            }),
+      },
+    });
+    expect(diagnostics).toHaveLength(1);
+    const span = diagnostics[0]!.span!;
+    expect(schema.slice(span.start.offset, span.end.offset)).toBe(`@@${attribute}([unknown])`);
+  });
+
+  it("reports literal-default mismatches at @default", async () => {
+    const schema = 'model User {\n id String @id\n count Int @default("wrong")\n}';
+    const diagnostics = await sharedDiagnostics(schema, {
+      User: { store: "user", key: "id", fields: { id: "String", count: "Int" }, fieldDefaults: { count: "wrong" } },
+    });
+    const span = diagnostics[0]!.span!;
+    expect(schema.slice(span.start.offset, span.end.offset)).toBe('@default("wrong")');
+  });
+
+  it("rejects an optional temporal update timestamp at the field", () => {
+    const result = interpret("model User {\n id String @id\n touched temporal.updatedAt()?\n}");
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.failure.diagnostics.map(({ code }) => code)).toEqual(["IDB_EXECUTION_DEFAULT_ON_OPTIONAL_FIELD"]);
+    expect(result.failure.diagnostics[0]!.span!.start.line).toBe(3);
+  });
+});

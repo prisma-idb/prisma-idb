@@ -1,5 +1,5 @@
 {
   "contract": null,
-  "error": "Field \"roles\" has type \"Role[]?\". A list field cannot be optional.",
+  "error": "IDB_OPTIONAL_LIST: Field \"User.roles\": A list field cannot be optional.",
   "hashes": null
 }

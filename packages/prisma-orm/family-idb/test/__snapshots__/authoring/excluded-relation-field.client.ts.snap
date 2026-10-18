@@ -1,5 +1,5 @@
 {
   "contract": null,
-  "error": "defineContract: model \"Post\" excludeFields references unknown field \"author\" — it is not declared in \"fields\".",
+  "error": "IDB_EXCLUDE_ON_RELATION_FIELD_UNSUPPORTED: Field \"Post.author\" is a relation field and cannot be marked @idb.exclude directly. Exclude the target model with @@idb.exclude to drop the relation, or exclude a plain scalar field.\nIDB_UNRESOLVED_BACKRELATION: Backrelation field \"User.posts\" (list of Post) has no matching @relation in \"Post\" pointing to \"User\". Add @relation(fields: [...], references: [...]) to the FK field in \"Post\".",
   "hashes": null
 }

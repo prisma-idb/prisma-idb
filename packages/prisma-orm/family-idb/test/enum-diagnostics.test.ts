@@ -46,3 +46,34 @@ describe("enum member diagnostics", () => {
     expect(duplicate?.span?.start.line).toBe(1);
   });
 });
+
+it("shares scalar-name conflict wording with TS authoring and anchors the enum declaration", async () => {
+  const { defineContract, IdbContractError } = await import("../src/exports/contract-ts");
+  const { default: family } = await import("../src/exports/pack");
+  const { default: target } = await import("@prisma-idb/target-idb/pack");
+  const { document, sources } = parse("enum String {\n A\n}\nmodel User {\n id String @id\n}", "enum.prisma");
+  const { symbolTable } = buildSymbolTable({
+    documents: [document],
+    sources,
+    defaultNamespaceId: UNBOUND_DOMAIN_NAMESPACE_ID,
+  });
+  const psl = interpretPslDocumentToIdbContract(symbolTable, "enum.prisma", { sources });
+  expect(psl.ok).toBe(false);
+  if (psl.ok) return;
+  expect(psl.failure.diagnostics[0]!.span).toEqual(symbolTable.defaultNamespace.blocks["String"]!.span);
+  try {
+    defineContract({
+      family,
+      target,
+      enums: { String: ["A"] },
+      models: { User: { store: "user", key: "id", fields: { id: "String" } } },
+    });
+    expect.fail("expected invalid enum name");
+  } catch (error) {
+    expect(error).toBeInstanceOf(IdbContractError);
+    if (!(error instanceof IdbContractError)) throw error;
+    expect(psl.failure.diagnostics.map(({ code, message }) => ({ code, message }))).toEqual(
+      error.diagnostics.map(({ code, message }) => ({ code, message }))
+    );
+  }
+});

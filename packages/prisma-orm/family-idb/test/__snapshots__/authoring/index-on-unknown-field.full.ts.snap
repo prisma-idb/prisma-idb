@@ -1,5 +1,5 @@
 {
   "contract": null,
-  "error": "defineContract: model \"User\" index \"unknown\" references field \"unknown\", which is not declared in \"fields\".",
+  "error": "IDB_INVALID_INDEX: Model \"User\" index \"unknown\" references field \"unknown\", which is not declared in \"fields\".",
   "hashes": null
 }

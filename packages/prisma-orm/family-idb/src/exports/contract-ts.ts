@@ -10,3 +10,5 @@ export type {
   RelationDef,
 } from "../core/contract-builder";
 export type { ContractProjection } from "../core/psl-interpreter";
+export { IdbContractError } from "../core/contract-error";
+export type { IdbDiagnostic } from "../core/validate-definition";

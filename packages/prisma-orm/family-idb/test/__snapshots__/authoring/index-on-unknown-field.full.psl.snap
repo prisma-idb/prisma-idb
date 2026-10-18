@@ -1,87 +1,27 @@
 {
-  "contract": {
-    "capabilities": {
-      "idb": {
-        "ddlOnlyInUpgrade": true,
-        "transactionalDDL": true
-      }
-    },
-    "domain": {
-      "namespaces": {
-        "__unbound__": {
-          "models": {
-            "User": {
-              "fields": {
-                "id": {
-                  "nullable": false,
-                  "type": {
-                    "codecId": "idb/string@1",
-                    "kind": "scalar"
-                  }
-                }
-              },
-              "relations": {},
-              "storage": {
-                "keyPath": "id",
-                "storeName": "user"
-              }
-            }
-          }
-        }
-      }
-    },
-    "extensions": {},
-    "meta": {},
-    "profileHash": "40329830af4e39e0774683fbebcdc24dcf983a5da02c5fe6079a2a57579f861c",
-    "roots": {
-      "user": {
-        "model": "User",
-        "namespace": "__unbound__"
-      }
-    },
-    "storage": {
-      "namespaces": {
-        "__unbound__": {
-          "entries": {},
-          "id": "__unbound__"
-        }
-      },
-      "storageHash": "c17faba21bc18575df132b84924a2a8067206de71191a81435073ce7982f617a",
-      "stores": {
-        "user": {
-          "indexes": {
-            "unknown": {
-              "keyPath": "unknown",
-              "unique": false
-            }
-          },
-          "keyPath": "id",
-          "record": {
-            "fields": {
-              "id": {
-                "nullable": false,
-                "type": {
-                  "codecId": "idb/string@1",
-                  "kind": "scalar"
-                }
-              }
-            },
-            "model": "User"
-          }
-        }
-      }
-    },
-    "target": "idb",
-    "targetFamily": "idb"
-  },
+  "contract": null,
   "diagnostics": {
-    "interpretation": [],
+    "interpretation": [
+      {
+        "code": "IDB_INVALID_INDEX",
+        "message": "Model \"User\" index \"unknown\" references field \"unknown\", which is not declared in \"fields\".",
+        "sourceId": "authoring.prisma",
+        "span": {
+          "end": {
+            "column": 27,
+            "line": 4,
+            "offset": 68
+          },
+          "start": {
+            "column": 9,
+            "line": 4,
+            "offset": 50
+          }
+        }
+      }
+    ],
     "parse": [],
     "symbols": []
   },
-  "hashes": {
-    "executionHash": null,
-    "profileHash": "40329830af4e39e0774683fbebcdc24dcf983a5da02c5fe6079a2a57579f861c",
-    "storageHash": "c17faba21bc18575df132b84924a2a8067206de71191a81435073ce7982f617a"
-  }
+  "hashes": null
 }

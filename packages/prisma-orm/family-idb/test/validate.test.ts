@@ -48,3 +48,17 @@ describe("validateContract", () => {
     ).toThrow('Model "Item" field "choice" uses a union type, which prisma-idb does not support');
   });
 });
+
+it.each([{ keyPath: "" }, { keyPath: [] }, { keyPath: ["id", "id"] }, { keyPath: ["id", ""] }])(
+  "rejects malformed raw store keys with the shared key-path rule: $keyPath",
+  ({ keyPath }) => {
+    expect(() => validateContract(createRawIdbContract({ items: { keyPath } }))).toThrow(
+      /Store "items" is missing a required keyPath/
+    );
+  }
+);
+
+it("accepts a raw contract with a well-formed store key", () => {
+  const contract = createRawIdbContract({ items: { keyPath: "id" } });
+  expect(validateContract(contract)).toBe(contract);
+});

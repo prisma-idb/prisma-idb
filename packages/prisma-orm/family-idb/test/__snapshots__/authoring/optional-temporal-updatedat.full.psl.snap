@@ -1,117 +1,27 @@
 {
-  "contract": {
-    "capabilities": {
-      "idb": {
-        "ddlOnlyInUpgrade": true,
-        "transactionalDDL": true
-      }
-    },
-    "domain": {
-      "namespaces": {
-        "__unbound__": {
-          "models": {
-            "Row": {
-              "fields": {
-                "id": {
-                  "nullable": false,
-                  "type": {
-                    "codecId": "idb/string@1",
-                    "kind": "scalar"
-                  }
-                },
-                "t": {
-                  "nullable": true,
-                  "type": {
-                    "codecId": "idb/date@1",
-                    "kind": "scalar"
-                  }
-                }
-              },
-              "relations": {},
-              "storage": {
-                "keyPath": "id",
-                "storeName": "row"
-              }
-            }
-          }
-        }
-      }
-    },
-    "execution": {
-      "executionHash": "517c1e2aa2eed3340553e66a1268dcb29a003dad1b0fdf9503c49ffc9353f296",
-      "mutations": {
-        "defaults": [
-          {
-            "onCreate": {
-              "id": "timestampNow",
-              "kind": "generator"
-            },
-            "onUpdate": {
-              "id": "timestampNow",
-              "kind": "generator"
-            },
-            "ref": {
-              "entry": "row",
-              "field": "t",
-              "namespace": "__unbound__"
-            }
-          }
-        ]
-      }
-    },
-    "extensions": {},
-    "meta": {},
-    "profileHash": "40329830af4e39e0774683fbebcdc24dcf983a5da02c5fe6079a2a57579f861c",
-    "roots": {
-      "row": {
-        "model": "Row",
-        "namespace": "__unbound__"
-      }
-    },
-    "storage": {
-      "namespaces": {
-        "__unbound__": {
-          "entries": {},
-          "id": "__unbound__"
-        }
-      },
-      "storageHash": "6ffc20b49eaeb5351ccbf7328d01aab5580ddf30be18f2dcf1666e1d511a5b51",
-      "stores": {
-        "row": {
-          "keyPath": "id",
-          "record": {
-            "fields": {
-              "id": {
-                "nullable": false,
-                "type": {
-                  "codecId": "idb/string@1",
-                  "kind": "scalar"
-                }
-              },
-              "t": {
-                "nullable": true,
-                "type": {
-                  "codecId": "idb/date@1",
-                  "kind": "scalar"
-                }
-              }
-            },
-            "model": "Row"
-          }
-        }
-      }
-    },
-    "target": "idb",
-    "targetFamily": "idb"
-  },
+  "contract": null,
   "diagnostics": {
-    "interpretation": [],
+    "interpretation": [
+      {
+        "code": "IDB_EXECUTION_DEFAULT_ON_OPTIONAL_FIELD",
+        "message": "Field \"Row.t\" cannot be optional with a generated default. Remove \"?\" or the generator.",
+        "sourceId": "authoring.prisma",
+        "span": {
+          "end": {
+            "column": 32,
+            "line": 4,
+            "offset": 72
+          },
+          "start": {
+            "column": 9,
+            "line": 4,
+            "offset": 49
+          }
+        }
+      }
+    ],
     "parse": [],
     "symbols": []
   },
-  "hashes": {
-    "executionHash": "517c1e2aa2eed3340553e66a1268dcb29a003dad1b0fdf9503c49ffc9353f296",
-    "profileHash": "40329830af4e39e0774683fbebcdc24dcf983a5da02c5fe6079a2a57579f861c",
-    "storageHash": "6ffc20b49eaeb5351ccbf7328d01aab5580ddf30be18f2dcf1666e1d511a5b51"
-  }
+  "hashes": null
 }

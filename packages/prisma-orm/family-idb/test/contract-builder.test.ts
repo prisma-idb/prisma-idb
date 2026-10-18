@@ -366,7 +366,7 @@ describe("defineContract — enums in the client projection", () => {
 
   it("still validates an enum that only excluded fields use", () => {
     expect(() => defineContract({ ...input, enums: { ...input.enums, Secret: [] } }, { projection: "client" })).toThrow(
-      /enum "Secret" must declare at least one value/
+      /Enum "Secret" must declare at least one member/
     );
   });
 });
@@ -1090,5 +1090,42 @@ describe("defineContract — literal defaults", () => {
 
     const models = domainModelsAtDefaultNamespace(contract.domain) as Record<string, { storage: object }>;
     expect(models["Thing"]!.storage).not.toHaveProperty("fieldDefaults");
+  });
+});
+
+describe("defineContract — structured diagnostics", () => {
+  it("exposes every semantic error through the public error type", async () => {
+    const { IdbContractError } = await import("../src/exports/contract-ts");
+    try {
+      defineContract({
+        family: idbFamilyPack,
+        target: idbTargetPack,
+        enums: { Role: ["A", "A"] },
+        models: {
+          User: {
+            store: "user",
+            key: "id",
+            fields: { id: "Boolean?", roles: "Role[]?" as never },
+            indexes: { missing: { keyPath: "unknown" } },
+          },
+        },
+      });
+      expect.fail("expected invalid contract");
+    } catch (error) {
+      expect(error).toBeInstanceOf(IdbContractError);
+      if (!(error instanceof IdbContractError)) throw error;
+      expect(error.name).toBe("IdbContractError");
+      expect(error.diagnostics.map(({ code }) => code)).toEqual([
+        "IDB_ENUM_DUPLICATE_VALUE",
+        "IDB_NULLABLE_ID",
+        "IDB_INVALID_KEY_TYPE",
+        "IDB_INVALID_INDEX",
+        "IDB_OPTIONAL_LIST",
+      ]);
+      for (const diagnostic of error.diagnostics) {
+        expect(error.message).toContain(`${diagnostic.code}: ${diagnostic.message}`);
+        expect(diagnostic.at.length).toBeGreaterThan(0);
+      }
+    }
   });
 });

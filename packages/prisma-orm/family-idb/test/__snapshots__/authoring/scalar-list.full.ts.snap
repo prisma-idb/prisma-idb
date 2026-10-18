@@ -1,5 +1,5 @@
 {
   "contract": null,
-  "error": "Field \"tags\" has list type \"String[]\". Only enum fields can be lists.",
+  "error": "IDB_UNSUPPORTED_FIELD_TYPE: Field \"User.tags\" is a scalar list. Only enum fields can be lists.",
   "hashes": null
 }

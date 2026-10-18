@@ -1,5 +1,5 @@
 {
   "contract": null,
-  "error": "Unknown field type \"MissingRole\" for field \"role\"",
+  "error": "IDB_UNSUPPORTED_FIELD_TYPE: Field \"User.role\" has unsupported type \"MissingRole\". Supported types: String, Int, Float, Boolean, DateTime, BigInt, Decimal, Json, Bytes.",
   "hashes": null
 }
