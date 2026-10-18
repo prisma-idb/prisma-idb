@@ -485,11 +485,11 @@ export function createIdbAttributeBinder(input: IdbAttributeBinderInput): IdbAtt
     model: bindModel,
     field: bindField,
     isModelExcluded: (model) => {
-      const attribute = model.attributes.find(({ name }) => name === IDB_EXCLUDE_ATTR);
-      if (attribute === undefined) return false;
+      const markers = model.attributes.filter(({ name }) => name === IDB_EXCLUDE_ATTR);
+      // Validate every marker, not just the first, so a repeated malformed exclusion cannot hide in either projection.
       // The model stays excluded either way: a malformed exclusion fails the contract through its diagnostic.
-      interpret(excludeModelSpec, attribute, { ...base, selfModel: model });
-      return true;
+      for (const marker of markers) interpret(excludeModelSpec, marker, { ...base, selfModel: model });
+      return markers.length > 0;
     },
     isFieldExcluded: (field) => field.attributes.some((attribute) => attribute.name === IDB_EXCLUDE_ATTR),
   };

@@ -198,6 +198,22 @@ describe("interpretPslDocumentToIdbContract with malformed attributes", () => {
     if (result.ok) return;
     expect(result.failure.diagnostics).toHaveLength(1);
   });
+
+  it.each(["full", "client"] as const)(
+    "validates a repeated @@idb.exclude marker in the %s projection",
+    (projection) => {
+      const schema =
+        "model Post {\n  id String @id\n  @@idb.exclude\n  @@idb.exclude(1)\n}\nmodel User {\n  id String @id\n}";
+      const { document, sources } = parse(schema, "bad.prisma");
+      const { symbolTable } = buildSymbolTable({ documents: [document], sources, defaultNamespaceId: "__unbound__" });
+
+      const result = interpretPslDocumentToIdbContract(symbolTable, "bad.prisma", { sources, projection });
+
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.failure.diagnostics).toHaveLength(1);
+    }
+  );
 });
 
 /** Interprets a complete schema and returns the result. */
