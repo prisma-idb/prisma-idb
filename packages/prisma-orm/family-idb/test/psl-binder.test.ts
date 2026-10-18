@@ -186,4 +186,55 @@ describe("interpretPslDocumentToIdbContract with malformed attributes", () => {
     expect(result.failure.diagnostics).toHaveLength(1);
     expect(schema.slice(diagnostic!.span!.start.offset, diagnostic!.span!.end.offset)).toContain("oops");
   });
+
+  it("validates @@idb.exclude arguments in the client projection too", () => {
+    const schema = "model Post {\n  id String @id\n  @@idb.exclude(1)\n}\nmodel User {\n  id String @id\n}";
+    const { document, sources } = parse(schema, "bad.prisma");
+    const { symbolTable } = buildSymbolTable({ documents: [document], sources, defaultNamespaceId: "__unbound__" });
+
+    const result = interpretPslDocumentToIdbContract(symbolTable, "bad.prisma", { sources, projection: "client" });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.failure.diagnostics).toHaveLength(1);
+  });
+});
+
+/** Interprets a complete schema and returns the result. */
+function interpret(schema: string) {
+  const { document, sources } = parse(schema, "schema.prisma");
+  const { symbolTable } = buildSymbolTable({ documents: [document], sources, defaultNamespaceId: "__unbound__" });
+  return interpretPslDocumentToIdbContract(symbolTable, "schema.prisma", { sources });
+}
+
+describe("interpretPslDocumentToIdbContract with portable attribute arguments", () => {
+  it.each([
+    ["@@id with name", 'model Post {\n  a String\n  b String\n  @@id([a, b], name: "postKey")\n}'],
+    ["@@id with map and sort", 'model Post {\n  a String\n  b String\n  @@id([a, b], map: "pk", sort: Desc)\n}'],
+    ["@id with clustered and length", "model Post {\n  id String @id(length: 10, clustered: false)\n}"],
+    ["@unique with sort", "model Post {\n  id String @id\n  slug String @unique(sort: Desc)\n}"],
+    ["@default with map", 'model Post {\n  id String @id @default(uuid(), map: "post_id_default")\n}'],
+    [
+      "@@index with type and length",
+      "model Post {\n  id String @id\n  t String\n  @@index([t], type: Hash, length: 4)\n}",
+    ],
+  ])("accepts %s and ignores the extra argument", (_name, schema) => {
+    expect(interpret(schema).ok).toBe(true);
+  });
+
+  it("keeps escape sequences in a model's storage name verbatim", () => {
+    const result = interpret('model Post {\n  id String @id\n  @@map("a\\nb")\n}');
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(Object.keys(result.value.storage.stores)).toEqual(["a\\nb"]);
+  });
+
+  it("reports a list default as an invalid default value", () => {
+    const result = interpret("model Post {\n  id String @id\n  tags String[] @default([])\n}");
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.failure.diagnostics.map((d) => d.code)).toContain("IDB_INVALID_DEFAULT_VALUE");
+  });
 });

@@ -73,6 +73,7 @@ export interface IdbDefaultValue {
     | { readonly kind: "boolean"; readonly value: boolean }
     | { readonly kind: "number"; readonly value: number }
     | { readonly kind: "identifier"; readonly name: string }
+    | { readonly kind: "list" }
     | { readonly kind: "call"; readonly name: string; readonly args: readonly string[] };
 }
 
@@ -112,7 +113,7 @@ function callForm(arg: ExpressionAst): IdbDefaultValue["form"] {
   };
 }
 
-/** The `@default(...)` argument: a literal, a bare identifier (an enum member), or a function call. */
+/** The `@default(...)` argument: a literal, a bare identifier (an enum member), a list, or a function call. */
 function defaultValueArg(): ArgType<IdbDefaultValue, AttributeCtx> {
   return mapArg(
     oneOf(
@@ -120,11 +121,36 @@ function defaultValueArg(): ArgType<IdbDefaultValue, AttributeCtx> {
       mapArg(str(), (value) => ({ kind: "string" as const, value })),
       mapArg(numLiteral(), ({ text }) => ({ kind: "number" as const, value: Number(text) })),
       mapArg(identifier(), (name) => ({ kind: "identifier" as const, name })),
+      // Scalar-list defaults are not supported; binding them lets the interpreter report that with its own code.
+      mapArg(list(oneOf(identifier(), str(), numLiteral(), bool())), () => ({ kind: "list" as const })),
       mapArg(anyFunctionCall(), (_call, arg) => callForm(arg))
     ),
     (form, arg) => ({ raw: sourceText(arg.syntax), form })
   );
 }
+
+/**
+ * A string literal read as its source text between the quotes, with escape
+ * sequences left undecoded. Storage and index names have always been taken
+ * verbatim, and decoding them would change the object-store name and the hash
+ * for a name such as `"a\nb"`.
+ */
+function verbatimStr(): ArgType<string, AttributeCtx> {
+  return mapArg(str(), (_decoded, arg) => sourceText(arg.syntax).slice(1, -1));
+}
+
+/**
+ * A named argument that other Prisma targets give meaning (`sort`, `length`,
+ * `clustered`, `type`, `map` on a field default, ...). IDB accepts and ignores
+ * it, as it always has, so one schema can serve every target.
+ */
+const portableOnly = {
+  type: optional(oneOf(identifier(), numLiteral(), bool(), str())),
+  documentation: "Accepted for schema portability; IDB ignores it.",
+};
+
+/** The portable arguments of an attribute that declares a key or an index. */
+const portableKeyArgs = { map: portableOnly, length: portableOnly, sort: portableOnly, clustered: portableOnly };
 
 // ── Attribute specs ────────────────────────────────────────────────────────────
 
@@ -138,21 +164,22 @@ function defaultValueArg(): ArgType<IdbDefaultValue, AttributeCtx> {
 
 const mapModelSpec = modelAttribute("map", {
   documentation: "Names the object store this model is stored in.",
-  positional: [{ key: "name", type: str(), documentation: "The object store name." }],
+  positional: [{ key: "name", type: verbatimStr(), documentation: "The object store name." }],
 });
 
 const idModelSpec = modelAttribute("id", {
   documentation: "Declares a compound primary key for this model.",
   positional: [{ key: "fields", type: list(identifier()), documentation: "The ordered primary-key fields." }],
-  named: { map: { type: optional(str()), documentation: "Accepted for schema portability; IDB ignores it." } },
+  named: { ...portableKeyArgs, name: portableOnly },
 });
 
 const uniqueModelSpec = modelAttribute("unique", {
   documentation: "Creates a unique index over these fields.",
   positional: [{ key: "fields", type: list(identifier()), documentation: "The ordered indexed fields." }],
   named: {
-    name: { type: optional(str()), documentation: "The index name." },
-    map: { type: optional(str()), documentation: "The index name, when `name` is not given." },
+    ...portableKeyArgs,
+    name: { type: optional(verbatimStr()), documentation: "The index name." },
+    map: { type: optional(verbatimStr()), documentation: "The index name, when `name` is not given." },
   },
 });
 
@@ -160,8 +187,10 @@ const indexModelSpec = modelAttribute("index", {
   documentation: "Creates a non-unique index over these fields.",
   positional: [{ key: "fields", type: list(identifier()), documentation: "The ordered indexed fields." }],
   named: {
-    name: { type: optional(str()), documentation: "The index name." },
-    map: { type: optional(str()), documentation: "The index name, when `name` is not given." },
+    ...portableKeyArgs,
+    type: portableOnly,
+    name: { type: optional(verbatimStr()), documentation: "The index name." },
+    map: { type: optional(verbatimStr()), documentation: "The index name, when `name` is not given." },
   },
 });
 
@@ -171,12 +200,12 @@ const excludeModelSpec = modelAttribute(IDB_EXCLUDE_ATTR, {
 
 const idFieldSpec = fieldAttribute("id", {
   documentation: "Makes this field the primary key.",
-  named: { map: { type: optional(str()), documentation: "Accepted for schema portability; IDB ignores it." } },
+  named: portableKeyArgs,
 });
 
 const uniqueFieldSpec = fieldAttribute("unique", {
   documentation: "Creates a unique index over this field.",
-  named: { map: { type: optional(str()), documentation: "Accepted for schema portability; IDB ignores it." } },
+  named: portableKeyArgs,
 });
 
 const updatedAtFieldSpec = fieldAttribute("updatedAt", {
@@ -192,6 +221,7 @@ const defaultFieldSpec = fieldAttribute("default", {
       documentation: "A literal, an enum member, or one of `now()`, `uuid()`, `cuid()` and `autoincrement()`.",
     },
   ],
+  named: { map: portableOnly },
 });
 
 const relationFieldSpec = fieldAttribute("relation", {
@@ -286,7 +316,10 @@ export interface IdbAttributeBinder {
   model(model: ModelSymbol): BoundModelAttributes;
   /** Binds a field's `@id`, `@unique`, `@updatedAt`, `@default` and `@relation`, reporting failures once. */
   field(model: ModelSymbol, field: FieldSymbol): BoundFieldAttributes;
-  /** Whether `@@idb.exclude` is present. Checked without binding, so an excluded model's other attributes go unread. */
+  /**
+   * Whether `@@idb.exclude` is present. Only the exclusion attribute is bound, and a malformed one is reported,
+   * so an excluded model's other attributes go unread.
+   */
   isModelExcluded(model: ModelSymbol): boolean;
   /** Whether `@idb.exclude` is present. Checked without binding. */
   isFieldExcluded(field: FieldSymbol): boolean;
@@ -451,7 +484,13 @@ export function createIdbAttributeBinder(input: IdbAttributeBinderInput): IdbAtt
   return {
     model: bindModel,
     field: bindField,
-    isModelExcluded: (model) => model.attributes.some((attribute) => attribute.name === IDB_EXCLUDE_ATTR),
+    isModelExcluded: (model) => {
+      const attribute = model.attributes.find(({ name }) => name === IDB_EXCLUDE_ATTR);
+      if (attribute === undefined) return false;
+      // The model stays excluded either way: a malformed exclusion fails the contract through its diagnostic.
+      interpret(excludeModelSpec, attribute, { ...base, selfModel: model });
+      return true;
+    },
     isFieldExcluded: (field) => field.attributes.some((attribute) => attribute.name === IDB_EXCLUDE_ATTR),
   };
 }
