@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import type { ContractConfig } from "@prisma/orm-framework/config/config-types";
 import { buildSymbolTable, mapPslDiagnostics } from "@prisma/orm-framework/psl-parser";
 import { withSeedDiagnostics } from "@prisma/orm-framework/psl-parser/interpret";
+import type { PslInterpretCapable, PslInterpretInput } from "@prisma/orm-framework/psl-parser/interpret";
 import { parse } from "@prisma/orm-framework/psl-parser/syntax";
 import { notOk } from "@prisma/orm-framework/utils/result";
 import { extname, basename } from "pathe";
@@ -79,69 +80,81 @@ export interface PrismaIdbContractOptions {
  * (`schema.prisma` → `contract.json`). Override with `options.output`.
  */
 export function prismaIdbContract(schemaPath: string, options?: PrismaIdbContractOptions): ContractConfig {
-  return {
-    source: {
-      format: "psl",
-      inputs: [schemaPath],
-      load: async (context) => {
-        const [absoluteSchemaPath] = context.resolvedInputs;
-        if (absoluteSchemaPath === undefined) {
-          throw new Error(
-            "prismaIdbContract: context.resolvedInputs is empty. The CLI config loader should populate it positional-matched with source.inputs."
-          );
-        }
+  /**
+   * Share the family pipeline between disk loading and cached editor documents.
+   * The interpreter binds IDB attributes with the family's own specs.
+   */
+  function interpret({ documents, symbolTable, sources }: Omit<PslInterpretInput, "binder">) {
+    const [document] = documents;
+    const sourceId = document === undefined ? schemaPath : sources.sourceFileFor(document.syntax).filename;
+    return interpretPslDocumentToIdbContract(symbolTable, sourceId, {
+      sources,
+      ...(options?.projection !== undefined ? { projection: options.projection } : {}),
+    });
+  }
 
-        let schema: string;
-        try {
-          schema = await readFile(absoluteSchemaPath, "utf-8");
-        } catch (error) {
-          const message = String(error);
-          return notOk({
-            summary: `Failed to read Prisma schema at "${schemaPath}"`,
-            diagnostics: [
-              {
-                code: "PSL_SCHEMA_READ_FAILED",
-                message,
-                sourceId: schemaPath,
-              },
-            ],
-          });
-        }
-
-        if (options?.injectSchemaText) {
-          schema = options.injectSchemaText(schema);
-        }
-
-        // The filename becomes each diagnostic's `sourceId`, so pass the
-        // configured schema path to keep diagnostics pointing at the user's file.
-        const { document, sources, diagnostics: parseDiagnostics } = parse(schema, schemaPath);
-        const { symbolTable: table, diagnostics: symbolDiagnostics } = buildSymbolTable({
-          documents: [document],
-          sources,
-          defaultNamespaceId: context.defaultNamespaceId,
-        });
-
-        // Do not short-circuit on provider-level diagnostics — the fault-tolerant
-        // parser/symbol-table still produce a usable table, and the interpreter
-        // may surface its own diagnostics in the same response.
-        const seedDiagnostics = [
-          ...mapPslDiagnostics(parseDiagnostics, sources),
-          ...mapPslDiagnostics(symbolDiagnostics, sources),
-        ];
-
-        const interpreted = withSeedDiagnostics(
-          interpretPslDocumentToIdbContract(table, schemaPath, {
-            sources,
-            ...(options?.projection !== undefined ? { projection: options.projection } : {}),
-          }),
-          seedDiagnostics
+  const source: PslInterpretCapable = {
+    format: "psl",
+    interpret,
+    inputs: [schemaPath],
+    load: async (context) => {
+      const [absoluteSchemaPath] = context.resolvedInputs;
+      if (absoluteSchemaPath === undefined) {
+        throw new Error(
+          "prismaIdbContract: context.resolvedInputs is empty. The CLI config loader should populate it positional-matched with source.inputs."
         );
-        // Return the full Result so seed diagnostics (parse + symbol-table
-        // findings) survive the success path — the config loader surfaces
-        // them alongside the contract.
-        return interpreted;
-      },
+      }
+
+      let schema: string;
+      try {
+        schema = await readFile(absoluteSchemaPath, "utf-8");
+      } catch (error) {
+        const message = String(error);
+        return notOk({
+          summary: `Failed to read Prisma schema at "${schemaPath}"`,
+          diagnostics: [
+            {
+              code: "PSL_SCHEMA_READ_FAILED",
+              message,
+              sourceId: schemaPath,
+            },
+          ],
+        });
+      }
+
+      if (options?.injectSchemaText) {
+        schema = options.injectSchemaText(schema);
+      }
+
+      // The filename becomes each diagnostic's `sourceId`, so pass the
+      // configured schema path to keep diagnostics pointing at the user's file.
+      const { document, sources, diagnostics: parseDiagnostics } = parse(schema, schemaPath);
+      const { symbolTable: table, diagnostics: symbolDiagnostics } = buildSymbolTable({
+        documents: [document],
+        sources,
+        defaultNamespaceId: context.defaultNamespaceId,
+      });
+
+      // Do not short-circuit on provider-level diagnostics — the fault-tolerant
+      // parser/symbol-table still produce a usable table, and the interpreter
+      // may surface its own diagnostics in the same response.
+      const seedDiagnostics = [
+        ...mapPslDiagnostics(parseDiagnostics, sources),
+        ...mapPslDiagnostics(symbolDiagnostics, sources),
+      ];
+
+      const interpreted = withSeedDiagnostics(
+        interpret({ documents: [document], symbolTable: table, sources }),
+        seedDiagnostics
+      );
+      // Return the full Result so seed diagnostics (parse + symbol-table
+      // findings) survive the success path — the config loader surfaces
+      // them alongside the contract.
+      return interpreted;
     },
+  };
+  return {
+    source,
     output: options?.output ?? defaultOutputFromSchemaPath(schemaPath),
   };
 }
