@@ -1,29 +1,28 @@
 import type { ContractSourceDiagnostic, ContractSourceDiagnostics } from "@prisma/orm-framework/config/config-types";
-import { computeExecutionHash, computeProfileHash, computeStorageHash } from "@prisma/orm-framework/contract/hashing";
-import { buildRecordShape } from "./record-shape";
-import type {
-  ApplicationDomain,
-  Contract,
-  ContractField,
-  ExecutionMutationDefault,
-} from "@prisma/orm-framework/contract/types";
-import { UNBOUND_DOMAIN_NAMESPACE_ID, crossRef } from "@prisma/orm-framework/contract/types";
+import type { Contract } from "@prisma/orm-framework/contract/types";
 import { nodePslSpan } from "@prisma/orm-framework/psl-parser";
 import type { FieldSymbol, ModelSymbol, SymbolTable } from "@prisma/orm-framework/psl-parser";
 import { StringLiteralExprAst } from "@prisma/orm-framework/psl-parser/syntax";
 import type { KeyValuePairAst, PslSources } from "@prisma/orm-framework/psl-parser/syntax";
 import type {
-  IdbIndexDefinition,
   IdbKeyPath,
-  IdbModelStorage,
   IdbMutationDefaultGeneratorId,
   IdbReferentialAction,
   IdbStorage,
-  IdbStoreDefinition,
 } from "@prisma-idb/target-idb/pack";
 import { notOk, ok } from "@prisma/orm-framework/utils/result";
 import type { Result } from "@prisma/orm-framework/utils/result";
-import { validateContract } from "./validate";
+import { buildIdbContractFromDefinition } from "./build-contract-from-definition";
+import type {
+  IdbContractDefinition,
+  IdbEnumNode,
+  IdbExecutionDefaultNode,
+  IdbFieldNode,
+  IdbIndexNode,
+  IdbModelNode,
+  IdbRelationNode,
+} from "./contract-definition";
+import { PslDefinitionSourceMap } from "./psl-definition-source-map";
 
 /** The one `temporal.*` type-constructor path IDB currently understands. */
 const TEMPORAL_UPDATED_AT_PATH = ["temporal", "updatedAt"] as const;
@@ -34,20 +33,8 @@ const TIMESTAMP_NOW_GENERATOR_ID: IdbMutationDefaultGeneratorId = "timestampNow"
 /** Synthetic generator id that just echoes `params.value` — backs `@default(<literal>)`. */
 const LITERAL_GENERATOR_ID: IdbMutationDefaultGeneratorId = "literal";
 
-/** An execution-plane mutation default resolved for one field, pre-`ref` (the store name isn't known yet at field-resolution time). */
-interface FieldExecutionDefault {
-  readonly fieldName: string;
-  readonly onCreate?: {
-    readonly kind: "generator";
-    readonly id: IdbMutationDefaultGeneratorId;
-    readonly params?: Record<string, unknown>;
-  };
-  readonly onUpdate?: {
-    readonly kind: "generator";
-    readonly id: IdbMutationDefaultGeneratorId;
-    readonly params?: Record<string, unknown>;
-  };
-}
+/** A resolved field default before it is attached to its definition field. */
+type FieldExecutionDefault = IdbExecutionDefaultNode & { readonly fieldName: string };
 
 /** Parses `@default(...)`'s positional argument as a literal value: `true`/`false`/a number/a quoted string. */
 function parseDefaultLiteralValue(raw: string): { readonly value: string | number | boolean } | undefined {
@@ -254,12 +241,6 @@ function hasModelAttribute(model: ModelSymbol, name: string): boolean {
 
 const IDB_EXCLUDE_ATTR = "idb.exclude";
 
-/** A `ContractEnum` whose member values are known to be strings. */
-type StringContractEnum = {
-  readonly codecId: string;
-  readonly members: readonly { readonly name: string; readonly value: string }[];
-};
-
 /**
  * Reads the stored string of one enum entry: the member name when the entry
  * has no value, or the decoded string literal. Returns `undefined` for any
@@ -276,13 +257,15 @@ function interpretEnums(
   table: SymbolTable,
   sourceId: string,
   sources: PslSources | undefined,
-  diagnostics: ContractSourceDiagnostic[]
-): Record<string, StringContractEnum> {
-  const enums: Record<string, StringContractEnum> = {};
+  diagnostics: ContractSourceDiagnostic[],
+  sourceMap: PslDefinitionSourceMap
+): Record<string, IdbEnumNode> {
+  const enums: Record<string, IdbEnumNode> = {};
 
   for (const block of Object.values(table.defaultNamespace.blocks)) {
     if (block.keyword !== "enum") continue;
 
+    sourceMap.set(["enums", block.name], block.span);
     const members: Array<{ readonly name: string; readonly value: string }> = [];
     const seenValues = new Set<string>();
 
@@ -291,6 +274,7 @@ function interpretEnums(
       if (memberName === undefined) continue;
       // Without the parsed sources, a diagnostic can only point at the whole enum block.
       const span = sources !== undefined ? nodePslSpan(entry.syntax, sources) : block.span;
+      sourceMap.set(["enums", block.name, "members", memberName], span);
       const value = enumEntryValue(entry, memberName);
 
       if (value === undefined) {
@@ -325,7 +309,7 @@ function interpretEnums(
       continue;
     }
 
-    enums[block.name] = { codecId: SCALAR_TO_CODEC_ID["String"]!, members };
+    enums[block.name] = { name: block.name, members };
   }
 
   return enums;
@@ -333,32 +317,11 @@ function interpretEnums(
 
 // ── Per-model interpretation result ───────────────────────────────────────────
 
-/** One model interpretation before backrelations and contract hashes are assembled. */
+/** A lowered model with mutable relations for the backrelation pass. */
 interface InterpretedModel {
-  readonly modelName: string;
-  readonly storeName: string;
-  readonly keyPath: IdbKeyPath;
-  readonly indexes: Record<string, IdbIndexDefinition>;
-  readonly fields: Record<string, ContractField>;
-  readonly relations: Record<
-    string,
-    {
-      readonly to: ReturnType<typeof crossRef>;
-      readonly cardinality: "1:1" | "1:N" | "N:1";
-      readonly on: { readonly localFields: readonly string[]; readonly targetFields: readonly string[] };
-      /** Set on to-one relations only; the emitter requires it there. */
-      readonly nullable?: boolean;
-    }
-  >;
-  readonly relationsStorage: Record<string, { onDelete?: IdbReferentialAction; onUpdate?: IdbReferentialAction }>;
-  /** Literal `@default(...)` values, keyed by field name — feeds `IdbModelStorage.fieldDefaults` (`setDefault`). */
-  readonly fieldDefaults: Record<string, string | number | boolean>;
-  /** FK-side declarations keyed by targetModelName for back-relation resolution. */
+  readonly definition: IdbModelNode & { readonly relations: IdbRelationNode[] };
+  /** FK-side declarations keyed by target model for backrelation resolution. */
   readonly fksByTarget: ReadonlyMap<string, { fieldName: string; localFields: string[]; targetFields: string[] }>;
-  /** Execution-plane defaults resolved from `temporal.updatedAt()`, bare `@updatedAt`, and `@default(...)` — feeds `contract.execution.mutations.defaults`. */
-  readonly fieldExecutionDefaults: readonly FieldExecutionDefault[];
-  /** `true` when `@default(autoincrement())` was declared on this model's `@id` field — feeds `IdbStoreDefinition.autoIncrement`. */
-  readonly autoIncrement: boolean;
 }
 
 // ── Core interpreter ───────────────────────────────────────────────────────────
@@ -367,13 +330,15 @@ interface InterpretedModel {
 function interpretModel(
   model: ModelSymbol,
   modelNames: ReadonlySet<string>,
-  enums: Readonly<Record<string, StringContractEnum>>,
+  enums: Readonly<Record<string, IdbEnumNode>>,
   sourceId: string,
   diagnostics: ContractSourceDiagnostic[],
   projection: ContractProjection,
   excludedModelNames: ReadonlySet<string>,
-  excludedFieldNamesByModel: ReadonlyMap<string, ReadonlySet<string>>
+  excludedFieldNamesByModel: ReadonlyMap<string, ReadonlySet<string>>,
+  sourceMap: PslDefinitionSourceMap
 ): InterpretedModel | undefined {
+  sourceMap.recordModel(model);
   const modelFields = Object.values(model.fields);
   // Fields marked `@idb.exclude`. Empty (no-op) in "full" projection — the
   // attribute only takes effect when projecting the client contract.
@@ -462,8 +427,11 @@ function interpretModel(
     return undefined;
   }
 
+  sourceMap.set(["models", model.name, "key"], idModelAttr?.span ?? getFieldAttribute(idFields[0]!, "id")!.span);
+  sourceMap.set(["models", model.name, "storeName"], mapAttr?.span ?? model.span);
+
   // ── Build indexes ────────────────────────────────────────────────────────────
-  const indexes: Record<string, IdbIndexDefinition> = {};
+  const indexes: Record<string, Omit<IdbIndexNode, "name">> = {};
 
   // @@index([fields]) / @@unique([fields]) model attribute — `fields` may be
   // a single field or an ordered list for a compound (multi-field) index.
@@ -505,12 +473,12 @@ function interpretModel(
     const indexName = parseStringArg(nameRaw) ?? (isUnique ? `${defaultName}_unique` : defaultName);
     const keyPath: IdbKeyPath = fields.length === 1 ? fields[0]! : fields;
     indexes[indexName] = { keyPath, unique: isUnique };
+    sourceMap.set(["models", model.name, "indexes", indexName], attr.span);
   }
 
   // ── Walk fields ──────────────────────────────────────────────────────────────
-  const contractFields: Record<string, ContractField> = {};
-  const relations: InterpretedModel["relations"] = {};
-  const relationsStorage: Record<string, { onDelete?: IdbReferentialAction; onUpdate?: IdbReferentialAction }> = {};
+  const fields: Record<string, IdbFieldNode> = {};
+  const relations: Record<string, IdbRelationNode> = {};
   const fieldDefaults: Record<string, string | number | boolean> = {};
   const fksByTarget = new Map<string, { fieldName: string; localFields: string[]; targetFields: string[] }>();
   const fieldExecutionDefaults: FieldExecutionDefault[] = [];
@@ -631,18 +599,17 @@ function interpretModel(
       }
 
       relations[field.name] = {
-        to: crossRef(field.typeName),
+        name: field.name,
+        to: field.typeName,
         cardinality: "N:1",
-        on: { localFields, targetFields },
+        localFields,
+        targetFields,
         // `author User?` is the PSL spelling of an optional to-one relation.
         nullable: field.optional,
+        ...(onDelete !== undefined ? { onDelete } : {}),
+        ...(onUpdate !== undefined ? { onUpdate } : {}),
       };
-      if (onDelete !== undefined || onUpdate !== undefined) {
-        relationsStorage[field.name] = {
-          ...(onDelete !== undefined ? { onDelete } : {}),
-          ...(onUpdate !== undefined ? { onUpdate } : {}),
-        };
-      }
+      sourceMap.set(["models", model.name, "relations", field.name], relationAttr.span);
       fksByTarget.set(field.typeName, {
         fieldName: field.name,
         localFields,
@@ -653,6 +620,7 @@ function interpretModel(
       for (const fkField of localFields) {
         if (!(fkField in indexes)) {
           indexes[fkField] = { keyPath: fkField, unique: false };
+          sourceMap.set(["models", model.name, "indexes", fkField], relationAttr.span);
         }
       }
       continue;
@@ -733,19 +701,21 @@ function interpretModel(
         continue;
       }
 
-      contractFields[field.name] = {
+      fields[field.name] = {
+        name: field.name,
         nullable: field.optional,
-        type: { kind: "scalar", codecId: SCALAR_TO_CODEC_ID["DateTime"]! },
+        codecId: SCALAR_TO_CODEC_ID["DateTime"]!,
+        list: false,
       };
       fieldExecutionDefaults.push({
         fieldName: field.name,
-        onCreate: { kind: "generator", id: TIMESTAMP_NOW_GENERATOR_ID },
-        onUpdate: { kind: "generator", id: TIMESTAMP_NOW_GENERATOR_ID },
+        onCreate: { id: TIMESTAMP_NOW_GENERATOR_ID },
+        onUpdate: { id: TIMESTAMP_NOW_GENERATOR_ID },
       });
       continue;
     }
 
-    const codecId = enumType?.codecId ?? SCALAR_TO_CODEC_ID[field.typeName];
+    const codecId = enumType !== undefined ? SCALAR_TO_CODEC_ID["String"]! : SCALAR_TO_CODEC_ID[field.typeName];
     if (codecId === undefined) {
       diagnostics.push({
         code: "IDB_UNSUPPORTED_FIELD_TYPE",
@@ -756,20 +726,12 @@ function interpretModel(
       continue;
     }
 
-    contractFields[field.name] = {
+    fields[field.name] = {
+      name: field.name,
       nullable: field.optional,
-      type: { kind: "scalar", codecId },
-      ...(field.list ? { many: { elementNullable: false } } : {}),
-      ...(enumType !== undefined
-        ? {
-            valueSet: {
-              plane: "domain",
-              entityKind: "enum",
-              namespaceId: UNBOUND_DOMAIN_NAMESPACE_ID,
-              entityName: field.typeName,
-            },
-          }
-        : {}),
+      codecId,
+      list: field.list,
+      ...(enumType !== undefined ? { enumName: field.typeName } : {}),
     };
 
     // `@updatedAt` (classic Prisma spelling) — same runtime semantics as
@@ -818,8 +780,8 @@ function interpretModel(
       }
       fieldExecutionDefaults.push({
         fieldName: field.name,
-        onCreate: { kind: "generator", id: TIMESTAMP_NOW_GENERATOR_ID },
-        onUpdate: { kind: "generator", id: TIMESTAMP_NOW_GENERATOR_ID },
+        onCreate: { id: TIMESTAMP_NOW_GENERATOR_ID },
+        onUpdate: { id: TIMESTAMP_NOW_GENERATOR_ID },
       });
     } else if (defaultAttr) {
       const raw = findPositionalArg(defaultAttr.args);
@@ -848,7 +810,7 @@ function interpretModel(
       if (enumType !== undefined && enumMember !== undefined) {
         fieldExecutionDefaults.push({
           fieldName: field.name,
-          onCreate: { kind: "generator", id: LITERAL_GENERATOR_ID, params: { value: enumMember.value } },
+          onCreate: { id: LITERAL_GENERATOR_ID, params: { value: enumMember.value } },
         });
         fieldDefaults[field.name] = enumMember.value;
       } else if (enumType !== undefined) {
@@ -873,7 +835,7 @@ function interpretModel(
           }
           fieldExecutionDefaults.push({
             fieldName: field.name,
-            onCreate: { kind: "generator", id: LITERAL_GENERATOR_ID, params: { value: literal.value } },
+            onCreate: { id: LITERAL_GENERATOR_ID, params: { value: literal.value } },
           });
           // Also feeds `IdbModelStorage.fieldDefaults` (setDefault referential
           // action) — only literal defaults land here, never a generator
@@ -953,7 +915,7 @@ function interpretModel(
 
           fieldExecutionDefaults.push({
             fieldName: field.name,
-            onCreate: { kind: "generator", id: resolution.generatorId },
+            onCreate: { id: resolution.generatorId },
           });
         }
       }
@@ -964,21 +926,17 @@ function interpretModel(
       const existingKey = Object.entries(indexes).find(([, idx]) => idx.keyPath === field.name)?.[0];
       if (!existingKey) {
         indexes[`${field.name}_unique`] = { keyPath: field.name, unique: true };
+        sourceMap.set(
+          ["models", model.name, "indexes", `${field.name}_unique`],
+          getFieldAttribute(field, "unique")!.span
+        );
       }
     }
   }
 
   // ── Validate key/index field types against IDB's valid-key algorithm ───────
-  // Only checked when the field itself resolved a codec — a field that
-  // already failed IDB_UNSUPPORTED_FIELD_TYPE above shouldn't also get a
-  // second, redundant diagnostic here. Every entry `interpretModel` puts into
-  // `contractFields` is `kind: "scalar"` (see the assignment above) — IDB has
-  // no value-object fields — so the narrowing here is just satisfying
-  // `ContractField.type`'s shared framework union type.
-  const scalarCodecOf = (fieldName: string): string | undefined => {
-    const type = contractFields[fieldName]?.type;
-    return type?.kind === "scalar" ? type.codecId : undefined;
-  };
+  // A field that already failed type resolution should not get a second diagnostic.
+  const scalarCodecOf = (fieldName: string): string | undefined => fields[fieldName]?.codecId;
 
   for (const keyField of idFieldNames) {
     const keyFieldCodec = scalarCodecOf(keyField);
@@ -1005,18 +963,22 @@ function interpretModel(
     }
   }
 
+  const executionDefaults = new Map(fieldExecutionDefaults.map(({ fieldName, ...node }) => [fieldName, node]));
   return {
-    modelName: model.name,
-    storeName,
-    keyPath,
-    indexes,
-    fields: contractFields,
-    relations,
-    relationsStorage,
-    fieldDefaults,
+    definition: {
+      modelName: model.name,
+      storeName,
+      key: keyPath,
+      indexes: Object.entries(indexes).map(([name, node]) => ({ name, ...node })),
+      fields: Object.values(fields).map((field) => ({
+        ...field,
+        ...(Object.hasOwn(fieldDefaults, field.name) ? { literalDefault: fieldDefaults[field.name]! } : {}),
+        ...(executionDefaults.has(field.name) ? { executionDefault: executionDefaults.get(field.name)! } : {}),
+      })),
+      relations: Object.values(relations),
+      autoIncrement,
+    },
     fksByTarget,
-    fieldExecutionDefaults,
-    autoIncrement,
   };
 }
 
@@ -1048,15 +1010,22 @@ export interface InterpretPslOptions {
   readonly sources?: PslSources;
 }
 
-/** Interpret the supported PSL subset, pair backrelations, and hash the assembled contract. */
-export function interpretPslDocumentToIdbContract(
+/** The lowered definition and source locations used to anchor shared diagnostics. */
+export interface LoweredPslDefinition {
+  readonly definition: IdbContractDefinition;
+  readonly sourceMap: PslDefinitionSourceMap;
+}
+
+/** Lower supported PSL declarations and pair backrelations without assembling a contract. */
+export function lowerPslDocumentToIdbContractDefinition(
   table: SymbolTable,
   sourceId: string,
   options?: InterpretPslOptions
-): Result<Contract<IdbStorage>, ContractSourceDiagnostics> {
+): Result<LoweredPslDefinition, ContractSourceDiagnostics> {
   const projection: ContractProjection = options?.projection ?? "full";
   const diagnostics: ContractSourceDiagnostic[] = [];
-  const enums = interpretEnums(table, sourceId, options?.sources, diagnostics);
+  const sourceMap = new PslDefinitionSourceMap();
+  const enums = interpretEnums(table, sourceId, options?.sources, diagnostics, sourceMap);
 
   // IDB does not support namespace blocks
   const explicitNamespaces = Object.values(table.namespaces).filter((ns) => ns !== table.defaultNamespace);
@@ -1126,7 +1095,8 @@ export function interpretPslDocumentToIdbContract(
       diagnostics,
       projection,
       excludedModelNames,
-      excludedFieldNamesByModel
+      excludedFieldNamesByModel,
+      sourceMap
     );
     if (result) {
       interpretedByName.set(model.name, result);
@@ -1160,12 +1130,14 @@ export function interpretPslDocumentToIdbContract(
       }
 
       // The 1:N side: localFields are the PK fields of this model, targetFields are the FK fields in the target
-      const mutableInterp = interp as { relations: Record<string, unknown> };
-      mutableInterp.relations[field.name] = {
-        to: crossRef(field.typeName),
+      interp.definition.relations.push({
+        name: field.name,
+        to: field.typeName,
         cardinality: "1:N",
-        on: { localFields: fk.targetFields, targetFields: fk.localFields },
-      };
+        localFields: fk.targetFields,
+        targetFields: fk.localFields,
+      });
+      sourceMap.set(["models", model.name, "relations", field.name], field.span);
     }
   }
 
@@ -1176,117 +1148,22 @@ export function interpretPslDocumentToIdbContract(
     });
   }
 
-  // ── Build the contract ────────────────────────────────────────────────────────
+  const models = [...interpretedByName.values()].map((model) => model.definition);
+  // Enum declarations are validated before projection; only referenced enums reach a client contract.
+  const keptEnums = Object.values(enums).filter(
+    (node) =>
+      projection !== "client" || models.some((model) => model.fields.some((field) => field.enumName === node.name))
+  );
+  return ok({ definition: { models, enums: keptEnums }, sourceMap });
+}
 
-  const ns = UNBOUND_DOMAIN_NAMESPACE_ID;
-  const stores: Record<string, IdbStoreDefinition> = {};
-  const roots: Record<string, ReturnType<typeof crossRef>> = {};
-  const domainModels: Record<string, unknown> = {};
-  const executionDefaults: ExecutionMutationDefault[] = [];
-
-  for (const [modelName, interp] of interpretedByName) {
-    stores[interp.storeName] = {
-      record: buildRecordShape(modelName, interp.fields, { enum: enums }),
-      keyPath: interp.keyPath,
-      ...(interp.autoIncrement ? { autoIncrement: true } : {}),
-      ...(Object.keys(interp.indexes).length > 0 ? { indexes: interp.indexes } : {}),
-    };
-
-    roots[interp.storeName] = crossRef(modelName);
-
-    for (const fd of interp.fieldExecutionDefaults) {
-      executionDefaults.push({
-        ref: { namespace: ns, entry: interp.storeName, field: fd.fieldName },
-        ...(fd.onCreate ? { onCreate: fd.onCreate } : {}),
-        ...(fd.onUpdate ? { onUpdate: fd.onUpdate } : {}),
-      });
-    }
-
-    const modelStorage: IdbModelStorage = {
-      storeName: interp.storeName,
-      keyPath: interp.keyPath,
-      ...(Object.keys(interp.relationsStorage).length > 0 ? { relations: interp.relationsStorage } : {}),
-      ...(Object.keys(interp.fieldDefaults).length > 0 ? { fieldDefaults: interp.fieldDefaults } : {}),
-    };
-
-    domainModels[modelName] = {
-      fields: interp.fields,
-      relations: interp.relations,
-      storage: modelStorage,
-    };
-  }
-
-  const storageBlock = {
-    stores,
-    namespaces: { [ns]: { id: ns, entries: {} } },
-  };
-
-  const capabilities = {
-    idb: { ddlOnlyInUpgrade: true, transactionalDDL: true },
-  };
-
-  const storageHash = computeStorageHash({
-    target: "idb",
-    targetFamily: "idb",
-    storage: storageBlock,
-  });
-
-  const profileHash = computeProfileHash({
-    target: "idb",
-    targetFamily: "idb",
-    capabilities,
-  });
-
-  const storage: IdbStorage = { ...storageBlock, storageHash };
-
-  // Every enum block was validated above. In the client projection, keep only
-  // the enums a remaining field uses, so enums that only excluded models or
-  // fields reference don't reach the client contract.
-  const domainEnums =
-    projection === "client"
-      ? Object.fromEntries(
-          Object.entries(enums).filter(([enumName]) =>
-            [...interpretedByName.values()].some((interp) =>
-              Object.values(interp.fields).some((field) => field.valueSet?.entityName === enumName)
-            )
-          )
-        )
-      : enums;
-
-  const domain = {
-    namespaces: {
-      [ns]: {
-        models: domainModels,
-        ...(Object.keys(domainEnums).length > 0 ? { enum: domainEnums } : {}),
-      },
-    },
-  } as unknown as ApplicationDomain;
-
-  const execution =
-    executionDefaults.length > 0
-      ? {
-          executionHash: computeExecutionHash({
-            target: "idb",
-            targetFamily: "idb",
-            execution: { mutations: { defaults: executionDefaults } },
-          }),
-          mutations: { defaults: executionDefaults },
-        }
-      : undefined;
-
-  const contract: Contract<IdbStorage> = {
-    target: "idb",
-    targetFamily: "idb",
-    roots,
-    domain,
-    storage,
-    capabilities,
-    extensions: {},
-    meta: {},
-    profileHash,
-    ...(execution ? { execution } : {}),
-  };
-
-  validateContract(contract);
-  return ok(contract);
+/** Interpret PSL through the same definition builder used by the TypeScript DSL. */
+export function interpretPslDocumentToIdbContract(
+  table: SymbolTable,
+  sourceId: string,
+  options?: InterpretPslOptions
+): Result<Contract<IdbStorage>, ContractSourceDiagnostics> {
+  const result = lowerPslDocumentToIdbContractDefinition(table, sourceId, options);
+  if (!result.ok) return result;
+  return ok(buildIdbContractFromDefinition(result.value.definition));
 }
