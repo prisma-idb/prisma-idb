@@ -427,4 +427,36 @@ describe("runPreflight", () => {
 
     await expect(runPreflight({ migrationsDir: join(cwd, "migrations") })).rejects.toThrow(/migration hash mismatch/i);
   });
+  it("throws when ops.json holds an operation that is not an IDB operation", async () => {
+    await writePackage({
+      dirName: "0001_baseline",
+      from: null,
+      to: "sha256:A",
+      ops: [{ kind: "rawSql", id: "sql.fake", label: "fake", operationClass: "additive", sql: "SELECT 1" }],
+    });
+
+    await expect(runPreflight({ migrationsDir: join(cwd, "migrations") })).rejects.toThrow(/non-idb op/i);
+  });
+
+  it("throws when two packages start from the same hash", async () => {
+    await writePackage({ dirName: "0001_baseline", from: null, to: "sha256:A", ops: [createMarker, createUsers] });
+    await writePackage({ dirName: "0002_a", from: "sha256:A", to: "sha256:B", ops: [createPosts] });
+    await writePackage({ dirName: "0003_b", from: "sha256:A", to: "sha256:C", ops: [] });
+
+    await expect(runPreflight({ migrationsDir: join(cwd, "migrations") })).rejects.toThrow(/chain conflict/i);
+  });
+
+  it("replays packages in chain order when directory-name order disagrees", async () => {
+    // Regression: mixed `T0337` / `T120000` stamps replayed the add-on before its baseline.
+    const head = await writeSnapshot({ users: { keyPath: "id" }, posts: { keyPath: "id" } });
+    await writePackage({ dirName: "20260527T0337_addPosts", from: "sha256:A", to: head, ops: [createPosts] });
+    await writePackage({
+      dirName: "20260527T120000_baseline",
+      from: null,
+      to: "sha256:A",
+      ops: [createMarker, createUsers],
+    });
+
+    expect(await runPreflight({ migrationsDir: join(cwd, "migrations") })).toBe(0);
+  });
 });

@@ -93,38 +93,23 @@ describe("prisma-idb — config-driven path resolution", () => {
 
     const { stderr, exitCode } = await cli(["migration", "plan"], { cwd });
     expect(exitCode).toBe(2);
-    expect(stderr.length).toBeGreaterThan(0);
+    expect(stderr).toContain("CLI.CONFIG_SECTION_INVALID");
+    expect(stderr).toContain("no config file was found");
   });
 
-  it("migration contract-space defaults --out to be colocated with the resolved contract path", async () => {
+  it("migration contract-space writes next to the resolved contract by default, and to an explicit nested --out", async () => {
     const cwd = await setupTmpProject("cfg-contract-space-out");
     await writeMinimalIdbConfig(cwd, { contractOutput: "src/contract.json", migrationsDir: "migrations" });
     await writeContractAt(cwd, "src/contract.json");
+    expect((await cli(["migration", "plan"], { cwd })).exitCode).toBe(0);
 
-    const { exitCode } = await cli(["migration", "plan"], { cwd });
-    expect(exitCode).toBe(0);
-
-    const spaceResult = await cli(["migration", "contract-space"], { cwd });
-    expect(spaceResult.exitCode).toBe(0);
-
+    expect((await cli(["migration", "contract-space"], { cwd })).exitCode).toBe(0);
     // Colocated with src/contract.json, NOT the old hardcoded src/lib/prisma/ default.
-    const out = await readFile(join(cwd, "src", "contract-space.generated.ts"), "utf-8");
-    expect(out).toContain("THIS FILE IS AUTO-GENERATED");
-  });
+    expect(await readFile(join(cwd, "src", "contract-space.generated.ts"), "utf-8")).toContain("AUTO-GENERATED");
 
-  it("an explicit relative --out writes to a not-yet-existing nested directory", async () => {
-    const cwd = await setupTmpProject("cfg-contract-space-explicit-out");
-    await writeMinimalIdbConfig(cwd, { contractOutput: "src/contract.json", migrationsDir: "migrations" });
-    await writeContractAt(cwd, "src/contract.json");
-
-    const { exitCode } = await cli(["migration", "plan"], { cwd });
-    expect(exitCode).toBe(0);
-
-    const spaceResult = await cli(["migration", "contract-space", "--out", "generated/space.ts"], { cwd });
-    expect(spaceResult.exitCode).toBe(0);
-
-    const out = await readFile(join(cwd, "generated", "space.ts"), "utf-8");
-    expect(out).toContain("THIS FILE IS AUTO-GENERATED");
+    // An explicit relative --out may name a directory that does not exist yet.
+    expect((await cli(["migration", "contract-space", "--out", "generated/space.ts"], { cwd })).exitCode).toBe(0);
+    expect(await readFile(join(cwd, "generated", "space.ts"), "utf-8")).toContain("AUTO-GENERATED");
   });
 });
 

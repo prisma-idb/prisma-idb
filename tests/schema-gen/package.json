@@ -2,7 +2,7 @@
   "name": "@prisma-idb/schema-gen-tests",
   "version": "1.0.0",
   "private": true,
-  "description": "Snapshot tests for the idb-client-generator output",
+  "description": "Generator tests for idb-client-generator: schema diagnostics, generated-project compilation, and generated sync/client behavior",
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest"
@@ -11,9 +11,16 @@
   "packageManager": "pnpm@10.32.1",
   "devDependencies": {
     "@prisma-idb/idb-client-generator": "workspace:*",
+    "@prisma/client": "^7.10.0",
+    "@prisma/internals": "^7.9.1",
     "@types/node": "^24.13.3",
     "execa": "^10.0.1",
+    "fake-indexeddb": "^6.2.5",
+    "idb": "^8.0.3",
     "prisma": "^7.9.1",
-    "vitest": "^4.1.11"
+    "typescript": "^6.0.3",
+    "uuid": "^14.0.2",
+    "vitest": "^4.1.11",
+    "zod": "^4.6.5"
   }
 }

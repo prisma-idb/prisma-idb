@@ -1302,18 +1302,39 @@ importers:
       '@prisma-idb/idb-client-generator':
         specifier: workspace:*
         version: link:../../packages/generator
+      '@prisma/client':
+        specifier: ^7.10.0
+        version: 7.10.0(prisma@7.9.1(@types/node@24.13.6)(@types/react-dom@19.2.4(@types/react@19.2.18))(@types/react@19.2.18)(magicast@0.5.4)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(typescript@6.0.3))(typescript@6.0.3)
+      '@prisma/internals':
+        specifier: ^7.9.1
+        version: 7.9.1(magicast@0.5.4)(typescript@6.0.3)
       '@types/node':
         specifier: ^24.10.9
         version: 24.13.6
       execa:
         specifier: ^10.0.1
         version: 10.0.1
+      fake-indexeddb:
+        specifier: ^6.2.5
+        version: 6.2.5
+      idb:
+        specifier: ^8.0.3
+        version: 8.0.3
       prisma:
         specifier: ^7.9.1
         version: 7.9.1(@types/node@24.13.6)(@types/react-dom@19.2.4(@types/react@19.2.18))(@types/react@19.2.18)(magicast@0.5.4)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(typescript@6.0.3)
+      typescript:
+        specifier: ^6.0.3
+        version: 6.0.3
+      uuid:
+        specifier: ^14.0.2
+        version: 14.0.2
       vitest:
         specifier: ^4.1.11
         version: 4.1.11(@types/node@24.13.6)(vite@8.2.1(@types/node@24.13.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.15)(yaml@2.9.1))
+      zod:
+        specifier: ^4.6.5
+        version: 4.6.5
 
 packages:
 

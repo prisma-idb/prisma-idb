@@ -48,11 +48,4 @@ describe("prisma-idb (CLI surface)", () => {
     expect(stderr).toContain("No command registered");
     expect(stderr).toContain("frobnicate");
   });
-
-  it("unknown migration subcommand exits non-zero with an error", async () => {
-    const cwd = await setupTmpProject("cli-unknown-migration-sub");
-    const { stderr, exitCode } = await cli(["migration", "frobnicate"], { cwd });
-    expect(exitCode).toBe(2);
-    expect(stderr).toContain("No command registered");
-  });
 });

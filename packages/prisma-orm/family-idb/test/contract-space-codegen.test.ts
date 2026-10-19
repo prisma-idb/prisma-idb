@@ -12,7 +12,7 @@
  * - Idempotent: re-running produces byte-identical output.
  */
 
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -131,6 +131,31 @@ describe("generateContractSpace", () => {
     const second = await readFile(join(cwd, "src", "lib", "prisma", "contract-space.generated.ts"), "utf-8");
 
     expect(first).toBe(second);
+  });
+
+  it("orders migrations by from/to chain, not by directory name", async () => {
+    // Regression: a lexicographic sort put `T0337_addcomments` before `T120000_baseline`.
+    await writePackage({ dirName: "20260527T0337_addcomments", from: "sha256:A", to: "sha256:B" });
+    await writePackage({ dirName: "20260527T120000_baseline", from: null, to: "sha256:A" });
+
+    expect(await generateContractSpace(defaultPaths(cwd))).toBe(0);
+
+    const out = await readFile(join(cwd, "src", "lib", "prisma", "contract-space.generated.ts"), "utf-8");
+    expect(out.indexOf('dirName: "20260527T120000_baseline"')).toBeGreaterThan(-1);
+    expect(out.indexOf('dirName: "20260527T120000_baseline"')).toBeLessThan(
+      out.indexOf('dirName: "20260527T0337_addcomments"')
+    );
+    expect(out).toContain("hash: mig_20260527T0337_addcomments_meta.to");
+  });
+
+  it("treats a missing migrations/app directory as no migrations", async () => {
+    // Early bootstrap: the contract is emitted but `migration plan` has not run yet.
+    await rm(join(cwd, "migrations", "app"), { recursive: true });
+
+    expect(await generateContractSpace(defaultPaths(cwd))).toBe(0);
+
+    const out = await readFile(join(cwd, "src", "lib", "prisma", "contract-space.generated.ts"), "utf-8");
+    expect(out).toContain("migrations: [],");
   });
 
   it("respects explicit migrationsDir/contractPath/outPath", async () => {
