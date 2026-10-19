@@ -66,7 +66,7 @@ test("HTTP sync uses the session account despite forged push and pull scopes", a
     expect(await push(other.request, owner.userId, unauthorized)).toEqual(
       unauthorized.map(({ id }) => ({ id, success: false, error: "SCOPE_VIOLATION", retryable: false, record: null }))
     );
-    // Creating a child under another user's row must not bypass ownership either.
+    // Creating a board with another user's owner ID must also fail ownership checks.
     const forged = board(owner.userId);
     expect(await push(other.request, owner.userId, [forged])).toMatchObject([
       { id: forged.id, success: false, retryable: false },

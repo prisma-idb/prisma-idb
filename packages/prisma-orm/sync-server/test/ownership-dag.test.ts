@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { createSyncServer } from "../src/exports/server";
 import { contractWithUnexcludedIsland, cyclicContract, kanbanClientContract, kanbanContract } from "./helpers";
 
-describe("buildOwnershipDag", () => {
+describe("createSyncServer ownership graph", () => {
   it("accepts server-only islands but refuses their events", () => {
     const server = createSyncServer({
       contract: kanbanContract(),

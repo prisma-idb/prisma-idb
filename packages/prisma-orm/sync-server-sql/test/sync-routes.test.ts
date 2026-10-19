@@ -170,6 +170,7 @@ describe("applyPush", () => {
           { id: "board", success: false, error: "Failed to apply event board", retryable: true },
         ],
       });
+      expect(errorLog).toHaveBeenCalled();
       expect(await ormRootFor(db, "Board").first({ id: "b1" })).toBeNull();
       expect(await ormRootFor(db, "Todo").first({ id: "t1" })).toBeNull();
       expect(await ormRootFor(db, "Changelog").first({ outboxEventId: "todo" })).toBeNull();

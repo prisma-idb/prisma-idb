@@ -19,6 +19,7 @@ function referenceChecks(contract: SyncServerContract, model: string) {
     { scopeKey: "u1" }
   );
   if (!result) throw new Error("Missing validation result");
+  expect(result.check.kind).toBe(model === "User" ? "root" : "scoped");
   return result.check.kind === "scoped" ? (result.check.parentReferences ?? []) : [];
 }
 

@@ -280,7 +280,7 @@ describe("the scope lock's ordering guarantee", () => {
     async (level) => {
       const db = await testDb();
       await seed(db, { User: [{ id: "u1", name: "Ann" }] });
-      vi.spyOn(console, "error").mockImplementation(() => {});
+      const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
 
       const atLevel = {
         orm: db.orm,
@@ -307,6 +307,7 @@ describe("the scope lock's ordering guarantee", () => {
         ok: true,
         results: [{ id: "ea", success: false, error: "Failed to apply event ea", retryable: true }],
       });
+      expect(errorLog).toHaveBeenCalled();
       // The whole transaction rolled back: no board, no changelog row.
       expect(await pullAll(db, "u1", null)).toEqual([]);
     }

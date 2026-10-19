@@ -49,8 +49,8 @@ test("CLI writes matching reports and returns a failing exit code for a blocking
     expect(result.stderr).toBe("");
     expect(result.status).toBe(1);
     expect(readFileSync(markdownPath, "utf8")).toBe(result.stdout);
-    expect(result.stdout).toContain("Test report");
-    expect(result.stdout).toContain("read");
+    expect(result.stdout).toContain("<summary><b>Test report</b>:");
+    expect(result.stdout).toMatch(/^\| [^|]+ \| `read` \|/m);
     expect(JSON.parse(readFileSync(jsonPath, "utf8"))).toMatchObject({
       baselineRunId: "baseline",
       currentRunId: "current",
