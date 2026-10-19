@@ -1,0 +1,40 @@
+---
+title: Editor Setup
+description: Enable Prisma 8 schema hints in VS Code and troubleshoot missing completions and diagnostics
+icon: Code
+---
+
+Use this guide to enable scalar completion, attribute signatures, hover descriptions, and IDB diagnostics for Prisma 8 schemas in VS Code. The [Schema & Config reference](/docs/prisma-8/schema#editor-support) describes the required directive and available editor metadata.
+
+## Configure the editor
+
+1. Install the Prisma VS Code extension with Prisma 8 support and the project's local `prisma` CLI, as shown in the [Quick Start](/docs/prisma-8/getting-started). In a monorepo, install the CLI in the app that owns the schema and config.
+2. Configure `prisma.config.ts` with `@prisma-idb/family-idb/control` and `prismaIdbContract(...)`, following the [Quick Start config](/docs/prisma-8/getting-started#3-configure-the-clis).
+3. Put `// use prisma-8` on the first line of each Prisma 8 schema, before other comments or declarations:
+
+   ```prisma
+   // use prisma-8
+
+   model Todo {
+     id    String @id
+     title String
+   }
+   ```
+
+4. Trust the workspace and set `prisma.pinToPrisma6` to `false` in VS Code settings.
+5. Run **Prisma: Restart Language Server** after changing the directive, config, or installed packages.
+
+The Output panel should show a **Prisma ORM 8 Language Server** channel for the app. Open the schema to check scalar completions and hover descriptions, attribute signatures and documentation (including `@idb.exclude` and `@@idb.exclude`), and schema diagnostics.
+
+## Troubleshoot missing hints
+
+- Confirm that `// use prisma-8` is the first line. Without it, the extension routes the schema to the legacy language server, which does not read IDB's authoring metadata.
+- Check that the workspace is trusted and `prisma.pinToPrisma6` is `false`.
+- Use the **Prisma ORM 8 Language Server** Output channel to check config-loading errors. In a monorepo, confirm that the app owning the schema has its own local `prisma` CLI and `prisma.config.ts`.
+- When using workspace packages, rebuild `@prisma-idb/family-idb` before restarting the language server so it loads the updated descriptor:
+
+  ```bash
+  pnpm --filter '@prisma-idb/family-idb...' build
+  ```
+
+- Run **Prisma: Restart Language Server** again after correcting the configuration or rebuilding packages.
