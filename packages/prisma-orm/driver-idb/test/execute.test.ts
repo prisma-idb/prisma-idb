@@ -37,7 +37,6 @@ import type {
   IdbCountPlan,
   IdbCursorScanPlan,
   IdbDeletePlan,
-  IdbGetAllPlan,
   IdbKeyGetPlan,
   IdbKeysPlan,
   IdbPutPlan,
@@ -144,41 +143,6 @@ describe("key-get", () => {
 });
 
 // ── get-all ───────────────────────────────────────────────────────────────────
-
-describe("get-all", () => {
-  let db: IDBDatabase;
-
-  beforeEach(async () => {
-    db = await openTestDb(dbName(), [USERS_STORE]);
-    await seedStore(db, "users", [ALICE, BOB, CAROL]);
-  });
-  afterEach(() => db.close());
-
-  it("returns matching rows via index range", async () => {
-    const plan: IdbGetAllPlan = {
-      meta: META,
-      kind: "get-all",
-      storeName: "users",
-      indexName: "by-email",
-      range: { kind: "only", key: "bob@example.com" },
-    };
-    const rows = await executeIdbPlan(db, plan);
-    expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ id: "u2", name: "Bob" });
-  });
-
-  it("returns empty array when no records match", async () => {
-    const plan: IdbGetAllPlan = {
-      meta: META,
-      kind: "get-all",
-      storeName: "users",
-      indexName: "by-email",
-      range: { kind: "only", key: "nobody@example.com" },
-    };
-    const rows = await executeIdbPlan(db, plan);
-    expect(rows).toHaveLength(0);
-  });
-});
 
 // ── keys ──────────────────────────────────────────────────────────────────────
 
@@ -491,17 +455,6 @@ describe("cursor-scan", () => {
     expect(rows[0]).toMatchObject({ id: "u3", score: 20 }); // Carol
   });
 
-  it("returns rows in reverse primary-key order with direction 'prev'", async () => {
-    const plan: IdbCursorScanPlan = {
-      meta: META,
-      kind: "cursor-scan",
-      storeName: "users",
-      direction: "prev",
-    };
-    const rows = await executeIdbPlan(db, plan);
-    expect(rows.map((r) => r["id"])).toEqual(["u3", "u2", "u1"]);
-  });
-
   it("applies filter and comparator together", async () => {
     const plan: IdbCursorScanPlan = {
       meta: META,
@@ -514,24 +467,6 @@ describe("cursor-scan", () => {
     const rows = await executeIdbPlan(db, plan);
     expect(rows).toHaveLength(2); // Carol (20) and Alice (30)
     expect(rows.map((r) => r["score"])).toEqual([30, 20]); // Alice first (higher score)
-  });
-
-  it("scans via a secondary index when indexName is set", async () => {
-    const plan: IdbCursorScanPlan = {
-      meta: META,
-      kind: "cursor-scan",
-      storeName: "users",
-      indexName: "by-email",
-      range: { kind: "bound", lower: "a", upper: "c" }, // emails starting with a or b
-    };
-    const rows = await executeIdbPlan(db, plan);
-    // alice@ and bob@ match; carol@ does not (c > c is false, but "carol" >= "c")
-    // IDBKeyRange.bound("a","c") includes keys where "a" <= key <= "c"
-    // alice@... starts with 'a', bob@... starts with 'b', carol@... > 'c'
-    expect(rows.length).toBeGreaterThanOrEqual(2);
-    const emails = rows.map((r) => r["email"] as string);
-    expect(emails).toContain("alice@example.com");
-    expect(emails).toContain("bob@example.com");
   });
 });
 

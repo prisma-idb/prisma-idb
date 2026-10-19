@@ -241,6 +241,17 @@ describe("verifyIdbSchema — index issues", () => {
     const result = verifyIdbSchema(contract, schema, false);
 
     expect(result.ok).toBe(true);
+    expect(result.schema.root.children[0]!.children).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          status: "warn",
+          code: "extra_index",
+          name: "byEmail",
+          message: 'Index "byEmail" exists in manifest but is not in contract',
+        }),
+      ])
+    );
+    expect(result.schema.root.status).toBe("warn");
   });
 
   it("fails on extra manifest index in strict mode", () => {
@@ -260,14 +271,7 @@ describe("verifyIdbSchema — index issues", () => {
 // ── Result shape ──────────────────────────────────────────────────────────────
 
 describe("verifyIdbSchema — result shape", () => {
-  it("includes strict in meta", () => {
-    const contract = makeContract({ users: { keyPath: "id" } });
-    const schema = makeSchema({ users: { keyPath: "id" } });
-    const result = verifyIdbSchema(contract, schema, true);
-    expect(result.meta?.strict).toBe(true);
-  });
-
-  it("has counts that sum to totalNodes", () => {
+  it("reports consistent counts, strict mode and elapsed time for a matching schema", () => {
     const contract = makeContract({
       users: { keyPath: "id", indexes: { byEmail: { keyPath: "email", unique: true } } },
     });
@@ -279,13 +283,7 @@ describe("verifyIdbSchema — result shape", () => {
     const { pass, warn, fail, totalNodes } = result.schema.counts;
     expect(pass + warn + fail).toBe(totalNodes);
     expect(totalNodes).toBeGreaterThan(0);
-  });
-
-  it("includes timings.total", () => {
-    const contract = makeContract({ users: { keyPath: "id" } });
-    const schema = makeSchema({ users: { keyPath: "id" } });
-    const result = verifyIdbSchema(contract, schema, false);
-
-    expect(typeof result.timings.total).toBe("number");
+    expect(result.meta?.strict).toBe(false);
+    expect(result.timings.total).toBeGreaterThanOrEqual(0);
   });
 });
