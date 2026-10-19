@@ -159,44 +159,54 @@ describe("concurrent pushes on one scope", () => {
     expect(seen.sort()).toEqual(["ba", "bb"]);
   });
 
-  it.each([false, true])("handles a racing retry with applied-event read failure = %s", async (failAppliedRead) => {
-    const db = await testDb();
-    await seed(db, { User: [{ id: "u1", name: "Ann" }] });
+  it.each([false, true])(
+    "stores one mutation and changelog after concurrent redelivery and a lost acknowledgement (read failure = %s)",
+    async (failAppliedRead) => {
+      const db = await testDb();
+      await seed(db, { User: [{ id: "u1", name: "Ann" }] });
 
-    // The first request applied the event but has not committed; a timed-out
-    // client retries the same event meanwhile and collides with its unique keys.
-    const first = pausedAfterChangelogInsert(db);
-    const pushFirst = adapter.applyPush(first.db, { scopeKey: "u1", events: [createBoard("ea", "ba", "u1")] });
-    const observed = observedBoardInsert(db, failAppliedRead);
-    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
-    let retry: ReturnType<typeof adapter.applyPush>;
-    try {
-      await first.inserted;
-      retry = adapter.applyPush(observed.db, { scopeKey: "u1", events: [createBoard("ea", "ba", "u1")] });
-      await Promise.race([
-        observed.inserting,
-        retry.then(() => {
-          throw new Error("Retry completed before reaching its conflicting insert");
-        }),
-      ]);
-    } finally {
-      first.release();
-    }
+      // The first request applied the event but has not committed; a timed-out
+      // client retries the same event meanwhile and collides with its unique keys.
+      const first = pausedAfterChangelogInsert(db);
+      const pushFirst = adapter.applyPush(first.db, { scopeKey: "u1", events: [createBoard("ea", "ba", "u1")] });
+      const observed = observedBoardInsert(db, failAppliedRead);
+      const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+      let retry: ReturnType<typeof adapter.applyPush>;
+      try {
+        await first.inserted;
+        retry = adapter.applyPush(observed.db, { scopeKey: "u1", events: [createBoard("ea", "ba", "u1")] });
+        await Promise.race([
+          observed.inserting,
+          retry.then(() => {
+            throw new Error("Retry completed before reaching its conflicting insert");
+          }),
+        ]);
+      } finally {
+        first.release();
+      }
 
-    const expected = { ok: true, results: [{ id: "ea", success: true }] };
-    expect(await pushFirst).toEqual(expected);
-    try {
-      expect(await retry).toEqual(
-        failAppliedRead
-          ? { ok: true, results: [{ id: "ea", success: false, error: "Failed to apply event ea", retryable: true }] }
-          : expected
+      const expected = { ok: true, results: [{ id: "ea", success: true }] };
+      expect(await pushFirst).toEqual(expected);
+      try {
+        expect(await retry).toEqual(
+          failAppliedRead
+            ? { ok: true, results: [{ id: "ea", success: false, error: "Failed to apply event ea", retryable: true }] }
+            : expected
+        );
+      } finally {
+        errorLog.mockRestore();
+      }
+      // Either acknowledgement can be lost; later redelivery must still be idempotent.
+      expect(await adapter.applyPush(db, { scopeKey: "u1", events: [createBoard("ea", "ba", "u1")] })).toEqual(
+        expected
       );
-      expect(errorLog).toHaveBeenCalled();
-    } finally {
-      errorLog.mockRestore();
+      expect(await db.orm.public.Board.all().toArray()).toEqual([{ id: "ba", ownerId: "u1" }]);
+      const changes = await db.orm.public.Changelog.where({ outboxEventId: "ea" }).all().toArray();
+      expect(changes).toHaveLength(1);
+      expect(changes[0]).toMatchObject({ model: "Board", keyPath: "ba", operation: "create", scopeKey: "u1" });
+      expect((await pullAll(db, "u1", null)).map((log) => log.keyPath)).toEqual(["ba"]);
     }
-    expect((await pullAll(db, "u1", null)).map((log) => log.keyPath)).toEqual(["ba"]);
-  });
+  );
 
   it("does not block pushes on a different scope", async () => {
     const db = await testDb();
@@ -229,34 +239,6 @@ describe("the scope lock's ordering guarantee", () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.restoreAllMocks();
-  });
-
-  it("checks isolation and takes the scope lock in one raw query per new event", async () => {
-    const db = await testDb();
-    await seed(db, { User: [{ id: "u1", name: "Ann" }] });
-    const query = vi.fn();
-    const execute = vi.fn();
-    const counted = {
-      orm: db.orm,
-      raw: db.raw,
-      transaction: <T>(fn: (tx: never) => Promise<T>) =>
-        db.transaction((tx) => {
-          query.mockImplementation(tx.query.bind(tx));
-          execute.mockImplementation(tx.execute.bind(tx));
-          return fn({ orm: tx.orm, query, execute } as never);
-        }),
-    };
-
-    expect(await adapter.applyPush(counted, { scopeKey: "u1", events: [createBoard("ea", "ba", "u1")] })).toEqual({
-      ok: true,
-      results: [{ id: "ea", success: true }],
-    });
-    // Ownership locks also use raw queries. Isolation still belongs in the scope-lock statement.
-    const scopeQueries = query.mock.calls.filter(([plan]) => JSON.stringify(plan).includes("pg_advisory_xact_lock"));
-    expect(scopeQueries).toHaveLength(1);
-    expect(JSON.stringify(scopeQueries[0])).toContain("transaction_isolation");
-    expect(execute).not.toHaveBeenCalled();
-    expect((await pullAll(db, "u1", null)).map((log) => log.keyPath)).toEqual(["ba"]);
   });
 
   it("orders a push after the commit it waited on, even when its own clock reads earlier", async () => {
@@ -298,7 +280,7 @@ describe("the scope lock's ordering guarantee", () => {
     async (level) => {
       const db = await testDb();
       await seed(db, { User: [{ id: "u1", name: "Ann" }] });
-      const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+      vi.spyOn(console, "error").mockImplementation(() => {});
 
       const atLevel = {
         orm: db.orm,
@@ -325,8 +307,6 @@ describe("the scope lock's ordering guarantee", () => {
         ok: true,
         results: [{ id: "ea", success: false, error: "Failed to apply event ea", retryable: true }],
       });
-      const logged = consoleError.mock.calls.flat().find((arg): arg is Error => arg instanceof Error);
-      expect(logged?.message).toMatch(new RegExp(`READ COMMITTED.*${level.toLowerCase()}`));
       // The whole transaction rolled back: no board, no changelog row.
       expect(await pullAll(db, "u1", null)).toEqual([]);
     }

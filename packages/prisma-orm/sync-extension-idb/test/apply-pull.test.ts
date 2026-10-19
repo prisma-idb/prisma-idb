@@ -65,7 +65,6 @@ async function putVersionMeta(
 describe("applyPull", () => {
   it("counts corrupt rows separately, writes valid rows and consumes the corrupt tail cursor", async () => {
     const { client } = await createTestSyncClient();
-    const transaction = vi.spyOn(client, "withTransaction");
     const result = await applyPull(client, [
       log({ changelogId: changelogId(1), operation: "create", record: { id: "u1" } }),
       log({ changelogId: changelogId(2), operation: "create" }),
@@ -78,14 +77,12 @@ describe("applyPull", () => {
       halted: false,
       lastChangelogId: changelogId(3),
     });
-    expect(transaction).toHaveBeenCalledTimes(1);
     expect(await scanAll(client, "users")).toEqual([{ id: "u1", name: "Alice" }]);
     expect((await getVersionMeta(client, 'User::"u1"'))?.lastAppliedChangeId).toBe(changelogId(2));
   });
 
-  it("rejects extra fields, invalid keys and record/key mismatches before a transaction", async () => {
+  it("rejects extra fields, invalid keys and record/key mismatches without storing records or version metadata", async () => {
     const { client } = await createTestSyncClient();
-    const transaction = vi.spyOn(client, "withTransaction");
     const result = await applyPull(client, [
       log({ changelogId: changelogId(1), operation: "create", record: { id: "u1", name: "Alice", extra: true } }),
       log({ changelogId: changelogId(2), operation: "delete", record: null, keyPath: 42 }),
@@ -99,7 +96,8 @@ describe("applyPull", () => {
       halted: false,
       lastChangelogId: changelogId(4),
     });
-    expect(transaction).not.toHaveBeenCalled();
+    expect(await scanAll(client, "_idb_sync_version_meta")).toEqual([]);
+    expect(await scanAll(client, "users")).toEqual([]);
   });
 
   it("reports a decode error as corruption and continues applying the batch", async () => {
@@ -553,7 +551,6 @@ describe("applyPull with a compound key", () => {
 
   it("rejects a key that is not an array of the right length, or that does not match the record", async () => {
     const client = await createMembershipClient();
-    const transaction = vi.spyOn(client, "withTransaction");
     const result = await applyPull(client, [
       { changelogId: changelogId(1), model: "Membership", operation: "create", keyPath: "o1", record: membership },
       { changelogId: changelogId(2), model: "Membership", operation: "create", keyPath: ["o1"], record: membership },
@@ -572,6 +569,7 @@ describe("applyPull with a compound key", () => {
       halted: false,
       lastChangelogId: changelogId(3),
     });
-    expect(transaction).not.toHaveBeenCalled();
+    expect(await scanAll(client, "memberships")).toEqual([]);
+    expect(await scanAll(client, "_idb_sync_version_meta")).toEqual([]);
   });
 });

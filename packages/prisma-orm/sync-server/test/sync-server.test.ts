@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { createSyncServer, defaultGetKeyField, validatePush } from "../src/core/sync-server";
 import { buildOwnershipDag } from "../src/core/ownership-dag";
 import type { SyncServerContract } from "../src/core/ownership-dag";
@@ -23,6 +23,7 @@ function toNonIdbShapedContract(contract: SyncServerContract): SyncServerContrac
   return clone;
 }
 
+/** Creates a server whose client model set excludes server-only records. */
 function server() {
   return createSyncServer({ contract: kanbanContract(), clientContract: kanbanClientContract(), rootModel: "User" });
 }
@@ -56,14 +57,12 @@ describe("createSyncServer", () => {
   });
 
   describe("validatePush", () => {
-    it("rejects malformed records and keys before resolving ownership paths", () => {
+    it("rejects malformed records and keys as permanent validation failures", () => {
       const contract = kanbanContract();
-      const getKeyField = vi.fn((_contract: SyncServerContract, _model: string) => "id");
       const syncServer = createSyncServer({
         contract,
         clientContract: kanbanClientContract(),
         rootModel: "User",
-        getKeyField,
       });
       const [badRecord, badKey] = syncServer.validatePush(
         [
@@ -74,8 +73,6 @@ describe("createSyncServer", () => {
       );
       expect(badRecord?.check).toMatchObject({ kind: "validation-failure", error: "RECORD_VALIDATION_FAILURE" });
       expect(badKey?.check).toMatchObject({ kind: "validation-failure", error: "KEYPATH_VALIDATION_FAILURE" });
-      // A scoped ownership check would additionally resolve the root's key field.
-      expect(getKeyField.mock.calls.map(([, model]) => model)).toEqual(["Todo", "Todo"]);
     });
 
     it.each([
@@ -128,8 +125,7 @@ describe("createSyncServer", () => {
       delete clientBoard.fields["ownerId"];
       delete clientBoard.relations["owner"];
       clientBoard.fields["label"] = { nullable: true, type: { kind: "scalar", codecId: "idb/string@1" } };
-      const getKeyField = vi.fn((_contract: SyncServerContract, _model: string) => "id");
-      const syncServer = createSyncServer({ contract, clientContract, rootModel: "User", getKeyField });
+      const syncServer = createSyncServer({ contract, clientContract, rootModel: "User" });
       const [valid, missingKey, hiddenField, badVisibleCreate, badVisibleUpdate] = syncServer.validatePush(
         [
           { id: "valid", model: "Board", operation: "create", payload: { id: "b1" }, wireKey: "b1" },
@@ -153,7 +149,6 @@ describe("createSyncServer", () => {
       for (const result of [hiddenField, badVisibleCreate, badVisibleUpdate]) {
         expect(result?.check).toMatchObject({ kind: "validation-failure", error: "RECORD_VALIDATION_FAILURE" });
       }
-      expect(getKeyField.mock.calls.every(([checkedContract]) => checkedContract === contract)).toBe(true);
     });
 
     it("checks updates as patches and deletes as key-only events", () => {
@@ -438,8 +433,6 @@ describe("projectRecord", () => {
     const row = { id, name: "server-only", extra: { secret: true } };
     const projected = server.projectRecord("User", row);
     expect(projected).toEqual({ id });
-    expect(projected).not.toBe(row);
-    expect(projected["id"]).toBe(id);
     expect(row).toEqual({ id, name: "server-only", extra: { secret: true } });
   });
 

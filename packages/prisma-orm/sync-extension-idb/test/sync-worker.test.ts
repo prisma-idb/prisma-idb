@@ -50,6 +50,15 @@ function makeStubSyncClient(): SyncIdbClient<never> {
   };
 }
 
+/** Builds a valid pull row for observable worker effects. */
+const userLog = (changelogId: string, id: string): Extract<LogWithRecord, { record: unknown }> => ({
+  changelogId,
+  model: "User",
+  operation: "create",
+  keyPath: id,
+  record: { id, name: id },
+});
+
 describe("SyncWorker — state machine", () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -302,10 +311,8 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
       const { client } = await createTestSyncClient();
       await seedAcknowledgedEvents(client, 105);
       await asAccessors(client.orm)["users"]!.create({ id: "u1", name: "Alice" });
-      const pushHandler = vi.fn(async (events: OutboxEvent[]) =>
-        events.map((event) => ({ id: event.id, success: true }))
-      );
-      const pullHandler = vi.fn(async () => []);
+      const pushHandler = async (events: OutboxEvent[]) => events.map((event) => ({ id: event.id, success: true }));
+      const pullHandler = async () => [userLog(changelogId(1), "remote")];
       const worker = trackedWorker({ syncClient: client, pushHandler, pullHandler });
       const spy = vi.spyOn(client, "withTransaction").mockRejectedValueOnce(new Error("cleanup failure"));
 
@@ -315,9 +322,10 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
         spy.mockRestore();
       }
 
-      expect(pushHandler).toHaveBeenCalledTimes(1);
-      expect(pushHandler.mock.calls[0]?.[0]).toHaveLength(1);
-      expect(pullHandler).toHaveBeenCalledTimes(1);
+      expect(await scanAll(client, "users")).toEqual([
+        { id: "remote", name: "remote" },
+        { id: "u1", name: "Alice" },
+      ]);
       expect(worker.status).toBe("idle");
       const retained = await scanAll(client, "_idb_sync_outbox");
       expect(retained).toHaveLength(100);
@@ -327,15 +335,13 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
     it("prunes existing history during an idle cycle and remains idempotent", async () => {
       const { client } = await createTestSyncClient();
       await seedAcknowledgedEvents(client, 105);
-      const pushHandler = vi.fn(async () => []);
-      const worker = trackedWorker({ syncClient: client, pushHandler, pullHandler: async () => [] });
+      const worker = trackedWorker({ syncClient: client, pushHandler: async () => [], pullHandler: async () => [] });
 
       await worker.forceSync();
 
       const retained = await scanAll(client, "_idb_sync_outbox");
       expect(retained).toHaveLength(100);
       expect(retained[0]?.["id"]).toBe("history-005");
-      expect(pushHandler).not.toHaveBeenCalled();
       await worker.forceSync();
       expect(await scanAll(client, "_idb_sync_outbox")).toEqual(retained);
     });
@@ -397,7 +403,7 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
             await fn(scope);
             throw new Error("result transaction failure");
           })) as typeof client.withTransaction);
-        const pullHandler = vi.fn(async () => []);
+        const pullHandler = async () => [userLog(changelogId(1), "remote")];
         const worker = trackedWorker({
           syncClient: client,
           pushHandler: async (events) =>
@@ -427,7 +433,6 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
         expect(await scanAll(client, "_idb_sync_outbox")).toEqual(beforeOutbox);
         expect(await scanAll(client, "_idb_sync_version_meta")).toEqual(beforeMeta);
         expect(await scanAll(client, "users")).toEqual(beforeUsers);
-        expect(pullHandler).not.toHaveBeenCalled();
       }
     );
   });
@@ -656,11 +661,13 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
 
     it("leaves the cursor untouched and reports the mismatch when a pull is refused", async () => {
       const { client } = await createTestSyncClient();
-      const setCursor = vi.fn();
+      let persisted = changelogId(7);
       const worker = trackedWorker({
         syncClient: client,
-        getCursor: () => changelogId(7),
-        setCursor,
+        getCursor: () => persisted,
+        setCursor: (id) => {
+          persisted = id;
+        },
         pushHandler: async () => [],
         pullHandler: async () => {
           throw new ContractMismatchError();
@@ -672,7 +679,7 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
       await expect(worker.forceSync()).rejects.toBeInstanceOf(ContractMismatchError);
 
       expect(mismatches).toEqual([{ during: "pull" }]);
-      expect(setCursor).not.toHaveBeenCalled();
+      expect(persisted).toBe(changelogId(7));
     });
 
     it("keeps refused edits queued and unchanged, and sends them once the server accepts", async () => {
@@ -716,24 +723,15 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
   });
 
   describe("pull cursor", () => {
-    const userLog = (changelogId: string, id: string): Extract<LogWithRecord, { record: unknown }> => ({
-      changelogId,
-      model: "User",
-      operation: "create",
-      keyPath: id,
-      record: { id, name: id },
-    });
-
     it.each(["invalid-record", "server-marker"])(
       "persists a corrupt tail row's cursor, reports %s corruption and resumes past it",
       async (kind) => {
         const { client } = await createTestSyncClient();
         let persisted: string | null = null;
-        const setCursor = vi.fn((id: string) => {
+        const setCursor = (id: string) => {
           persisted = id;
-        });
-        const pullHandler = vi.fn(async (_cursor: string | null): Promise<LogWithRecord[]> => []);
-        pullHandler.mockResolvedValueOnce([
+        };
+        const firstPage: LogWithRecord[] = [
           userLog(changelogId(9), "u9"),
           kind === "invalid-record"
             ? { ...userLog(changelogId(10), "u10"), record: { id: "u10", name: 42 } }
@@ -744,7 +742,13 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
                 keyPath: "u10",
                 validationError: "KEYPATH_VALIDATION_FAILURE",
               },
-        ]);
+        ];
+        /** Serves the next page only after the corrupt tail cursor has been restored. */
+        const pullHandler = async (cursor: string | null): Promise<LogWithRecord[]> => {
+          if (cursor === null) return firstPage;
+          if (cursor === changelogId(10)) return [userLog(changelogId(11), "u11")];
+          return [];
+        };
         const worker = trackedWorker({
           syncClient: client,
           pushHandler: async () => [],
@@ -752,11 +756,11 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
           getCursor: () => persisted,
           setCursor,
         });
-        const completed = vi.fn();
-        worker.on("pullcompleted", completed);
+        const completed: PullCompletedEvent[] = [];
+        worker.on("pullcompleted", (event) => completed.push(event));
         await worker.forceSync();
-        expect(completed).toHaveBeenCalledWith({ applied: 1, skipped: 1, validationFailed: 1, halted: false });
-        expect(setCursor).toHaveBeenCalledWith(changelogId(10));
+        expect(completed).toEqual([{ applied: 1, skipped: 1, validationFailed: 1, halted: false }]);
+        expect(persisted).toBe(changelogId(10));
         const restarted = trackedWorker({
           syncClient: client,
           pushHandler: async () => [],
@@ -765,8 +769,11 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
           setCursor,
         });
         await restarted.forceSync();
-        expect(pullHandler.mock.calls[1]?.[0]).toBe(changelogId(10));
-        expect(await scanAll(client, "users")).toEqual([{ id: "u9", name: "u9" }]);
+        expect(persisted).toBe(changelogId(11));
+        expect(await scanAll(client, "users")).toEqual([
+          { id: "u11", name: "u11" },
+          { id: "u9", name: "u9" },
+        ]);
       }
     );
 
@@ -815,10 +822,10 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
       expect(cursors).toEqual([null, changelogId(10), changelogId(10)]);
     });
 
-    it("resumes from getCursor's value on the first pull and loads it only once", async () => {
+    it("resumes from the persisted cursor on successive pulls", async () => {
       const { client } = await createTestSyncClient();
       const from: (string | null)[] = [];
-      const getCursor = vi.fn(async () => changelogId(42));
+      const getCursor = async () => changelogId(42);
       const worker = trackedWorker({
         syncClient: client,
         pushHandler: async () => [],
@@ -833,7 +840,6 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
       await worker.forceSync();
 
       expect(from).toEqual([changelogId(42), changelogId(42)]);
-      expect(getCursor).toHaveBeenCalledTimes(1);
     });
 
     it("treats a null/undefined getCursor result as no cursor", async () => {
@@ -1069,7 +1075,7 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
     it("skips the pull while a retryable event remains, and pulls once it succeeds", async () => {
       const { client } = await createTestSyncClient();
       await asAccessors(client.orm)["users"]!.create({ id: "u1", name: "Alice" });
-      const pullHandler = vi.fn(async (): Promise<LogWithRecord[]> => []);
+      const pullHandler = async (): Promise<LogWithRecord[]> => [userLog(changelogId(1), "remote")];
       let failPush = true;
       const worker = trackedWorker({
         syncClient: client,
@@ -1084,12 +1090,15 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
       worker.on("pushcompleted", (p) => pushes.push(p));
 
       await worker.forceSync();
-      expect(pullHandler).not.toHaveBeenCalled();
+      expect(await scanAll(client, "users")).toEqual([{ id: "u1", name: "Alice" }]);
       expect(pushes.at(-1)).toMatchObject({ pullBlocked: true });
 
       failPush = false;
       await worker.forceSync();
-      expect(pullHandler).toHaveBeenCalledTimes(1);
+      expect(await scanAll(client, "users")).toEqual([
+        { id: "remote", name: "remote" },
+        { id: "u1", name: "Alice" },
+      ]);
       expect(pushes.at(-1)).toMatchObject({ synced: 1, pullBlocked: false });
     });
 

@@ -4,7 +4,7 @@
  * point is that the extended batch plan actually reaches the driver and
  * commits atomically in one IDB transaction.
  */
-import { describe, expect, it, vi, type Mock } from "vitest";
+import { describe, expect, it } from "vitest";
 import { AsyncIterableResult } from "@prisma/orm-framework/components/runtime";
 import type { IdbQueryPlan } from "@prisma-idb/adapter-idb/runtime";
 import type { IdbContract, IdbQueryExecutor } from "@prisma-idb/client-idb/orm";
@@ -37,9 +37,16 @@ describe("SyncInterceptorExecutor — autoIncrement keys", () => {
 });
 
 describe("SyncInterceptorExecutor — plans that can't sync", () => {
-  /** An executor whose `query()` returns no rows and records that it ran. */
-  function stubExecutor(): IdbQueryExecutor & { query: Mock } {
-    return { query: vi.fn(() => new AsyncIterableResult((async function* () {})())) } as never;
+  /** An executor yielding a recognizable row, so delegation is observable in the result. */
+  function stubExecutor(): IdbQueryExecutor {
+    return {
+      query: () =>
+        new AsyncIterableResult(
+          (async function* () {
+            yield { id: "u1", name: "Alice" };
+          })()
+        ),
+    } as never;
   }
 
   /** A hand-built plan: `client-idb` itself never sends these kinds to a tracked model's `query()`. */
@@ -61,16 +68,15 @@ describe("SyncInterceptorExecutor — plans that can't sync", () => {
     expect(() => executor.query(handBuiltPlan(ast))).toThrow(
       `a "${ast.kind}" plan on the synced model User can't be synced`
     );
-    expect(inner.query).not.toHaveBeenCalled();
   });
 
-  it("passes the same plans through for a model that isn't tracked", () => {
+  it("returns results for a plan on a model that is not tracked", async () => {
     const inner = stubExecutor();
     const executor = new SyncInterceptorExecutor(inner, { contract: testContract(), trackedModels: ["Post"] });
 
-    executor.query(handBuiltPlan({ kind: "deleteAll", modelName: "User" }));
+    const result = executor.query(handBuiltPlan({ kind: "deleteAll", modelName: "User" }));
 
-    expect(inner.query).toHaveBeenCalledOnce();
+    expect(await result.toArray()).toEqual([{ id: "u1", name: "Alice" }]);
   });
 });
 

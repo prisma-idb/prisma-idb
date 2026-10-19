@@ -1,34 +1,31 @@
 import { describe, expect, it } from "vitest";
-import { resolveAuthorizationPaths, resolveParentReferenceChecks } from "../src/core/authorization-paths";
-import { defaultGetKeyField } from "../src/core/sync-server";
+import { createSyncServer, type SyncServerContract } from "../src/exports/server";
 import { asNamespaceId, domainModelsAtDefaultNamespace } from "@prisma/orm-framework/contract/types";
-import { kanbanContract } from "./helpers";
+import { kanbanClientContract, kanbanContract } from "./helpers";
 
-describe("resolveAuthorizationPaths", () => {
-  it("returns no paths for the root model itself", () => {
-    expect(resolveAuthorizationPaths(kanbanContract(), "User", "User")).toEqual([]);
-  });
+/** Reads parent authorization requirements through the public push-validation result. */
+function referenceChecks(contract: SyncServerContract, model: string) {
+  const server = createSyncServer({ contract, clientContract: kanbanClientContract(), rootModel: "User" });
+  const [result] = server.validatePush(
+    [
+      {
+        id: "e1",
+        model,
+        operation: "create",
+        payload: model === "User" ? { id: "u1", name: "Ann" } : { id: "u1", authorId: "u1", todoId: null },
+        wireKey: "u1",
+      },
+    ],
+    { scopeKey: "u1" }
+  );
+  if (!result) throw new Error("Missing validation result");
+  return result.check.kind === "scoped" ? (result.check.parentReferences ?? []) : [];
+}
 
-  it("returns the single relation-name chain for a direct child", () => {
-    expect(resolveAuthorizationPaths(kanbanContract(), "User", "Board")).toEqual([["owner"]]);
-  });
-
-  it("returns a multi-hop chain for a grandchild", () => {
-    expect(resolveAuthorizationPaths(kanbanContract(), "User", "Todo")).toEqual([["board", "owner"]]);
-  });
-
-  it("returns every path, shortest first, when a model is reachable more than one way", () => {
-    const paths = resolveAuthorizationPaths(kanbanContract(), "User", "Comment");
-
-    expect(paths).toEqual([["author"], ["todo", "board", "owner"]]);
-  });
-});
-
-describe("resolveParentReferenceChecks", () => {
+describe("validatePush parent references", () => {
   it("derives independent parents and FK nullability from the full contract", () => {
     const contract = kanbanContract();
-    const paths = resolveAuthorizationPaths(contract, "User", "Comment");
-    expect(resolveParentReferenceChecks(contract, defaultGetKeyField, "Comment", paths)).toEqual([
+    expect(referenceChecks(contract, "Comment")).toEqual([
       { relation: "author", localField: "authorId", nullable: false, paths: [["author"]] },
       { relation: "todo", localField: "todoId", nullable: true, paths: [["todo", "board", "owner"]] },
     ]);
@@ -44,8 +41,7 @@ describe("resolveParentReferenceChecks", () => {
       to: { model: "User", namespace: asNamespaceId("public") },
       on: { localFields: ["authorId"], targetFields: ["id"] },
     };
-    const paths = resolveAuthorizationPaths(contract, "User", "Comment");
-    expect(resolveParentReferenceChecks(contract, defaultGetKeyField, "Comment", paths)).toEqual([
+    expect(referenceChecks(contract, "Comment")).toEqual([
       { relation: "author", localField: "authorId", nullable: false, paths: [["author"]] },
       {
         relation: "todo",
@@ -73,14 +69,7 @@ describe("resolveParentReferenceChecks", () => {
       to: { model: "User", namespace: asNamespaceId("public") },
       on,
     };
-    expect(() =>
-      resolveParentReferenceChecks(
-        contract,
-        defaultGetKeyField,
-        "Comment",
-        resolveAuthorizationPaths(contract, "User", "Comment")
-      )
-    ).toThrow(/Board.owner.*single-field FK/);
+    expect(() => referenceChecks(contract, "Comment")).toThrow(/Board.owner.*single-field FK/);
   });
 
   it("excludes global parents and inverse collections, and returns no checks for the root", () => {
@@ -98,21 +87,7 @@ describe("resolveParentReferenceChecks", () => {
       to: { model: "Comment", namespace: asNamespaceId("public") },
       on: { localFields: ["id"], targetFields: ["authorId"] },
     };
-    expect(
-      resolveParentReferenceChecks(
-        contract,
-        defaultGetKeyField,
-        "Comment",
-        resolveAuthorizationPaths(contract, "User", "Comment")
-      ).map(({ relation }) => relation)
-    ).toEqual(["author", "todo"]);
-    expect(
-      resolveParentReferenceChecks(
-        contract,
-        defaultGetKeyField,
-        "User",
-        resolveAuthorizationPaths(contract, "User", "User")
-      )
-    ).toEqual([]);
+    expect(referenceChecks(contract, "Comment").map(({ relation }) => relation)).toEqual(["author", "todo"]);
+    expect(referenceChecks(contract, "User")).toEqual([]);
   });
 });
