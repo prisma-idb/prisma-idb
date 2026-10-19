@@ -8,6 +8,25 @@ This page lists what a Prisma schema can contain when it targets IndexedDB, and 
 
 For PSL attributes alongside the TypeScript DSL, see [Contract Authoring](/docs/prisma-8/contract-authoring).
 
+## Editor support
+
+For Prisma VS Code extension hints, put `// use prisma-8` on the first line of each Prisma 8 schema, before other comments or declarations:
+
+```prisma
+// use prisma-8
+
+model Todo {
+  id    String @id
+  title String
+}
+```
+
+This directive selects the Prisma 8 language server. Without it, the extension uses the legacy language server, which does not read IDB's authoring metadata. With the IDB family configured, the Prisma 8 server provides scalar type completion and descriptions, attribute signatures and documentation (including `@idb.exclude` and `@@idb.exclude`), and schema diagnostics from the IDB validator.
+
+Install the Prisma VS Code extension with Prisma 8 support and the project's local `prisma` CLI, then configure `prisma.config.ts` with `@prisma-idb/family-idb/control` and `prismaIdbContract(...)` as shown in the [Quick Start](/docs/prisma-8/getting-started). In a monorepo, install the CLI in the app that owns the schema and config.
+
+If hints are missing, confirm that the directive is first, the workspace is trusted, and `prisma.pinToPrisma6` is `false` in VS Code settings. Run **Prisma: Restart Language Server** after changing the directive, config, or installed packages. The Output panel should show a **Prisma ORM 8 Language Server** channel for the app; use that channel to check config-loading errors. When using workspace packages, rebuild `@prisma-idb/family-idb` before restarting so the server loads the updated descriptor.
+
 ## Scalar types
 
 | Prisma type | JavaScript value | Notes                                                |

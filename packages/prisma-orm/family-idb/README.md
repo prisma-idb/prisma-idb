@@ -32,6 +32,8 @@ All three read `prisma.config.ts`. See [Migrations](https://prisma-idb.dev/docs/
 
 Author a contract in PSL with `prismaIdbContract(path, options?)`, or in TypeScript with `defineContract(input, options?)`. Both surfaces lower into one internal `IdbContractDefinition` and use the same validation and hash builder. Equivalent definitions produce the same storage, profile, and execution hashes.
 
+For Prisma VS Code extension hints, put `// use prisma-8` on the first line of the `.prisma` file, before other comments. This selects the Prisma 8 language server, which uses the project's local `prisma` CLI and `prisma.config.ts` to discover IDB scalar types, attribute signatures, hover descriptions, and diagnostics. Without the directive, the extension uses the legacy server. Run **Prisma: Restart Language Server** after changing the directive or rebuilding workspace packages. See [Editor support](https://prisma-idb.dev/docs/prisma-8/schema#editor-support).
+
 TypeScript models use a `defaults` map for create-time literals and helpers: `autoincrement()`, `now()`, `uuidv4()`, `uuidv7()`, `cuid2()`, and `updatedAt()`. Import the helpers from `@prisma-idb/family-idb/contract-ts`. The older `fieldDefaults` map only supplies values for the `setDefault` referential action.
 
 Both surfaces index each foreign-key field by default. TypeScript relations can set `index: false` to opt out. Existing TypeScript contracts may get a new `storageHash` and need an index migration. See [Adopt Foreign-Key Indexes](https://prisma-idb.dev/docs/prisma-8/foreign-key-indexes).

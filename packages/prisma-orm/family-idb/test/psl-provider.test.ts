@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { assembleAuthoringContributions } from "@prisma/orm-framework/components/control";
-import { EMPTY_DATA_TYPES, buildSymbolTable, createBinder } from "@prisma/orm-framework/psl-parser";
+import { EMPTY_DATA_TYPES, buildSymbolTable, createBinder, typeReferenceNode } from "@prisma/orm-framework/psl-parser";
 import { hasPslInterpreter } from "@prisma/orm-framework/psl-parser/interpret";
 import { parse } from "@prisma/orm-framework/psl-parser/syntax";
 import type { ContractSourceContext } from "@prisma/orm-framework/config/config-types";
@@ -137,11 +137,26 @@ function editorInput(schema: string, sourceId = "authoring.prisma") {
     sources,
     defaultNamespaceId: context.defaultNamespaceId,
   });
-  const { binder } = createBinder({ symbolTable, sources, context });
-  return { input: { documents: [document], sources, symbolTable, binder }, context };
+  const { binder, diagnostics } = createBinder({ symbolTable, sources, context });
+  return { input: { documents: [document], sources, symbolTable, binder }, context, binderDiagnostics: diagnostics };
 }
 
 describe("PSL editor interpretation", () => {
+  it("resolves every supported scalar and nullable scalar without editor reference errors", () => {
+    const scenario = authoringScenarios.find(({ name }) => name === "all scalar codecs and nullable fields")!;
+    const { input, binderDiagnostics } = editorInput(scenario.psl);
+
+    expect(binderDiagnostics).toEqual([]);
+    for (const field of Object.values(input.symbolTable.defaultNamespace.models["Scalar"]!.fields)) {
+      const resolution = input.binder.symbolForNode(typeReferenceNode(field)!);
+      expect(resolution?.kind).toBe("contributedType");
+      if (resolution?.kind !== "contributedType") throw new Error(`Unresolved scalar: ${field.typeName}`);
+      expect(resolution.symbol.descriptor.kind).toBe("typeConstructor");
+      if (resolution.symbol.descriptor.kind !== "typeConstructor") throw new Error("Expected scalar metadata");
+      expect(resolution.symbol.descriptor.documentation).toEqual(expect.any(String));
+    }
+  });
+
   it("discovers attribute documentation and argument types from the public family descriptor", () => {
     const { input } = editorInput(`model User {
   id String @id
