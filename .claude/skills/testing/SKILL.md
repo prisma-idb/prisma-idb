@@ -97,7 +97,7 @@ pnpm test:prisma-idb                       # all Prisma 8 packages
 pnpm check                                 # types: vitest does not type-check
 ```
 
-Run `pnpm check` before you push. See [CONTRIBUTING](../.github/CONTRIBUTING.md) for the browser suite.
+Run `pnpm check` before you push. See [CONTRIBUTING](../../../.github/CONTRIBUTING.md) for the browser suite.
 
 ## For reviewers
 
