@@ -1,3 +1,5 @@
+// use prisma-8
+
 // The `id`/`name`/`email` fields are also this app's domain identity (owns
 // Boards); everything else is better-auth's own required User shape — one
 // table serves both, same as this schema being the single source for both

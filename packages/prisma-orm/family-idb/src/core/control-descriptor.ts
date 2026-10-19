@@ -1,6 +1,8 @@
 import type { ControlFamilyDescriptor, ControlStack } from "@prisma/orm-framework/components/control";
 import { idbEmission } from "./emission";
 import { type IdbControlFamilyInstance, createIdbFamilyInstance } from "./control-instance";
+import { idbAttributeSpecs } from "./psl-binder";
+import { idbScalarTypes } from "./psl-scalars";
 
 /**
  * IDB family descriptor — the control-plane entry point for the IDB family.
@@ -23,6 +25,8 @@ export class IdbFamilyDescriptor implements ControlFamilyDescriptor<"idb", IdbCo
   readonly familyId = "idb" as const;
   readonly version = "0.0.1";
   readonly emission = idbEmission;
+  /** Makes scalar types and attribute signatures discoverable by editor tooling. */
+  readonly authoring = { type: idbScalarTypes, attributeSpecs: idbAttributeSpecs };
 
   /**
    * Creates an {@link IdbControlFamilyInstance} for the given control stack.

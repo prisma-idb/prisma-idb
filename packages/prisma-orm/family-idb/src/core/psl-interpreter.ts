@@ -25,6 +25,7 @@ import type {
 import { createIdbAttributeBinder } from "./psl-binder";
 import type { IdbAttributeBinder, IdbDefaultValue } from "./psl-binder";
 import { PslDefinitionSourceMap } from "./psl-definition-source-map";
+import { SCALAR_TO_CODEC_ID } from "./psl-scalars";
 import { validateIdbContractDefinition } from "./validate-definition";
 
 /** The one `temporal.*` type-constructor path IDB currently understands. */
@@ -68,20 +69,6 @@ function resolveDefaultFunctionGeneratorId(name: string, arg: string | undefined
       return { ok: false, reason: "unknown-function" };
   }
 }
-
-// ── Scalar type → codec ID mapping ────────────────────────────────────────────
-
-export const SCALAR_TO_CODEC_ID: Record<string, string> = {
-  String: "idb/string@1",
-  Int: "idb/int32@1",
-  Float: "idb/double@1",
-  Boolean: "idb/bool@1",
-  DateTime: "idb/date@1",
-  BigInt: "idb/bigint@1",
-  Decimal: "idb/decimal@1",
-  Json: "idb/json@1",
-  Bytes: "idb/bytes@1",
-};
 
 // PSL PascalCase referential actions → IDB lowercase
 const REFERENTIAL_ACTION_MAP: Record<string, IdbReferentialAction> = {
