@@ -40,6 +40,8 @@ pnpm --dir apps/prisma-orm-usage exec playwright install --with-deps
 pnpm test:prisma-idb-e2e
 ```
 
+Before you add a test, read the [testing guidelines](../docs/testing-guidelines.md). Zero new tests is a valid outcome.
+
 Type-check (catches things vitest/esbuild won't):
 
 ```bash
