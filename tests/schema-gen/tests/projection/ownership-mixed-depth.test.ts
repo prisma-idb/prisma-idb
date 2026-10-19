@@ -33,7 +33,11 @@ beforeAll(async () => {
   processor = await loadBatchProcessor(project);
 }, 60000);
 
-/** Two users with a department, team and project each, a team with no department, and two tickets. */
+/**
+ * Two users with a department, team and project each, a team with no department, and four tickets:
+ * Alice's through her team, Alice's through her project only (in Bob's team), Bob's, and one in
+ * the department-less team that no path ties to any owner.
+ */
 const seedDb = async (extra: Record<string, Record<string, unknown>[]> = {}) =>
   createFakePrisma(await fs.readFile(schemaPath(SCHEMA), "utf8"), {
     User: [
@@ -53,7 +57,12 @@ const seedDb = async (extra: Record<string, Record<string, unknown>[]> = {}) =>
       { id: "alice-project", name: "Apollo", userId: ALICE },
       { id: "bob-project", name: "Gemini", userId: BOB },
     ],
-    Ticket: [ticket("alice-ticket", "alice-team"), ticket("project-ticket", "bob-team", null, "alice-project")],
+    Ticket: [
+      ticket("alice-ticket", "alice-team"),
+      ticket("project-ticket", "bob-team", null, "alice-project"),
+      ticket("bob-ticket", "bob-team"),
+      ticket("detached-ticket", "detached-team"),
+    ],
     ...extra,
   });
 
@@ -100,7 +109,45 @@ describe("generated project (mixed-depth ownership paths)", () => {
     const result = await push("create", payload);
 
     expect(result.error).toMatchObject({ type: "SCOPE_VIOLATION", retryable: false });
-    expect(db.rows("Ticket")).toHaveLength(2);
+    expect(db.rows("Ticket").map((row) => row.id)).not.toContain("new-ticket");
+  });
+
+  it.each(["update", "delete"] as const)("%ss a ticket the scope owns through the team path", async (operation) => {
+    // Regression: dropping the `team.department?.user` term from the stored-record check rejects
+    // a ticket whose only owned path is the team, which has no assignee or project to fall back on.
+    const result = await push(operation, ticket("alice-ticket", "alice-team"));
+
+    expect(result.error).toBeNull();
+  });
+
+  it("deletes a ticket the scope owns only through the project path", async () => {
+    // Regression: requiring the team path to be owned would block a ticket that sits in a
+    // foreign team but belongs to the scope's project.
+    const result = await push("delete", ticket("project-ticket", "bob-team", null, "alice-project"));
+
+    expect(result.error).toBeNull();
+  });
+
+  it("moves a ticket the scope owns only through the project path into an owned team", async () => {
+    // The stored record passes through the project path alone. Keeping it in the foreign team would
+    // fail the payload check, so the update moves it.
+    const result = await push("update", ticket("project-ticket", "alice-team", null, "alice-project"));
+
+    expect(result.error).toBeNull();
+  });
+
+  it.each([
+    ["bob-ticket", ticket("bob-ticket", "bob-team")],
+    ["detached-ticket", ticket("detached-ticket", "detached-team")],
+  ])("rejects an update or delete of %s, which no path ties to the scope", async (id, payload) => {
+    // `detached-ticket` guards the optional middle link on stored records: it must fail the check,
+    // not throw a TypeError (a retryable UNKNOWN_ERROR that would loop forever).
+    for (const operation of ["update", "delete"] as const) {
+      const result = await push(operation, payload);
+
+      expect(result.error).toMatchObject({ type: "SCOPE_VIOLATION", retryable: false });
+    }
+    expect(db.rows("Ticket").map((row) => row.id)).toContain(id);
   });
 
   it("pulls a ticket the scope reaches through any one path", async () => {

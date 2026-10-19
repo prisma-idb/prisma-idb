@@ -93,7 +93,17 @@ describe("generated project (multiple ownership paths)", () => {
     const result = await push("create", payload);
 
     expect(result.error).toMatchObject({ type: "SCOPE_VIOLATION", retryable: false });
-    expect(db.rows("FoodEntry")).toHaveLength(2);
+    expect(db.rows("FoodEntry").map((row) => row.id)).not.toContain("new-entry");
+  });
+
+  it.each(["update", "delete"] as const)("%ss an entry the scope owns only through its meal", async (operation) => {
+    // Regression: checking only the direct `user` path of a stored entry rejects an entry that is
+    // filed under the scope's meal but whose own `userId` is another user.
+    db = await seedDb({ FoodEntry: [entry("meal-entry", BOB, "alice-meal")] });
+
+    const result = await push(operation, entry("meal-entry", ALICE, "alice-meal"));
+
+    expect(result.error).toBeNull();
   });
 
   it.each(["update", "delete"] as const)("rejects an %s of an entry owned by another scope", async (operation) => {
