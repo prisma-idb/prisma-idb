@@ -41,7 +41,7 @@ export async function generateProject(schemaFile: string): Promise<GeneratedProj
 
 /**
  * Type-checks every generated module (both the Prisma Client and the IndexedDB client) under
- * `strict`. Resolves with the compiler output, which is empty when the project compiles.
+ * `strict`. Resolves with stdout on success or failure details if the compiler fails to run or compile.
  */
 export async function typeCheck(project: GeneratedProject): Promise<string> {
   const tsconfig = {
@@ -61,5 +61,5 @@ export async function typeCheck(project: GeneratedProject): Promise<string> {
   await fs.writeFile(configPath, JSON.stringify(tsconfig));
 
   const result = await execa(tscBin, ["-p", configPath], { reject: false });
-  return result.stdout;
+  return result.failed ? result.message || "TypeScript invocation failed" : result.stdout;
 }
