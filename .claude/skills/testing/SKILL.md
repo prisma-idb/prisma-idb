@@ -92,7 +92,7 @@ Keep the end-to-end layer small. It is slow and flaky relative to the layers bel
 Run the smallest check that covers your change:
 
 ```bash
-pnpm --filter @prisma-idb/<package> test   # one package
+pnpm --filter @prisma-idb/adapter-idb test   # one package
 pnpm test:prisma-idb                       # all Prisma 8 packages
 pnpm check                                 # types: vitest does not type-check
 ```
