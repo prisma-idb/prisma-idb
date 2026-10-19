@@ -1,11 +1,10 @@
 /**
- * mutation-executor unit tests.
+ * Nested mutation behavior through the public ORM.
  *
- * Exercises the IDB mutation executor against fake-indexeddb:
- *   hasNestedMutationCallbacks — detection only on relation fields
- *   executeNestedCreateMutation — 1:N and N:1 nested creates
- *   executeNestedCreateMutation — N:1 nested connect
- *   executeNestedUpdateMutation — N:1 connect + disconnect, 1:N disconnect
+ * Exercises nested writes against fake-indexeddb:
+ *   ORM nested create — 1:N and N:1 nested creates
+ *   ORM nested create — N:1 nested connect
+ *   ORM nested update — N:1 connect + disconnect, 1:N disconnect
  *   atomicity — rollback when nested write fails
  *   scalar FK validation — create/update with FK fields validated against target store
  */
@@ -19,12 +18,6 @@ import { createIDBRuntimeDriver, type IdbRuntimeDriverInstance } from "@prisma-i
 import type { IdbQueryPlan } from "@prisma-idb/adapter-idb/runtime";
 import { idbOrm, IdbRecordValidationError } from "../src/exports/orm";
 import type { IdbQueryExecutor, IdbQueryExecutorWithTransaction, IdbRelationMutator } from "../src/exports/orm";
-import {
-  executeNestedCreateMutation,
-  executeNestedUpdateMutation,
-  hasNestedMutationCallbacks,
-  hasScalarFkFields,
-} from "../src/core/mutation-executor";
 
 // ── Test contract ─────────────────────────────────────────────────────────────
 
@@ -103,52 +96,9 @@ function getAllRows(db: IDBDatabase, storeName: string): Promise<Record<string, 
   });
 }
 
-// ── hasNestedMutationCallbacks ────────────────────────────────────────────────
+// ── ORM nested create — 1:N child-owned ─────────────────────────────
 
-describe("hasNestedMutationCallbacks", () => {
-  it("returns true when a relation field holds a function", () => {
-    expect(
-      hasNestedMutationCallbacks(contract, "User", {
-        id: "u1",
-        name: "Alice",
-        posts: (rel: { create: () => unknown }) => rel.create(),
-      })
-    ).toBe(true);
-  });
-
-  it("returns false when no relation fields are functions", () => {
-    expect(
-      hasNestedMutationCallbacks(contract, "User", {
-        id: "u1",
-        name: "Alice",
-      })
-    ).toBe(false);
-  });
-
-  it("returns false when a non-relation field is a function", () => {
-    expect(
-      hasNestedMutationCallbacks(contract, "User", {
-        id: "u1",
-        name: () => "Alice",
-      })
-    ).toBe(false);
-  });
-
-  it("returns false for a model with no relations", () => {
-    const noRelContract = defineContract({
-      family: idbFamilyPack,
-      target: idbTargetPack,
-      models: {
-        Widget: { store: "widgets", key: "id", fields: { id: "String" } },
-      },
-    });
-    expect(hasNestedMutationCallbacks(noRelContract, "Widget", { fn: () => "x" })).toBe(false);
-  });
-});
-
-// ── executeNestedCreateMutation — 1:N child-owned ─────────────────────────────
-
-describe("executeNestedCreateMutation — 1:N child create", () => {
+describe("ORM nested create — 1:N child create", () => {
   let db: IDBDatabase;
   let executor: TestExecutorWithTransaction;
 
@@ -160,20 +110,15 @@ describe("executeNestedCreateMutation — 1:N child create", () => {
   afterEach(() => db.close());
 
   it("creates parent and children in one transaction", async () => {
-    const row = await executeNestedCreateMutation({
-      executor,
-      contract,
-      modelName: "User",
-      data: {
-        id: "u1",
-        name: "Alice",
-        posts: (rel: RelMutator) =>
-          rel.create([
-            { id: "p1", authorId: "placeholder", title: "Post 1" },
-            { id: "p2", authorId: "placeholder", title: "Post 2" },
-          ]),
-      } as Record<string, unknown>,
-    });
+    const row = await idbOrm({ contract, executor })["users"]!.create({
+      id: "u1",
+      name: "Alice",
+      posts: (rel: RelMutator) =>
+        rel.create([
+          { id: "p1", authorId: "placeholder", title: "Post 1" },
+          { id: "p2", authorId: "placeholder", title: "Post 2" },
+        ]),
+    } as never);
 
     expect(row).toMatchObject({ id: "u1", name: "Alice" });
 
@@ -185,16 +130,11 @@ describe("executeNestedCreateMutation — 1:N child create", () => {
   });
 
   it("injects parent FK into children, overwriting any supplied value", async () => {
-    await executeNestedCreateMutation({
-      executor,
-      contract,
-      modelName: "User",
-      data: {
-        id: "u1",
-        name: "Alice",
-        posts: (rel: RelMutator) => rel.create([{ id: "p1", authorId: "WRONG", title: "Post" }]),
-      } as Record<string, unknown>,
-    });
+    await idbOrm({ contract, executor })["users"]!.create({
+      id: "u1",
+      name: "Alice",
+      posts: (rel: RelMutator) => rel.create([{ id: "p1", authorId: "WRONG", title: "Post" }]),
+    } as never);
 
     const posts = await getAllRows(db, "posts");
     expect(posts[0]?.["authorId"]).toBe("u1");
@@ -205,25 +145,20 @@ describe("executeNestedCreateMutation — 1:N child create", () => {
   // IDB's structured-clone surface an opaque DataCloneError.
   it("rejects recursive nesting with a descriptive error (not DataCloneError)", async () => {
     await expect(
-      executeNestedCreateMutation({
-        executor,
-        contract,
-        modelName: "User",
-        data: {
-          id: "u1",
-          name: "Alice",
-          posts: (rel: RelMutator) =>
-            // Inner record itself carries a relation callback → recursive nesting.
-            rel.create([{ id: "p1", title: "Post", author: () => undefined } as Record<string, unknown>]),
-        } as Record<string, unknown>,
-      })
+      idbOrm({ contract, executor })["users"]!.create({
+        id: "u1",
+        name: "Alice",
+        posts: (rel: RelMutator) =>
+          // Inner record itself carries a relation callback → recursive nesting.
+          rel.create([{ id: "p1", title: "Post", author: () => undefined } as Record<string, unknown>]),
+      } as never)
     ).rejects.toThrow(/[Rr]ecursive nested writes are not supported/);
   });
 });
 
-// ── executeNestedCreateMutation — N:1 parent-owned ───────────────────────────
+// ── ORM nested create — N:1 parent-owned ───────────────────────────
 
-describe("executeNestedCreateMutation — N:1 parent create + connect", () => {
+describe("ORM nested create — N:1 parent create + connect", () => {
   let db: IDBDatabase;
   let executor: TestExecutorWithTransaction;
   const orm_ = () => idbOrm({ contract, executor });
@@ -236,16 +171,11 @@ describe("executeNestedCreateMutation — N:1 parent create + connect", () => {
   afterEach(() => db.close());
 
   it("N:1 nested create: creates related first, copies PK into parent FK", async () => {
-    const row = await executeNestedCreateMutation({
-      executor,
-      contract,
-      modelName: "Post",
-      data: {
-        id: "p1",
-        title: "Post",
-        author: (rel: RelMutator) => rel.create({ id: "u1", name: "Alice" }),
-      } as Record<string, unknown>,
-    });
+    const row = await idbOrm({ contract, executor })["posts"]!.create({
+      id: "p1",
+      title: "Post",
+      author: (rel: RelMutator) => rel.create({ id: "u1", name: "Alice" }),
+    } as never);
 
     expect(row).toMatchObject({ id: "p1", authorId: "u1" });
 
@@ -259,39 +189,29 @@ describe("executeNestedCreateMutation — N:1 parent create + connect", () => {
     // Pre-seed the user
     await orm_()["users"]!.create({ id: "u1", name: "Alice" } as never);
 
-    const row = await executeNestedCreateMutation({
-      executor,
-      contract,
-      modelName: "Post",
-      data: {
-        id: "p1",
-        title: "Post",
-        author: (rel: RelMutator) => rel.connect({ id: "u1" }),
-      } as Record<string, unknown>,
-    });
+    const row = await idbOrm({ contract, executor })["posts"]!.create({
+      id: "p1",
+      title: "Post",
+      author: (rel: RelMutator) => rel.connect({ id: "u1" }),
+    } as never);
 
     expect(row).toMatchObject({ id: "p1", authorId: "u1" });
   });
 
   it("N:1 nested connect throws when referenced row not found", async () => {
     await expect(
-      executeNestedCreateMutation({
-        executor,
-        contract,
-        modelName: "Post",
-        data: {
-          id: "p1",
-          title: "Post",
-          author: (rel: RelMutator) => rel.connect({ id: "nonexistent" }),
-        } as Record<string, unknown>,
-      })
+      idbOrm({ contract, executor })["posts"]!.create({
+        id: "p1",
+        title: "Post",
+        author: (rel: RelMutator) => rel.connect({ id: "nonexistent" }),
+      } as never)
     ).rejects.toThrow("connect");
   });
 });
 
-// ── executeNestedUpdateMutation ────────────────────────────────────────────────
+// ── Public nested updates ────────────────────────────────────────────────────
 
-describe("executeNestedUpdateMutation", () => {
+describe("ORM nested update", () => {
   let db: IDBDatabase;
   let executor: TestExecutorWithTransaction;
   const orm_ = () => idbOrm({ contract, executor });
@@ -305,13 +225,9 @@ describe("executeNestedUpdateMutation", () => {
 
   it("returns null when no parent row matches the filters", async () => {
     const { fieldFilter } = await import("@prisma-idb/adapter-idb/runtime");
-    const result = await executeNestedUpdateMutation({
-      executor,
-      contract,
-      modelName: "User",
-      filters: [fieldFilter("id", "eq", "nonexistent")],
-      data: { posts: (rel: RelMutator) => rel.disconnect() } as Record<string, unknown>,
-    });
+    const result = await idbOrm({ contract, executor })
+      ["users"]!.where(() => fieldFilter("id", "eq", "nonexistent"))
+      .update({ posts: (rel: RelMutator) => rel.disconnect() } as never);
     expect(result).toBeNull();
   });
 
@@ -321,13 +237,9 @@ describe("executeNestedUpdateMutation", () => {
     await orm_()["posts"]!.create({ id: "p1", authorId: "u1", title: "Post" } as never);
 
     const { fieldFilter } = await import("@prisma-idb/adapter-idb/runtime");
-    const row = await executeNestedUpdateMutation({
-      executor,
-      contract,
-      modelName: "Post",
-      filters: [fieldFilter("id", "eq", "p1")],
-      data: { author: (rel: RelMutator) => rel.connect({ id: "u2" }) } as Record<string, unknown>,
-    });
+    const row = await idbOrm({ contract, executor })
+      ["posts"]!.where(() => fieldFilter("id", "eq", "p1"))
+      .update({ author: (rel: RelMutator) => rel.connect({ id: "u2" }) } as never);
 
     expect(row).toMatchObject({ id: "p1", authorId: "u2" });
     const posts = await getAllRows(db, "posts");
@@ -339,13 +251,9 @@ describe("executeNestedUpdateMutation", () => {
     await orm_()["posts"]!.create({ id: "p1", authorId: "u1", title: "Post" } as never);
 
     const { fieldFilter } = await import("@prisma-idb/adapter-idb/runtime");
-    const row = await executeNestedUpdateMutation({
-      executor,
-      contract,
-      modelName: "Post",
-      filters: [fieldFilter("id", "eq", "p1")],
-      data: { author: (rel: RelMutator) => rel.disconnect() } as Record<string, unknown>,
-    });
+    const row = await idbOrm({ contract, executor })
+      ["posts"]!.where(() => fieldFilter("id", "eq", "p1"))
+      .update({ author: (rel: RelMutator) => rel.disconnect() } as never);
 
     expect(row).toMatchObject({ id: "p1", authorId: null });
   });
@@ -356,13 +264,9 @@ describe("executeNestedUpdateMutation", () => {
     await orm_()["posts"]!.create({ id: "p2", authorId: "u1", title: "P2" } as never);
 
     const { fieldFilter } = await import("@prisma-idb/adapter-idb/runtime");
-    await executeNestedUpdateMutation({
-      executor,
-      contract,
-      modelName: "User",
-      filters: [fieldFilter("id", "eq", "u1")],
-      data: { posts: (rel: RelMutator) => rel.disconnect() } as Record<string, unknown>,
-    });
+    await idbOrm({ contract, executor })
+      ["users"]!.where(() => fieldFilter("id", "eq", "u1"))
+      .update({ posts: (rel: RelMutator) => rel.disconnect() } as never);
 
     const posts = await getAllRows(db, "posts");
     expect(posts.every((p) => p["authorId"] === null)).toBe(true);
@@ -374,13 +278,9 @@ describe("executeNestedUpdateMutation", () => {
     await orm_()["posts"]!.create({ id: "p2", authorId: "u1", title: "P2" } as never);
 
     const { fieldFilter } = await import("@prisma-idb/adapter-idb/runtime");
-    await executeNestedUpdateMutation({
-      executor,
-      contract,
-      modelName: "User",
-      filters: [fieldFilter("id", "eq", "u1")],
-      data: { posts: (rel: RelMutator) => rel.disconnect([{ id: "p1" }]) } as Record<string, unknown>,
-    });
+    await idbOrm({ contract, executor })
+      ["users"]!.where(() => fieldFilter("id", "eq", "u1"))
+      .update({ posts: (rel: RelMutator) => rel.disconnect([{ id: "p1" }]) } as never);
 
     const posts = await getAllRows(db, "posts");
     const p1 = posts.find((p) => p["id"] === "p1");
@@ -392,7 +292,7 @@ describe("executeNestedUpdateMutation", () => {
 
 // ── child-owned connect matches ALL rows ────────────────────
 
-describe("executeNestedUpdateMutation — 1:N connect matches all", () => {
+describe("ORM nested update — 1:N connect matches all", () => {
   let db: IDBDatabase;
   let executor: TestExecutorWithTransaction;
 
@@ -412,13 +312,9 @@ describe("executeNestedUpdateMutation — 1:N connect matches all", () => {
     await orm["posts"]!.create({ id: "p3", title: "other", authorId: null } as never);
 
     const { fieldFilter } = await import("@prisma-idb/adapter-idb/runtime");
-    await executeNestedUpdateMutation({
-      executor,
-      contract,
-      modelName: "User",
-      filters: [fieldFilter("id", "eq", "u1")],
-      data: { posts: (rel: RelMutator) => rel.connect([{ title: "shared" }]) } as Record<string, unknown>,
-    });
+    await idbOrm({ contract, executor })
+      ["users"]!.where(() => fieldFilter("id", "eq", "u1"))
+      .update({ posts: (rel: RelMutator) => rel.connect([{ title: "shared" }]) } as never);
 
     const posts = await getAllRows(db, "posts");
     expect(posts.find((p) => p["id"] === "p1")?.["authorId"]).toBe("u1");
@@ -462,26 +358,6 @@ describe("upsert — atomic path (transaction-capable executor)", () => {
     const users = await getAllRows(db, "users");
     expect(users).toHaveLength(1);
     expect(users[0]?.["name"]).toBe("Updated");
-  });
-});
-
-// ── hasScalarFkFields ─────────────────────────────────────────────────────────
-
-describe("hasScalarFkFields", () => {
-  it("returns true when a N:1 localField is present and non-null", () => {
-    expect(hasScalarFkFields(contract, "Post", { id: "p1", authorId: "u1", title: "T" })).toBe(true);
-  });
-
-  it("returns false when the FK field is null", () => {
-    expect(hasScalarFkFields(contract, "Post", { id: "p1", authorId: null, title: "T" })).toBe(false);
-  });
-
-  it("returns false when the FK field is absent", () => {
-    expect(hasScalarFkFields(contract, "Post", { id: "p1", title: "T" })).toBe(false);
-  });
-
-  it("returns false for a model with no N:1 relations", () => {
-    expect(hasScalarFkFields(contract, "User", { id: "u1", name: "Alice" })).toBe(false);
   });
 });
 

@@ -32,6 +32,40 @@ async function openRawDb(name: string): Promise<IDBDatabase> {
   });
 }
 
+/** Seeds pending extension state before an upgrade, waiting for its commit. */
+async function seedPendingSyncState(
+  name: string,
+  pending: Record<string, unknown>,
+  version: Record<string, unknown>
+): Promise<void> {
+  const db = await openRawDb(name);
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(["_idb_sync_outbox", "_idb_sync_version_meta"], "readwrite");
+      tx.objectStore("_idb_sync_outbox").put(pending);
+      tx.objectStore("_idb_sync_version_meta").put(version);
+      tx.oncomplete = () => resolve();
+      tx.onabort = () => reject(tx.error);
+    });
+  } finally {
+    db.close();
+  }
+}
+
+/** Reads opaque extension rows and markers without the app ORM's model projection. */
+function readStores(db: IDBDatabase, stores: string[]): Promise<unknown[][]> {
+  return Promise.all(
+    stores.map(
+      (storeName) =>
+        new Promise<unknown[]>((resolve, reject) => {
+          const request = db.transaction(storeName).objectStore(storeName).getAll();
+          request.onsuccess = () => resolve(request.result as unknown[]);
+          request.onerror = () => reject(request.error);
+        })
+    )
+  );
+}
+
 const appV1 = defineContract({
   family: idbFamilyPack,
   target: idbTargetPack,
@@ -45,6 +79,33 @@ const syncV1 = defineContract({
   target: idbTargetPack,
   models: {
     OutboxEvent: { store: "_idb_sync_outbox", key: "id", fields: { id: "String", entityType: "String" } },
+    VersionMeta: { store: "_idb_sync_version_meta", key: "id", fields: { id: "String", model: "String" } },
+  },
+});
+
+/** App and extension successors add indexes without replacing stores. */
+const appV2 = defineContract({
+  family: idbFamilyPack,
+  target: idbTargetPack,
+  models: {
+    User: {
+      store: "users",
+      key: "id",
+      fields: { id: "String", email: "String" },
+      indexes: { byEmail: { keyPath: "email", unique: true } },
+    },
+  },
+});
+const syncV2 = defineContract({
+  family: idbFamilyPack,
+  target: idbTargetPack,
+  models: {
+    OutboxEvent: {
+      store: "_idb_sync_outbox",
+      key: "id",
+      fields: { id: "String", entityType: "String" },
+      indexes: { byEntityType: { keyPath: "entityType" } },
+    },
     VersionMeta: { store: "_idb_sync_version_meta", key: "id", fields: { id: "String", model: "String" } },
   },
 });
@@ -166,6 +227,64 @@ describe("auto-migrate combined multi-space apply", () => {
     expect(dbAfterDay2.version).toBe(versionAfterDay1 + 1);
     expect(dbAfterDay2.objectStoreNames.contains("_idb_sync_outbox")).toBe(true);
     dbAfterDay2.close();
+  });
+
+  it("preserves pending outbox writes and version metadata across app and extension upgrades", async () => {
+    const name = dbName();
+    const initial = await createAutoMigratingIdbClient({
+      contractSpace: buildContractSpaceFixture([appV1]),
+      dbName: name,
+      extensions: [syncExtension()],
+    });
+    await asRecord(initial.orm)["users"]!.create({ id: "u1", email: "pending@example.com" });
+    await initial.close();
+    // Extension rows are opaque to the core migrator. An upgrade must preserve
+    // unsent payloads and version bookkeeping, including fields it does not own.
+    const pending = {
+      id: "event-1",
+      entityType: "User",
+      status: "pending",
+      payload: { id: "u1", email: "pending@example.com" },
+      retries: 2,
+    };
+    const version = { id: "User:u1", model: "User", serverVersion: 7, localVersion: 9 };
+    await seedPendingSyncState(name, pending, version);
+
+    for (const extensionVersions of [[syncV1], [syncV1, syncV2]]) {
+      const client = await createAutoMigratingIdbClient({
+        contractSpace: buildContractSpaceFixture([appV1, appV2]),
+        dbName: name,
+        extensions: [
+          { spaceId: "idb-sync", contractSpace: buildExtensionContractSpaceFixture("idb-sync", extensionVersions) },
+        ],
+      });
+      try {
+        expect(await asRecord(client.orm)["users"]!.all().toArray()).toEqual([
+          { id: "u1", email: "pending@example.com" },
+        ]);
+      } finally {
+        await client.close();
+      }
+      const upgraded = await openRawDb(name);
+      try {
+        const stored = await readStores(upgraded, [
+          "_idb_sync_outbox",
+          "_idb_sync_version_meta",
+          "_prisma_next_marker",
+        ]);
+        expect(stored[0]).toEqual([pending]);
+        expect(stored[1]).toEqual([version]);
+        expect(stored[2]).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ space: "app", storageHash: appV2.storage.storageHash }),
+            expect.objectContaining({ space: "idb-sync", storageHash: extensionVersions.at(-1)!.storage.storageHash }),
+          ])
+        );
+        expect(upgraded.transaction("users").objectStore("users").indexNames.contains("byEmail")).toBe(true);
+      } finally {
+        upgraded.close();
+      }
+    }
   });
 
   it("repeated open with an already-migrated extension is a no-op (no version bump)", async () => {

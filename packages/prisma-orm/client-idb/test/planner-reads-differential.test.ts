@@ -171,6 +171,9 @@ function itemsCatalog(testContract: IdbContract) {
   return buildCatalog(testContract, "items", modelName);
 }
 
+const accessors = new WeakMap<IdbRuntimeDriverInstance, Map<IdbContract, IdbStoreAccessor<never, never>>>();
+
+/** Reuses the immutable base accessor for each driver/contract pair. Refinements return new accessors. */
 function accessor(
   driver: IdbRuntimeDriverInstance,
   testContract: IdbContract = contract
@@ -178,8 +181,18 @@ function accessor(
   const catalog = itemsCatalog(testContract);
   readStored = catalog.absentAsNull;
   comparisonFields = catalog.fields;
-  const orm = idbOrm({ contract: testContract, executor: new TestExecutor(driver) });
-  return (orm as unknown as Record<string, IdbStoreAccessor<never, never>>)["items"]!;
+  let byContract = accessors.get(driver);
+  if (!byContract) {
+    byContract = new Map();
+    accessors.set(driver, byContract);
+  }
+  let base = byContract.get(testContract);
+  if (!base) {
+    const orm = idbOrm({ contract: testContract, executor: new TestExecutor(driver) });
+    base = (orm as unknown as Record<string, IdbStoreAccessor<never, never>>)["items"]!;
+    byContract.set(testContract, base);
+  }
+  return base;
 }
 
 function applyQuery(base: IdbStoreAccessor<never, never>, query: Query) {
@@ -195,7 +208,8 @@ async function compare(
   db: IDBDatabase,
   driver: IdbRuntimeDriverInstance,
   query: Query,
-  testContract: IdbContract = contract
+  testContract: IdbContract = contract,
+  checkExistence = true
 ) {
   const actual = (await applyQuery(accessor(driver, testContract), query).all().toArray()) as Row[];
   const expected = await oracle(db, query);
@@ -209,7 +223,7 @@ async function compare(
   expect(await applyQuery(accessor(driver, testContract), query).count(), "count matches full scan").toBe(
     expected.length
   );
-  await compareExists(db, driver, query.where, testContract);
+  if (checkExistence) await compareExists(db, driver, query.where, testContract);
 }
 
 /** Existence lowering, with and without an in-memory filter, against a full scan. */
@@ -338,7 +352,8 @@ it("matches full scan for each accelerated shape and conservative fallback", asy
         for (const where of filters) {
           await compare(db, driver, { where });
           // A total order also checks global sorting/pagination across multiple ranges.
-          await compare(db, driver, { where, orderBy: { serial: "desc" }, skip: 1, take: 4 });
+          // Existence has no ordering or pagination; the preceding comparison checks both existence paths.
+          await compare(db, driver, { where, orderBy: { serial: "desc" }, skip: 1, take: 4 }, contract, false);
         }
         for (const orderBy of [
           { serial: "asc" },
@@ -394,7 +409,13 @@ it("matches full scan for generated boolean combinations of filters", async () =
       fc.asyncProperty(data, filter, fc.boolean(), async (rows, where, descending) => {
         await seed(db, rows);
         await compare(db, driver, { where });
-        await compare(db, driver, { where, orderBy: { serial: descending ? "desc" : "asc" }, skip: 1, take: 3 });
+        await compare(
+          db,
+          driver,
+          { where, orderBy: { serial: descending ? "desc" : "asc" }, skip: 1, take: 3 },
+          contract,
+          false
+        );
       }),
       { seed: 99005, numRuns: 150 }
     );

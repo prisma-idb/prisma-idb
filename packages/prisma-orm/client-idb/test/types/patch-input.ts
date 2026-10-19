@@ -1,5 +1,6 @@
-/** Compile-time assertions run through `pnpm check`; Vitest groups the public input contracts. */
-import { describe, expectTypeOf, it } from "vitest";
+/** Compiler-only fixture: pnpm check validates accepted inputs and every @ts-expect-error. */
+
+import { expectTypeOf } from "vitest";
 import type { NamespaceId } from "@prisma/orm-framework/contract/types";
 import type { IdbContractWithTypeMaps, IdbTypeMaps } from "@prisma-idb/target-idb/pack";
 import type {
@@ -8,7 +9,7 @@ import type {
   IdbStoreAccessor,
   MutationUpdateInput,
   PatchInput,
-} from "../src/exports/orm";
+} from "../../src/exports/orm";
 
 type KeyPaths = {
   Parent: "id";
@@ -76,8 +77,10 @@ type UpdateInputs<M extends keyof Rows> = {
   upsert: Parameters<Accessor<M>["upsert"]>[0]["update"];
 };
 
-describe("primary-key update inputs", () => {
-  it("allows typed relation callbacks on key-only parents while rejecting scalar keys", () => {
+// primary-key update inputs
+{
+  // allows typed relation callbacks on key-only parents while rejecting scalar keys
+  {
     const connect: MutationUpdateInput<TestContract, "Parent"> = {
       children: (rel) => {
         expectTypeOf(rel).toEqualTypeOf<IdbRelationMutator<TestContract, "Child">>();
@@ -106,9 +109,10 @@ describe("primary-key update inputs", () => {
     // @ts-expect-error — scalar PatchInput remains restrictive for key-only parents.
     const patch: PatchInput<TestContract, "Parent"> = { id: "changed" };
     void [connect, disconnect, create, empty, call, key, unknown, undefinedRelation, invalidChild, bulk, patch];
-  });
+  }
 
-  it("rejects a single key in every update API, including a repeated key", () => {
+  // rejects a single key in every update API, including a repeated key
+  {
     const inputs: UpdateInputs<"Single"> = {
       // @ts-expect-error — primary keys are immutable, even when the value is unchanged.
       update: { id: "i1", title: "draft" },
@@ -124,9 +128,10 @@ describe("primary-key update inputs", () => {
       title?: "draft" | "published";
       note?: string;
     }>();
-  });
+  }
 
-  it("rejects every compound-key member in every update API", () => {
+  // rejects every compound-key member in every update API
+  {
     const inputs: UpdateInputs<"Compound"> = {
       // @ts-expect-error — tenant is part of the primary key.
       update: { tenant: "t1", role: "admin" },
@@ -139,9 +144,10 @@ describe("primary-key update inputs", () => {
     };
     void inputs;
     expectTypeOf<PatchInput<TestContract, "Compound">>().toEqualTypeOf<{ role?: "member" | "admin" }>();
-  });
+  }
 
-  it("rejects single-key updates when there are no mutable fields", () => {
+  // rejects single-key updates when there are no mutable fields
+  {
     const inputs: UpdateInputs<"SingleKeyOnly"> = {
       // @ts-expect-error — an empty mutable shape must still reject the key.
       update: { id: "changed" },
@@ -156,9 +162,10 @@ describe("primary-key update inputs", () => {
     const patch: PatchInput<TestContract, "SingleKeyOnly"> = { id: "changed" };
     const empty: UpdateInputs<"SingleKeyOnly"> = { update: {}, updateAll: {}, updateCount: {}, upsert: {} };
     void [inputs, patch, empty];
-  });
+  }
 
-  it("rejects compound-key updates when there are no mutable fields", () => {
+  // rejects compound-key updates when there are no mutable fields
+  {
     const inputs: UpdateInputs<"CompoundKeyOnly"> = {
       // @ts-expect-error — tenant remains immutable in a key-only model.
       update: { tenant: "changed" },
@@ -173,9 +180,10 @@ describe("primary-key update inputs", () => {
     const patch: PatchInput<TestContract, "CompoundKeyOnly"> = { tenant: "changed", id: 2 };
     const empty: UpdateInputs<"CompoundKeyOnly"> = { update: {}, updateAll: {}, updateCount: {}, upsert: {} };
     void [inputs, patch, empty];
-  });
+  }
 
-  it("rejects dotted-key updates when there are no mutable fields", () => {
+  // rejects dotted-key updates when there are no mutable fields
+  {
     const inputs: UpdateInputs<"DottedKeyOnly"> = {
       // @ts-expect-error — the key's containing field remains immutable.
       update: { identity: { id: "changed" } },
@@ -188,16 +196,18 @@ describe("primary-key update inputs", () => {
     };
     const empty: UpdateInputs<"DottedKeyOnly"> = { update: {}, updateAll: {}, updateCount: {}, upsert: {} };
     void [inputs, empty];
-  });
+  }
 
-  it("does not let a key-only union member widen another model's patch", () => {
+  // does not let a key-only union member widen another model's patch
+  {
     const patch: PatchInput<TestContract, "SingleKeyOnly" | "Single"> = { title: "draft" };
     // @ts-expect-error — the key-only member must not introduce a permissive {} arm.
     const invalid: PatchInput<TestContract, "SingleKeyOnly" | "Single"> = { id: "changed" };
     void [patch, invalid];
-  });
+  }
 
-  it("rejects replacement of a dotted key's containing field in every update API", () => {
+  // rejects replacement of a dotted key's containing field in every update API
+  {
     const inputs: UpdateInputs<"Dotted"> = {
       // @ts-expect-error — replacing identity can change identity.id.
       update: { identity: { id: "i1", label: "new" }, title: "draft" },
@@ -210,13 +220,15 @@ describe("primary-key update inputs", () => {
     };
     void inputs;
     expectTypeOf<PatchInput<TestContract, "Dotted">>().toEqualTypeOf<{ title?: "draft" | "published" }>();
-  });
+  }
 
-  it("omits both plain and dotted members of a compound key", () => {
+  // omits both plain and dotted members of a compound key
+  {
     expectTypeOf<PatchInput<TestContract, "DottedCompound">>().toEqualTypeOf<{ label?: string }>();
-  });
+  }
 
-  it("keeps every field for a model without an inline key", () => {
+  // keeps every field for a model without an inline key
+  {
     const inputs: UpdateInputs<"Keyless"> = {
       update: { id: "i1", label: "new" },
       updateAll: { id: "i1", label: "new" },
@@ -225,14 +237,16 @@ describe("primary-key update inputs", () => {
     };
     void inputs;
     expectTypeOf<PatchInput<TestContract, "Keyless">>().toEqualTypeOf<{ id?: string; label?: string }>();
-  });
+  }
 
-  it("preserves the untyped fallback when the model name cannot be resolved", () => {
+  // preserves the untyped fallback when the model name cannot be resolved
+  {
     expectTypeOf<PatchInput<IdbContract, never>>().toEqualTypeOf<Partial<Record<string, unknown>>>();
     expectTypeOf<MutationUpdateInput<IdbContract, never>>().toEqualTypeOf<Partial<Record<string, unknown>>>();
-  });
+  }
 
-  it("keeps remaining fields optional without widening their literal types", () => {
+  // keeps remaining fields optional without widening their literal types
+  {
     const empty: UpdateInputs<"Single"> = { update: {}, updateAll: {}, updateCount: {}, upsert: {} };
     const patch: PatchInput<TestContract, "Single"> = { note: "optional", title: "published" };
     // @ts-expect-error — omitting the key must not widen title to string.
@@ -240,9 +254,10 @@ describe("primary-key update inputs", () => {
     // @ts-expect-error — an optional field still excludes explicit undefined.
     const undefinedNote: PatchInput<TestContract, "Single"> = { note: undefined };
     void [empty, patch, invalid, undefinedNote];
-  });
+  }
 
-  it("preserves each model's non-key fields when model names form a union", () => {
+  // preserves each model's non-key fields when model names form a union
+  {
     expectTypeOf<PatchInput<TestContract, "Single" | "Compound">>().toEqualTypeOf<
       { title?: "draft" | "published"; note?: string } | { role?: "member" | "admin" }
     >();
@@ -256,9 +271,10 @@ describe("primary-key update inputs", () => {
       upsert: { role: "member" },
     };
     void inputs;
-  });
+  }
 
-  it("still accepts and requires keys in create and upsert.create", () => {
+  // still accepts and requires keys in create and upsert.create
+  {
     type SingleCreate = Parameters<Accessor<"Single">["create"]>[0];
     type UpsertCreate = Parameters<Accessor<"Single">["upsert"]>[0]["create"];
     const create: SingleCreate = { id: "i1", title: "draft" };
@@ -273,5 +289,5 @@ describe("primary-key update inputs", () => {
       title: "draft",
     };
     void [create, upsertCreate, missingCreateKey, missingUpsertKey, compound, dotted];
-  });
-});
+  }
+}

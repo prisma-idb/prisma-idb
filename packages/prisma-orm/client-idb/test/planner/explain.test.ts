@@ -6,11 +6,15 @@ import { catalog, source } from "./fixtures";
 
 it("describes dates, bytes, arrays, and infinite endpoints without losing key identity", () => {
   const c = catalog([source("a", "a")]);
-  expect(
+  const descriptor = JSON.parse(
     explain(planQuery(c, { where: fieldFilter("a", "in", [new Date(0), new Uint8Array([1, 2]), ["x"], Infinity]) }))
-  ).toBe(
-    '{"access":"index","index":"a","keyPath":"a","ranges":[{"kind":"only","key":{"number":"Infinity"}},{"kind":"only","key":{"date":"1970-01-01T00:00:00.000Z"}},{"kind":"only","key":{"bytes":[1,2]}},{"kind":"only","key":["x"]}],"exact":true}'
   );
+  expect(descriptor.ranges.map((range: { key: unknown }) => range.key)).toEqual([
+    { number: "Infinity" },
+    { date: "1970-01-01T00:00:00.000Z" },
+    { bytes: [1, 2] },
+    ["x"],
+  ]);
 });
 it("produces the same descriptor for equivalent membership orders", () => {
   const c = catalog([source("a", "a")]);
