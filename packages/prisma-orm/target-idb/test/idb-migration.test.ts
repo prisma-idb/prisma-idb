@@ -1,11 +1,8 @@
 /**
  * Tests for the `Migration` abstract base class.
  *
- * Coverage:
- * - subclass exposes the expected `targetId`, `operations`, `describe()`
- * - `origin` / `destination` getters derive correctly from `describe()`
- * - `operations` getter is consumed by `buildMigrationArtifacts` to produce
- *   a valid `ops.json` + `migration.json` pair
+ * Verifies subclass operations and destination metadata through the public
+ * artifact builder's ops.json and migration.json output.
  */
 
 import { buildMigrationArtifacts } from "@prisma/orm-toolchain/migration-tools/migration";

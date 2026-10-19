@@ -77,7 +77,7 @@ it("emits compilable consumer types for enum values, compound paths, index flags
   const generated = generateContractDts(
     contract,
     idbEmission,
-    [],
+    [idbTargetPack.types.codecTypes.import],
     { storageHash: contract.storage.storageHash, profileHash: contract.profileHash },
     undefined,
     idbCodecLookup,
@@ -92,14 +92,26 @@ it("emits compilable consumer types for enum values, compound paths, index flags
   const empty = idbEmission.generateStorageType(emptyContract, "string");
   expectTypechecks({
     "contract.d.ts": generated,
-    "consumer.ts": `
- import type { Contract, Stores, FieldInputTypes, LaneCodecTypes, StorageHash } from "./contract";
- type Equal<A,B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? true : false;
- type Expect<T extends true> = T;
+    "assertions.ts": `
+ export type Equal<A,B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? true : false;
+ export type Expect<T extends true> = T;
+ `,
+    "enum-consumer.ts": `
+ import type { Contract, FieldInputTypes } from "./contract";
+ import type { Equal, Expect } from "./assertions";
  type Row = FieldInputTypes["__unbound__"]["User"];
  type Role = Expect<Equal<Row["role"], "USER" | "ADMIN">>;
  type NullableRole = Expect<Equal<Row["invitedAs"], "USER" | "ADMIN" | null>>;
  type RoleList = Expect<Equal<Row["previousRoles"], ReadonlyArray<"USER" | "ADMIN">>>;
+ type Members = Contract["domain"]["namespaces"]["__unbound__"]["enum"]["Role"]["members"];
+ type FirstEnumName = Expect<Equal<Members[0]["name"], "USER">>;
+ type LastEnumValue = Expect<Equal<Members[1]["value"], "ADMIN">>;
+ // @ts-expect-error — enum unions reject undeclared members.
+ const rejected: Row["role"] = "OWNER";
+ `,
+    "storage-consumer.ts": `
+ import type { Contract, Stores, StorageHash } from "./contract";
+ import type { Equal, Expect } from "./assertions";
  type ScalarKey = Expect<Equal<Stores["my-store"]["keyPath"], "id">>;
  type CompoundKey = Expect<Equal<Stores["pairs"]["keyPath"], readonly ["orgId", "userId"]>>;
  type CompoundIndex = Expect<Equal<Stores["pairs"]["indexes"]["history"]["keyPath"], readonly ["userId", "effectiveFrom"]>>;
@@ -107,9 +119,7 @@ it("emits compilable consumer types for enum values, compound paths, index flags
  type OrdinaryIndex = Expect<Equal<Stores["my-store"]["indexes"]["byTags"]["unique"], false>>;
  type MultiEntry = Expect<Equal<Stores["my-store"]["indexes"]["byTags"]["multiEntry"], true>>;
  type EmptyIndexes = Expect<Equal<Stores["posts"]["indexes"], Record<string,never>>>;
- type Members = Contract["domain"]["namespaces"]["__unbound__"]["enum"]["Role"]["members"];
- type FirstEnumName = Expect<Equal<Members[0]["name"], "USER">>;
- type LastEnumValue = Expect<Equal<Members[1]["value"], "ADMIN">>;
+
  type Hash = Expect<Equal<Contract["storage"]["storageHash"], StorageHash>>;
  type ModelKey = Expect<Equal<Contract["domain"]["namespaces"]["__unbound__"]["models"]["User"]["storage"]["keyPath"], "id">>;
  type ModelStore = Expect<Equal<Contract["domain"]["namespaces"]["__unbound__"]["models"]["User"]["storage"]["storeName"], "my-store">>;
@@ -117,11 +127,34 @@ it("emits compilable consumer types for enum values, compound paths, index flags
  type Auto = Expect<Equal<AutoIncrement["stores"]["items"]["autoIncrement"], true>>;
  type Empty = ${empty};
  type EmptyStores = Expect<Equal<Empty["stores"], Record<string,never>>>;
- // Missing codec imports or wrappers must not degrade field inputs to any.
- type Codec = LaneCodecTypes[keyof LaneCodecTypes];
- const invalid: Row["role"] = "USER";
- // @ts-expect-error — enum unions reject undeclared members.
- const rejected: Row["role"] = "OWNER";
+ `,
+    "scalar-consumer.ts": `
+ import type { FieldInputTypes } from "./contract";
+ import type { Equal, Expect } from "./assertions";
+ // These exact types detect unresolved codec imports degrading inputs to any.
+ type User = FieldInputTypes["__unbound__"]["User"];
+ type Pair = FieldInputTypes["__unbound__"]["Pair"];
+ type Email = Expect<Equal<User["email"], string>>;
+ type Tags = Expect<Equal<User["tags"], unknown>>;
+ type EffectiveFrom = Expect<Equal<Pair["effectiveFrom"], Date>>;
+ `,
+  });
+});
+
+it("emits unique: false when canonicalization omits the index flag", () => {
+  const contract = {
+    ...minimalIdbContract,
+    storage: {
+      ...minimalIdbContract.storage,
+      stores: { users: { keyPath: "id", indexes: { byEmail: { keyPath: "email" } } } },
+    },
+  };
+  const storage = idbEmission.generateStorageType(contract, "string");
+  expectTypechecks({
+    "canonical-index.ts": `
+ export type Storage = ${storage};
+ type ExpectFalse<T extends false> = T;
+ type Unique = ExpectFalse<Storage["stores"]["users"]["indexes"]["byEmail"]["unique"]>;
  `,
   });
 });

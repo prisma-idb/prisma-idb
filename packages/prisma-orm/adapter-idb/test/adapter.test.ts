@@ -1,14 +1,21 @@
+/** Verifies descriptor lowering preserves executable query semantics and identities. */
 import { describe, expect, it } from "vitest";
 import { canonicalStringify } from "@prisma/orm-framework/utils/canonical-stringify";
 import type { IdbQueryPlan, IdbLowererContext } from "../src/exports/runtime";
 import descriptor from "../src/exports/runtime";
 import type { IdbCursorScanPlan, IdbKeyGetPlan, IdbBatchPlan } from "@prisma-idb/driver-idb/runtime";
+
 const META = { target: "idb", storageHash: "test-hash", lane: "test" } as const;
+
 /** Wraps a driver plan in its public query envelope. */
 function makePlan(idbPlan: IdbQueryPlan["idbPlan"]): IdbQueryPlan {
   return { meta: META, idbPlan };
 }
+
+/** Minimal contract context required by the public lowerer. */
 const TEST_CTX: IdbLowererContext = { contract: { storage: { storageHash: "test-hash", stores: {} } } };
+
+/** Adapter created through the same descriptor used by runtime consumers. */
 const adapter = descriptor.create({} as Parameters<typeof descriptor.create>[0]);
 
 describe("adapter lowering", () => {
@@ -18,6 +25,7 @@ describe("adapter lowering", () => {
     expect(adapter.targetId).toBe("idb");
     expect(await adapter.lower(makePlan(plan), TEST_CTX)).toEqual(plan);
   });
+
   it("preserves batch operation order, records and patches", async () => {
     const plan: IdbBatchPlan = {
       meta: META,
@@ -31,6 +39,7 @@ describe("adapter lowering", () => {
     };
     expect(await adapter.lower(makePlan(plan), TEST_CTX)).toEqual(plan);
   });
+
   it("keeps cursor predicates executable with the same pagination", async () => {
     const plan: IdbCursorScanPlan = {
       meta: META,
@@ -46,6 +55,7 @@ describe("adapter lowering", () => {
     expect([{ active: true }, { active: false }].filter((row) => lowered.filter!(row))).toEqual([{ active: true }]);
   });
 });
+
 describe("IdbAdapter.lower() — closure identities", () => {
   it("snapshots structured filter values without mutating the driver plan", async () => {
     const where = { kind: "field" as const, field: "score", op: "eq" as const, value: 10 };

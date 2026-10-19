@@ -272,6 +272,7 @@ describe("query", () => {
     let state: boolean | undefined;
     const adapter = makeMockAdapter({
       lower: async (plan, ctx) => {
+        controller.abort();
         state = ctx.signal?.aborted;
         return plan.idbPlan;
       },
@@ -280,7 +281,7 @@ describe("query", () => {
     for await (const _row of runtime.query(makeQueryPlan(), { signal: controller.signal })) {
       /* Drain the public result. */
     }
-    expect(state).toBe(false);
+    expect(state).toBe(true);
   });
 
   it("middleware beforeEncode is called before the driver runs", async () => {

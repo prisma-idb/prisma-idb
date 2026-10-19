@@ -12,7 +12,7 @@ import idbTargetPack from "@prisma-idb/target-idb/pack";
 import { fieldFilter } from "@prisma-idb/adapter-idb/runtime";
 import type { IdbQueryPlan } from "@prisma-idb/adapter-idb/runtime";
 import { createIDBRuntimeDriver, type IdbRuntimeDriverInstance } from "@prisma-idb/driver-idb/runtime";
-import { and, idbOrm } from "../src/exports/orm";
+import { and, or, idbOrm } from "../src/exports/orm";
 import type { IdbQueryExecutor, IdbQueryExecutorWithTransaction } from "../src/exports/orm";
 import { installIdbProbe, type IdbProbe, type ProbeSnapshot } from "./_idb-probe";
 
@@ -165,13 +165,29 @@ interface Scenario {
 }
 
 const SCENARIOS: readonly Scenario[] = [
+  // ── Single-store reads ──
+  { name: "findMany: no filter", run: (o) => o["items"].all().toArray() },
   { name: "findMany: eq on primary key", run: (o) => o["items"].where({ id: "item-0003" }).all().toArray() },
+  { name: "findUnique: primary key", run: (o) => o["items"].findUnique("item-0003") },
   { name: "findMany: eq on indexed field", run: (o) => o["items"].where({ category: "c3" }).all().toArray() },
+  { name: "findMany: eq on non-indexed field", run: (o) => o["items"].where({ status: "open" }).all().toArray() },
+  {
+    name: "findMany: indexed eq AND non-indexed eq",
+    run: (o) => o["items"].where({ category: "c3", status: "open" }).all().toArray(),
+  },
   {
     name: "findMany: lt on indexed field",
     run: (o) =>
       o["items"]
         .where(() => fieldFilter("score", "lt", 20))
+        .all()
+        .toArray(),
+  },
+  {
+    name: "findMany: gte AND lt on indexed field",
+    run: (o) =>
+      o["items"]
+        .where(() => and(fieldFilter("score", "gte", 10), fieldFilter("score", "lt", 30)))
         .all()
         .toArray(),
   },
@@ -184,6 +200,35 @@ const SCENARIOS: readonly Scenario[] = [
         .toArray(),
   },
   {
+    name: "findMany: OR of indexed eqs",
+    run: (o) =>
+      o["items"]
+        .where(() => or(fieldFilter("category", "eq", "c1"), fieldFilter("category", "eq", "c2")))
+        .all()
+        .toArray(),
+  },
+  {
+    name: "findMany: OR with an AND branch",
+    run: (o) =>
+      o["items"]
+        .where(() =>
+          or(
+            and(fieldFilter("category", "eq", "c1"), fieldFilter("status", "eq", "closed")),
+            fieldFilter("category", "eq", "c2")
+          )
+        )
+        .all()
+        .toArray(),
+  },
+  {
+    name: "findMany: OR mixing indexed and non-indexed",
+    run: (o) =>
+      o["items"]
+        .where(() => or(fieldFilter("category", "eq", "c1"), fieldFilter("status", "eq", "open")))
+        .all()
+        .toArray(),
+  },
+  {
     name: "findMany: compound index exact match",
     run: (o) => o["items"].where({ orgId: "o1", rank: 6 }).all().toArray(),
   },
@@ -191,6 +236,16 @@ const SCENARIOS: readonly Scenario[] = [
   {
     name: "findMany: orderBy indexed field, take 10",
     run: (o) => o["items"].orderBy({ score: "asc" }).take(10).all().toArray(),
+  },
+  {
+    name: "findMany: indexed in with orderBy and take 2",
+    run: (o) =>
+      o["items"]
+        .where(() => fieldFilter("category", "in", ["c1", "c2"]))
+        .orderBy({ category: "desc" })
+        .take(2)
+        .all()
+        .toArray(),
   },
   {
     name: "findFirst: descending compound suffix",
@@ -209,6 +264,7 @@ const SCENARIOS: readonly Scenario[] = [
         .orderBy({ effectiveFrom: "desc" })
         .first(),
   },
+  { name: "findFirst: eq on indexed field", run: (o) => o["items"].where({ category: "c3" }).first() },
   { name: "count: no filter", run: (o) => o["items"].count() },
   { name: "count: eq on indexed field", run: (o) => o["items"].where({ category: "c3" }).count() },
   {
@@ -216,9 +272,30 @@ const SCENARIOS: readonly Scenario[] = [
     run: (o) => o["items"].where({ category: "c3", status: "closed" }).count(),
   },
   {
+    name: "count: in() on indexed field",
+    run: (o) => o["items"].where(() => fieldFilter("category", "in", ["c1", "c2"])).count(),
+  },
+  {
+    name: "count: lt on indexed field",
+    run: (o) => o["items"].where(() => fieldFilter("score", "lt", 20)).count(),
+  },
+  {
+    name: "aggregate: count and sum, eq on indexed field",
+    run: (o) =>
+      o["items"].where({ category: "c3" }).aggregate((a: LooseOrm) => ({ n: a["count"](), s: a["sum"]("score") })),
+  },
+
+  // ── Relation loading ──
+  {
     name: "include 1:N via indexed foreign key",
     run: (o) => o["authors"].where({ id: "a0001" }).include("books").all().toArray(),
   },
+  {
+    name: "include N:1 via primary key",
+    run: (o) => o["books"].where({ id: "book-0001" }).include("author").all().toArray(),
+  },
+
+  // ── Mutations ──
   {
     name: "create: foreign key validation",
     run: (o) => o["books"].create({ id: "book-new", authorId: "a0001", publisherId: "p0", title: "New" }),
@@ -230,8 +307,20 @@ const SCENARIOS: readonly Scenario[] = [
     run: (o) => o["items"].where({ category: "c3" }).updateAll({ status: "archived" }).toArray(),
   },
   {
+    name: "updateAll: range on indexed field",
+    run: (o) =>
+      o["items"]
+        .where(() => fieldFilter("score", "lt", 20))
+        .updateAll({ status: "archived" })
+        .toArray(),
+  },
+  {
     name: "updateAll: changes walked index field",
     run: (o) => o["items"].where({ category: "c3" }).updateAll({ category: "c4" }).toArray(),
+  },
+  {
+    name: "update: eq on indexed field",
+    run: (o) => o["items"].where({ category: "c3" }).update({ status: "archived" }),
   },
   {
     name: "upsert: primary-key existing-row lookup",
@@ -241,6 +330,10 @@ const SCENARIOS: readonly Scenario[] = [
         create: { id: "new", category: "new", score: 0, status: "active", orgId: "o1", rank: 0 },
         update: { status: "archived" },
       }),
+  },
+  {
+    name: "deleteAll: eq on indexed field",
+    run: (o) => o["items"].where({ category: "c3" }).deleteAll().toArray(),
   },
 ];
 
@@ -266,11 +359,28 @@ const READ_BUDGETS: Record<string, readonly number[]> = {
   "updateAll: eq on indexed field": [12, 120],
   "updateAll: changes walked index field": [24, 240],
   "upsert: primary-key existing-row lookup": [4, 4],
+  "findMany: no filter": [120, 1200],
+  "findUnique: primary key": [2, 2],
+  "findMany: eq on non-indexed field": [120, 1200],
+  "findMany: indexed eq AND non-indexed eq": [12, 120],
+  "findMany: gte AND lt on indexed field": [24, 24],
+  "findMany: OR of indexed eqs": [24, 240],
+  "findMany: OR with an AND branch": [120, 1200],
+  "findMany: OR mixing indexed and non-indexed": [120, 1200],
+  "findMany: indexed in with orderBy and take 2": [6, 6],
+  "findFirst: eq on indexed field": [2, 2],
+  "count: in() on indexed field": [0, 0],
+  "count: lt on indexed field": [0, 0],
+  "aggregate: count and sum, eq on indexed field": [12, 120],
+  "include N:1 via primary key": [4, 4],
+  "updateAll: range on indexed field": [24, 24],
+  "update: eq on indexed field": [4, 4],
+  "deleteAll: eq on indexed field": [24, 240],
 };
 
 let dbCounter = 0;
 
-/** Measures storage reads with the same matching data at each store size. */
+/** Measures storage reads at each size, with matching rows proportional to the store. */
 async function measure(scenario: Scenario): Promise<number[]> {
   const reads: number[] = [];
   for (const n of SIZES) {
@@ -303,12 +413,19 @@ afterAll(() => {
 });
 
 describe("plan-shape gate", () => {
+  it("assigns a budget to every scenario and has no stale budget keys", () => {
+    expect(SCENARIOS.map(({ name }) => name).sort()).toEqual(Object.keys(READ_BUDGETS).sort());
+    for (const budget of Object.values(READ_BUDGETS)) expect(budget).toHaveLength(SIZES.length);
+  });
   for (const scenario of SCENARIOS) {
-    it(`${scenario.name} avoids a full-store read as unrelated rows grow`, async () => {
+    it(`${scenario.name} stays within the read budget at 100 and 1,000 rows`, async () => {
       const actual = await measure(scenario);
-      const budget = READ_BUDGETS[scenario.name]!;
+      const budget = READ_BUDGETS[scenario.name];
+      expect(budget, `missing read budget for ${scenario.name}`).toBeDefined();
       for (const [index, reads] of actual.entries()) {
-        expect(reads, `reads at store size ${SIZES[index]}`).toBeLessThanOrEqual(budget[index]!);
+        // An unfiltered control proves the probe can observe a full scan.
+        if (scenario.name === "findMany: no filter") expect(reads).toBeGreaterThanOrEqual(SIZES[index]!);
+        expect(reads, `reads at store size ${SIZES[index]}`).toBeLessThanOrEqual(budget![index]!);
       }
     });
   }

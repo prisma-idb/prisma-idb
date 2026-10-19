@@ -661,6 +661,24 @@ it("matches full-scan write results, counts and contents for planned ranges and 
   });
 });
 
+it.each(["updateAll", "updateCount"] as const)(
+  "%s rejects primary-key changes without persisting a partial write",
+  async (operation) => {
+    await withDatabase(async (db, driver) => {
+      const rows = [{ id: "i1", category: "a", rank: 1, label: "original" }];
+      for (const where of [undefined, f("id", "eq", "i1")]) {
+        await seed(db, rows);
+        const query = applyQuery(accessor(driver, compoundContract), where === undefined ? {} : { where });
+        // Exercise untyped callers too: primary keys are excluded from the typed patch API.
+        const patch = { id: "new", label: "changed" } as never;
+        const result = operation === "updateAll" ? query.updateAll(patch).toArray() : query.updateCount(patch);
+        await expect(result).rejects.toMatchObject({ code: "PRIMARY_KEY_CHANGE_UNSUPPORTED" });
+        expect(await oracle(db, {})).toEqual(rows);
+      }
+    }, compoundContract);
+  }
+);
+
 it("updates each row once when keys move into a later range or out of the walked index", async () => {
   await withDatabase(async (db, driver) => {
     const rows = [
@@ -671,16 +689,16 @@ it("updates each row once when keys move into a later range or out of the walked
     ];
     for (const patch of [{ category: "b" }, { category: "0" }, { category: null }])
       await compareWrite(db, driver, rows, f("category", "in", ["a", "b"]), "updateAll", patch);
-    // The trailing compound-index field is walked even though it is not filtered.
-    await compareWrite(
-      db,
-      driver,
-      rows,
-      f("category", "eq", "b"),
-      "updateAll",
-      { label: "zz", rank: 9 },
-      compoundContract
-    );
+    // Patching a trailing field moves the first row into a later point range.
+    // An idempotent patch still must not return or count that row twice.
+    const compoundRows = [
+      { id: "i1", category: "b", rank: 1, label: "x" },
+      { id: "i2", category: "b", rank: 2, label: "y" },
+      { id: "i3", category: "c", rank: 1, label: "z" },
+    ];
+    const where = andExpr([f("category", "eq", "b"), f("rank", "in", [1, 2])]);
+    for (const operation of ["updateAll", "updateCount"] as const)
+      await compareWrite(db, driver, compoundRows, where, operation, { rank: 2 }, compoundContract);
     // A single-row write limits matches globally, rather than once per range.
     await seed(db, rows);
     const updated = await accessor(driver)

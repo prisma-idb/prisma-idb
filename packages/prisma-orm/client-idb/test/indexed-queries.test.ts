@@ -170,6 +170,7 @@ describe("equality on indexed fields and keys", () => {
       ).toEqual([]);
     }
   );
+
   it("returns correct rows for equality on indexed field", async () => {
     const client = asRecord(idbOrm({ contract: userContract, executor }));
     const rows = await client["users"]!.where({ email: "alice@example.com" }).all().toArray();

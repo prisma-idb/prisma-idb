@@ -1,12 +1,12 @@
-import { resolve } from "node:path";
+import { resolve, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { expect } from "vitest";
 import ts from "typescript";
 
 /** Typechecks consumers of generated declarations against the real package exports. */
 export function expectTypechecks(files: Record<string, string>): void {
-  const sources = new Map(
-    Object.entries(files).map(([name, source]) => [resolve("test", ".generated-types", name), source])
-  );
+  const generatedDir = resolve(dirname(fileURLToPath(import.meta.url)), ".generated-types");
+  const sources = new Map(Object.entries(files).map(([name, source]) => [resolve(generatedDir, name), source]));
   const options: ts.CompilerOptions = {
     noEmit: true,
     strict: true,
@@ -23,7 +23,7 @@ export function expectTypechecks(files: Record<string, string>): void {
   const originalFileExists = host.fileExists.bind(host);
   host.fileExists = (name) => sources.has(name) || originalFileExists(name);
   const originalDirectoryExists = host.directoryExists!.bind(host);
-  host.directoryExists = (name) => name === resolve("test", ".generated-types") || originalDirectoryExists(name);
+  host.directoryExists = (name) => name === generatedDir || originalDirectoryExists(name);
   host.getSourceFile = (name, languageVersion, onError, shouldCreateNewSourceFile) => {
     const source = sources.get(name);
     return source === undefined

@@ -229,30 +229,35 @@ describe("auto-migrate combined multi-space apply", () => {
     dbAfterDay2.close();
   });
 
-  it("preserves pending outbox writes and version metadata across app and extension upgrades", async () => {
-    const name = dbName();
-    const initial = await createAutoMigratingIdbClient({
-      contractSpace: buildContractSpaceFixture([appV1]),
-      dbName: name,
-      extensions: [syncExtension()],
-    });
-    await asRecord(initial.orm)["users"]!.create({ id: "u1", email: "pending@example.com" });
-    await initial.close();
-    // Extension rows are opaque to the core migrator. An upgrade must preserve
-    // unsent payloads and version bookkeeping, including fields it does not own.
-    const pending = {
-      id: "event-1",
-      entityType: "User",
-      status: "pending",
-      payload: { id: "u1", email: "pending@example.com" },
-      retries: 2,
-    };
-    const version = { id: "User:u1", model: "User", serverVersion: 7, localVersion: 9 };
-    await seedPendingSyncState(name, pending, version);
+  it.each([
+    { name: "app", appVersions: [appV1, appV2], extensionVersions: [syncV1] },
+    { name: "extension", appVersions: [appV1], extensionVersions: [syncV1, syncV2] },
+    { name: "combined app and extension", appVersions: [appV1, appV2], extensionVersions: [syncV1, syncV2] },
+  ])(
+    "preserves pending outbox writes and version metadata across $name upgrades",
+    async ({ appVersions, extensionVersions }) => {
+      const name = dbName();
+      const initial = await createAutoMigratingIdbClient({
+        contractSpace: buildContractSpaceFixture([appV1]),
+        dbName: name,
+        extensions: [syncExtension()],
+      });
+      await asRecord(initial.orm)["users"]!.create({ id: "u1", email: "pending@example.com" });
+      await initial.close();
+      // Extension rows are opaque to the core migrator. An upgrade must preserve
+      // unsent payloads and version bookkeeping, including fields it does not own.
+      const pending = {
+        id: "event-1",
+        entityType: "User",
+        status: "pending",
+        payload: { id: "u1", email: "pending@example.com" },
+        retries: 2,
+      };
+      const version = { id: "User:u1", model: "User", serverVersion: 7, localVersion: 9 };
+      await seedPendingSyncState(name, pending, version);
 
-    for (const extensionVersions of [[syncV1], [syncV1, syncV2]]) {
       const client = await createAutoMigratingIdbClient({
-        contractSpace: buildContractSpaceFixture([appV1, appV2]),
+        contractSpace: buildContractSpaceFixture(appVersions),
         dbName: name,
         extensions: [
           { spaceId: "idb-sync", contractSpace: buildExtensionContractSpaceFixture("idb-sync", extensionVersions) },
@@ -276,16 +281,21 @@ describe("auto-migrate combined multi-space apply", () => {
         expect(stored[1]).toEqual([version]);
         expect(stored[2]).toEqual(
           expect.arrayContaining([
-            expect.objectContaining({ space: "app", storageHash: appV2.storage.storageHash }),
+            expect.objectContaining({ space: "app", storageHash: appVersions.at(-1)!.storage.storageHash }),
             expect.objectContaining({ space: "idb-sync", storageHash: extensionVersions.at(-1)!.storage.storageHash }),
           ])
         );
-        expect(upgraded.transaction("users").objectStore("users").indexNames.contains("byEmail")).toBe(true);
+        expect(upgraded.transaction("users").objectStore("users").indexNames.contains("byEmail")).toBe(
+          appVersions.length === 2
+        );
+        const outbox = upgraded.transaction("_idb_sync_outbox").objectStore("_idb_sync_outbox");
+        expect(outbox.indexNames.contains("byEntityType")).toBe(extensionVersions.length === 2);
+        if (extensionVersions.length === 2) expect(outbox.index("byEntityType").keyPath).toBe("entityType");
       } finally {
         upgraded.close();
       }
     }
-  });
+  );
 
   it("repeated open with an already-migrated extension is a no-op (no version bump)", async () => {
     const name = dbName();

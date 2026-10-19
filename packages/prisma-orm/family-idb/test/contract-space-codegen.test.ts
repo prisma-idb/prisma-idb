@@ -6,8 +6,8 @@
 
 import { mkdir, mkdtemp, readFile, writeFile, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
+import { join } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { ContractSpace } from "@prisma/orm-framework/components/control";
@@ -27,7 +27,7 @@ beforeEach(async () => {
     "utf-8"
   );
 
-  await symlink(resolve("node_modules"), join(cwd, "node_modules"), "dir");
+  await symlink(fileURLToPath(new URL("../node_modules", import.meta.url)), join(cwd, "node_modules"), "dir");
   await writeFile(join(cwd, "package.json"), JSON.stringify({ type: "module" }));
 });
 
@@ -90,7 +90,12 @@ async function writePackage(opts: {
   );
 }
 
-describe("generateContractSpace", () => {
+// JSON import attributes require Node 20.10+ (or 18.20+ on the older LTS line).
+const [nodeMajor, nodeMinor] = process.versions.node.split(".").map(Number);
+const supportsJsonAttributes =
+  nodeMajor! > 20 || (nodeMajor === 20 && nodeMinor! >= 10) || (nodeMajor === 18 && nodeMinor! >= 20);
+
+describe.skipIf(!supportsJsonAttributes)("generateContractSpace", () => {
   it("emits an empty-migrations module when no packages exist", async () => {
     const exitCode = await generateContractSpace(defaultPaths(cwd));
     expect(exitCode).toBe(0);
