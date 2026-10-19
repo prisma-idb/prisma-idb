@@ -21,9 +21,10 @@ interface TestCookie {
  * testing. That real flow is still covered directly by `test/login.spec.ts`;
  * everything else here just needs *a* signed-in user.
  */
-export async function signInAsTestUser(page: Page): Promise<void> {
+export async function signInAsTestUser(page: Page): Promise<{ id: string }> {
   const res = await page.request.post("/api/test/session");
   if (!res.ok()) throw new Error(`/api/test/session failed: ${res.status()} ${await res.text()}`);
-  const { cookies } = (await res.json()) as { cookies: TestCookie[] };
+  const { cookies, user } = (await res.json()) as { cookies: TestCookie[]; user: { id: string } };
   await page.context().addCookies(cookies);
+  return user;
 }

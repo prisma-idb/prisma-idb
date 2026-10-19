@@ -145,15 +145,13 @@ test("switches theme modes and persists explicit choices", async ({ page }) => {
   await expect(page.getByText("Ready")).toBeVisible({ timeout: 15_000 });
   await expect(page.locator("html")).toHaveClass(/dark/);
 
-  // Cycle: dark → system → light
+  // An explicit light choice survives a reload too; no dependency on the theme library's storage keys.
   await toggle.click();
   await toggle.click();
   await expect(page.locator("html")).not.toHaveClass(/dark/);
-
-  // Cycle: light → dark → system
-  await toggle.click();
-  await toggle.click();
-  await expect.poll(() => page.evaluate(() => localStorage.getItem("mode-watcher-mode"))).toBe("system");
+  await page.reload();
+  await expect(page.getByText("Ready")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator("html")).not.toHaveClass(/dark/);
 });
 
 test("serves PWA metadata and reloads the app shell offline", async ({ page, context, request }) => {
@@ -167,11 +165,9 @@ test("serves PWA metadata and reloads the app shell offline", async ({ page, con
     start_url: "/",
     display: "standalone",
   });
-  expect(manifest.icons.map((icon: { src: string }) => icon.src)).toEqual([
-    "/icons/icon-144x144.png",
-    "/icons/icon-192x192.png",
-    "/icons/icon-512x512.png",
-  ]);
+  for (const icon of manifest.icons as { src: string }[]) {
+    expect((await request.get(icon.src)).ok()).toBe(true);
+  }
 
   const serviceWorkerResponse = await request.get("/service-worker.js");
   expect(serviceWorkerResponse.ok()).toBe(true);
