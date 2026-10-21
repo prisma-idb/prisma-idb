@@ -128,9 +128,11 @@ function callForm(arg: ExpressionAst): IdbDefaultValue["form"] {
 function taggedDateDefault(): ArgType<{ readonly kind: "date"; readonly value: string }, AttributeCtx> {
   const support = { entries: idbTarget.authoring.dataTypes, lookup: createDataTypeLookup(idbTarget.dataTypes) };
   const tagged = taggedLiteral(knownTags(support), { documentation: "A registered date literal." });
+  // Drop the original output-type witness because parse below returns the IDB date form.
   const { _out: _parsedType, ...metadata } = tagged;
   return {
     ...metadata,
+    // Claim only tagged AST nodes so oneOf preserves tag diagnostics while letting untagged arguments try other forms.
     claims: (arg) => TaggedLiteralExprAst.cast(arg.syntax) !== undefined,
     parse: (arg, ctx) => {
       const parsed = tagged.parse(arg, ctx);
