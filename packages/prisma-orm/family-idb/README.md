@@ -36,6 +36,8 @@ For Prisma VS Code extension hints, put `// use prisma-8` on the first line of t
 
 TypeScript models use a `defaults` map for create-time literals and helpers: `autoincrement()`, `now()`, `uuidv4()`, `uuidv7()`, `cuid2()`, and `updatedAt()`. Import the helpers from `@prisma-idb/family-idb/contract-ts`. The older `fieldDefaults` map only supplies values for the `setDefault` referential action.
 
+PSL `DateTime` fields also accept tagged calendar defaults, such as ``startsAt DateTime @default(date`2024-01-01`)``. The `date` tag accepts valid `YYYY-MM-DD` dates and produces a native `Date` at midnight UTC. Explicit values, including `null` on nullable fields, take precedence. This prototype supports create defaults only; tagged dates do not supply `setDefault` relation values or automatic migration backfills. It uses the public tag-authoring API in Prisma `8.0.0-rc.18`.
+
 Both surfaces index each foreign-key field by default. TypeScript relations can set `index: false` to opt out. Existing TypeScript contracts may get a new `storageHash` and need an index migration. See [Adopt Foreign-Key Indexes](https://prisma-idb.dev/docs/prisma-8/foreign-key-indexes).
 
 Invalid shared definitions throw `IdbContractError` from the TypeScript entry point. Its `diagnostics` array lists `IDB_*` codes, messages, and definition paths. PSL reports the corresponding diagnostics with source spans. See [Contract Authoring](https://prisma-idb.dev/docs/prisma-8/contract-authoring) for attribute mappings, defaults, indexes, and diagnostic codes.
