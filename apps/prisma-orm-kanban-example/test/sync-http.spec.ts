@@ -69,7 +69,7 @@ test("HTTP sync uses the session account despite forged push and pull scopes", a
     // Creating a board with another user's owner ID must also fail ownership checks.
     const forged = board(owner.userId);
     expect(await push(other.request, owner.userId, [forged])).toMatchObject([
-      { id: forged.id, success: false, retryable: false },
+      { id: forged.id, success: false, error: "SCOPE_VIOLATION", retryable: false },
     ]);
 
     const ownPull = await owner.request.get(`/api/sync/pull?scopeKey=${other.userId}`);

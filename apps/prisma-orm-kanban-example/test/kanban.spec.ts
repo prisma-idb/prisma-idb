@@ -149,6 +149,7 @@ test("switches theme modes and persists explicit choices", async ({ page }) => {
   await toggle.click();
   await toggle.click();
   await expect(page.locator("html")).not.toHaveClass(/dark/);
+  await page.emulateMedia({ colorScheme: "dark" });
   await page.reload();
   await expect(page.getByText("Ready")).toBeVisible({ timeout: 15_000 });
   await expect(page.locator("html")).not.toHaveClass(/dark/);
@@ -165,6 +166,7 @@ test("serves PWA metadata and reloads the app shell offline", async ({ page, con
     start_url: "/",
     display: "standalone",
   });
+  expect(manifest.icons.length).toBeGreaterThan(0);
   for (const icon of manifest.icons as { src: string }[]) {
     expect((await request.get(icon.src)).ok()).toBe(true);
   }
