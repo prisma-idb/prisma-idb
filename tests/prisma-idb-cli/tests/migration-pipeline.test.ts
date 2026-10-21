@@ -1,37 +1,25 @@
 /**
- * End-to-end regression tests for the full prisma-idb migration pipeline.
+ * End-to-end regression test for the full prisma-idb migration pipeline.
  *
- * Each test drives the CLI commands in the order a developer would run them on
- * a real project, using a temp directory and real contract JSON fixtures
- * derived from `apps/prisma-orm-usage`:
+ * One journey drives the CLI commands in the order a developer runs them on a real project, in a
+ * temp directory, with contract JSON fixtures derived from `apps/prisma-orm-usage`:
  *
- *   Phase 1 (baseline):
- *     prisma-idb migration plan
- *     prisma-idb migration contract-space
- *     prisma-idb migration preflight
+ *   Phase 1 (baseline):  migration plan, contract-space, preflight
+ *   Phase 2 (add posts): migration plan --name, contract-space, preflight
  *
- *   Phase 2 (add posts):
- *     (write second migration package — simulating a real `migration plan`
- *     incremental run)
- *     prisma-idb migration contract-space
- *     prisma-idb migration preflight
+ * What each command computes (baseline and incremental package contents, hashes, snapshots, the
+ * `--name` requirement) is covered without a subprocess in `family-idb/test/migration-plan.test.ts`.
+ * The journey keeps what only the real binary and the real files can show: the commands compose,
+ * and each reads what the one before it wrote.
  *
- * The contract fixtures are the exact JSON snapshots produced by
- * `prisma contract emit` for the corresponding schema states.
+ * The contract fixtures are the exact JSON snapshots produced by `prisma contract emit` for the
+ * corresponding schema states.
  */
 
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import {
-  cli,
-  createPostsByAuthorIdIndexOp,
-  createPostsStoreOp,
-  getMigrationDirs,
-  setupTmpProject,
-  writePackage,
-  writeRawContractJson,
-} from "./_helpers";
+import { cli, getMigrationDirs, setupTmpProject, writeRawContractJson } from "./_helpers";
 
 // ── Contract fixtures ────────────────────────────────────────────────────────
 // Exact JSON snapshots from apps/prisma-orm-usage: the "no-posts" state
@@ -141,156 +129,59 @@ const CONTRACT_V2_WITH_POSTS = {
 // ── Tests ────────────────────────────────────────────────────────────────────
 
 describe("migration pipeline e2e", () => {
-  it("migration plan (greenfield) creates a valid baseline package from a full contract", async () => {
-    const cwd = await setupTmpProject("e2e-baseline-only");
-    await writeRawContractJson(cwd, CONTRACT_V1_NO_POSTS);
-
-    const { stderr, exitCode } = await cli(["migration", "plan"], { cwd });
-    expect(exitCode).toBe(0);
-    expect(stderr).toContain("Generated baseline migration");
-    expect(stderr).toContain("from: null");
-    expect(stderr).toContain(V1_STORAGE_HASH);
-
-    const dirs = await getMigrationDirs(cwd);
-    expect(dirs).toHaveLength(1);
-    expect(dirs[0]).toMatch(/_baseline$/);
-
-    const meta = JSON.parse(await readFile(join(cwd, "migrations", "app", dirs[0], "migration.json"), "utf-8")) as {
-      from: null;
-      to: string;
-      migrationHash: string;
-    };
-    expect(meta.from).toBeNull();
-    expect(meta.to).toBe(V1_STORAGE_HASH);
-    // Bare hex, no `sha256:` prefix (rc.4+ hash convention).
-    expect(meta.migrationHash).toMatch(/^[0-9a-f]{64,}$/);
-
-    const ops = JSON.parse(await readFile(join(cwd, "migrations", "app", dirs[0], "ops.json"), "utf-8")) as Array<{
-      kind: string;
-      storeName: string;
-    }>;
-    const storeNames = ops.filter((op) => op.kind === "createObjectStore").map((op) => op.storeName);
-    expect(storeNames).toContain("_prisma_next_marker");
-    expect(storeNames).toContain("users");
-    expect(storeNames).toContain("random_store");
-    expect(storeNames).not.toContain("posts");
-  });
-
-  it("full pipeline: plan → contract-space → preflight, then add-posts → contract-space → preflight", async () => {
+  it("plan → contract-space → preflight for a baseline, then the same three for an incremental migration", async () => {
+    // Regression: a command that writes output the next command cannot read, such as a plan whose
+    // snapshot fails preflight, or a contract-space module that omits the newest package.
     const cwd = await setupTmpProject("e2e-full-pipeline");
+    const contractSpacePath = join(cwd, "src", "lib", "prisma", "contract-space.generated.ts");
     await writeRawContractJson(cwd, CONTRACT_V1_NO_POSTS);
 
-    // ── Phase 1: generate the baseline ──────────────────────────────────────
+    // ── Phase 1: baseline ───────────────────────────────────────────────────
 
-    const r1 = await cli(["migration", "plan"], { cwd });
-    expect(r1.exitCode).toBe(0);
+    expect((await cli(["migration", "plan"], { cwd })).exitCode).toBe(0);
+    const [baselineDir] = await getMigrationDirs(cwd);
+    expect(await getMigrationDirs(cwd)).toHaveLength(1);
 
-    const dirs1 = await getMigrationDirs(cwd);
-    expect(dirs1).toHaveLength(1);
-    const baselineMeta = JSON.parse(
-      await readFile(join(cwd, "migrations", "app", dirs1[0], "migration.json"), "utf-8")
-    ) as { from: null; to: string };
-    expect(baselineMeta.to).toBe(V1_STORAGE_HASH);
+    const space1 = await cli(["migration", "contract-space"], { cwd });
+    expect(space1.exitCode).toBe(0);
+    expect(space1.stderr).toContain("1 migration");
+    expect(await readFile(contractSpacePath, "utf-8")).toContain(baselineDir);
 
-    const r2 = await cli(["migration", "contract-space"], { cwd });
-    expect(r2.exitCode).toBe(0);
-    expect(r2.stderr).toContain("1 migration");
-
-    const generated1 = await readFile(join(cwd, "src", "lib", "prisma", "contract-space.generated.ts"), "utf-8");
-    expect(generated1).toContain(dirs1[0]);
-    expect(generated1).not.toContain("posts");
-
-    const r3 = await cli(["migration", "preflight"], { cwd });
-    expect(r3.exitCode).toBe(0);
-    expect(r3.stderr).toContain("Preflighting 1 migration(s)");
-    expect(r3.stderr).toContain(dirs1[0] + " … ok");
-    expect(r3.stderr).toContain("Preflight passed");
+    const preflight1 = await cli(["migration", "preflight"], { cwd });
+    expect(preflight1.exitCode).toBe(0);
+    expect(preflight1.stderr).toContain("Preflight passed");
 
     // ── Phase 2: add the posts model ─────────────────────────────────────────
-    // Simulates what `prisma-idb migration plan` would produce after the
-    // developer adds the Post model to the schema and re-emits the contract.
 
     await writeRawContractJson(cwd, CONTRACT_V2_WITH_POSTS);
-    await writePackage({
-      cwd,
-      dirName: "20260604T1029_add_posts",
-      from: V1_STORAGE_HASH,
-      to: V2_STORAGE_HASH,
-      ops: [createPostsStoreOp, createPostsByAuthorIdIndexOp],
-    });
 
-    // A real migration plan also persists the destination contract snapshot.
-    const snapshotDir = join(cwd, "migrations", "snapshots", V2_STORAGE_HASH);
-    await mkdir(snapshotDir, { recursive: true });
-    await writeFile(join(snapshotDir, "contract.json"), JSON.stringify(CONTRACT_V2_WITH_POSTS), "utf-8");
-
-    const dirs2 = await getMigrationDirs(cwd);
-    expect(dirs2).toHaveLength(2);
-
-    const r4 = await cli(["migration", "contract-space"], { cwd });
-    expect(r4.exitCode).toBe(0);
-    expect(r4.stderr).toContain("2 migration");
-
-    const generated2 = await readFile(join(cwd, "src", "lib", "prisma", "contract-space.generated.ts"), "utf-8");
-    expect(generated2).toContain(dirs1[0]);
-    expect(generated2).toContain("20260604T1029_add_posts");
-    // Baseline must appear before add_posts in the migrations array
-    const baselineIdx = generated2.indexOf(dirs1[0]);
-    const addPostsIdx = generated2.indexOf("20260604T1029_add_posts");
-    expect(baselineIdx).toBeLessThan(addPostsIdx);
-
-    const r5 = await cli(["migration", "preflight"], { cwd });
-    expect(r5.exitCode).toBe(0);
-    expect(r5.stderr).toContain("Preflighting 2 migration(s)");
-    expect(r5.stderr).toContain(dirs1[0] + " … ok");
-    expect(r5.stderr).toContain("20260604T1029_add_posts … ok");
-    expect(r5.stderr).toContain("Preflight passed");
-  });
-
-  it("migration plan auto-detects incremental (not a re-baseline) when migrations/app/ already has packages", async () => {
-    const cwd = await setupTmpProject("e2e-no-double-baseline");
-    await writeRawContractJson(cwd, CONTRACT_V1_NO_POSTS);
-
-    const baseline = await cli(["migration", "plan"], { cwd });
-    expect(baseline.exitCode).toBe(0);
-    const existingDirs = await getMigrationDirs(cwd);
-    expect(existingDirs).toHaveLength(1);
-    const baselineDir = existingDirs[0]!;
-
-    // Without --name it refuses (incremental mode requires one), but it does
-    // NOT try to write a second `from: null` baseline alongside the existing one.
-    const noName = await cli(["migration", "plan"], { cwd });
-    expect(noName.exitCode).toBe(2);
-    expect(noName.stderr).toContain("--name <slug> is required");
+    // Incremental mode must refuse a second baseline, and must not write one while refusing.
+    const unnamed = await cli(["migration", "plan"], { cwd });
+    expect(unnamed.exitCode).toBe(2);
+    expect(unnamed.stderr).toContain("--name <slug> is required");
     expect(await getMigrationDirs(cwd)).toEqual([baselineDir]);
 
-    await writeRawContractJson(cwd, CONTRACT_V2_WITH_POSTS);
-    const withName = await cli(["migration", "plan", "--name", "add_posts"], { cwd });
-    expect(withName.exitCode).toBe(0);
-
+    expect((await cli(["migration", "plan", "--name", "add_posts"], { cwd })).exitCode).toBe(0);
     const dirs = await getMigrationDirs(cwd);
     expect(dirs).toHaveLength(2);
-    expect(dirs).toContain(baselineDir);
-    const newDir = dirs.find((d) => d !== baselineDir)!;
-    const meta = JSON.parse(await readFile(join(cwd, "migrations", "app", newDir, "migration.json"), "utf-8")) as {
-      from: string | null;
+    const addPostsDir = dirs.find((dir) => dir !== baselineDir)!;
+
+    const space2 = await cli(["migration", "contract-space"], { cwd });
+    expect(space2.exitCode).toBe(0);
+    expect(space2.stderr).toContain("2 migration");
+    const generated = await readFile(contractSpacePath, "utf-8");
+    expect(generated).toContain(baselineDir);
+    expect(generated).toContain(addPostsDir);
+
+    const preflight2 = await cli(["migration", "preflight"], { cwd });
+    expect(preflight2.exitCode).toBe(0);
+    expect(preflight2.stderr).toContain("Preflighting 2 migration(s)");
+    expect(preflight2.stderr).toContain("Preflight passed");
+
+    const head = JSON.parse(await readFile(join(cwd, "migrations", "app", addPostsDir, "migration.json"), "utf-8")) as {
+      from: string;
+      to: string;
     };
-    expect(meta.from).toBe(V1_STORAGE_HASH); // chained from the existing package, not from: null
-  });
-
-  it("migration contract-space after migration plan is idempotent", async () => {
-    const cwd = await setupTmpProject("e2e-idempotent");
-    await writeRawContractJson(cwd, CONTRACT_V1_NO_POSTS);
-    await cli(["migration", "plan"], { cwd });
-
-    const r1 = await cli(["migration", "contract-space"], { cwd });
-    expect(r1.exitCode).toBe(0);
-    const out1 = await readFile(join(cwd, "src", "lib", "prisma", "contract-space.generated.ts"), "utf-8");
-
-    const r2 = await cli(["migration", "contract-space"], { cwd });
-    expect(r2.exitCode).toBe(0);
-    const out2 = await readFile(join(cwd, "src", "lib", "prisma", "contract-space.generated.ts"), "utf-8");
-
-    expect(out1).toBe(out2);
+    expect(head).toMatchObject({ from: V1_STORAGE_HASH, to: V2_STORAGE_HASH });
   });
 });

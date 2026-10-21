@@ -1,0 +1,53 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`generated client for a sync schema (user, board, todo) > projects the generated scoped schema 1`] = `
+"// This is a generated Prisma schema for the scoped database.
+// It includes only the models that are synchronized with the client.
+
+generator client {
+  provider = "prisma-client"
+  output   = "./generated"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id	String	@id
+  name	String
+  email	String	@unique
+  emailVerified	Boolean	@default(false)
+  image	String?
+  createdAt	DateTime	@default(now())
+  updatedAt	DateTime	@updatedAt
+  boards	Board[]	@relation("BoardToUser")
+}
+
+model Board {
+  id	String	@id @default(uuid(4))
+  name	String
+  createdAt	DateTime	@default(now())
+  todos	Todo[]	@relation("BoardToTodo")
+  user	User	@relation("BoardToUser", fields: [userId], references: [id])
+  userId	String
+}
+
+model Todo {
+  id	String	@id @default(uuid(4))
+  title	String
+  description	String?
+  isCompleted	Boolean	@default(false)
+  createdAt	DateTime	@default(now())
+  board	Board	@relation("BoardToTodo", fields: [boardId], references: [id])
+  boardId	String
+}
+
+enum ChangeOperation {
+  create
+  update
+  delete
+}
+
+"
+`;

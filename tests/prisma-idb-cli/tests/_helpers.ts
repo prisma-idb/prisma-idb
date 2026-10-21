@@ -221,38 +221,3 @@ export const createPostsStoreOp = {
   storeName: "posts",
   def: { keyPath: "id" },
 } as const;
-
-export const createCommentsStoreOp = {
-  kind: "createObjectStore",
-  id: "object-store.comments.create",
-  label: 'Create object store "comments"',
-  operationClass: "additive",
-  storeName: "comments",
-  def: { keyPath: "id" },
-} as const;
-
-export const createPostsByAuthorIdIndexOp = {
-  kind: "createIndex",
-  id: "index.posts.byAuthorId.create",
-  label: 'Create index "byAuthorId" on "posts"',
-  operationClass: "additive",
-  storeName: "posts",
-  indexName: "byAuthorId",
-  def: { keyPath: "authorId", unique: false },
-} as const;
-
-/**
- * A genuinely-broken op: create an index on a store that was never created.
- * The apply path calls `tx.objectStore("does-not-exist")`, which throws
- * NotFoundError. (Dropping a non-existent store is NOT a failure, because
- * each DDL op skips itself when there's nothing to do.)
- */
-export const indexOnMissingStoreOp = {
-  kind: "createIndex",
-  id: "index.does-not-exist.byThing.create",
-  label: 'Create index "byThing" on "does-not-exist"',
-  operationClass: "additive",
-  storeName: "does-not-exist",
-  indexName: "byThing",
-  def: { keyPath: "thing", unique: false },
-} as const;
