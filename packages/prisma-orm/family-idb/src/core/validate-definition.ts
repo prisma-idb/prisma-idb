@@ -171,7 +171,18 @@ function validateExecutionDefault(model: IdbModelNode, field: IdbFieldNode, repo
   }
   for (const phase of ["onUpdate", "onCreate"] as const) {
     const generator = execution[phase];
-    if (!generator || generator.id === "literal") continue;
+    if (!generator) continue;
+    if (generator.id === "literal") {
+      const codecId = generator.params?.["codecId"];
+      if (codecId !== undefined && (codecId !== field.codecId || field.enumName !== undefined || field.list)) {
+        report("IDB_INVALID_DEFAULT_VALUE", `${label} cannot use a tagged default with codec "${String(codecId)}".`, [
+          ...at,
+          "executionDefault",
+          phase,
+        ]);
+      }
+      continue;
+    }
     const isTimestamp = generator.id === "timestampNow";
     const expectedCodec = isTimestamp ? "idb/date@1" : "idb/string@1";
     if (field.codecId !== expectedCodec || field.enumName !== undefined || field.list) {

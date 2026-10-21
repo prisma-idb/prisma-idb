@@ -16,10 +16,14 @@
  *   fields on the same row), and a cache keyed only by generator id would
  *   otherwise leak one field's/row's value onto the next.
  */
-import type { ExecutionMutationDefault, ExecutionMutationDefaultValue } from "@prisma/orm-framework/contract/types";
+import type {
+  ExecutionMutationDefault,
+  ExecutionMutationDefaultValue,
+  JsonValue,
+} from "@prisma/orm-framework/contract/types";
 import { generateId } from "@prisma/orm-framework/ids/runtime";
 import type { IdbMutationDefaultGeneratorId } from "@prisma-idb/target-idb/pack";
-import { absentAsNull } from "@prisma-idb/target-idb/runtime";
+import { absentAsNull, idbCodecLookup } from "@prisma-idb/target-idb/runtime";
 import { getStoreName, type IdbContract } from "./types";
 
 /** Per-top-level-mutation-call cache, keyed by generator id. Create one with {@link createMutationDefaultsCache}. */
@@ -38,8 +42,16 @@ function computeGeneratedValue(spec: ExecutionMutationDefaultValue): unknown {
   switch (id) {
     case "timestampNow":
       return new Date();
-    case "literal":
-      return spec.params?.["value"];
+    case "literal": {
+      const value = spec.params?.["value"];
+      const codecId = spec.params?.["codecId"];
+      if (codecId === undefined) return value;
+      const codec = typeof codecId === "string" ? idbCodecLookup.get(codecId) : undefined;
+      if (!codec) throw new Error(`Unknown literal-default codec "${String(codecId)}"`);
+      // Contract JSON keeps tagged literals in the codec's wire form. Decode
+      // each resolution so mutable values are never shared across records.
+      return codec.decodeJson(value as JsonValue);
+    }
     case "uuidv4":
     case "uuidv7":
     case "cuid2":

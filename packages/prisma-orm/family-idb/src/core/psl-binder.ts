@@ -1,4 +1,7 @@
 import { assembleAuthoringContributions } from "@prisma/orm-framework/components/control";
+import { describeRefusal, knownTags, readWrittenValue } from "@prisma/orm-framework/components/authoring";
+import { createDataTypeLookup } from "@prisma/orm-framework/components/codec";
+import idbTarget from "@prisma-idb/target-idb/pack";
 import type { ContractSourceDiagnostic } from "@prisma/orm-framework/config/config-types";
 import {
   EMPTY_DATA_TYPES,
@@ -18,6 +21,7 @@ import {
   oneOf,
   optional,
   str,
+  taggedLiteral,
 } from "@prisma/orm-framework/psl-parser";
 import type {
   ArgType,
@@ -32,7 +36,13 @@ import type {
   ResolvedAttribute,
   SymbolTable,
 } from "@prisma/orm-framework/psl-parser";
-import { FunctionCallAst, PslSources, SourceFile, printSyntax } from "@prisma/orm-framework/psl-parser/syntax";
+import {
+  FunctionCallAst,
+  PslSources,
+  SourceFile,
+  TaggedLiteralExprAst,
+  printSyntax,
+} from "@prisma/orm-framework/psl-parser/syntax";
 import type {
   FieldAttributeAst,
   ModelAttributeAst,
@@ -72,6 +82,7 @@ export interface IdbDefaultValue {
     | { readonly kind: "string"; readonly value: string }
     | { readonly kind: "boolean"; readonly value: boolean }
     | { readonly kind: "number"; readonly value: number }
+    | { readonly kind: "date"; readonly value: string }
     | { readonly kind: "identifier"; readonly name: string }
     | { readonly kind: "list" }
     | { readonly kind: "call"; readonly name: string; readonly args: readonly string[] };
@@ -113,13 +124,40 @@ function callForm(arg: ExpressionAst): IdbDefaultValue["form"] {
   };
 }
 
-/** The `@default(...)` argument: a literal, a bare identifier (an enum member), a list, or a function call. */
+/** Reads registered tags through the target's public authoring entries, including unknown-tag diagnostics. */
+function taggedDateDefault(): ArgType<{ readonly kind: "date"; readonly value: string }, AttributeCtx> {
+  const support = { entries: idbTarget.authoring.dataTypes, lookup: createDataTypeLookup(idbTarget.dataTypes) };
+  const tagged = taggedLiteral(knownTags(support), { documentation: "A registered date literal." });
+  const { _out: _parsedType, ...metadata } = tagged;
+  return {
+    ...metadata,
+    claims: (arg) => TaggedLiteralExprAst.cast(arg.syntax) !== undefined,
+    parse: (arg, ctx) => {
+      const parsed = tagged.parse(arg, ctx);
+      if (!parsed.ok) return parsed;
+      const { tag, canonicalization } = parsed.value;
+      if (!canonicalization.ok) return notOk([leafDiagnostic(ctx, arg, "Invalid tagged literal text.")]);
+      const result = readWrittenValue(support, { kind: "tag", tag, text: canonicalization.text });
+      if (!result.ok) {
+        const refusal = describeRefusal(result.failure, support, { forms: [], rewrite: undefined });
+        return notOk([leafDiagnostic(ctx, arg, refusal.message, refusal.code)]);
+      }
+      if (result.value.type !== "idb/date" || typeof result.value.value !== "string") {
+        return notOk([leafDiagnostic(ctx, arg, "Expected an IDB date literal.")]);
+      }
+      return ok({ kind: "date", value: result.value.value });
+    },
+  };
+}
+
+/** The `@default(...)` argument: a plain or tagged literal, an enum member, a list, or a function call. */
 function defaultValueArg(): ArgType<IdbDefaultValue, AttributeCtx> {
   return mapArg(
     oneOf(
       mapArg(bool(), (value) => ({ kind: "boolean" as const, value })),
       mapArg(str(), (value) => ({ kind: "string" as const, value })),
       mapArg(numLiteral(), ({ text }) => ({ kind: "number" as const, value: Number(text) })),
+      taggedDateDefault(),
       mapArg(identifier(), (name) => ({ kind: "identifier" as const, name })),
       // Scalar-list defaults are not supported; binding them lets the interpreter report that with its own code.
       mapArg(list(oneOf(identifier(), str(), numLiteral(), bool())), () => ({ kind: "list" as const })),

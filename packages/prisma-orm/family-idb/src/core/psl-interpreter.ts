@@ -34,13 +34,13 @@ const TEMPORAL_UPDATED_AT_PATH = ["temporal", "updatedAt"] as const;
 /** Generator id shared by `temporal.updatedAt()`/bare `@updatedAt`/`@default(now())`. */
 const TIMESTAMP_NOW_GENERATOR_ID: IdbMutationDefaultGeneratorId = "timestampNow";
 
-/** Synthetic generator id that just echoes `params.value` — backs `@default(<literal>)`. */
+/** Generator id for plain literals and codec-backed tagged literals. */
 const LITERAL_GENERATOR_ID: IdbMutationDefaultGeneratorId = "literal";
 
 /** A resolved field default before it is attached to its definition field. */
 type FieldExecutionDefault = IdbExecutionDefaultNode & { readonly fieldName: string };
 
-/** The literal an `@default(...)` argument spells, or `undefined` when it is an identifier or a call. */
+/** The plain literal an `@default(...)` argument spells, or `undefined` for other forms. */
 function defaultLiteralValue(form: IdbDefaultValue["form"]): { readonly value: string | number | boolean } | undefined {
   return form.kind === "string" || form.kind === "number" || form.kind === "boolean"
     ? { value: form.value }
@@ -480,7 +480,12 @@ function interpretModel(
 
       const enumMember = enumType === undefined ? undefined : enumType.members.find((member) => raw === member.name);
 
-      if (enumType !== undefined) {
+      if (form.kind === "date") {
+        fieldExecutionDefaults.push({
+          fieldName: field.name,
+          onCreate: { id: LITERAL_GENERATOR_ID, params: { value: form.value, codecId: "idb/date@1" } },
+        });
+      } else if (enumType !== undefined) {
         const value = enumMember?.value ?? raw;
         fieldExecutionDefaults.push({
           fieldName: field.name,
