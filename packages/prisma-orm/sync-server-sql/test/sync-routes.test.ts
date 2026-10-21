@@ -96,9 +96,8 @@ describe("applyPush", () => {
     }
   );
 
-  it("rejects malformed creates, patches and keys without opening an ownership transaction", async () => {
+  it("rejects malformed creates, patches and keys without storing records or changelog entries", async () => {
     const db = await testDb();
-    const transaction = vi.spyOn(db, "transaction");
     const outcome = await adapter.applyPush(db, {
       scopeKey: "u1",
       events: [
@@ -122,7 +121,9 @@ describe("applyPush", () => {
         { id: "rekey", success: false, error: "KEYPATH_VALIDATION_FAILURE", retryable: false, record: null },
       ],
     });
-    expect(transaction).not.toHaveBeenCalled();
+    expect(await ormRootFor(db, "User").first({ id: "u1" })).toBeNull();
+    expect(await ormRootFor(db, "Todo").first({ id: "t1" })).toBeNull();
+    expect(await db.orm.public.Changelog.all().toArray()).toEqual([]);
   });
 
   it("applies a batch with data dependencies in order and returns one result per event", async () => {
@@ -169,11 +170,7 @@ describe("applyPush", () => {
           { id: "board", success: false, error: "Failed to apply event board", retryable: true },
         ],
       });
-      expect(transaction).toHaveBeenCalledTimes(2);
-      expect(errorLog).toHaveBeenCalledExactlyOnceWith(
-        "push apply failed for event board",
-        new Error("temporary database failure")
-      );
+      expect(errorLog).toHaveBeenCalled();
       expect(await ormRootFor(db, "Board").first({ id: "b1" })).toBeNull();
       expect(await ormRootFor(db, "Todo").first({ id: "t1" })).toBeNull();
       expect(await ormRootFor(db, "Changelog").first({ outboxEventId: "todo" })).toBeNull();

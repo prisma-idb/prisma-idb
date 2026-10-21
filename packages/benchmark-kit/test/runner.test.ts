@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { runBenchmarkSuite, type BenchmarkOperationDefinition } from "../src/runner";
 import type { BenchmarkProgress } from "../src/types";
 
@@ -84,5 +84,42 @@ describe("runBenchmarkSuite", () => {
       ["measure", 6, "label b"],
     ]);
     expect(progress.every((step) => step.totalSteps === 6)).toBe(true);
+  });
+
+  it("excludes prepare, cleanup and warmup durations from each operation's reported statistics", async () => {
+    let clock = 0;
+    const now = vi.spyOn(performance, "now").mockImplementation(() => clock);
+    // Distinct operation durations detect swapped sample buckets as well as leaked setup time.
+    const definitions = [7, 13].map((duration): BenchmarkOperationDefinition<null, null> => ({
+      operationId: `read-${duration}`,
+      label: `Read ${duration}`,
+      prepare: async () => {
+        clock += 100;
+        return null;
+      },
+      run: async () => {
+        clock += duration;
+      },
+      cleanup: async () => {
+        clock += 200;
+      },
+    }));
+    try {
+      const result = await runBenchmarkSuite({ client: null, definitions, config });
+      expect(
+        result.operations.map(({ operationId, samplesMs, summary }) => ({
+          operationId,
+          samplesMs,
+          meanMs: summary.meanMs,
+          medianMs: summary.medianMs,
+        }))
+      ).toEqual([
+        { operationId: "read-7", samplesMs: [7, 7], meanMs: 7, medianMs: 7 },
+        { operationId: "read-13", samplesMs: [13, 13], meanMs: 13, medianMs: 13 },
+      ]);
+      expect(result.totalDurationMs).toBe(1860);
+    } finally {
+      now.mockRestore();
+    }
   });
 });

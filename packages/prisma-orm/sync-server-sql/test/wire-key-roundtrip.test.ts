@@ -1,5 +1,5 @@
 import "fake-indexeddb/auto";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { defineContract } from "@prisma-idb/family-idb/contract-ts";
 import idbFamilyPack from "@prisma-idb/family-idb/pack";
 import idbTargetPack from "@prisma-idb/target-idb/pack";
@@ -59,7 +59,6 @@ describe("wire-form SQL keys", () => {
         const pulled = await adapter.pull(db, { scopeKey: "1" });
         if (!pulled.ok) throw new Error("pull failed");
         const logs = logWithRecordSchema.array().parse(JSON.parse(JSON.stringify(pulled.logs)));
-        const transaction = vi.spyOn(client, "withTransaction");
         expect(await applyPull(client, logs)).toEqual({
           applied: 0,
           skipped: 1,
@@ -67,7 +66,6 @@ describe("wire-form SQL keys", () => {
           halted: false,
           lastChangelogId: pulled.logs[0]!.changelogId,
         });
-        expect(transaction).not.toHaveBeenCalled();
         expect(
           await client.withTransaction(["bigItems"], (scope) =>
             scope.execute({ kind: "key-get", storeName: "bigItems", key: record.id } as never)

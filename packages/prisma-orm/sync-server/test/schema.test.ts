@@ -7,7 +7,7 @@ import postgresPackRef from "@prisma/orm-postgres/target/pack";
 import { postgresCreateNamespace } from "@prisma/orm-postgres/target/types";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { defineConfig } from "../src/exports/postgres";
-import { injectChangelogModelSql, prepareSqlSchemaWithSync, sqlContractWithSync } from "../src/exports/schema";
+import { sqlContractWithSync } from "../src/exports/schema";
 
 const postgresContractOptions = {
   target: postgresPackRef,
@@ -22,44 +22,6 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await rm(dir, { recursive: true, force: true });
-});
-
-describe("injectChangelogModelSql", () => {
-  it("appends a real enum and a UUID v7 id", () => {
-    const withChangelog = injectChangelogModelSql("model User {\n  id String @id\n}\n");
-    expect(withChangelog).toContain("enum ChangeOperation {");
-    expect(withChangelog).toMatch(/id\s+String\s+@id @default\(uuid\(7\)\)/);
-    expect(withChangelog).toContain("model User {");
-  });
-
-  it("stores keyPath as String, not Json", () => {
-    const withChangelog = injectChangelogModelSql("");
-    expect(withChangelog).toMatch(/keyPath\s+String/);
-  });
-
-  it("emits no @@type codec pragma on the enum — inferred by the target's own config instead", () => {
-    const withChangelog = injectChangelogModelSql("");
-    expect(withChangelog).not.toContain("@@type");
-  });
-});
-
-describe("prepareSqlSchemaWithSync", () => {
-  it("strips @idb.exclude and appends the SQL-flavored Changelog in one call", () => {
-    const result = prepareSqlSchemaWithSync(`
-      model User {
-        id           String @id
-        passwordHash String @idb.exclude
-      }
-      model AuditLog {
-        id String @id
-        @@idb.exclude
-      }
-    `);
-    expect(result).not.toContain("@idb.exclude");
-    expect(result).toContain("passwordHash");
-    expect(result).toContain("model AuditLog");
-    expect(result).toContain("enum ChangeOperation {");
-  });
 });
 
 describe("sqlContractWithSync", () => {
@@ -99,6 +61,7 @@ describe("sqlContractWithSync", () => {
   // Runs the real parse → symbol table → interpret path against the assembled
   // Postgres control stack, the same context `prisma contract emit` builds.
   describe("load against the Postgres control stack", () => {
+    /** Loads the transformed schema through the same Postgres stack as contract emit. */
     async function loadSchema(schema: string) {
       const schemaPath = join(dir, "schema.prisma");
       await writeFile(schemaPath, schema, "utf-8");
@@ -124,14 +87,42 @@ describe("sqlContractWithSync", () => {
   name   String
   secret String @idb.exclude
 }
+model AuditLog {
+  id String @id
+  @@idb.exclude
+}
 `);
       if (!result.ok) {
         throw new Error(result.failure.diagnostics.map((d) => `[${d.code}] ${d.message}`).join("\n"));
       }
-      const json = JSON.stringify(result.value);
-      expect(json).toContain('"User"');
-      expect(json).toContain('"Changelog"');
-      expect(json).toContain('"secret"');
+      expect(result.value).toMatchObject({
+        domain: {
+          namespaces: {
+            public: {
+              models: {
+                User: { fields: { secret: { type: { kind: "scalar", codecId: "pg/text@1" } } } },
+                AuditLog: { fields: { id: { type: { kind: "scalar", codecId: "pg/text@1" } } } },
+                Changelog: {
+                  fields: {
+                    keyPath: { type: { kind: "scalar", codecId: "pg/text@1" } },
+                    operation: { valueSet: { entityKind: "enum", entityName: "ChangeOperation" } },
+                  },
+                },
+              },
+            },
+          },
+        },
+        execution: {
+          mutations: {
+            defaults: expect.arrayContaining([
+              expect.objectContaining({
+                ref: expect.objectContaining({ entry: "Changelog", field: "id" }),
+                onCreate: { kind: "generator", id: "uuidv7" },
+              }),
+            ]),
+          },
+        },
+      });
     });
 
     it("anchors parse diagnostics to the configured schema path", async () => {

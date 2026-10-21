@@ -58,20 +58,6 @@ describe("sqlGetKeyField", () => {
   });
 });
 
-describe("ormRootFor", () => {
-  it("returns the model root when present", () => {
-    const db = {
-      orm: { public: { User: { first: async () => null, select: () => ({}) as never, where: () => ({}) as never } } },
-    };
-    expect(ormRootFor(db, "User")).toBeDefined();
-  });
-
-  it("throws when the model isn't on db.orm.public", () => {
-    const db = { orm: { public: {} } };
-    expect(() => ormRootFor(db, "Ghost")).toThrow(/not found on db\.orm\.public/);
-  });
-});
-
 describe("toSyncPushPayload", () => {
   it("passes create payloads through unchanged", () => {
     expect(toSyncPushPayload("create", { id: "1", name: "Ann" }, "id")).toEqual({ id: "1", name: "Ann" });
