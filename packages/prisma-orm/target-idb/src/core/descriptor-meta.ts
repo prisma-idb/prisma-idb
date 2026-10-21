@@ -1,6 +1,7 @@
 import type { TargetDescriptor } from "@prisma/orm-framework/components/components";
 import { codecDescriptors } from "./codecs";
 import { idbDataTypes } from "./data-types";
+import { idbDateAuthoring } from "./date-authoring";
 
 /**
  * Descriptor metadata for the IndexedDB target.
@@ -27,6 +28,7 @@ export const idbTargetDescriptorMeta = {
   id: "idb",
   version: "0.0.1",
   dataTypes: idbDataTypes,
+  authoring: { dataTypes: idbDateAuthoring },
   types: {
     codecTypes: {
       import: {

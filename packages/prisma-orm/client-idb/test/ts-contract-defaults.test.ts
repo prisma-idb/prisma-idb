@@ -100,6 +100,35 @@ afterEach(async () => {
   client = undefined;
 });
 
+describe("PSL tagged date defaults", () => {
+  it("creates and reads native dates after contract JSON serialization, preserving explicit values", async () => {
+    const { document, sources } = parse(
+      "model Event {\n id Int @id @default(autoincrement())\n startsAt DateTime? @default(date`2024-02-29`)\n}",
+      "schema.prisma"
+    );
+    const { symbolTable } = buildSymbolTable({ documents: [document], sources, defaultNamespaceId: "__unbound__" });
+    const result = interpretPslDocumentToIdbContract(symbolTable, "schema.prisma");
+    if (!result.ok) throw new Error(JSON.stringify(result.failure.diagnostics));
+    client = await openClient(JSON.parse(JSON.stringify(result.value)) as IdbContract);
+    const events = client.orm["event"]!;
+    const first = (await events.create({})) as Record<string, unknown>;
+    expect(first["startsAt"]).toEqual(new Date("2024-02-29T00:00:00.000Z"));
+
+    // Mutating a returned default must not affect the next record's default.
+    (first["startsAt"] as Date).setUTCFullYear(2030);
+    await events.create({});
+    const explicit = new Date("2025-01-01T12:00:00.000Z");
+    await events.create({ startsAt: explicit });
+    await events.create({ startsAt: null });
+    expect(await events.orderBy({ id: "asc" }).all().toArray()).toEqual([
+      { id: 1, startsAt: new Date("2024-02-29T00:00:00.000Z") },
+      { id: 2, startsAt: new Date("2024-02-29T00:00:00.000Z") },
+      { id: 3, startsAt: explicit },
+      { id: 4, startsAt: null },
+    ]);
+  });
+});
+
 describe("TypeScript-authored execution defaults", () => {
   it("hashes the same as the equivalent PSL contract", () => {
     expect(tsContract.storage.storageHash).toBe(pslContract.storage.storageHash);
