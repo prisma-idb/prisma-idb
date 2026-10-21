@@ -123,7 +123,8 @@ export type IdbReferentialAction = "cascade" | "setNull" | "setDefault" | "restr
  *
  * - `"timestampNow"` — `new Date()`. Backs `temporal.updatedAt()` and bare
  *   `@updatedAt` (onCreate + onUpdate) and `@default(now())` (onCreate only).
- * - `"literal"` — echoes `params.value` verbatim. Backs `@default(<literal>)`.
+ * - `"literal"` — returns `params.value`, decoding its JSON form through
+ *   `params.codecId` when present. Backs plain and tagged literal defaults.
  *   IDB has no storage-plane default slot (no server to render one), so even
  *   a literal default has to be produced by this same execution-plane
  *   mechanism.
