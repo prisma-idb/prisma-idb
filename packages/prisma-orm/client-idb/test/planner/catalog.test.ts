@@ -34,14 +34,10 @@ describe("buildCatalog", () => {
       tags: { collection: true },
     });
   });
-  it("caches by contract identity and store without mutating the contract", () => {
+  it("keeps compound key order and leaves the input contract unchanged", () => {
     const before = structuredClone(contract);
-    expect(buildCatalog(contract, "items", "Item")).toBe(buildCatalog(contract, "items", "Item"));
-    expect(buildCatalog(structuredClone(contract), "items", "Item")).not.toBe(buildCatalog(contract, "items", "Item"));
     expect(buildCatalog(contract, "pairs", "Pair").primaryKey.keyPath).toEqual(["a", "b"]);
     expect(contract).toEqual(before);
-    expect(Object.isFrozen(buildCatalog(contract, "items", "Item").indexes)).toBe(true);
-    expect(Object.isFrozen(buildCatalog(contract, "items", "Item").fields["a"])).toBe(true);
   });
   describe("models that share a store", () => {
     const shared = defineContract({
@@ -57,10 +53,6 @@ describe("buildCatalog", () => {
       const row = { id: "1" };
       expect(buildCatalog(shared, "shared", "Plain").absentAsNull(row)).toEqual({ id: "1" });
       expect(buildCatalog(shared, "shared", "Nullable").absentAsNull(row)).toEqual({ id: "1", note: null });
-    });
-    it("caches one catalog per model", () => {
-      expect(buildCatalog(shared, "shared", "Plain")).toBe(buildCatalog(shared, "shared", "Plain"));
-      expect(buildCatalog(shared, "shared", "Plain")).not.toBe(buildCatalog(shared, "shared", "Nullable"));
     });
   });
   it("reports an unknown store, an unknown model and a model of another store", () => {

@@ -96,18 +96,10 @@ describe("createIdbFamilyInstance", () => {
     );
   });
 
-  it("readMarker returns null (no marker queryable from CLI)", async () => {
-    const marker = await instance.readMarker({ driver, space: "app" });
-    expect(marker).toBeNull();
-  });
-
-  it("readAllMarkers returns an empty map", async () => {
-    const markers = await instance.readAllMarkers({ driver });
-    expect(markers.size).toBe(0);
-  });
-
-  it("introspect returns an empty schema (live DB not reachable)", async () => {
+  it("reports no live schema or markers when the CLI cannot reach a browser database", async () => {
     const schema = await instance.introspect({ driver });
     expect(schema.stores).toEqual({});
+    expect(await instance.readMarker({ driver, space: "app" })).toBeNull();
+    expect(await instance.readAllMarkers({ driver })).toEqual(new Map());
   });
 });

@@ -171,6 +171,9 @@ function itemsCatalog(testContract: IdbContract) {
   return buildCatalog(testContract, "items", modelName);
 }
 
+const accessors = new WeakMap<IdbRuntimeDriverInstance, Map<IdbContract, IdbStoreAccessor<never, never>>>();
+
+/** Reuses the immutable base accessor for each driver/contract pair. Refinements return new accessors. */
 function accessor(
   driver: IdbRuntimeDriverInstance,
   testContract: IdbContract = contract
@@ -178,8 +181,18 @@ function accessor(
   const catalog = itemsCatalog(testContract);
   readStored = catalog.absentAsNull;
   comparisonFields = catalog.fields;
-  const orm = idbOrm({ contract: testContract, executor: new TestExecutor(driver) });
-  return (orm as unknown as Record<string, IdbStoreAccessor<never, never>>)["items"]!;
+  let byContract = accessors.get(driver);
+  if (!byContract) {
+    byContract = new Map();
+    accessors.set(driver, byContract);
+  }
+  let base = byContract.get(testContract);
+  if (!base) {
+    const orm = idbOrm({ contract: testContract, executor: new TestExecutor(driver) });
+    base = (orm as unknown as Record<string, IdbStoreAccessor<never, never>>)["items"]!;
+    byContract.set(testContract, base);
+  }
+  return base;
 }
 
 function applyQuery(base: IdbStoreAccessor<never, never>, query: Query) {
@@ -195,7 +208,8 @@ async function compare(
   db: IDBDatabase,
   driver: IdbRuntimeDriverInstance,
   query: Query,
-  testContract: IdbContract = contract
+  testContract: IdbContract = contract,
+  checkExistence = true
 ) {
   const actual = (await applyQuery(accessor(driver, testContract), query).all().toArray()) as Row[];
   const expected = await oracle(db, query);
@@ -209,7 +223,7 @@ async function compare(
   expect(await applyQuery(accessor(driver, testContract), query).count(), "count matches full scan").toBe(
     expected.length
   );
-  await compareExists(db, driver, query.where, testContract);
+  if (checkExistence) await compareExists(db, driver, query.where, testContract);
 }
 
 /** Existence lowering, with and without an in-memory filter, against a full scan. */
@@ -338,7 +352,8 @@ it("matches full scan for each accelerated shape and conservative fallback", asy
         for (const where of filters) {
           await compare(db, driver, { where });
           // A total order also checks global sorting/pagination across multiple ranges.
-          await compare(db, driver, { where, orderBy: { serial: "desc" }, skip: 1, take: 4 });
+          // Existence has no ordering or pagination; the preceding comparison checks both existence paths.
+          await compare(db, driver, { where, orderBy: { serial: "desc" }, skip: 1, take: 4 }, contract, false);
         }
         for (const orderBy of [
           { serial: "asc" },
@@ -394,7 +409,13 @@ it("matches full scan for generated boolean combinations of filters", async () =
       fc.asyncProperty(data, filter, fc.boolean(), async (rows, where, descending) => {
         await seed(db, rows);
         await compare(db, driver, { where });
-        await compare(db, driver, { where, orderBy: { serial: descending ? "desc" : "asc" }, skip: 1, take: 3 });
+        await compare(
+          db,
+          driver,
+          { where, orderBy: { serial: descending ? "desc" : "asc" }, skip: 1, take: 3 },
+          contract,
+          false
+        );
       }),
       { seed: 99005, numRuns: 150 }
     );
@@ -640,6 +661,24 @@ it("matches full-scan write results, counts and contents for planned ranges and 
   });
 });
 
+it.each(["updateAll", "updateCount"] as const)(
+  "%s rejects primary-key changes without persisting a partial write",
+  async (operation) => {
+    await withDatabase(async (db, driver) => {
+      const rows = [{ id: "i1", category: "a", rank: 1, label: "original" }];
+      for (const where of [undefined, f("id", "eq", "i1")]) {
+        await seed(db, rows);
+        const query = applyQuery(accessor(driver, compoundContract), where === undefined ? {} : { where });
+        // Exercise untyped callers too: primary keys are excluded from the typed patch API.
+        const patch = { id: "new", label: "changed" } as never;
+        const result = operation === "updateAll" ? query.updateAll(patch).toArray() : query.updateCount(patch);
+        await expect(result).rejects.toMatchObject({ code: "PRIMARY_KEY_CHANGE_UNSUPPORTED" });
+        expect(await oracle(db, {})).toEqual(rows);
+      }
+    }, compoundContract);
+  }
+);
+
 it("updates each row once when keys move into a later range or out of the walked index", async () => {
   await withDatabase(async (db, driver) => {
     const rows = [
@@ -650,16 +689,16 @@ it("updates each row once when keys move into a later range or out of the walked
     ];
     for (const patch of [{ category: "b" }, { category: "0" }, { category: null }])
       await compareWrite(db, driver, rows, f("category", "in", ["a", "b"]), "updateAll", patch);
-    // The trailing compound-index field is walked even though it is not filtered.
-    await compareWrite(
-      db,
-      driver,
-      rows,
-      f("category", "eq", "b"),
-      "updateAll",
-      { label: "zz", rank: 9 },
-      compoundContract
-    );
+    // Patching a trailing field moves the first row into a later point range.
+    // An idempotent patch still must not return or count that row twice.
+    const compoundRows = [
+      { id: "i1", category: "b", rank: 1, label: "x" },
+      { id: "i2", category: "b", rank: 2, label: "y" },
+      { id: "i3", category: "c", rank: 1, label: "z" },
+    ];
+    const where = andExpr([f("category", "eq", "b"), f("rank", "in", [1, 2])]);
+    for (const operation of ["updateAll", "updateCount"] as const)
+      await compareWrite(db, driver, compoundRows, where, operation, { rank: 2 }, compoundContract);
     // A single-row write limits matches globally, rather than once per range.
     await seed(db, rows);
     const updated = await accessor(driver)

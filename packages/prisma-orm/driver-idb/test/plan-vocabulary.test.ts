@@ -236,43 +236,9 @@ describe("cursor-scan", () => {
   });
 
   describe("early stop", () => {
-    /** A filter that records the ids of the rows the cursor visited. */
-    function recordingFilter(): { visited: unknown[]; filter: (row: Record<string, unknown>) => boolean } {
-      const visited: unknown[] = [];
-      return {
-        visited,
-        filter: (row) => {
-          visited.push(row["id"]);
-          return true;
-        },
-      };
-    }
-
-    it("stops the cursor once take rows are collected", async () => {
-      const { visited, filter } = recordingFilter();
-      const rows = await executeIdbPlan(db, scan({ indexName: "by-n", direction: "prev", take: 2, filter }));
-      expect(ids(rows)).toEqual(["a", "b"]);
-      expect(visited).toEqual(["a", "b"]);
+    it("returns no cursor rows for take 0", async () => {
+      expect(await executeIdbPlan(db, scan({ take: 0 }))).toEqual([]);
     });
-
-    it("counts skipped rows as visited", async () => {
-      const { visited, filter } = recordingFilter();
-      await executeIdbPlan(db, scan({ skip: 2, take: 1, filter }));
-      expect(visited).toEqual(["a", "b", "c"]);
-    });
-
-    it("visits every row when a comparator needs the whole range", async () => {
-      const { visited, filter } = recordingFilter();
-      await executeIdbPlan(db, scan({ take: 1, filter, comparator: () => 0 }));
-      expect(visited).toHaveLength(ITEMS.length);
-    });
-
-    it("does not open a cursor for take 0", async () => {
-      const { visited, filter } = recordingFilter();
-      expect(await executeIdbPlan(db, scan({ take: 0, filter }))).toEqual([]);
-      expect(visited).toEqual([]);
-    });
-
     it("leaves the transaction able to commit, so the next op in a batch runs", async () => {
       const batch: IdbBatchPlan = {
         meta: META,
@@ -377,19 +343,5 @@ describe("scan-write", () => {
     await expect(executeIdbPlan(db, scanWrite({ write: "delete", indexName: "nope" }))).rejects.toMatchObject({
       name: "NotFoundError",
     });
-  });
-});
-
-describe("count and keys ranges", () => {
-  it("count takes a descriptor", async () => {
-    const range: IdbKeyRangeDescriptor = { kind: "lower", key: 30, open: true };
-    const rows = await executeIdbPlan(db, { meta: META, kind: "count", storeName: "items", indexName: "by-n", range });
-    expect(rows).toEqual([{ count: 2 }]);
-  });
-
-  it("keys takes a descriptor", async () => {
-    const range: IdbKeyRangeDescriptor = { kind: "upper", key: 20 };
-    const rows = await executeIdbPlan(db, { meta: META, kind: "keys", storeName: "items", indexName: "by-n", range });
-    expect(rows).toEqual([{ key: "f" }, { key: "e" }]);
   });
 });

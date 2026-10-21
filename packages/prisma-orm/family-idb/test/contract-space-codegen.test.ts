@@ -1,27 +1,21 @@
 /**
- * Tests for the `migration contract-space` codegen.
- *
- * Coverage:
- * - Empty migrations dir → emits a module with `migrations: []` and writes
- *   an empty head.json.
- * - One package → emits import statements + the package, head.json points
- *   at the package's `to`.
- * - Two packages in chain order → emits both, head.json points at the
- *   last package's `to`.
- * - Broken chain (mismatched from/to) → throws with a clear message.
- * - Idempotent: re-running produces byte-identical output.
+ * Imports generated contract spaces to catch unresolved paths, swapped artifacts,
+ * incorrect chain order and a head that points at the wrong migration.
+ * Output placement, broken chains and idempotence remain separate regressions.
  */
 
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import type { ContractSpace } from "@prisma/orm-framework/components/control";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import ts from "typescript";
 import { generateContractSpace } from "../src/core/contract-space-codegen";
 
 let cwd: string;
-let originalStdout: typeof process.stdout.write;
-let originalStderr: typeof process.stderr.write;
-
 beforeEach(async () => {
   cwd = await mkdtemp(join(tmpdir(), "idb-codegen-test-"));
   // Set up the canonical layout the codegen expects by default.
@@ -33,26 +27,45 @@ beforeEach(async () => {
     "utf-8"
   );
 
-  // Silence stdout/stderr during tests.
-  originalStdout = process.stdout.write.bind(process.stdout);
-  originalStderr = process.stderr.write.bind(process.stderr);
-  process.stdout.write = (() => true) as typeof process.stdout.write;
-  process.stderr.write = (() => true) as typeof process.stderr.write;
+  await symlink(fileURLToPath(new URL("../node_modules", import.meta.url)), join(cwd, "node_modules"), "dir");
+  await writeFile(join(cwd, "package.json"), JSON.stringify({ type: "module" }));
 });
 
-afterEach(() => {
-  process.stdout.write = originalStdout;
-  process.stderr.write = originalStderr;
+afterEach(async () => {
+  await rm(cwd, { recursive: true, force: true });
 });
 
-function defaultPaths(base: string): { migrationsDir: string; contractPath: string; outPath: string } {
+/** Compiles and imports the emitted module using Node, including its real JSON dependencies. */
+async function importGenerated(outPath: string): Promise<ContractSpace> {
+  const source = await readFile(outPath, "utf-8");
+  const { outputText, diagnostics } = ts.transpileModule(source, {
+    compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
+    reportDiagnostics: true,
+    fileName: outPath,
+  });
+  expect(diagnostics).toEqual([]);
+  const modulePath = outPath.replace(/\.ts$/, ".mjs");
+  await writeFile(modulePath, outputText);
+  const { stdout } = await promisify(execFile)(process.execPath, [
+    "--input-type=module",
+    "-e",
+    `const {contractSpace} = await import(${JSON.stringify(pathToFileURL(modulePath).href)}); console.log(JSON.stringify(contractSpace));`,
+  ]);
+  return JSON.parse(stdout) as ContractSpace;
+}
+
+/** Resolves fixture paths and keeps CLI output out of test logs. */
+function defaultPaths(base: string) {
   return {
+    out: (_line: string) => {},
+    err: (_line: string) => {},
     migrationsDir: join(base, "migrations"),
     contractPath: join(base, "src", "lib", "prisma", "contract.json"),
     outPath: join(base, "src", "lib", "prisma", "contract-space.generated.ts"),
   };
 }
 
+/** Writes a distinct migration package so swapped JSON imports are observable. */
 async function writePackage(opts: {
   dirName: string;
   from: string | null;
@@ -70,42 +83,63 @@ async function writePackage(opts: {
     createdAt: new Date(2026, 0, 1).toISOString(),
   };
   await writeFile(join(dir, "migration.json"), JSON.stringify(metadata), "utf-8");
-  await writeFile(join(dir, "ops.json"), "[]", "utf-8");
+  await writeFile(
+    join(dir, "ops.json"),
+    JSON.stringify([{ kind: "createObjectStore", storeName: opts.dirName }]),
+    "utf-8"
+  );
 }
 
-describe("generateContractSpace", () => {
+// JSON import attributes require Node 20.10+ (or 18.20+ on the older LTS line).
+const [nodeMajor, nodeMinor] = process.versions.node.split(".").map(Number);
+const supportsJsonAttributes =
+  nodeMajor! > 20 || (nodeMajor === 20 && nodeMinor! >= 10) || (nodeMajor === 18 && nodeMinor! >= 20);
+
+describe.skipIf(!supportsJsonAttributes)("generateContractSpace", () => {
   it("emits an empty-migrations module when no packages exist", async () => {
     const exitCode = await generateContractSpace(defaultPaths(cwd));
     expect(exitCode).toBe(0);
 
-    const out = await readFile(join(cwd, "src", "lib", "prisma", "contract-space.generated.ts"), "utf-8");
-    expect(out).toContain("THIS FILE IS AUTO-GENERATED");
-    expect(out).toContain("import contractJson from");
-    expect(out).toContain("migrations: [],");
-    expect(out).toContain('hash: ""');
+    const output = await importGenerated(defaultPaths(cwd).outPath);
+    expect(output.contractJson.storage.storageHash).toBe("sha256:contract-x");
+    expect(output.migrations).toEqual([]);
+    expect(output.headRef).toEqual({ hash: "", invariants: [] });
   });
 
-  it("emits one import pair per package and inlines headRef pointing at the last package", async () => {
-    await writePackage({ dirName: "0001_baseline", from: null, to: "sha256:A", invariants: ["inv-1"] });
-    await writePackage({ dirName: "0002_addPosts", from: "sha256:A", to: "sha256:B" });
+  it("imports migration metadata and operations in chain order and derives the final head", async () => {
+    await writePackage({ dirName: "z_baseline", from: null, to: "sha256:A", invariants: ["inv-1"] });
+    await writePackage({ dirName: "a_addPosts", from: "sha256:A", to: "sha256:B", invariants: ["head-invariant"] });
 
     const exitCode = await generateContractSpace(defaultPaths(cwd));
     expect(exitCode).toBe(0);
 
-    const out = await readFile(join(cwd, "src", "lib", "prisma", "contract-space.generated.ts"), "utf-8");
-    expect(out).toContain("import mig_0001_baseline_meta");
-    expect(out).toContain("import mig_0001_baseline_ops");
-    expect(out).toContain("import mig_0002_addPosts_meta");
-    expect(out).toContain("import mig_0002_addPosts_ops");
-    expect(out).toContain('dirName: "0001_baseline"');
-    expect(out).toContain('dirName: "0002_addPosts"');
-    // headRef is inlined and pulls .to from the last package's metadata import.
-    expect(out).toContain("hash: mig_0002_addPosts_meta.to");
-    expect(out).toContain("invariants: (mig_0002_addPosts_meta.providedInvariants");
+    const output = await importGenerated(defaultPaths(cwd).outPath);
+    expect(
+      output.migrations.map((pkg) => ({
+        dirName: pkg.dirName,
+        from: pkg.metadata.from,
+        to: pkg.metadata.to,
+        ops: pkg.ops,
+      }))
+    ).toEqual([
+      {
+        dirName: "z_baseline",
+        from: null,
+        to: "sha256:A",
+        ops: [{ kind: "createObjectStore", storeName: "z_baseline" }],
+      },
+      {
+        dirName: "a_addPosts",
+        from: "sha256:A",
+        to: "sha256:B",
+        ops: [{ kind: "createObjectStore", storeName: "a_addPosts" }],
+      },
+    ]);
+    expect(output.headRef).toEqual({ hash: "sha256:B", invariants: ["head-invariant"] });
   });
 
   it("does not write migrations/refs/ (would collide with framework's space scanner)", async () => {
-    await writePackage({ dirName: "0001_baseline", from: null, to: "sha256:A" });
+    await writePackage({ dirName: "z_baseline", from: null, to: "sha256:A" });
 
     await generateContractSpace(defaultPaths(cwd));
 
@@ -122,7 +156,7 @@ describe("generateContractSpace", () => {
   });
 
   it("is idempotent", async () => {
-    await writePackage({ dirName: "0001_baseline", from: null, to: "sha256:A" });
+    await writePackage({ dirName: "z_baseline", from: null, to: "sha256:A" });
 
     await generateContractSpace(defaultPaths(cwd));
     const first = await readFile(join(cwd, "src", "lib", "prisma", "contract-space.generated.ts"), "utf-8");
@@ -181,13 +215,16 @@ describe("generateContractSpace", () => {
     await writeFile(join(customMigDir, "app", "0001", "ops.json"), "[]", "utf-8");
 
     const exitCode = await generateContractSpace({
+      ...defaultPaths(cwd),
       migrationsDir: customMigDir,
       contractPath: customContract,
       outPath: customOut,
     });
     expect(exitCode).toBe(0);
 
-    const out = await readFile(customOut, "utf-8");
-    expect(out).toContain('dirName: "0001"');
+    const output = await importGenerated(customOut);
+    expect(output.migrations.map((pkg) => pkg.dirName)).toEqual(["0001"]);
+    expect(output.contractJson.storage.storageHash).toBe("sha256:X");
+    expect(output.headRef.hash).toBe("sha256:X");
   });
 });

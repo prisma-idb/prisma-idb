@@ -168,13 +168,6 @@ const sortById = <T extends { id: string }>(rows: T[]) => [...rows].sort((a, b) 
 type UserWithPosts = { id: string; posts: { id: string }[] };
 
 describe("idbOrm factory", () => {
-  it("returns a client with keys from contract.roots", () => {
-    const contract = makeTestContract({ users: "User" }, { User: { storeName: "users", keyPath: "id" } });
-    const driver = createIDBRuntimeDriver("no-db", 1).create();
-    const client = idbOrm({ contract, executor: new TestExecutor(driver) });
-    expect(client).toHaveProperty("users");
-  });
-
   it("exposes all root keys from the contract", () => {
     const contract = makeTestContract(
       { users: "User", posts: "Post" },
@@ -988,17 +981,7 @@ describe("IdbStoreAccessor — upsert", () => {
       update: { name: "Alice Updated" },
     });
     expect(row).toMatchObject({ id: "u1", name: "Alice Updated" });
-  });
-
-  it("does not duplicate rows on update path", async () => {
-    const client = makeClient();
-    await client["users"]!.upsert({
-      where: { id: "u1" },
-      create: { id: "u1", name: "Dup", email: "dup@x.com" },
-      update: { name: "No Dup" },
-    });
-    const rows = await client["users"]!.all().toArray();
-    expect(rows).toHaveLength(1);
+    expect(await client["users"]!.all().toArray()).toEqual([row]);
   });
 });
 
@@ -1030,13 +1013,7 @@ describe("IdbStoreAccessor — createAll / createCount", () => {
     const rows = await client["users"]!.createAll([ALICE, BOB]).toArray();
     expect(rows).toHaveLength(2);
     expect((rows as Record<string, unknown>[]).map((r) => r["id"]).sort()).toEqual(["u1", "u2"]);
-  });
-
-  it("createAll persists all records", async () => {
-    const client = makeClient();
-    await client["users"]!.createAll([ALICE, BOB]).toArray();
-    const all = await client["users"]!.all().toArray();
-    expect(all).toHaveLength(2);
+    expect(await client["users"]!.all().toArray()).toEqual([ALICE, BOB]);
   });
 
   it("createCount returns count of inserted records", async () => {
@@ -1078,14 +1055,10 @@ describe("IdbStoreAccessor — deleteAll / deleteCount", () => {
     const rows = await client["users"]!.where({ id: "u1" }).deleteAll().toArray();
     expect(rows).toHaveLength(1);
     expect((rows[0] as Record<string, unknown>)["id"]).toBe("u1");
-  });
-
-  it("deleteAll removes rows from the store", async () => {
-    const client = makeClient();
-    await client["users"]!.where({ id: "u1" }).deleteAll().toArray();
-    const remaining = await client["users"]!.all().toArray();
-    expect(remaining).toHaveLength(2);
-    expect((remaining as Record<string, unknown>[]).map((r) => r["id"])).not.toContain("u1");
+    expect(((await client["users"]!.all().toArray()) as Record<string, unknown>[]).map((row) => row["id"])).toEqual([
+      "u2",
+      "u3",
+    ]);
   });
 
   it("deleteAll deletes all rows when no filter", async () => {

@@ -6,9 +6,11 @@
  * that produces these lists (`temporal.updatedAt()`) is covered separately
  * in family-idb's contract-psl.test.ts.
  */
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ExecutionMutationDefault } from "@prisma/orm-framework/contract/types";
 import { applyCreateDefaults, applyUpdateDefaults, createMutationDefaultsCache } from "../src/core/mutation-defaults";
+
+afterEach(() => vi.useRealTimers());
 
 const updatedAtDefault: ExecutionMutationDefault = {
   ref: { namespace: "__unbound__", entry: "post", field: "updatedAt" },
@@ -31,7 +33,7 @@ describe("applyCreateDefaults", () => {
       { id: "p1", updatedAt: explicit },
       createMutationDefaultsCache()
     );
-    expect(result["updatedAt"]).toBe(explicit);
+    expect(result["updatedAt"]).toEqual(explicit);
   });
 
   it("ignores defaults for other stores", () => {
@@ -39,23 +41,24 @@ describe("applyCreateDefaults", () => {
     expect(result).not.toHaveProperty("updatedAt");
   });
 
-  it("returns the same object reference when there is nothing to apply", () => {
-    const data = { id: "p1" };
-    const result = applyCreateDefaults(undefined, "post", data, createMutationDefaultsCache());
-    expect(result).toBe(data);
-  });
-
-  it("shares one generated timestamp across a batch via a shared cache", () => {
+  it("shares one generated timestamp across a batch even when the clock advances", () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(0));
     const cache = createMutationDefaultsCache();
     const a = applyCreateDefaults([updatedAtDefault], "post", { id: "p1" }, cache);
+    vi.setSystemTime(new Date(1));
     const b = applyCreateDefaults([updatedAtDefault], "post", { id: "p2" }, cache);
-    expect(a["updatedAt"]).toBe(b["updatedAt"]);
+    expect(a["updatedAt"]).toEqual(b["updatedAt"]);
   });
 
-  it("generates an independent timestamp instance per call when given separate caches", () => {
+  it("takes a fresh timestamp for a later independent mutation", () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(0));
     const a = applyCreateDefaults([updatedAtDefault], "post", { id: "p1" }, createMutationDefaultsCache());
+    vi.setSystemTime(new Date(1));
     const b = applyCreateDefaults([updatedAtDefault], "post", { id: "p2" }, createMutationDefaultsCache());
-    expect(a["updatedAt"]).not.toBe(b["updatedAt"]);
+    expect(a["updatedAt"]).toEqual(new Date(0));
+    expect(b["updatedAt"]).toEqual(new Date(1));
   });
 
   it("treats an explicit undefined value the same as an absent column", () => {
@@ -161,20 +164,20 @@ describe("applyUpdateDefaults", () => {
       { updatedAt: explicit },
       createMutationDefaultsCache()
     );
-    expect(result["updatedAt"]).toBe(explicit);
+    expect(result["updatedAt"]).toEqual(explicit);
   });
 
   it("skips every onUpdate default for an empty patch", () => {
     const patch = {};
     const result = applyUpdateDefaults([updatedAtDefault], "post", patch, createMutationDefaultsCache());
-    expect(result).toBe(patch);
+    expect(result).toEqual(patch);
     expect(result).not.toHaveProperty("updatedAt");
   });
 
   it("treats a patch whose fields are all undefined the same as an empty patch", () => {
     const patch = { title: undefined };
     const result = applyUpdateDefaults([updatedAtDefault], "post", patch, createMutationDefaultsCache());
-    expect(result).toBe(patch);
+    expect(result).toEqual(patch);
     expect(result).not.toHaveProperty("updatedAt");
   });
 

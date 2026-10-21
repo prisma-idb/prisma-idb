@@ -1,23 +1,7 @@
-/**
- * `CreateInput` type-level tests.
- *
- * Pure compile-time checks — the assertions live in the type positions
- * below, not in `expect(...)` calls. A real violation surfaces as a `tsc`
- * error (caught by `pnpm check`), not a runtime test failure, so each
- * "it" body just exercises the type and exists for discoverability/grouping.
- *
- * `defineContract()` (the TS-DSL used by other tests in this package)
- * returns a plain `Contract<IdbStorage>` with no `IdbContractWithTypeMaps`
- * phantom key, so `CreateInput` would silently fall back to
- * `Record<string, unknown>` for it and this test would pass vacuously
- * regardless of the type-level logic under test. Building the phantom-typed
- * contract by hand instead reproduces the exact shape a real PSL-derived
- * `contract.d.ts` carries (see `family-idb/src/core/emission.ts`'s
- * `getContractWrapper`/`getTypeMapsExpression`).
- */
-import { describe, it } from "vitest";
+/** Compiler-only fixture: pnpm check validates accepted inputs and every @ts-expect-error. */
+
 import type { IdbContractWithTypeMaps, IdbTypeMaps } from "@prisma-idb/target-idb/pack";
-import type { CreateInput } from "../src/core/types";
+import type { CreateInput } from "../../src/exports/orm";
 
 // Deliberately *not* `Contract<IdbStorage>` — every type-level helper
 // `CreateInput` depends on (`ModelsOf`, `ModelKeyPath`, `ExecutionDefaultsOf`)
@@ -148,28 +132,33 @@ type CounterCreateInput = CreateInput<TestContract, "Counter">;
 type TagCreateInput = CreateInput<TestContract, "Tag">;
 type DocumentCreateInput = CreateInput<TestContract, "Document">;
 
-describe("CreateInput", () => {
-  it("makes a field with an onCreate execution default optional", () => {
+// CreateInput
+{
+  // makes a field with an onCreate execution default optional
+  {
     const input: PostCreateInput = { id: "p1", authorId: "u1" };
     void input;
-  });
+  }
 
-  it("makes a nullable field optional, and still accepts null", () => {
+  // makes a nullable field optional, and still accepts null
+  {
     const omitted: PostCreateInput = { id: "p1", authorId: "u1" };
     const supplied: PostCreateInput = { id: "p1", authorId: "u1", subtitle: "Hi" };
     const explicitNull: PostCreateInput = { id: "p1", authorId: "u1", subtitle: null };
     void omitted;
     void supplied;
     void explicitNull;
-  });
+  }
 
-  it("still requires a field with no execution default", () => {
+  // still requires a field with no execution default
+  {
     // @ts-expect-error — authorId has no default and must remain required.
     const input: PostCreateInput = { id: "p1", title: "hello" };
     void input;
-  });
+  }
 
-  it("requires a non-nullable JSON field even though its input type accepts null", () => {
+  // requires a non-nullable JSON field even though its input type accepts null
+  {
     // @ts-expect-error — requiredJson has nullable: false and no default.
     const omitted: DocumentCreateInput = { id: "d1" };
     const supplied: DocumentCreateInput = { id: "d1", requiredJson: { nested: [1] } };
@@ -177,57 +166,66 @@ describe("CreateInput", () => {
     void omitted;
     void supplied;
     void explicitNull;
-  });
+  }
 
-  it("makes a nullable JSON field optional and still accepts null", () => {
+  // makes a nullable JSON field optional and still accepts null
+  {
     const omitted: DocumentCreateInput = { id: "d1", requiredJson: {} };
     const supplied: DocumentCreateInput = { id: "d1", requiredJson: {}, nullableJson: { nested: [1] } };
     const explicitNull: DocumentCreateInput = { id: "d1", requiredJson: {}, nullableJson: null };
     void omitted;
     void supplied;
     void explicitNull;
-  });
-});
+  }
+}
 
-describe("CreateInput — single-field primary key", () => {
-  it("requires a key with no default and no autoIncrement — IDB can't generate it", () => {
+// CreateInput — single-field primary key
+{
+  // requires a key with no default and no autoIncrement — IDB can't generate it
+  {
     // @ts-expect-error — Post.id is a plain `String @id`; `add()` would throw DataError without it.
     const input: PostCreateInput = { authorId: "u1" };
     void input;
-  });
+  }
 
-  it("makes an autoIncrement key optional — IDB's key generator fills it", () => {
+  // makes an autoIncrement key optional — IDB's key generator fills it
+  {
     const omitted: CounterCreateInput = { label: "a" };
     const supplied: CounterCreateInput = { id: 7, label: "b" };
     void omitted;
     void supplied;
-  });
+  }
 
-  it("makes a key with an onCreate default (uuid()/cuid()) optional", () => {
+  // makes a key with an onCreate default (uuid()/cuid()) optional
+  {
     const omitted: TagCreateInput = { name: "t" };
     const supplied: TagCreateInput = { id: "t1", name: "t" };
     void omitted;
     void supplied;
-  });
-});
+  }
+}
 
-describe("CreateInput — compound primary key", () => {
-  it("accepts every key member supplied", () => {
+// CreateInput — compound primary key
+{
+  // accepts every key member supplied
+  {
     const input: MembershipCreateInput = { orgId: "o1", userId: "u1", role: "admin" };
     void input;
-  });
+  }
 
-  it("requires every key member — IDB can't generate a compound key", () => {
+  // requires every key member — IDB can't generate a compound key
+  {
     // @ts-expect-error — userId is part of the compound key and has no default.
     const input: MembershipCreateInput = { orgId: "o1", role: "admin" };
     void input;
-  });
+  }
 
-  it("makes a key member with its own onCreate default optional, but not the others", () => {
+  // makes a key member with its own onCreate default optional, but not the others
+  {
     const withDefault: SessionCreateInput = { userId: "u1", device: "phone" };
     void withDefault;
     // @ts-expect-error — userId has no default and must remain required.
     const missing: SessionCreateInput = { device: "phone" };
     void missing;
-  });
-});
+  }
+}

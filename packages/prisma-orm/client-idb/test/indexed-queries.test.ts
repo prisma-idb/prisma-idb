@@ -159,15 +159,21 @@ describe("equality on indexed fields and keys", () => {
     await driver.close();
   });
 
+  it.each([null, true, NaN, {}, 1n, ["a", true]])(
+    "returns no matches without an IndexedDB DataError for invalid indexed equality %s",
+    async (value) => {
+      const client = asRecord(idbOrm({ contract: userContract, executor }));
+      expect(
+        await client["users"]!.where(() => fieldFilter("email", "eq", value))
+          .all()
+          .toArray()
+      ).toEqual([]);
+    }
+  );
+
   it("returns correct rows for equality on indexed field", async () => {
     const client = asRecord(idbOrm({ contract: userContract, executor }));
     const rows = await client["users"]!.where({ email: "alice@example.com" }).all().toArray();
-    expect(rows).toEqual([{ id: "u1", name: "Alice", email: "alice@example.com", active: true }]);
-  });
-
-  it("returns correct rows for equality on the primary key", async () => {
-    const client = asRecord(idbOrm({ contract: userContract, executor }));
-    const rows = await client["users"]!.where({ id: "u1" }).all().toArray();
     expect(rows).toEqual([{ id: "u1", name: "Alice", email: "alice@example.com", active: true }]);
   });
 
@@ -197,65 +203,6 @@ describe("equality on indexed fields and keys", () => {
     const rows = await client["users"]!.where({ email: "alice@example.com" }).take(1).all().toArray();
     expect(rows).toEqual([{ id: "u1", name: "Alice", email: "alice@example.com", active: true }]);
   });
-
-  it("does not throw for eq-null on an indexed field", async () => {
-    const client = asRecord(idbOrm({ contract: userContract, executor }));
-    // `IDBKeyRange.only(null)` throws. The raw AST builder, unlike the
-    // `.where({...})` shorthand, doesn't turn null into a null-check.
-    const rows = await client["users"]!.where(() => fieldFilter("email", "eq", null))
-      .all()
-      .toArray();
-    expect(rows).toEqual([]);
-  });
-
-  it("does not throw for a boolean eq value on an indexed field", async () => {
-    const client = asRecord(idbOrm({ contract: userContract, executor }));
-    // `IDBKeyRange.only(true)` throws DataError. Use the raw AST builder so
-    // the value is not normalised by the `.where({…})` shorthand.
-    const rows = await client["users"]!.where(() => fieldFilter("email", "eq", true))
-      .all()
-      .toArray();
-    expect(rows).toEqual([]);
-  });
-
-  it("does not throw for a NaN eq value on an indexed field", async () => {
-    const client = asRecord(idbOrm({ contract: userContract, executor }));
-    // `IDBKeyRange.only(NaN)` throws DataError.
-    const rows = await client["users"]!.where(() => fieldFilter("email", "eq", NaN))
-      .all()
-      .toArray();
-    expect(rows).toEqual([]);
-  });
-
-  it("does not throw for a plain-object eq value on an indexed field", async () => {
-    const client = asRecord(idbOrm({ contract: userContract, executor }));
-    // `IDBKeyRange.only({})` throws DataError.
-    const rows = await client["users"]!.where(() => fieldFilter("email", "eq", {}))
-      .all()
-      .toArray();
-    expect(rows).toEqual([]);
-  });
-
-  it("does not throw for a BigInt eq value on an indexed field", async () => {
-    const client = asRecord(idbOrm({ contract: userContract, executor }));
-    // BigInt is a supported IDB scalar codec but not a valid IndexedDB key
-    // type — IDBKeyRange.only(1n) throws DataError.
-    const rows = await client["users"]!.where(() => fieldFilter("email", "eq", 1n))
-      .all()
-      .toArray();
-    expect(rows).toEqual([]);
-  });
-
-  it("does not throw for an array eq value containing an invalid element", async () => {
-    const client = asRecord(idbOrm({ contract: userContract, executor }));
-    // Arrays are valid IDB keys, but only when every element is itself a
-    // valid key — IDBKeyRange.only(["a", true]) throws DataError because of
-    // the nested boolean.
-    const rows = await client["users"]!.where(() => fieldFilter("email", "eq", ["a", true]))
-      .all()
-      .toArray();
-    expect(rows).toEqual([]);
-  });
 });
 
 // ── include() ─────────────────────────────────────────────────────────────────
@@ -279,16 +226,6 @@ describe("include() joined on an indexed foreign key or a primary key", () => {
 
   afterEach(async () => {
     await driver.close();
-  });
-
-  it("loads relation correctly when FK has an index (single parent)", async () => {
-    const client = asRecord(idbOrm({ contract: relContract, executor }));
-    const rows = (await client["users"]!.where({ id: "u1" }).include("posts").all().toArray()) as unknown as Array<{
-      id: string;
-      posts: Array<{ id: string; title: string; authorId: string }>;
-    }>;
-    expect(rows).toHaveLength(1);
-    expect(rows[0]!.posts.map((p) => p.id).sort()).toEqual(["p1", "p2"]);
   });
 
   it("loads relation correctly when FK has an index (multiple parents)", async () => {

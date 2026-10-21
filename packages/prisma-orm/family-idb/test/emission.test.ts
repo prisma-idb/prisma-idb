@@ -1,8 +1,7 @@
-import type { ContractModel } from "@prisma/orm-framework/contract/types";
-import { domainModelsAtDefaultNamespace } from "@prisma/orm-framework/contract/types";
 import { generateContractDts } from "@prisma/orm-toolchain/emitter";
 import { describe, expect, it } from "vitest";
 import { idbCodecLookup } from "@prisma-idb/target-idb/runtime";
+import { expectTypechecks } from "./_typecheck";
 import { idbEmission } from "../src/core/emission";
 import { validateContract } from "../src/core/validate";
 import { defineContract } from "../src/core/contract-builder";
@@ -44,210 +43,119 @@ function makeRawWithStorage(storage: Record<string, unknown>) {
 
 // ── emission ──────────────────────────────────────────────────────────────────
 
-describe("idbEmission", () => {
-  it("emits enum value unions for scalar, optional, and list fields", () => {
-    const contract = defineContract({
-      family: idbFamilyPack,
-      target: idbTargetPack,
-      enums: { Role: ["USER", "ADMIN"] },
-      models: {
-        User: {
-          store: "users",
-          key: "id",
-          fields: { id: "String", role: "Role", invitedAs: "Role?", previousRoles: "Role[]" },
-        },
+/** Exercises scalar and compound metadata together with enum input types. */
+const emissionContract = defineContract({
+  family: idbFamilyPack,
+  target: idbTargetPack,
+  enums: { Role: ["USER", "ADMIN"] },
+  models: {
+    User: {
+      store: "my-store",
+      key: "id",
+      fields: {
+        id: "String",
+        role: "Role",
+        invitedAs: "Role?",
+        previousRoles: "Role[]",
+        email: "String",
+        tags: "Json",
       },
-    });
+      indexes: { byEmail: { keyPath: "email", unique: true }, byTags: { keyPath: "tags", multiEntry: true } },
+    },
+    Pair: {
+      store: "pairs",
+      key: ["orgId", "userId"],
+      fields: { orgId: "String", userId: "String", effectiveFrom: "DateTime" },
+      indexes: { history: { keyPath: ["userId", "effectiveFrom"], unique: true } },
+    },
+    Post: { store: "posts", key: "id", fields: { id: "String" } },
+  },
+});
 
-    const result = generateContractDts(
-      contract,
-      idbEmission,
-      [],
-      { storageHash: contract.storage.storageHash, profileHash: contract.profileHash },
-      undefined,
-      idbCodecLookup
-    );
+it("emits compilable consumer types for enum values, compound paths, index flags and unusual store names", () => {
+  const contract = emissionContract;
+  const generated = generateContractDts(
+    contract,
+    idbEmission,
+    [idbTargetPack.types.codecTypes.import],
+    { storageHash: contract.storage.storageHash, profileHash: contract.profileHash },
+    undefined,
+    idbCodecLookup,
+    (specifier) => specifier.replace("@internal/", "@prisma/orm-framework/")
+  );
+  const autoContract = {
+    ...minimalIdbContract,
+    storage: { ...minimalIdbContract.storage, stores: { items: { keyPath: "id", autoIncrement: true } } },
+  };
+  const emptyContract = { ...minimalIdbContract, storage: { ...minimalIdbContract.storage, stores: {} } };
+  const autoIncrement = idbEmission.generateStorageType(autoContract, "string");
+  const empty = idbEmission.generateStorageType(emptyContract, "string");
+  expectTypechecks({
+    "contract.d.ts": generated,
+    "assertions.ts": `
+ export type Equal<A,B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? true : false;
+ export type Expect<T extends true> = T;
+ `,
+    "enum-consumer.ts": `
+ import type { Contract, FieldInputTypes } from "./contract";
+ import type { Equal, Expect } from "./assertions";
+ type Row = FieldInputTypes["__unbound__"]["User"];
+ type Role = Expect<Equal<Row["role"], "USER" | "ADMIN">>;
+ type NullableRole = Expect<Equal<Row["invitedAs"], "USER" | "ADMIN" | null>>;
+ type RoleList = Expect<Equal<Row["previousRoles"], ReadonlyArray<"USER" | "ADMIN">>>;
+ type Members = Contract["domain"]["namespaces"]["__unbound__"]["enum"]["Role"]["members"];
+ type FirstEnumName = Expect<Equal<Members[0]["name"], "USER">>;
+ type LastEnumValue = Expect<Equal<Members[1]["value"], "ADMIN">>;
+ // @ts-expect-error — enum unions reject undeclared members.
+ const rejected: Row["role"] = "OWNER";
+ `,
+    "storage-consumer.ts": `
+ import type { Contract, Stores, StorageHash } from "./contract";
+ import type { Equal, Expect } from "./assertions";
+ type ScalarKey = Expect<Equal<Stores["my-store"]["keyPath"], "id">>;
+ type CompoundKey = Expect<Equal<Stores["pairs"]["keyPath"], readonly ["orgId", "userId"]>>;
+ type CompoundIndex = Expect<Equal<Stores["pairs"]["indexes"]["history"]["keyPath"], readonly ["userId", "effectiveFrom"]>>;
+ type UniqueIndex = Expect<Equal<Stores["my-store"]["indexes"]["byEmail"]["unique"], true>>;
+ type OrdinaryIndex = Expect<Equal<Stores["my-store"]["indexes"]["byTags"]["unique"], false>>;
+ type MultiEntry = Expect<Equal<Stores["my-store"]["indexes"]["byTags"]["multiEntry"], true>>;
+ type EmptyIndexes = Expect<Equal<Stores["posts"]["indexes"], Record<string,never>>>;
 
-    expect(result).toContain('readonly role: "USER" | "ADMIN"');
-    expect(result).toContain('readonly invitedAs: "USER" | "ADMIN" | null');
-    expect(result).toContain('readonly previousRoles: ReadonlyArray<"USER" | "ADMIN">');
-    expect(result).toContain("readonly enum:");
-    expect(result).toContain("readonly Role:");
-    expect(result).toContain('readonly name: "USER"');
-    expect(result).toContain('readonly value: "ADMIN"');
+ type Hash = Expect<Equal<Contract["storage"]["storageHash"], StorageHash>>;
+ type ModelKey = Expect<Equal<Contract["domain"]["namespaces"]["__unbound__"]["models"]["User"]["storage"]["keyPath"], "id">>;
+ type ModelStore = Expect<Equal<Contract["domain"]["namespaces"]["__unbound__"]["models"]["User"]["storage"]["storeName"], "my-store">>;
+ type AutoIncrement = ${autoIncrement};
+ type Auto = Expect<Equal<AutoIncrement["stores"]["items"]["autoIncrement"], true>>;
+ type Empty = ${empty};
+ type EmptyStores = Expect<Equal<Empty["stores"], Record<string,never>>>;
+ `,
+    "scalar-consumer.ts": `
+ import type { FieldInputTypes } from "./contract";
+ import type { Equal, Expect } from "./assertions";
+ // These exact types detect unresolved codec imports degrading inputs to any.
+ type User = FieldInputTypes["__unbound__"]["User"];
+ type Pair = FieldInputTypes["__unbound__"]["Pair"];
+ type Email = Expect<Equal<User["email"], string>>;
+ type Tags = Expect<Equal<User["tags"], unknown>>;
+ type EffectiveFrom = Expect<Equal<Pair["effectiveFrom"], Date>>;
+ `,
   });
+});
 
-  describe("generateStorageType", () => {
-    it("serializes stores into a TypeScript type literal", () => {
-      const result = idbEmission.generateStorageType(minimalIdbContract, "StorageHash");
-      // Stores are sorted alphabetically (posts before users).
-      expect(result).toContain("readonly posts:");
-      expect(result).toContain("readonly users:");
-      // posts store — no indexes, no autoIncrement
-      expect(result).toContain("readonly keyPath: 'id'");
-      expect(result).toContain("readonly indexes: Record<string, never>");
-      // users store — has a byEmail index
-      expect(result).toContain("readonly byEmail:");
-      expect(result).toContain("readonly unique: true");
-      // trailing storageHash placeholder
-      expect(result).toContain("readonly storageHash: StorageHash");
-    });
-
-    it("serializes an index with keyPath and unique", () => {
-      const result = idbEmission.generateStorageType(minimalIdbContract, "H");
-      expect(result).toContain("readonly keyPath: 'email'; readonly unique: true");
-    });
-
-    it("emits autoIncrement when present on a store", () => {
-      const contract = defineContract({
-        family: idbFamilyPack,
-        target: idbTargetPack,
-        models: { Item: { store: "items", key: "id", fields: { id: "String" } } },
-      });
-      // Patch the storage to inject autoIncrement for this emission-only test.
-      const patched = {
-        ...contract,
-        storage: { ...contract.storage, stores: { items: { keyPath: "id", autoIncrement: true } } },
-      };
-      const result = idbEmission.generateStorageType(patched as typeof contract, "H");
-      expect(result).toContain("readonly autoIncrement: true");
-    });
-
-    it("emits multiEntry when present on an index", () => {
-      const contract = defineContract({
-        family: idbFamilyPack,
-        target: idbTargetPack,
-        models: {
-          Item: {
-            store: "items",
-            key: "id",
-            fields: { id: "String", tags: "Json" },
-            indexes: { byTags: { keyPath: "tags", unique: false, multiEntry: true } },
-          },
-        },
-      });
-      const result = idbEmission.generateStorageType(contract, "H");
-      expect(result).toContain("readonly multiEntry: true");
-      expect(result).toContain("readonly unique: false");
-    });
-
-    it("emits unique: false for an index whose flag was dropped by canonicalization", () => {
-      const contract = defineContract({
-        family: idbFamilyPack,
-        target: idbTargetPack,
-        models: {
-          Post: {
-            store: "posts",
-            key: "id",
-            fields: { id: "String", authorId: "String" },
-            indexes: { byAuthorId: { keyPath: "authorId", unique: false } },
-          },
-        },
-      });
-      // contract.json omits `unique: false`, and the emitter types the canonical form.
-      const { unique: _dropped, ...canonicalIndex } = contract.storage.stores["posts"]!.indexes!["byAuthorId"]!;
-      const canonical = {
-        ...contract,
-        storage: {
-          ...contract.storage,
-          stores: { posts: { ...contract.storage.stores["posts"]!, indexes: { byAuthorId: canonicalIndex } } },
-        },
-      } as unknown as typeof contract;
-      const result = idbEmission.generateStorageType(canonical, "H");
-      expect(result).toContain("readonly keyPath: 'authorId'; readonly unique: false");
-      expect(result).not.toContain("undefined");
-    });
-
-    it("serializes a compound (array) store keyPath as a readonly tuple type", () => {
-      const contract = defineContract({
-        family: idbFamilyPack,
-        target: idbTargetPack,
-        models: {
-          Membership: {
-            store: "memberships",
-            key: ["orgId", "userId"],
-            fields: { orgId: "String", userId: "String" },
-          },
-        },
-      });
-      const result = idbEmission.generateStorageType(contract, "H");
-      expect(result).toContain("readonly keyPath: readonly ['orgId', 'userId']");
-    });
-
-    it("serializes a compound (array) index keyPath as a readonly tuple type", () => {
-      const contract = defineContract({
-        family: idbFamilyPack,
-        target: idbTargetPack,
-        models: {
-          Membership: {
-            store: "memberships",
-            key: "id",
-            fields: { id: "String", userId: "String", effectiveFrom: "DateTime" },
-            indexes: { byUserEffective: { keyPath: ["userId", "effectiveFrom"], unique: true } },
-          },
-        },
-      });
-      const result = idbEmission.generateStorageType(contract, "H");
-      expect(result).toContain("readonly keyPath: readonly ['userId', 'effectiveFrom']; readonly unique: true");
-    });
-
-    it("returns a Record<string, never> stores type for an empty stores object", () => {
-      // Use a raw object here — defineContract requires at least one model.
-      // This test exercises the emission path directly with an empty stores map.
-      const raw = makeRawWithStorage({ stores: {}, storageHash: "sha256:test" });
-      const result = idbEmission.generateStorageType(
-        raw as unknown as Parameters<typeof idbEmission.generateStorageType>[0],
-        "H"
-      );
-      expect(result).toContain("readonly stores: Record<string, never>");
-    });
-  });
-
-  describe("generateModelStorageType", () => {
-    it("serializes a model's IDB storage metadata", () => {
-      const model = domainModelsAtDefaultNamespace(minimalIdbContract.domain)["Post"]!;
-      const result = idbEmission.generateModelStorageType("Post", model);
-      expect(result).toBe("{ readonly storeName: 'posts'; readonly keyPath: 'id' }");
-    });
-
-    it("handles store names with hyphens (requires quoting)", () => {
-      const model = {
-        storage: { storeName: "my-store", keyPath: "id" },
-      } as unknown as ContractModel;
-      const result = idbEmission.generateModelStorageType("Foo", model);
-      expect(result).toContain("'my-store'");
-    });
-  });
-
-  describe("getFamilyImports", () => {
-    it("returns an array with the IDB type import", () => {
-      const imports = idbEmission.getFamilyImports();
-      expect(imports).toHaveLength(1);
-      expect(imports[0]).toContain("IdbContractWithTypeMaps");
-      expect(imports[0]).toContain("IdbTypeMaps");
-      expect(imports[0]).toContain("@prisma-idb/target-idb/pack");
-    });
-  });
-
-  describe("getFamilyTypeAliases", () => {
-    it("exports LaneCodecTypes as CodecTypes", () => {
-      expect(idbEmission.getFamilyTypeAliases()).toBe("export type LaneCodecTypes = CodecTypes;");
-    });
-  });
-
-  describe("getTypeMapsExpression", () => {
-    it("returns an IdbTypeMaps generic instantiation", () => {
-      expect(idbEmission.getTypeMapsExpression()).toBe("IdbTypeMaps<CodecTypes, FieldOutputTypes, FieldInputTypes>");
-    });
-  });
-
-  describe("getContractWrapper", () => {
-    it("wraps the base contract with IdbContractWithTypeMaps and adds Stores", () => {
-      const result = idbEmission.getContractWrapper("ContractBase", "TypeMaps");
-      expect(result).toContain("export type Contract = IdbContractWithTypeMaps<ContractBase, TypeMaps>;");
-      expect(result).toContain("export type Stores = Contract['storage']['stores'];");
-      expect(result).not.toContain("ContractModelsMap");
-    });
+it("emits unique: false when canonicalization omits the index flag", () => {
+  const contract = {
+    ...minimalIdbContract,
+    storage: {
+      ...minimalIdbContract.storage,
+      stores: { users: { keyPath: "id", indexes: { byEmail: { keyPath: "email" } } } },
+    },
+  };
+  const storage = idbEmission.generateStorageType(contract, "string");
+  expectTypechecks({
+    "canonical-index.ts": `
+ export type Storage = ${storage};
+ type ExpectFalse<T extends false> = T;
+ type Unique = ExpectFalse<Storage["stores"]["users"]["indexes"]["byEmail"]["unique"]>;
+ `,
   });
 });
 
