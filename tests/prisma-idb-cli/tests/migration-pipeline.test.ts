@@ -128,7 +128,8 @@ const CONTRACT_V2_WITH_POSTS = {
 
 // ── Tests ────────────────────────────────────────────────────────────────────
 
-describe("migration pipeline e2e", () => {
+// The journey spawns six CLI subprocesses in sequence; a loaded CI runner can exceed the 30 s default.
+describe("migration pipeline e2e", { timeout: 120_000 }, () => {
   it("plan → contract-space → preflight for a baseline, then the same three for an incremental migration", async () => {
     // Regression: a command that writes output the next command cannot read, such as a plan whose
     // snapshot fails preflight, or a contract-space module that omits the newest package.
