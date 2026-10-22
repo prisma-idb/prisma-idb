@@ -105,6 +105,23 @@ describe("SyncWorker — state machine", () => {
     expect(second).toEqual(["pushing", "pulling", "idle", "pushing", "pulling", "idle"]);
   });
 
+  it("wraps non-Error failures for subscribers while forceSync rejects the original value", async () => {
+    const worker = createSyncWorker({
+      syncClient: makeStubSyncClient(),
+      pushHandler: async () => [],
+      pullHandler: async () => {
+        throw "offline";
+      },
+    });
+    const errors: Error[] = [];
+    worker.on("error", (error) => errors.push(error));
+
+    await expect(worker.forceSync()).rejects.toBe("offline");
+
+    expect(errors[0]).toBeInstanceOf(Error);
+    expect(errors[0]).toMatchObject({ message: "offline", cause: "offline" });
+  });
+
   it("start() is a no-op when already running", async () => {
     let pullCalls = 0;
     const worker = createSyncWorker({
@@ -159,11 +176,17 @@ describe("SyncWorker — state machine", () => {
       backoffMaxMs: 5_000,
     });
     const statuses: string[] = [];
+    const errors: Error[] = [];
     worker.on("statuschange", (s) => statuses.push(s));
+    worker.on("error", (error) => {
+      expect(worker.status).toBe("error");
+      errors.push(error);
+    });
 
     worker.start();
     await vi.advanceTimersByTimeAsync(0);
     expect(worker.status).toBe("error");
+    expect(errors).toEqual([new Error("pull failed")]);
 
     // 1st retry: backoffBaseMs * 2^0 = 1000ms
     await vi.advanceTimersByTimeAsync(999);
@@ -307,6 +330,37 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
       }
     });
   }
+
+  it.each(["push", "pull"] as const)("emits one error for overlapping forced cycles when %s fails", async (during) => {
+    const { client } = await createTestSyncClient();
+    await asAccessors(client.orm)["users"]!.create({ id: "u1", name: "Alice" });
+    const failure = new TypeError("Network request failed", { cause: "offline" });
+    const worker = trackedWorker({
+      syncClient: client,
+      pushHandler: async (events) => {
+        if (during === "push") throw failure;
+        return events.map((event) => ({ id: event.id, success: true }));
+      },
+      pullHandler: async () => {
+        throw failure;
+      },
+    });
+    const errors: Error[] = [];
+    worker.on("error", (error) => {
+      expect(worker.status).toBe("error");
+      errors.push(error);
+    });
+
+    await Promise.all([
+      expect(worker.forceSync()).rejects.toThrow(failure),
+      expect(worker.forceSync()).rejects.toThrow(failure),
+    ]);
+
+    expect(worker.status).toBe("error");
+    expect(errors).toEqual([failure]);
+    expect(errors[0]).toBeInstanceOf(TypeError);
+    expect(errors[0]).toMatchObject({ cause: "offline" });
+  });
 
   describe("acknowledged retention", () => {
     it("continues pushing and pulling when cycle-start pruning fails", async () => {

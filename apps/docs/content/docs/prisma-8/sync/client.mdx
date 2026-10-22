@@ -104,6 +104,9 @@ const worker = db.createSyncWorker(
 
 ```ts
 const worker = db.createSyncWorker({ pushHandler, pullHandler });
+worker.on("error", (error) => {
+  console.error("Sync failed:", error.message);
+});
 worker.start();
 ```
 
@@ -127,13 +130,19 @@ A failed push, including a request that throws or times out, stays retryable how
 
 Custom handlers receive `context.storageHash`, the emitted client contract's `storage.storageHash`. Send it with the request, for example in a header, and forward it to the server's `pull` and `applyPush`. If the server answers 409, throw `ContractMismatchError` (exported from `@prisma-idb/sync-extension-idb/client`) from the handler. The worker then keeps the pull cursor, the queued edits and their payloads, emits `contractmismatch` with `{ during: "push" | "pull" }`, and retries with backoff. Use the event to ask the user to reload. See [Contract check](/docs/prisma-8/sync/server#contract-check).
 
-| Method or property | Description                                                                                                                    |
-| ------------------ | ------------------------------------------------------------------------------------------------------------------------------ |
-| `start()`          | Starts the loop. Does nothing if it's running.                                                                                 |
-| `stop()`           | Lets the current cycle finish, then stops.                                                                                     |
-| `forceSync()`      | Runs a cycle now, ignoring any backoff.                                                                                        |
-| `status`           | `"idle"`, `"pushing"`, `"pulling"`, `"error"` or `"stopped"`.                                                                  |
-| `on(event, cb)`    | Subscribes to `"statuschange"`, `"pushcompleted"`, `"pullcompleted"` or `"contractmismatch"`. Returns an unsubscribe function. |
+| Method or property | Description                                                                                                                               |
+| ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `start()`          | Starts the loop. Does nothing if it's running.                                                                                            |
+| `stop()`           | Lets the current cycle finish, then stops.                                                                                                |
+| `forceSync()`      | Runs a cycle now, ignoring any backoff.                                                                                                   |
+| `status`           | `"idle"`, `"pushing"`, `"pulling"`, `"error"` or `"stopped"`.                                                                             |
+| `on(event, cb)`    | Subscribes to `"statuschange"`, `"error"`, `"pushcompleted"`, `"pullcompleted"` or `"contractmismatch"`. Returns an unsubscribe function. |
+
+`statuschange` receives the same lowercase string as `status`. The legacy generated worker uses uppercase statuses and a different status object. Use lowercase comparisons when migrating to this package.
+
+The `error` event receives the thrown `Error` after status becomes `"error"`. It covers push, pull, timeout, and cursor persistence failures. Error subclasses, stacks, and causes are preserved. Other thrown values are wrapped in an `Error` with `String(value)` as the message and the original value as `cause`. Each failed cycle emits once, even if concurrent callers share it. A failure that settles after `stop()` does not emit this event.
+
+`forceSync()` also sets the error status and emits `error`, while its promise rejects with the original thrown value. Handle that rejection when calling it. A successful cycle returns the status to `"idle"`. Per-event server rejections use `pushcompleted` and the outbox error fields; they do not emit a cycle error unless the cycle throws.
 
 Most apps also call `forceSync()` on the browser's `online` event, and `stop()` on sign-out.
 

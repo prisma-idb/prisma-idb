@@ -158,9 +158,11 @@ export interface ContractMismatchEvent {
   during: "push" | "pull";
 }
 
-/** Payload types for lifecycle, push, pull, and contract-mismatch notifications. */
+/** Payload types for lifecycle, failure, push, pull, and contract-mismatch notifications. */
 type SyncEventMap = {
   statuschange: SyncWorkerStatus;
+  /** A failed cycle, emitted after status becomes "error". */
+  error: Error;
   pushcompleted: PushCompletedEvent;
   pullcompleted: PullCompletedEvent;
   /** The server refused a request because this client's contract is out of step with its own. The pull cursor, queued edits and their payloads are preserved. */
@@ -375,9 +377,18 @@ export function createSyncWorker<TContract extends IdbContract>(options: SyncWor
   /** Runs `runCycle`, joining an already-in-flight cycle instead of starting a second one. */
   function runExclusive(): Promise<void> {
     if (inFlightCycle !== null) return inFlightCycle;
-    inFlightCycle = runCycle().finally(() => {
-      inFlightCycle = null;
-    });
+    inFlightCycle = runCycle()
+      .catch((error: unknown) => {
+        // Report once per cycle, even when scheduled and forced callers share it.
+        if (!stopped) {
+          setStatus("error");
+          emit("error", error instanceof Error ? error : new Error(String(error), { cause: error }));
+        }
+        throw error;
+      })
+      .finally(() => {
+        inFlightCycle = null;
+      });
     return inFlightCycle;
   }
 
@@ -402,7 +413,6 @@ export function createSyncWorker<TContract extends IdbContract>(options: SyncWor
     } catch {
       if (stopped) return;
       consecutiveFailures++;
-      setStatus("error");
     }
     // Guarded by `timer === null` because forceSync() may have already
     // rescheduled while this cycle was in flight (shared via runExclusive) —
