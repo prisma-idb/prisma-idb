@@ -16,7 +16,7 @@
 export interface ManagedIdbClientOptions {
   /** IDB database name — passed to `indexedDB.deleteDatabase` on `reset()`. */
   readonly dbName: string;
-  /** IDB factory override — primarily for tests. Defaults to `indexedDB`. */
+  /** IDB factory override — primarily for tests. Defaults to `indexedDB` when opening or resetting the database. */
   readonly idbFactory?: IDBFactory;
 }
 
@@ -44,6 +44,7 @@ export interface ManagedIdbClient<TClient> {
  * Wraps `open` (a client factory, e.g. `() => createAutoMigratingIdbClient({...})`)
  * with a module-scoped singleton: `get()` opens once and caches the result,
  * `close()` releases it, `reset()` closes and wipes the underlying database.
+ * Creating the wrapper does not access IndexedDB, so it is safe during server rendering.
  *
  * @example
  * ```ts
@@ -63,10 +64,11 @@ export function createManagedIdbClient<TClient extends { close(): Promise<void> 
   open: () => Promise<TClient>,
   options: ManagedIdbClientOptions
 ): ManagedIdbClient<TClient> {
-  const { dbName, idbFactory = indexedDB } = options;
+  const { dbName, idbFactory } = options;
 
   let client: TClient | null = null;
   let clientPromise: Promise<TClient> | null = null;
+  let capturedFactory: IDBFactory | undefined;
   // Gate between get() and reset() — set synchronously (no `await` before
   // either reads/writes it) so the two never interleave: see module doc comment.
   let resetPromise: Promise<void> | null = null;
@@ -75,12 +77,15 @@ export function createManagedIdbClient<TClient extends { close(): Promise<void> 
   async function get(): Promise<TClient> {
     if (resetPromise) await resetPromise;
     if (client) return client;
-    clientPromise ??= open().catch((err: unknown) => {
-      // Clear on rejection so a later get() call retries instead of
-      // re-awaiting the same rejected promise forever.
-      clientPromise = null;
-      throw err;
-    });
+    if (!clientPromise) {
+      capturedFactory = idbFactory ?? indexedDB;
+      clientPromise = open().catch((err: unknown) => {
+        // Clear on rejection so a later get() call retries instead of
+        // re-awaiting the same rejected promise forever.
+        clientPromise = null;
+        throw err;
+      });
+    }
 
     const fresh = await clientPromise;
     client = fresh;
@@ -102,7 +107,7 @@ export function createManagedIdbClient<TClient extends { close(): Promise<void> 
       if (clientPromise) await clientPromise.catch(() => {});
       await close();
       await new Promise<void>((resolve, reject) => {
-        const req = idbFactory.deleteDatabase(dbName);
+        const req = (capturedFactory ?? idbFactory ?? indexedDB).deleteDatabase(dbName);
         req.onsuccess = () => resolve();
         req.onerror = () => reject(req.error as Error);
         // Deliberately no-op: `onblocked` only means the request is waiting
@@ -112,6 +117,7 @@ export function createManagedIdbClient<TClient extends { close(): Promise<void> 
         // doc comment above.
         req.onblocked = () => {};
       });
+      capturedFactory = undefined;
     })();
     try {
       await resetPromise;
