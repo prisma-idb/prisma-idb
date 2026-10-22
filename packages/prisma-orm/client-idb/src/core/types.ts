@@ -37,6 +37,19 @@ type ModelsOf<TContract> = TContract extends { readonly domain: { readonly names
     : Record<string, ContractModelBase>
   : Record<string, ContractModelBase>;
 
+/** Resolve list metadata from the contract, including optional metadata on untyped contracts. */
+export type ModelFieldMany<
+  TContract,
+  ModelName extends string,
+  FieldName extends PropertyKey,
+> = ModelName extends keyof ModelsOf<TContract>
+  ? FieldName extends keyof ModelsOf<TContract>[ModelName]["fields"]
+    ? "many" extends keyof ModelsOf<TContract>[ModelName]["fields"][FieldName]
+      ? ModelsOf<TContract>[ModelName]["fields"][FieldName]["many"]
+      : undefined
+    : undefined
+  : undefined;
+
 // ── IdbContract convenience alias ─────────────────────────────────────────────
 
 /**
@@ -248,8 +261,8 @@ type ExecutionDefaultsOf<TContract> = TContract extends {
  */
 type FieldsWithCreateDefault<TContract, ModelName extends string> = Extract<
   ExecutionDefaultsOf<TContract>,
-  { readonly ref: { readonly table: ModelStoreName<TContract, ModelName> }; readonly onCreate: unknown }
->["ref"]["column"];
+  { readonly ref: { readonly entry: ModelStoreName<TContract, ModelName> }; readonly onCreate: unknown }
+>["ref"]["field"];
 
 /** {@link FieldsWithCreateDefault}, narrowed to keys that actually exist on the resolved input row (may be absent for models with no typed maps). */
 type DefaultedInputField<TContract, ModelName extends string> = FieldsWithCreateDefault<TContract, ModelName> &

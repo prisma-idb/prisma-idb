@@ -39,7 +39,7 @@ function computeGeneratedValue(spec: ExecutionMutationDefaultValue): unknown {
     case "timestampNow":
       return new Date();
     case "literal":
-      return spec.params?.["value"];
+      return structuredClone(spec.params?.["value"]);
     case "uuidv4":
     case "uuidv7":
     case "cuid2":

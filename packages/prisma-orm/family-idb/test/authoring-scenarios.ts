@@ -144,7 +144,7 @@ export const authoringScenarios: AuthoringScenario[] = [
         tags String[]
       }
     `,
-    ts: { models: { User: { store: "user", key: "id", fields: { id: "String", tags: "String[]" as never } } } },
+    ts: { models: { User: { store: "user", key: "id", fields: { id: "String", tags: "String[]" } } } },
   },
   {
     name: "enum named like an Object.prototype key",

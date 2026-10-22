@@ -301,8 +301,8 @@ describe("interpretPslDocumentToIdbContract with portable attribute arguments", 
     expect(Object.keys(result.value.storage.stores)).toEqual(["a\\nb"]);
   });
 
-  it("reports a list default as an invalid default value", () => {
-    const result = interpret("model Post {\n  id String @id\n  tags String[] @default([])\n}");
+  it("reports a list default on a scalar field as an invalid default value", () => {
+    const result = interpret("model Post {\n  id String @id\n  tags String @default([])\n}");
 
     expect(result.ok).toBe(false);
     if (result.ok) return;

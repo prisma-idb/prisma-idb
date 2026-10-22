@@ -1,3 +1,4 @@
+import { type IdbUpdateCallback, resolveFieldUpdates, applyFieldUpdates } from "./field-updates";
 import { AsyncIterableResult } from "@prisma/orm-framework/components/runtime";
 import type { PlanMeta } from "@prisma/orm-framework/contract/types";
 import type { IdbFilterExpr, IdbQueryPlan } from "@prisma-idb/adapter-idb/runtime";
@@ -287,19 +288,23 @@ export interface IdbStoreAccessor<
    * relation callback is present, all writes run in a single multi-store
    * IDB transaction (requires IdbRuntime).
    */
-  update(patch: MutationUpdateInput<TContract, ModelName>): Promise<DefaultModelRow<TContract, ModelName> | null>;
+  update(
+    patch: MutationUpdateInput<TContract, ModelName> | IdbUpdateCallback<TContract, ModelName>
+  ): Promise<DefaultModelRow<TContract, ModelName> | null>;
 
   /**
    * Update all rows matching the accumulated `.where()` filter and return
    * them as an `AsyncIterableResult` (also awaitable as `Row[]`).
    */
-  updateAll(patch: PatchInput<TContract, ModelName>): AsyncIterableResult<DefaultModelRow<TContract, ModelName>>;
+  updateAll(
+    patch: PatchInput<TContract, ModelName> | IdbUpdateCallback<TContract, ModelName>
+  ): AsyncIterableResult<DefaultModelRow<TContract, ModelName>>;
 
   /**
    * Update all rows matching the accumulated `.where()` filter.
    * Returns the count of updated rows.
    */
-  updateCount(patch: PatchInput<TContract, ModelName>): Promise<number>;
+  updateCount(patch: PatchInput<TContract, ModelName> | IdbUpdateCallback<TContract, ModelName>): Promise<number>;
 
   /**
    * Insert or update a single record.
@@ -314,7 +319,7 @@ export interface IdbStoreAccessor<
    */
   upsert(args: {
     create: CreateInput<TContract, ModelName>;
-    update: PatchInput<TContract, ModelName>;
+    update: PatchInput<TContract, ModelName> | IdbUpdateCallback<TContract, ModelName>;
     where: WhereFilter<TContract, ModelName>;
   }): Promise<DefaultModelRow<TContract, ModelName>>;
 
@@ -643,9 +648,10 @@ export class IdbStoreAccessorImpl<
 
   /** Update the first matching row with scalar or nested relation validation. */
   async update(
-    patch: MutationUpdateInput<TContract, ModelName>
+    patch: MutationUpdateInput<TContract, ModelName> | IdbUpdateCallback<TContract, ModelName>
   ): Promise<DefaultModelRow<TContract, ModelName> | null> {
-    const patchRecord = patch as Record<string, unknown>;
+    const resolvedUpdates = resolveFieldUpdates(this.#contract, this.#modelName, patch);
+    const patchRecord = resolvedUpdates.patch;
 
     if (hasNestedMutationCallbacks(this.#contract, this.#modelName, patchRecord)) {
       const row = await executeNestedUpdateMutation({
@@ -683,6 +689,7 @@ export class IdbStoreAccessorImpl<
       modelName: this.#modelName,
       filters: this.#state.filters,
       data: patchRecord,
+      operations: resolvedUpdates.operations,
     });
     return row as DefaultModelRow<TContract, ModelName> | null;
   }
@@ -697,11 +704,14 @@ export class IdbStoreAccessorImpl<
    * `scan-write` case), atomically with the write itself, instead of one
    * event for the whole batch with no way to recover which rows it covered.
    */
-  updateAll(patch: PatchInput<TContract, ModelName>): AsyncIterableResult<DefaultModelRow<TContract, ModelName>> {
+  updateAll(
+    patch: PatchInput<TContract, ModelName> | IdbUpdateCallback<TContract, ModelName>
+  ): AsyncIterableResult<DefaultModelRow<TContract, ModelName>> {
     const contract = this.#contract;
     const modelName = this.#modelName;
     const filters = this.#state.filters;
-    const patchRecord = patch as Record<string, unknown>;
+    const resolvedUpdates = resolveFieldUpdates(this.#contract, this.#modelName, patch);
+    const patchRecord = resolvedUpdates.patch;
     const executor = requireTransactionExecutor(this.#executor);
     return new AsyncIterableResult(
       (async function* (): AsyncGenerator<DefaultModelRow<TContract, ModelName>, void, unknown> {
@@ -711,20 +721,23 @@ export class IdbStoreAccessorImpl<
           modelName,
           filters,
           data: patchRecord,
+          operations: resolvedUpdates.operations,
         });
         for (const row of rows) yield row as DefaultModelRow<TContract, ModelName>;
       })()
     );
   }
 
-  async updateCount(patch: PatchInput<TContract, ModelName>): Promise<number> {
+  async updateCount(
+    patch: PatchInput<TContract, ModelName> | IdbUpdateCallback<TContract, ModelName>
+  ): Promise<number> {
     return (await this.updateAll(patch).toArray()).length;
   }
 
   /** Select and apply the create or update arm inside one transaction. */
   async upsert(args: {
     create: CreateInput<TContract, ModelName>;
-    update: PatchInput<TContract, ModelName>;
+    update: PatchInput<TContract, ModelName> | IdbUpdateCallback<TContract, ModelName>;
     where: WhereFilter<TContract, ModelName>;
   }): Promise<DefaultModelRow<TContract, ModelName>> {
     const where = snapshotLookup(args.where as Record<string, unknown>);
@@ -733,7 +746,8 @@ export class IdbStoreAccessorImpl<
     const whereExpr = shorthandToFilterExpr(where);
     const meta = this.#planMeta(this.#newGroupingKey());
     const createRecord = args.create as Record<string, unknown>;
-    const patchRecord = args.update as Record<string, unknown>;
+    const resolvedUpdates = resolveFieldUpdates(this.#contract, this.#modelName, args.update);
+    const patchRecord = resolvedUpdates.patch;
     const storeName = this.#storeName;
     const executionDefaults = this.#contract.execution?.mutations.defaults;
 
@@ -790,10 +804,18 @@ export class IdbStoreAccessorImpl<
         const rows = await scope.execute({ meta, kind: "add", storeName, record: createWithDefaults });
         return (rows[0] ?? createWithDefaults) as DefaultModelRow<TContract, ModelName>;
       }
-      await validateScalarFks(scope, this.#contract, this.#modelName, effectivePatch, existing);
+      const rowPatch = applyFieldUpdates(
+        this.#contract,
+        this.#modelName,
+        { patch: effectivePatch, operations: resolvedUpdates.operations },
+        existing
+      );
+      assertEnumValues(this.#contract, this.#modelName, rowPatch);
+      assertValidRecord(this.#contract, this.#modelName, "update", rowPatch);
+      await validateScalarFks(scope, this.#contract, this.#modelName, rowPatch, existing);
       const key = extractKeyFromRow(existing, keyPath);
-      await applyReferentialActionsForRowOnUpdate(scope, this.#contract, this.#modelName, existing, effectivePatch);
-      const rows = await scope.execute({ meta, kind: "update", storeName, key, patch: effectivePatch });
+      await applyReferentialActionsForRowOnUpdate(scope, this.#contract, this.#modelName, existing, rowPatch);
+      const rows = await scope.execute({ meta, kind: "update", storeName, key, patch: rowPatch });
       const updated = absentAsNull(this.#contract, this.#modelName)(rows[0] ?? existing);
       return updated as DefaultModelRow<TContract, ModelName>;
     });

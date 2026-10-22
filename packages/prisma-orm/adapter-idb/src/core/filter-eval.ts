@@ -15,6 +15,7 @@
 
 import {
   compareDecimalValues,
+  compareListValues,
   compareFieldValues,
   fieldValuesEqual,
   isDecimalString,
@@ -23,15 +24,17 @@ import type { IdbFilterExpr, IdbFilterOp } from "./idb-filter-expr";
 
 /** Codec metadata determines which string fields have numeric Decimal semantics. */
 export type FilterFieldMetadata = Readonly<
-  Record<string, { readonly codecId?: string | undefined; readonly collection?: boolean }>
+  Record<string, { readonly codecId?: string | undefined; readonly collection?: boolean; readonly dict?: true }>
 >;
 
-/** Reject invalid Decimal operands even when no stored row reaches the evaluator. */
+/** Reject invalid Decimal operands and unsupported list predicates before scanning any rows. */
 export function assertValidDecimalFilter(expr: IdbFilterExpr, fields: FilterFieldMetadata): void {
   if (expr.kind === "and" || expr.kind === "or") {
     expr.exprs.forEach((child) => assertValidDecimalFilter(child, fields));
   } else if (expr.kind === "not") {
     assertValidDecimalFilter(expr.expr, fields);
+  } else if (expr.kind === "field" && fields[expr.field]?.collection && !fields[expr.field]?.dict) {
+    assertValidListFilter(expr.field, expr.op, expr.value, fields[expr.field]?.codecId);
   } else if (expr.kind === "field" && isDecimalField(fields, expr.field)) {
     // Text operators inspect the stored spelling and need no numeric operand.
     if (expr.op === "contains" || expr.op === "startsWith" || expr.op === "endsWith") return;
@@ -39,6 +42,24 @@ export function assertValidDecimalFilter(expr: IdbFilterExpr, fields: FilterFiel
     if (Array.isArray(values) && values.some((value) => isPresent(value) && !isDecimalString(value))) {
       throw new TypeError(`Expected finite Decimal text for field "${expr.field}"`);
     }
+  }
+}
+
+/** Reject unsupported list predicates and invalid operands before scanning any records. */
+function assertValidListFilter(field: string, op: IdbFilterOp, value: unknown, codecId: string | undefined): void {
+  if (!["eq", "neq", "gt", "lt", "gte", "lte", "in", "notIn"].includes(op)) {
+    throw new TypeError(`Unsupported operator "${op}" on list field "${field}"`);
+  }
+  if (value === null && (op === "eq" || op === "neq")) return;
+  const operands = op === "in" || op === "notIn" ? value : [value];
+  if (!Array.isArray(operands) || operands.some((operand) => !Array.isArray(operand))) {
+    throw new TypeError(`Expected array operands for list field "${field}"`);
+  }
+  if (
+    codecId === "idb/decimal@1" &&
+    operands.some((operand: unknown[]) => operand.some((element) => !isDecimalString(element)))
+  ) {
+    throw new TypeError(`Expected finite Decimal text for list field "${field}"`);
   }
 }
 
@@ -111,8 +132,16 @@ function evalFieldOp(
     return op === "eq" ? !isPresent(cell) : isPresent(cell);
   }
   const decimal = isDecimalField(fields, field);
-  const compare = decimal ? compareDecimalValues : compareFieldValues;
-  const equal = decimal ? (a: unknown, b: unknown) => compareDecimalValues(a, b) === 0 : fieldValuesEqual;
+  const list = fields[field]?.collection && !fields[field]?.dict;
+  const compare = list
+    ? (a: unknown, b: unknown) =>
+        Array.isArray(a) && Array.isArray(b)
+          ? compareListValues(fields[field]?.codecId, a, b)
+          : compareFieldValues(a, b)
+    : decimal
+      ? compareDecimalValues
+      : compareFieldValues;
+  const equal = list || decimal ? (a: unknown, b: unknown) => compare(a, b) === 0 : fieldValuesEqual;
   if (op === "in" || op === "notIn") {
     const result = evaluateMembership(cell, value, equal);
     if (result === null) return null;

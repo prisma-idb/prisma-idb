@@ -334,12 +334,13 @@ function storedCreateDefault(
   storeName: string,
   name: string,
   field: IdbRecordField
-): string | number | boolean | undefined {
+): string | number | boolean | [] | undefined {
   const spec = contract.execution?.mutations?.defaults?.find(
     (entry) => entry.ref.entry === storeName && entry.ref.field === name
   )?.onCreate;
   const value = spec?.params?.["value"];
-  if (spec?.id !== "literal" || field.many || field.dict || field.type.kind !== "scalar") return undefined;
+  if (spec?.id !== "literal" || field.dict || field.type.kind !== "scalar") return undefined;
+  if (field.many) return Array.isArray(value) && value.length === 0 ? [] : undefined;
   if (typeof value !== "string" && typeof value !== "number" && typeof value !== "boolean") return undefined;
   if (typeof value === "number" && !Number.isFinite(value)) return undefined;
   return storedLiteralDefault(field, value);

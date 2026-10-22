@@ -89,10 +89,10 @@ describe("defineContract — enums", () => {
           },
         },
       })
-    ).toThrow(/enum list; list defaults are not supported by IDB/);
+    ).toThrow(/Only an empty list default/);
   });
 
-  it("rejects list specs on non-enum types and optional lists", () => {
+  it("accepts scalar lists and rejects optional lists", () => {
     const build = (spec: string) => () =>
       defineContract({
         family: idbFamilyPack,
@@ -102,8 +102,8 @@ describe("defineContract — enums", () => {
         models: { User: { store: "users", key: "id", fields: { id: "String", tags: spec as "String" } } },
       });
 
-    expect(build("String[]")).toThrow(/Only enum fields can be lists/);
-    expect(build("Json[]")).toThrow(/Only enum fields can be lists/);
+    expect(build("String[]")).not.toThrow();
+    expect(build("Json[]")).not.toThrow();
     expect(build("Role[]?")).toThrow(/A list field cannot be optional/);
     expect(build("Role[]")).not.toThrow();
   });

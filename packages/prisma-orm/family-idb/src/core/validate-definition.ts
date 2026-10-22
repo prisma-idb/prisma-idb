@@ -97,9 +97,6 @@ function validateField(
     );
     return;
   }
-  if (field.list && field.enumName === undefined) {
-    report("IDB_UNSUPPORTED_FIELD_TYPE", `${label} is a scalar list. Only enum fields can be lists.`, at);
-  }
   if (field.list && field.nullable) {
     report("IDB_OPTIONAL_LIST", `${label}: A list field cannot be optional.`, at);
   }
@@ -118,14 +115,10 @@ function validateLiteralDefault(
   const label = `Field "${model.modelName}.${field.name}"`;
   if (field.literalDefault !== undefined) {
     const defaultAt = [...at, "literalDefault"];
-    if (field.enumName !== undefined) {
-      if (field.list) {
-        report(
-          "IDB_ENUM_LIST_DEFAULT_UNSUPPORTED",
-          `${label} is an enum list; list defaults are not supported by IDB.`,
-          defaultAt
-        );
-      } else if (
+    if (field.list) {
+      report("IDB_LIST_DEFAULT_UNSUPPORTED", `${label}: Only an empty list default ([]) is supported.`, defaultAt);
+    } else if (field.enumName !== undefined) {
+      if (
         !definition.enums
           .find((node) => node.name === field.enumName)
           ?.members.some((member) => member.value === field.literalDefault)
@@ -152,6 +145,22 @@ function validateExecutionDefault(model: IdbModelNode, field: IdbFieldNode, repo
   const label = `Field "${model.modelName}.${field.name}"`;
   const execution = field.executionDefault;
   if (!execution) return;
+  if (field.list && field.literalDefault === undefined && execution.onCreate?.id === "literal") {
+    const value = execution.onCreate.params?.["value"];
+    if (!Array.isArray(value) || value.length !== 0) {
+      report("IDB_LIST_DEFAULT_UNSUPPORTED", `${label}: Only an empty list default ([]) is supported.`, [
+        ...at,
+        "literalDefault",
+      ]);
+    }
+  }
+  if (!field.list && execution.onCreate?.id === "literal" && Array.isArray(execution.onCreate.params?.["value"])) {
+    report("IDB_INVALID_DEFAULT_VALUE", `${label}: A scalar field cannot have a list default.`, [
+      ...at,
+      "literalDefault",
+    ]);
+  }
+
   if (
     field.nullable &&
     [execution.onCreate, execution.onUpdate].some((generator) => generator && generator.id !== "literal")
@@ -220,6 +229,12 @@ function validateKeys(model: IdbModelNode, report: Report): void {
         "key",
       ]);
     } else {
+      if (field.list)
+        report("IDB_LIST_ID", `Field "${model.modelName}.${name}" is a list and cannot be part of a primary key.`, [
+          ...at,
+          "fields",
+          name,
+        ]);
       if (field.nullable)
         report("IDB_NULLABLE_ID", `Field "${model.modelName}.${name}" is a key field and cannot be nullable.`, [
           ...at,
@@ -280,6 +295,12 @@ function validateIndexes(model: IdbModelNode, report: Report): void {
         report(
           "IDB_INVALID_INDEX",
           `Model "${model.modelName}" index "${index.name}" references field "${name}", which is not declared in "fields".`,
+          indexAt
+        );
+      else if (field.list)
+        report(
+          "IDB_LIST_INDEX",
+          `Model "${model.modelName}" index "${index.name}" references list field "${name}". Indexes on list fields are not supported.`,
           indexAt
         );
       else if (!index.multiEntry && !isValidIdbKeyCodec(field.codecId)) {

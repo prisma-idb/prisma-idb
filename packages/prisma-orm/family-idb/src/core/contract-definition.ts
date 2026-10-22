@@ -81,7 +81,7 @@ export interface IdbFieldNode {
   /** An unresolved source type retained so validation can report it alongside other errors. */
   readonly unsupportedType?: string;
   readonly nullable: boolean;
-  /** `true` for a list field. Only enum fields can be lists. */
+  /** `true` for a list field. Scalar and enum fields can be lists. */
   readonly list: boolean;
   /** The enum this field is typed as. Absent for scalar fields. */
   readonly enumName?: string;

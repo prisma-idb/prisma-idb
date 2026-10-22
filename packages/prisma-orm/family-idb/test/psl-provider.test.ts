@@ -188,7 +188,6 @@ describe("PSL editor interpretation", () => {
   });
 
   it.each([
-    { name: "scalar list", projection: "full" as const },
     { name: "optional enum list", projection: "full" as const },
     { name: "index on unknown field", projection: "full" as const },
     { name: "exclude back-relation list", projection: "client" as const },

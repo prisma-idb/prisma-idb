@@ -6,6 +6,7 @@
 model User {
   id               String            @id
   name             String
+  listItems        ListItem[]
   privateNotes     PrivateNote[]
   boards           Board[]
   jsonItems        JsonItem[]
@@ -158,4 +159,17 @@ model PrivateNote {
   secret  String @idb.exclude
   ownerId String @idb.exclude
   owner   User   @relation(fields: [ownerId], references: [id])
+}
+
+// Scalar lists retain each codec's native application value across sync.
+model ListItem {
+  id String @id
+  ownerId String
+  owner User @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  tags String[]
+  dates DateTime[]
+  bigs BigInt[]
+  bytes Bytes[]
+  decimals Decimal[]
+  jsons Json[]
 }

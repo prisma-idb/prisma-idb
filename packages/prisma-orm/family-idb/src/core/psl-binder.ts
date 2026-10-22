@@ -121,7 +121,7 @@ function defaultValueArg(): ArgType<IdbDefaultValue, AttributeCtx> {
       mapArg(str(), (value) => ({ kind: "string" as const, value })),
       mapArg(numLiteral(), ({ text }) => ({ kind: "number" as const, value: Number(text) })),
       mapArg(identifier(), (name) => ({ kind: "identifier" as const, name })),
-      // Scalar-list defaults are not supported; binding them lets the interpreter report that with its own code.
+      // Bind list defaults so the interpreter can accept [] and diagnose other literals.
       mapArg(list(oneOf(identifier(), str(), numLiteral(), bool())), () => ({ kind: "list" as const })),
       mapArg(anyFunctionCall(), (_call, arg) => callForm(arg))
     ),

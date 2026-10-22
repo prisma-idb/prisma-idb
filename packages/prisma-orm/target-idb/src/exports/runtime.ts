@@ -1,3 +1,4 @@
+export { compareListElement, compareListValues } from "../core/list-values";
 import type { RuntimeTargetDescriptor, RuntimeTargetInstance } from "@prisma/orm-framework/components/execution";
 import { idbTargetDescriptorMeta } from "../core/descriptor-meta";
 export { compareDecimalValues, isDecimalString } from "../core/decimal-compare";

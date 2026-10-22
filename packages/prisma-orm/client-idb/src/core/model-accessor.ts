@@ -3,8 +3,8 @@
  *
  * Mirrors `createModelAccessor()` from
  * Prisma ORM's SQL client, but without
- * the codec-trait gating — IDB stores native JS values, so every operator
- * is available on every field. The runtime accessor object is a Proxy
+ * the codec-trait gating. IDB stores native JS values. List fields compare
+ * complete arrays and reject text predicates. The runtime accessor is a Proxy
  * that materialises an `IdbFieldAccessor` on demand for whichever field
  * name is read; the type-level surface narrows that to the model's
  * actual field set so callbacks get autocomplete.
@@ -21,7 +21,7 @@ import type { DefaultModelRow, IdbContract } from "./types";
 // ── Typed surface ─────────────────────────────────────────────────────────────
 
 /**
- * Operator surface available on every field. All return frozen AST nodes
+ * Scalar-field operator surface; list accessors omit text predicates. All return frozen AST nodes
  * — they are values, not statements, so chaining and logical combinators
  * compose naturally.
  */
@@ -50,9 +50,12 @@ export interface IdbFieldAccessor<T> {
  * developer gets autocomplete.
  */
 export type IdbModelAccessor<TContract, ModelName extends string> = {
-  readonly [K in keyof DefaultModelRow<TContract, ModelName>]-?: IdbFieldAccessor<
-    DefaultModelRow<TContract, ModelName>[K]
-  >;
+  readonly [K in keyof DefaultModelRow<TContract, ModelName>]-?: DefaultModelRow<
+    TContract,
+    ModelName
+  >[K] extends readonly unknown[]
+    ? Omit<IdbFieldAccessor<DefaultModelRow<TContract, ModelName>[K]>, "contains" | "startsWith" | "endsWith">
+    : IdbFieldAccessor<DefaultModelRow<TContract, ModelName>[K]>;
 };
 
 // ── Runtime construction ──────────────────────────────────────────────────────

@@ -85,15 +85,15 @@ type BaseContract = {
     readonly mutations: {
       readonly defaults: readonly [
         {
-          readonly ref: { readonly namespace: "__unbound__"; readonly table: "posts"; readonly column: "title" };
+          readonly ref: { readonly namespace: "__unbound__"; readonly entry: "posts"; readonly field: "title" };
           readonly onCreate: { readonly kind: "generator"; readonly id: "timestampNow" };
         },
         {
-          readonly ref: { readonly namespace: "__unbound__"; readonly table: "sessions"; readonly column: "startedAt" };
+          readonly ref: { readonly namespace: "__unbound__"; readonly entry: "sessions"; readonly field: "startedAt" };
           readonly onCreate: { readonly kind: "generator"; readonly id: "timestampNow" };
         },
         {
-          readonly ref: { readonly namespace: "__unbound__"; readonly table: "tags"; readonly column: "id" };
+          readonly ref: { readonly namespace: "__unbound__"; readonly entry: "tags"; readonly field: "id" };
           readonly onCreate: { readonly kind: "generator"; readonly id: "uuidv4" };
         },
       ];

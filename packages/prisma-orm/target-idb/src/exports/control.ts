@@ -19,6 +19,18 @@ import { IdbMigrationRunner } from "../core/migration-runner";
  * already plain, JSON-safe objects with no class instances.
  */
 const idbContractSerializer: ContractSerializer<Contract> = {
+  /** Literal generator parameters are data: [] and false must survive default omission. */
+  shouldPreserveEmpty(path) {
+    return (
+      path.length === 6 &&
+      path[0] === "execution" &&
+      path[1] === "mutations" &&
+      path[2] === "defaults" &&
+      (path[3] === "onCreate" || path[3] === "onUpdate") &&
+      path[4] === "params" &&
+      path[5] === "value"
+    );
+  },
   deserializeContract<T extends Contract = Contract>(json: unknown): T {
     return json as T;
   },

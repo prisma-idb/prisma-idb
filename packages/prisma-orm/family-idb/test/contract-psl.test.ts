@@ -1692,7 +1692,6 @@ async function sharedDiagnostics(
 describe("shared definition diagnostics", () => {
   it.each([
     { type: "Role[]?", enums: { Role: ["A"] }, enumPsl: "enum Role {\n A\n}\n", code: "IDB_OPTIONAL_LIST" },
-    { type: "String[]", enums: {}, enumPsl: "", code: "IDB_UNSUPPORTED_FIELD_TYPE" },
     { type: "Unsupported", enums: {}, enumPsl: "", code: "IDB_UNSUPPORTED_FIELD_TYPE" },
   ])("matches $code for $type and points at the field", async ({ type, enums, enumPsl, code }) => {
     const schema = `${enumPsl}model User {\n id String @id\n value ${type}\n}`;

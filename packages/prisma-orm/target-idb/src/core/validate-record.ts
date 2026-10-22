@@ -88,7 +88,13 @@ function buildField(
     validator = validator.narrow((value) => values.some((allowed) => Object.is(allowed, value)));
   }
   // Nullable applies to the container. List elements are nullable only when the field says so.
-  if (field.many) validator = (field.many.elementNullable ? validator.or("null") : validator).array();
+  if (field.many) {
+    const elementNullable = field.many.elementNullable;
+    if (elementNullable) validator = validator.or("null");
+    // A JSON codec's `unknown` type needs an explicit predicate: excluding a union
+    // member cannot narrow unknown and would still accept null list elements.
+    validator = validator.narrow((value) => value !== undefined && (elementNullable || value !== null)).array();
+  }
   if (field.dict) validator = type({ "[string]": validator });
   // JSON null is a scalar value (Prisma JsonNull), independent of database nullability.
   const jsonScalar =

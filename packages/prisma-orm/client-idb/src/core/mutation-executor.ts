@@ -24,6 +24,7 @@
  * one IDB transaction spanning all required stores, per ADR 007.
  */
 
+import { applyFieldUpdates, type IdbFieldOperation } from "./field-updates";
 import type { PlanMeta } from "@prisma/orm-framework/contract/types";
 import type { ContractReferenceRelation } from "@prisma/orm-framework/contract/types";
 import { domainModelsAtDefaultNamespace } from "@prisma/orm-framework/contract/types";
@@ -1277,6 +1278,7 @@ function collectUpdateStoreNames(
 
 /** The executor, contract, filters, and scalar patch for a validated update. */
 interface ScalarUpdateOptions {
+  readonly operations?: readonly IdbFieldOperation[];
   readonly executor: IdbQueryExecutorWithTransaction;
   readonly contract: IdbContract;
   readonly modelName: string;
@@ -1328,7 +1330,7 @@ async function executeScalarUpdates(options: ScalarUpdateOptions, take?: 1): Pro
     if (!needsRowForFks) await validateScalarFks(scope, contract, modelName, patch);
     const meta = makePlanMeta(contract);
     const where = filters.length === 0 ? undefined : andExpr(filters);
-    if (!enforcesOnUpdate && !needsRowForFks) {
+    if (!enforcesOnUpdate && !needsRowForFks && !options.operations?.length) {
       return writeMutationRows(scope, contract, modelName, {
         write: "put-merged",
         patch,
@@ -1343,10 +1345,13 @@ async function executeScalarUpdates(options: ScalarUpdateOptions, take?: 1): Pro
     const keyPath = getKeyPath(contract, modelName);
     const results: Record<string, unknown>[] = [];
     for (const oldRow of oldRows) {
-      if (needsRowForFks) await validateScalarFks(scope, contract, modelName, patch, oldRow);
-      if (enforcesOnUpdate) await applyReferentialActionsForRowOnUpdate(scope, contract, modelName, oldRow, patch);
+      const rowPatch = applyFieldUpdates(contract, modelName, { patch, operations: options.operations ?? [] }, oldRow);
+      assertEnumValues(contract, modelName, rowPatch);
+      assertValidRecord(contract, modelName, "update", rowPatch);
+      if (needsRowForFks) await validateScalarFks(scope, contract, modelName, rowPatch, oldRow);
+      if (enforcesOnUpdate) await applyReferentialActionsForRowOnUpdate(scope, contract, modelName, oldRow, rowPatch);
       const key = extractKeyFromRow(oldRow, keyPath);
-      const rows = await scope.execute({ meta, kind: "update", storeName, key, patch } as IdbAtomicPlan);
+      const rows = await scope.execute({ meta, kind: "update", storeName, key, patch: rowPatch } as IdbAtomicPlan);
       const updated = rows[0];
       if (updated) results.push(updated);
     }

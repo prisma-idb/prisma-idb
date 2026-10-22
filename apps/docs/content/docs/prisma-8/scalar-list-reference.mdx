@@ -1,0 +1,48 @@
+---
+title: Scalar-list reference
+description: Supported element types, defaults, operations, comparison rules, and migrations.
+---
+
+Scalar lists are supported by the Prisma 8 client. The stable generator uses a separate API.
+
+| Element type | Application value                     |
+| ------------ | ------------------------------------- |
+| String, enum | `string` or a declared enum value     |
+| Int, Float   | `number`                              |
+| BigInt       | `bigint`                              |
+| Decimal      | Finite decimal text, such as `"1.25"` |
+| Boolean      | `boolean`                             |
+| DateTime     | `Date`                                |
+| Bytes        | `Uint8Array`                          |
+| Json         | A JSON value                          |
+
+The list container and its elements cannot be null or undefined. Nullable lists are rejected with `IDB_OPTIONAL_LIST`. JSON objects may contain nested null values.
+
+The only supported list default is `[]`: PSL `@default([])` or a TypeScript model's `defaults: { fieldName: [] }`. It makes that field optional on create. Lists without a default must be supplied. Nonempty defaults produce `IDB_LIST_DEFAULT_UNSUPPORTED`.
+
+| Write                                                   | List input                                               |
+| ------------------------------------------------------- | -------------------------------------------------------- |
+| `create`, `createAll`, `createCount`, upsert create arm | A plain array                                            |
+| Plain update patch                                      | A replacement array                                      |
+| `u.field.set(array)`                                    | Replace the array                                        |
+| `u.field.push(element)`                                 | Append one element                                       |
+| `u.field.pull(element)`                                 | Remove all equal elements                                |
+| `u.field.addToSet(element)`                             | Append the element unless an equal element exists        |
+| `u.field.pop(1)` / `pop(-1)`                            | Remove the last / first element; empty arrays stay empty |
+
+Update callbacks work in `update`, `updateAll`, `updateCount`, and the update arm of `upsert`. Duplicate operations on one field are rejected. Required lists cannot be unset. `pull` matches a complete element; partial JSON-object patterns are unsupported.
+
+| Filter                                | Operand                      |
+| ------------------------------------- | ---------------------------- |
+| `eq`, `neq`, `gt`, `gte`, `lt`, `lte` | A complete array             |
+| `in`, `notIn`                         | An array of candidate arrays |
+
+The pinned Prisma 8 surface does not define `has`, `hasEvery`, `hasSome`, or `isEmpty`. Use `eq([])` to match an explicitly empty list. Text predicates such as `contains` are rejected for lists. `select` includes only named fields. It never adds missing fields or replaces them with `[]`.
+
+Equality preserves order and duplicates. DateTime and Bytes use value equality. Decimal elements compare numerically, so `"1.0"` equals `"1.00"`. JSON elements use structural equality with canonical object-key order. Ordering compares elements from left to right; if all shared elements tie, the shorter list comes first. List filters use scans. List fields cannot be primary-key fields (`IDB_LIST_ID`) or index fields (`IDB_LIST_INDEX`), including in compound keys and `multiEntry` indexes.
+
+## Migration compatibility
+
+Adding, removing, or changing a list's element type changes `storageHash`. Changing only its default does not. When adding a required list to an existing store, the migration planner emits `defaultIfMissing([])` if that default is declared. Otherwise it emits a placeholder that the author must resolve. An incompatible element-type change also needs an explicit transform.
+
+Run the planned migration before using the new contract. The transform backfills stored rows and queued creates. Queued update patches retain only fields they already contain. Reads of unmigrated rows can return undefined for a missing required list; such a field does not match `eq([])`. Element operations reject a missing stored list. Replacing it with an explicit array repairs that field. [Author a field change](/docs/prisma-8/field-changes) describes the migration workflow.

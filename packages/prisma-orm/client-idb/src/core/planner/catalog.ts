@@ -8,6 +8,8 @@ export interface CatalogField {
   readonly codecId: string | undefined;
   readonly nullable: boolean;
   readonly collection: boolean;
+  /** Dictionaries are collections for planning but do not use list predicates. */
+  readonly dict?: true;
 }
 
 /** One primary-key or secondary-index source, in declaration order. */
@@ -59,6 +61,7 @@ export function buildCatalog(contract: IdbContract, storeName: string, modelName
         codecId: field.type.kind === "scalar" ? field.type.codecId : undefined,
         nullable: field.nullable,
         collection: Boolean(field.many) || field.dict === true,
+        ...(field.dict ? { dict: true as const } : {}),
       });
     }
   }

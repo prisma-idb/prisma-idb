@@ -175,7 +175,11 @@ describe("planQuery", () => {
     (trailing) => {
       const c = catalog([source(["a", "b"], "ab")], { b: trailing });
       expect(planQuery(c, { where: f("a", "eq", "x") }).access.kind).toBe("full");
-      expect(planQuery(c, { where: andExpr([f("a", "eq", "x"), f("b", "eq", "y")]) }).access.kind).toBe("ranges");
+      if (trailing.collection) {
+        expect(() => planQuery(c, { where: f("b", "eq", "y") })).toThrow(/Expected array operands/);
+      } else {
+        expect(planQuery(c, { where: andExpr([f("a", "eq", "x"), f("b", "eq", "y")]) }).access.kind).toBe("ranges");
+      }
     }
   );
   it("uses the next compound member's range with correct suffix inclusion", () => {
