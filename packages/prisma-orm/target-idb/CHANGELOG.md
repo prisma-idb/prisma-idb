@@ -1,5 +1,11 @@
 # @prisma-idb/target-idb
 
+## 0.14.0
+
+### Minor Changes
+
+- [#356](https://github.com/prisma-idb/prisma-idb/pull/356) [`1bebea5`](https://github.com/prisma-idb/prisma-idb/commit/1bebea51f01e9f8b3e56c0773d03764c4bb12806) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Plan empty-list backfills, validate list elements, and share codec-aware list comparison. Preserve literal default values during contract emission.
+
 ## 0.13.0
 
 ### Minor Changes

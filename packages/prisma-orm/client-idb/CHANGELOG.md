@@ -1,5 +1,19 @@
 # @prisma-idb/client-idb
 
+## 0.14.0
+
+### Minor Changes
+
+- [#356](https://github.com/prisma-idb/prisma-idb/pull/356) [`1bebea5`](https://github.com/prisma-idb/prisma-idb/commit/1bebea51f01e9f8b3e56c0773d03764c4bb12806) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Add fluent scalar-list updates across single, bulk, and upsert writes, with codec-aware filtering and ordering. Recognize declared create defaults in the current contract reference shape. Use contract list metadata to keep scalar JSON updates limited to set.
+
+### Patch Changes
+
+- Updated dependencies [[`1bebea5`](https://github.com/prisma-idb/prisma-idb/commit/1bebea51f01e9f8b3e56c0773d03764c4bb12806), [`1bebea5`](https://github.com/prisma-idb/prisma-idb/commit/1bebea51f01e9f8b3e56c0773d03764c4bb12806)]:
+  - @prisma-idb/adapter-idb@0.14.0
+  - @prisma-idb/target-idb@0.14.0
+  - @prisma-idb/runtime-idb@0.14.0
+  - @prisma-idb/driver-idb@0.14.0
+
 ## 0.13.0
 
 ### Minor Changes

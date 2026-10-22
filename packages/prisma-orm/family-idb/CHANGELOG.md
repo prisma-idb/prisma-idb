@@ -1,5 +1,46 @@
 # @prisma-idb/family-idb
 
+## 0.14.0
+
+### Minor Changes
+
+- [#351](https://github.com/prisma-idb/prisma-idb/pull/351) [`fb889c7`](https://github.com/prisma-idb/prisma-idb/commit/fb889c72e65a0b657019de41161fddb3c27e650f) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Validate PSL and TypeScript contract definitions with the same rules and diagnostic wording. TypeScript `defineContract` now throws the public `IdbContractError`, whose `diagnostics` array and message include every shared validation error with its `IDB_*` code. PSL diagnostics retain source spans.
+
+  PSL now rejects optional enum lists (`Role[]?`), scalar lists (`String[]`), enum names that conflict with scalar types (`enum String`), unknown fields in `@@index` and `@@id`, and `@idb.exclude` on back-relation lists in client projections. A scalar field's `@unique` keeps its uniqueness when declared after `@relation`. Optional `temporal.updatedAt()?` fields are rejected. Shared errors use one wording on both authoring surfaces.
+
+- [#353](https://github.com/prisma-idb/prisma-idb/pull/353) [`1c72afe`](https://github.com/prisma-idb/prisma-idb/commit/1c72afe900a07a13fecdc0e0e8b8f0f0f077f825) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Add create-time defaults to `defineContract`, and index foreign keys by default.
+
+  - A model's new `defaults` map takes `autoincrement()`, `now()`, `uuidv4()`, `uuidv7()`, `cuid2()` and `updatedAt()` from `@prisma-idb/family-idb/contract-ts`, or a literal value. They match PSL `@default(...)` and `@updatedAt`. A contract that uses them now carries an `executionHash`, and `create()` fills them as it does for PSL contracts. `fieldDefaults` still feeds only the `setDefault` referential action.
+  - Every to-one relation (`N:1` and `1:1`) now indexes its foreign-key fields, for TypeScript contracts as well as PSL. A TypeScript contract with relations therefore gets a new `storageHash`, and its next migration adds one index per foreign key. A declared index named like the foreign-key field replaces the implicit one. To keep a relation unindexed, set `index: false` on it. PSL contracts keep their `storageHash` and have no opt-out. The one exception is a foreign-key field named like an inherited object key, such as `constructor`, which PSL previously left unindexed and now indexes.
+  - A foreign-key field whose type IndexedDB cannot index, such as `Boolean`, is now rejected in TypeScript contracts, as it already was in PSL. Set `index: false` on the relation to keep it.
+
+- [#356](https://github.com/prisma-idb/prisma-idb/pull/356) [`1bebea5`](https://github.com/prisma-idb/prisma-idb/commit/1bebea51f01e9f8b3e56c0773d03764c4bb12806) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Support required scalar lists and empty-list defaults in PSL and TypeScript contracts. Reject list fields in primary keys and all indexes, including compound and multiEntry indexes.
+
+### Patch Changes
+
+- [#352](https://github.com/prisma-idb/prisma-idb/pull/352) [`8e55655`](https://github.com/prisma-idb/prisma-idb/commit/8e55655354a504f8b1458c09f909317fc41281f1) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Skip server-only scalar attribute binding in client projections while retaining exclusion validation for keys and indexes.
+
+- [#355](https://github.com/prisma-idb/prisma-idb/pull/355) [`0154b39`](https://github.com/prisma-idb/prisma-idb/commit/0154b39c3e4f8795f5d96f9fd17d99b66e1586a4) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Document PSL and TypeScript contract authoring, execution defaults, structured diagnostics, and the foreign-key index migration path in the package README.
+
+- [#348](https://github.com/prisma-idb/prisma-idb/pull/348) [`38db64a`](https://github.com/prisma-idb/prisma-idb/commit/38db64a4e0b004237e7672cb1f554669b74a1e92) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Build `defineContract` contracts through a shared contract definition and builder. The contract, its hashes and its errors are unchanged.
+
+- [#361](https://github.com/prisma-idb/prisma-idb/pull/361) [`3a15a46`](https://github.com/prisma-idb/prisma-idb/commit/3a15a466cb061de91222b510c57ec1893164368b) Thanks [@WhyAsh5114](https://github.com/WhyAsh5114)! - Expose scalar types and PSL attribute specs through the IDB control family descriptor so editor tooling can resolve all nine supported scalars and discover attribute signatures, argument types, and documentation, including `@idb.exclude` and `@@idb.exclude`. Document the leading `// use prisma-8` directive required to select the Prisma 8 language server in the Prisma VS Code extension.
+
+- [#354](https://github.com/prisma-idb/prisma-idb/pull/354) [`8940fdf`](https://github.com/prisma-idb/prisma-idb/commit/8940fdfff30365f56de0e1415557a75950dba065) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Expose the framework's PSL interpreter capability on the IDB contract source so editor tooling can report IDB diagnostics from cached schema text. Editor interpretation uses the same binder, definition, and validator pipeline as contract loading, with the configured projection and original source spans.
+
+- [#352](https://github.com/prisma-idb/prisma-idb/pull/352) [`f18d6f5`](https://github.com/prisma-idb/prisma-idb/commit/f18d6f55b5d970bad89682fe3fc7292cf07f76ef) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Read PSL attribute arguments through the framework's attribute-spec binder instead of hand-written parsing. Valid schemas produce the same contract and hashes. A malformed attribute, such as `@@map(name)` or `@@id` without a field list, now fails with a binder diagnostic that points at the attribute.
+
+- [#350](https://github.com/prisma-idb/prisma-idb/pull/350) [`017de3f`](https://github.com/prisma-idb/prisma-idb/commit/017de3f426b5b5c2f66765256b98d8ea36b5c594) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Build PSL contracts through the shared contract definition and builder. Contract output, hashes, and diagnostic spans are unchanged.
+
+- [#348](https://github.com/prisma-idb/prisma-idb/pull/348) [`a92b2f7`](https://github.com/prisma-idb/prisma-idb/commit/a92b2f709e3823efb88dd7e1b65bfbf36ad48fb1) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Preserve definition-controlled names such as `__proto__` in contract maps.
+
+- [#353](https://github.com/prisma-idb/prisma-idb/pull/353) [`92d62c5`](https://github.com/prisma-idb/prisma-idb/commit/92d62c5c869303423185fd1a94a10fbbb33399d0) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Validate create-time default generators against their field types and codecs, rejecting timestamp helpers on non-DateTime fields and ID helpers on non-String fields.
+
+- [#353](https://github.com/prisma-idb/prisma-idb/pull/353) [`b92a313`](https://github.com/prisma-idb/prisma-idb/commit/b92a3134c7243b1bcbb58756fe8b657e529f899e) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Report invalid TypeScript default values and foreign-key index name conflicts as contract diagnostics. Reuse a declared foreign-key index only when its keyPath indexes that field alone.
+
+- Updated dependencies [[`1bebea5`](https://github.com/prisma-idb/prisma-idb/commit/1bebea51f01e9f8b3e56c0773d03764c4bb12806)]:
+  - @prisma-idb/target-idb@0.14.0
+
 ## 0.13.0
 
 ### Minor Changes
