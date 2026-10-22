@@ -1,5 +1,21 @@
 # @prisma-idb/sync-extension-idb
 
+## 0.9.0
+
+### Minor Changes
+
+- [#364](https://github.com/prisma-idb/prisma-idb/pull/364) [`f60e74d`](https://github.com/prisma-idb/prisma-idb/commit/f60e74daa5b0dd08b7a84b2d3a3c38fa6fe2e04a) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Add fetch push and pull handlers that send the contract storage hash and throw ContractMismatchError on HTTP 409.
+
+### Patch Changes
+
+- Updated dependencies [[`2cb74ee`](https://github.com/prisma-idb/prisma-idb/commit/2cb74eeb8a4dc247f54f8840e4be68407fb02d8f)]:
+  - @prisma-idb/client-idb@0.14.1
+  - @prisma-idb/target-idb@0.14.1
+  - @prisma-idb/driver-idb@0.14.1
+  - @prisma-idb/adapter-idb@0.14.1
+  - @prisma-idb/runtime-idb@0.14.1
+  - @prisma-idb/family-idb@0.14.1
+
 ## 0.8.1
 
 ### Patch Changes

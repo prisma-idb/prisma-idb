@@ -1,5 +1,18 @@
 # @prisma-idb/sync-server-sql
 
+## 0.8.0
+
+### Minor Changes
+
+- [#364](https://github.com/prisma-idb/prisma-idb/pull/364) [`f60e74d`](https://github.com/prisma-idb/prisma-idb/commit/f60e74daa5b0dd08b7a84b2d3a3c38fa6fe2e04a) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Add fetch-compatible push and pull HTTP handlers, usable with Hono, that validate requests and map contract mismatches to HTTP 409.
+
+### Patch Changes
+
+- Updated dependencies [[`f60e74d`](https://github.com/prisma-idb/prisma-idb/commit/f60e74daa5b0dd08b7a84b2d3a3c38fa6fe2e04a)]:
+  - @prisma-idb/sync-extension-idb@0.9.0
+  - @prisma-idb/target-idb@0.14.1
+  - @prisma-idb/sync-server@0.8.2
+
 ## 0.7.1
 
 ### Patch Changes

@@ -1,5 +1,17 @@
 # @prisma-idb/client-idb
 
+## 0.14.1
+
+### Patch Changes
+
+- [#363](https://github.com/prisma-idb/prisma-idb/pull/363) [`2cb74ee`](https://github.com/prisma-idb/prisma-idb/commit/2cb74eeb8a4dc247f54f8840e4be68407fb02d8f) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Defer the managed client’s default IndexedDB factory lookup until opening or resetting the database. Managed clients, including managed sync clients, can now be created during server rendering without a global `indexedDB`. Reset uses the factory captured when opening the client, even if the global factory later changes. Explicit factory overrides remain supported.
+
+- Updated dependencies []:
+  - @prisma-idb/target-idb@0.14.1
+  - @prisma-idb/driver-idb@0.14.1
+  - @prisma-idb/adapter-idb@0.14.1
+  - @prisma-idb/runtime-idb@0.14.1
+
 ## 0.14.0
 
 ### Minor Changes
