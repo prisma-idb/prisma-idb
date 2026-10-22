@@ -119,6 +119,18 @@ function withTimeout<T>(makePromise: (signal: AbortSignal) => Promise<T>, ms: nu
   });
 }
 
+/** Preserves Error details and safely wraps other thrown values for subscribers. */
+function toSyncError(value: unknown): Error {
+  if (value instanceof Error) return value;
+  let message = "Sync cycle failed";
+  try {
+    message = String(value);
+  } catch {
+    // Some thrown values cannot be converted to a string; preserve them as the cause.
+  }
+  return new Error(message, { cause: value });
+}
+
 /** Failed tries after which the oldest pending event is reported as stalled. */
 const STALLED_AFTER_TRIES = 10;
 
@@ -382,7 +394,7 @@ export function createSyncWorker<TContract extends IdbContract>(options: SyncWor
         // Report once per cycle, even when scheduled and forced callers share it.
         if (!stopped) {
           setStatus("error");
-          emit("error", error instanceof Error ? error : new Error(String(error), { cause: error }));
+          emit("error", toSyncError(error));
         }
         throw error;
       })

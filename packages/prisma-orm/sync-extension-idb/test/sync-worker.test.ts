@@ -105,21 +105,58 @@ describe("SyncWorker — state machine", () => {
     expect(second).toEqual(["pushing", "pulling", "idle", "pushing", "pulling", "idle"]);
   });
 
-  it("wraps non-Error failures for subscribers while forceSync rejects the original value", async () => {
+  it.each([
+    { value: "offline", message: "offline" },
+    {
+      value: {
+        toString() {
+          throw new Error("cannot stringify");
+        },
+      },
+      message: "Sync cycle failed",
+    },
+  ])("wraps non-Error failures with message '$message' while preserving the rejection", async ({ value, message }) => {
     const worker = createSyncWorker({
       syncClient: makeStubSyncClient(),
       pushHandler: async () => [],
       pullHandler: async () => {
-        throw "offline";
+        throw value;
       },
     });
     const errors: Error[] = [];
     worker.on("error", (error) => errors.push(error));
 
-    await expect(worker.forceSync()).rejects.toBe("offline");
+    await expect(worker.forceSync()).rejects.toEqual(value);
 
     expect(errors[0]).toBeInstanceOf(Error);
-    expect(errors[0]).toMatchObject({ message: "offline", cause: "offline" });
+    expect(errors[0]).toMatchObject({ message, cause: value });
+  });
+
+  it("preserves the sync failure and notifies remaining subscribers when listeners throw", async () => {
+    const failure = new Error("pull failed");
+    const worker = createSyncWorker({
+      syncClient: makeStubSyncClient(),
+      pushHandler: async () => [],
+      pullHandler: async () => {
+        throw failure;
+      },
+    });
+    const statuses: string[] = [];
+    const errors: Error[] = [];
+    worker.on("statuschange", (status) => {
+      if (status === "error") throw new Error("status listener failed");
+    });
+    worker.on("statuschange", (status) => statuses.push(status));
+    worker.on("error", () => {
+      throw new Error("error listener failed");
+    });
+    worker.on("error", (error) => errors.push(error));
+
+    await expect(worker.forceSync()).rejects.toThrow(failure);
+
+    expect(statuses).toEqual(["pushing", "pulling", "error"]);
+    expect(worker.status).toBe("error");
+    expect(errors).toEqual([failure]);
   });
 
   it("start() is a no-op when already running", async () => {
