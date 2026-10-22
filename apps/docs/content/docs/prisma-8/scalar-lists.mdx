@@ -17,18 +17,18 @@ With TypeScript authoring, use `fields: { id: "String", tags: "String[]" }` and 
 Create a record with an array. Omit a list only when it declares a default:
 
 ```ts
-await db.note.create({ id: "n1", tags: ["draft"] });
-await db.note.create({ id: "n2" }); // stores tags: []
+await db.orm.note.create({ id: "n1", tags: ["draft"] });
+await db.orm.note.create({ id: "n2" }); // stores tags: []
 ```
 
 Use an update callback to change an element. `push` accepts one element:
 
 ```ts
-await db.note.where({ id: "n1" }).update((u) => [u.tags.push("review")]);
-await db.note.where({ id: "n1" }).update((u) => [u.tags.addToSet("review")]);
-await db.note.where({ id: "n1" }).update((u) => [u.tags.pull("draft")]);
-await db.note.where({ id: "n1" }).update((u) => [u.tags.pop(-1)]);
-await db.note.where({ id: "n1" }).update((u) => [u.tags.set([])]);
+await db.orm.note.where({ id: "n1" }).update((u) => [u.tags.push("review")]);
+await db.orm.note.where({ id: "n1" }).update((u) => [u.tags.addToSet("review")]);
+await db.orm.note.where({ id: "n1" }).update((u) => [u.tags.pull("draft")]);
+await db.orm.note.where({ id: "n1" }).update((u) => [u.tags.pop(-1)]);
+await db.orm.note.where({ id: "n1" }).update((u) => [u.tags.set([])]);
 ```
 
 Use a plain patch to replace the entire array: `.update({ tags: ["published"] })`. The same operations work in `updateAll`, `updateCount`, and the update arm of `upsert`. Specify at most one operation per field in a callback.
@@ -36,9 +36,9 @@ Use a plain patch to replace the entire array: `.update({ tags: ["published"] })
 Compare a complete list with `eq`. Array order matters:
 
 ```ts
-const drafts = await db.note.where((m) => m.tags.eq(["draft"])).all();
-const empty = await db.note.where((m) => m.tags.eq([])).all();
-const ordered = await db.note.orderBy({ tags: "asc" }).all();
+const drafts = await db.orm.note.where((m) => m.tags.eq(["draft"])).all();
+const empty = await db.orm.note.where((m) => m.tags.eq([])).all();
+const ordered = await db.orm.note.orderBy({ tags: "asc" }).all();
 ```
 
 Read the [scalar-list reference](/docs/prisma-8/scalar-list-reference) for supported types and operators. Read [why missing lists stay missing](/docs/prisma-8/scalar-list-storage) before migrating legacy data.
