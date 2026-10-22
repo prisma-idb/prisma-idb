@@ -30,3 +30,6 @@ export type {
   ApplyPullResult,
   VersionMetaRecord,
 } from "../types";
+
+export { createSyncFetchHandlers } from "../core/fetch-handlers";
+export type { SyncFetchHandlersOptions, SyncFetchHandlers } from "../core/fetch-handlers";

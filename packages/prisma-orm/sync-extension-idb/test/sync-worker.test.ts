@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { validateRecord } from "@prisma-idb/target-idb/runtime";
 import type { IdbContract } from "@prisma-idb/client-idb/orm";
 import { ContractMismatchError } from "../src/core/contract-mismatch-error";
+import { createSyncFetchHandlers } from "../src/core/fetch-handlers";
+import { pushRequestBodySchema } from "../src/schemas";
 import { createSyncWorker } from "../src/core/sync-worker";
 import type { ContractMismatchEvent, PullCompletedEvent, PushCompletedEvent } from "../src/core/sync-worker";
 import type { SyncIdbClient } from "../src/exports/client";
@@ -669,9 +671,11 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
           persisted = id;
         },
         pushHandler: async () => [],
-        pullHandler: async () => {
-          throw new ContractMismatchError();
-        },
+        pullHandler: createSyncFetchHandlers({
+          pushUrl: "https://sync.test/push",
+          pullUrl: "https://sync.test/pull",
+          fetch: async () => new Response("Contract mismatch", { status: 409 }),
+        }).pullHandler,
       });
       const mismatches: ContractMismatchEvent[] = [];
       worker.on("contractmismatch", (event) => mismatches.push(event));
@@ -690,10 +694,15 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
       let refuse = true;
       const worker = trackedWorker({
         syncClient: client,
-        pushHandler: async (events) => {
-          if (refuse) throw new ContractMismatchError();
-          return events.map((event) => ({ id: event.id, success: true }));
-        },
+        pushHandler: createSyncFetchHandlers({
+          pushUrl: "https://sync.test/push",
+          pullUrl: "https://sync.test/pull",
+          fetch: async (input, init) => {
+            if (refuse) return new Response("Contract mismatch", { status: 409 });
+            const { events } = pushRequestBodySchema.parse(await new Request(input, init).json());
+            return Response.json(events.map((event) => ({ id: event.id, success: true })));
+          },
+        }).pushHandler,
         pullHandler: async () => [],
       });
       const mismatches: ContractMismatchEvent[] = [];

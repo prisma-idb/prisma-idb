@@ -11,6 +11,9 @@
  */
 import { z } from "zod";
 
+/** HTTP header shared by the fetch sync client and server handlers. */
+export const STORAGE_HASH_HEADER = "x-storage-hash";
+
 /** One entry of a push request body's `events[]` — the fields a server actually needs out of a client `OutboxEvent` to authorize and apply it. */
 export const pushEventSchema = z.object({
   id: z.string(),

@@ -1,5 +1,5 @@
 import { createSyncServer } from "@prisma-idb/sync-server";
-import { createSqlSyncAdapter, sqlGetKeyField } from "@prisma-idb/sync-server-sql";
+import { createSqlSyncAdapter, createSqlSyncHandlers, sqlGetKeyField } from "@prisma-idb/sync-server-sql";
 import type { Contract as ClientContract } from "../prisma/contract";
 import type { Contract as ServerContract } from "../prisma/schema.postgres.generated.d";
 import clientContractJson from "../prisma/contract.json" with { type: "json" };
@@ -19,3 +19,6 @@ const syncServer = createSyncServer({
 });
 
 export const sqlSyncAdapter = createSqlSyncAdapter({ contract: serverContract, syncServer });
+
+/** HTTP boundary shared by both authenticated sync routes. */
+export const syncHandlers = createSqlSyncHandlers({ adapter: sqlSyncAdapter });

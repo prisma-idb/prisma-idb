@@ -160,7 +160,7 @@ Create the sync server once, at startup. Import both generated contracts and cas
 ```ts
 // src/server/sync.ts
 import { createSyncServer } from "@prisma-idb/sync-server";
-import { createSqlSyncAdapter, sqlGetKeyField } from "@prisma-idb/sync-server-sql";
+import { createSqlSyncAdapter, createSqlSyncHandlers, sqlGetKeyField } from "@prisma-idb/sync-server-sql";
 import type { Contract as ServerContract } from "../prisma/schema.postgres.generated";
 import type { Contract as ClientContract } from "../prisma/contract";
 import serverContractJson from "../prisma/schema.postgres.generated.json" with { type: "json" };
@@ -175,7 +175,8 @@ export const syncServer = createSyncServer({
   getKeyField: sqlGetKeyField,
 });
 
-export const sqlSyncAdapter = createSqlSyncAdapter({ contract: serverContract, syncServer });
+const sqlSyncAdapter = createSqlSyncAdapter({ contract: serverContract, syncServer });
+export const syncHandlers = createSqlSyncHandlers({ adapter: sqlSyncAdapter });
 ```
 
 `createSyncServer` throws at startup if a synced model has no relation path to `User`, or the relations form a cycle.
@@ -187,45 +188,18 @@ Add the push endpoint. It checks each event against the signed-in user and appli
 
 ```ts
 // POST /api/sync/push
-import { pushRequestBodySchema } from "@prisma-idb/sync-extension-idb/schemas";
-import { sqlSyncAdapter } from "./sync";
+import { syncHandlers } from "./sync";
 import { getAuthenticatedUserId } from "./auth"; // your session lookup
 import { db } from "./db"; // your Prisma 8 Postgres client
 
 export async function POST(req: Request) {
-  const scopeKey = await getAuthenticatedUserId(req); // never trust an id from the body
+  const scopeKey = await getAuthenticatedUserId(req);
   if (!scopeKey) return Response.json({ error: "Unauthorized" }, { status: 401 });
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return Response.json({ error: "Invalid JSON" }, { status: 400 });
-  }
-  const parsed = pushRequestBodySchema.safeParse(body);
-  if (!parsed.success) {
-    return Response.json({ error: "Malformed request body", details: parsed.error.issues }, { status: 400 });
-  }
-  const outcome = await sqlSyncAdapter.applyPush(db, {
-    events: parsed.data.events,
-    scopeKey,
-    clientStorageHash: req.headers.get("x-storage-hash"),
-  });
-  if (!outcome.ok) {
-    switch (outcome.reason) {
-      case "batch-too-large":
-        return Response.json({ error: "Too many events" }, { status: 400 });
-      case "duplicate-event-id":
-        return Response.json({ error: "Duplicate event id" }, { status: 400 });
-      case "contract-mismatch":
-        return Response.json({ error: "Client contract is out of date" }, { status: 409 });
-    }
-    throw new Error(`Unhandled push outcome: ${outcome satisfies never}`);
-  }
-  return Response.json(outcome.results);
+  return syncHandlers.push(req, { db, scopeKey });
 }
 ```
 
-Both endpoints read the client's storage hash from a request header and refuse a client whose contract differs from the server's. See [Contract check](/docs/prisma-8/sync/server#contract-check).
+The handlers read the client's contract storage hash from a request header and return HTTP 409 when it is missing or differs from the server's. They also validate push bodies and return HTTP 400 for malformed input. See [Contract check](/docs/prisma-8/sync/server#contract-check).
 
 `applyPush` decodes wire values and validates each event. It applies events in order, checking ownership and writing the record and its `Changelog` row in one transaction. It stops at the first retryable failure so dependent events remain pending until their parent succeeds.
 
@@ -236,29 +210,14 @@ Add the pull endpoint. It reads the user's changelog after the client's last pos
 
 ```ts
 // GET /api/sync/pull?since=<changelogId>
-import { sqlSyncAdapter } from "./sync";
+import { syncHandlers } from "./sync";
 import { getAuthenticatedUserId } from "./auth";
 import { db } from "./db";
 
 export async function GET(req: Request) {
   const scopeKey = await getAuthenticatedUserId(req);
   if (!scopeKey) return Response.json({ error: "Unauthorized" }, { status: 401 });
-  const outcome = await sqlSyncAdapter.pull(db, {
-    scopeKey,
-    lastChangelogId: new URL(req.url).searchParams.get("since") || null,
-    limit: 50,
-    clientStorageHash: req.headers.get("x-storage-hash"),
-  });
-  if (!outcome.ok) {
-    switch (outcome.reason) {
-      case "invalid-cursor":
-        return Response.json({ error: "since must be a changelog id" }, { status: 400 });
-      case "contract-mismatch":
-        return Response.json({ error: "Client contract is out of date" }, { status: 409 });
-    }
-    throw new Error(`Unhandled pull outcome: ${outcome satisfies never}`);
-  }
-  return Response.json(outcome.logs);
+  return syncHandlers.pull(req, { db, scopeKey });
 }
 ```
 
@@ -272,24 +231,19 @@ export async function GET(req: Request) {
 Back in the browser, create a worker that calls your two endpoints, and start it once the user is signed in:
 
 ```ts
-import { ContractMismatchError, type SyncRequestContext } from "@prisma-idb/sync-extension-idb/client";
+import { createSyncFetchHandlers } from "@prisma-idb/sync-extension-idb/client";
 
 const db = await getDb();
-const send = async (url: string, init: RequestInit, { storageHash }: SyncRequestContext) => {
-  const headers = { ...init.headers, "x-storage-hash": storageHash };
-  const response = await fetch(url, { ...init, headers });
-  if (response.status === 409) throw new ContractMismatchError();
-  return response.json();
-};
-
-const worker = db.createSyncWorker({
-  pushHandler: (events, signal, context) =>
-    send("/api/sync/push", { method: "POST", body: JSON.stringify({ events }), signal }, context),
-  pullHandler: (fromChangelogId, signal, context) =>
-    send(`/api/sync/pull?since=${fromChangelogId ?? ""}`, { signal }, context),
-});
+const worker = db.createSyncWorker(
+  createSyncFetchHandlers({
+    pushUrl: "/api/sync/push",
+    pullUrl: "/api/sync/pull",
+  })
+);
 worker.start();
 ```
+
+The fetch handlers send the storage hash and raise `ContractMismatchError` on HTTP 409. The worker emits `contractmismatch` so the app can ask the user to reload.
 
 The worker pushes and then pulls every five seconds, and backs off after failures. Call `worker.stop()` and `resetDb()` on sign-out.
 

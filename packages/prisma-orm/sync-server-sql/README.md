@@ -12,11 +12,11 @@ npm install @prisma-idb/sync-server-sql
 ```
 
 2. Create the server and adapter from your contracts.
-3. Call `applyPush` and `pull` from your endpoints. Take `scopeKey` from the authenticated session.
+3. Create HTTP handlers. Resolve `scopeKey` from the authenticated session before calling either handler.
 
 ```ts
 import { createSyncServer } from "@prisma-idb/sync-server";
-import { createSqlSyncAdapter, sqlGetKeyField } from "@prisma-idb/sync-server-sql";
+import { createSqlSyncAdapter, createSqlSyncHandlers, sqlGetKeyField } from "@prisma-idb/sync-server-sql";
 
 const syncServer = createSyncServer({
   contract: serverContract,
@@ -24,33 +24,25 @@ const syncServer = createSyncServer({
   rootModel: "User",
   getKeyField: sqlGetKeyField,
 });
-const sqlSyncAdapter = createSqlSyncAdapter({ contract: serverContract, syncServer });
+const adapter = createSqlSyncAdapter({ contract: serverContract, syncServer });
+const handlers = createSqlSyncHandlers({ adapter });
 
-// Push endpoint. `scopeKey` comes from the session, never the request body.
-// The browser sends its storage hash in a header (see "Contract check" below).
-const pushed = await sqlSyncAdapter.applyPush(db, {
-  events: body.events,
-  scopeKey,
-  clientStorageHash: request.headers.get("x-storage-hash"),
-});
-if (!pushed.ok) {
-  // "batch-too-large" | "duplicate-event-id" | "contract-mismatch"
-  return json({ error: pushed.reason }, { status: pushed.reason === "contract-mismatch" ? 409 : 400 });
-}
-return json(pushed.results);
-
-// Pull endpoint. `lastChangelogId` is the last `changelogId` the client received.
-const pulled = await sqlSyncAdapter.pull(db, {
-  scopeKey,
-  lastChangelogId: url.searchParams.get("since"),
-  clientStorageHash: request.headers.get("x-storage-hash"),
-});
-if (!pulled.ok) {
-  // "invalid-cursor" | "contract-mismatch"
-  return json({ error: pulled.reason }, { status: pulled.reason === "contract-mismatch" ? 409 : 400 });
-}
-return json(pulled.logs);
+// Fetch-style endpoint, after authentication:
+return handlers.push(request, { db, scopeKey });
+// Pull endpoint: return handlers.pull(request, { db, scopeKey });
 ```
+
+In Hono, pass `c.req.raw`: `handlers.push(c.req.raw, { db, scopeKey })` or `handlers.pull(c.req.raw, { db, scopeKey })`.
+No Hono dependency is required. Authentication stays in your middleware or route.
+
+The handlers read `x-storage-hash`, validate push JSON, and return JSON arrays on success.
+They map contract mismatches to HTTP 409 and malformed input to HTTP 400.
+Pull reads the exclusive cursor from `since`; an absent or empty value starts from the beginning.
+Options `maxBatchSize` and `pullLimit` override the adapter's default limits.
+Unexpected database errors reject the promise for your app's error middleware.
+
+Use `createSyncFetchHandlers` from `@prisma-idb/sync-extension-idb/client` on the client to send the storage hash and raise `ContractMismatchError` automatically.
+The lower-level `adapter.applyPush` and `adapter.pull` remain available for custom transports.
 
 ## Contract check
 
