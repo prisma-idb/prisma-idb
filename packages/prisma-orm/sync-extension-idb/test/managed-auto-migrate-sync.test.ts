@@ -38,13 +38,18 @@ describe("createManagedAutoSyncIdbClient", () => {
     (globalThis as unknown as { indexedDB: IDBFactory }).indexedDB = new fake.IDBFactory();
   });
 
-  it("migrates and opens a working sync-tracked client from a single dbName", async () => {
+  it("can be created without indexedDB and opens a sync-tracked client when it becomes available", async () => {
+    const browserFactory = globalThis.indexedDB;
+    Reflect.deleteProperty(globalThis, "indexedDB");
     const space = buildContractSpaceFixture(contract);
     const managed = createManagedAutoSyncIdbClient({
       contractSpace: space,
       dbName: dbName(),
       extensions: [idbSyncExtension],
     });
+
+    await managed.close();
+    globalThis.indexedDB = browserFactory;
 
     const db = await managed.get();
     const orm = db.orm as unknown as { users: { create(data: unknown): Promise<unknown> } };
@@ -57,15 +62,18 @@ describe("createManagedAutoSyncIdbClient", () => {
     });
     expect(outbox).toHaveLength(1);
 
-    await managed.close();
+    await managed.reset();
   });
 
-  it("reset() deletes the exact database get() opened", async () => {
+  it("uses an explicit factory to open and reset without a global indexedDB", async () => {
+    const factory = globalThis.indexedDB;
+    Reflect.deleteProperty(globalThis, "indexedDB");
     const space = buildContractSpaceFixture(contract);
     const managed = createManagedAutoSyncIdbClient({
       contractSpace: space,
       dbName: dbName(),
       extensions: [idbSyncExtension],
+      factory,
     });
 
     const db = await managed.get();
@@ -79,5 +87,7 @@ describe("createManagedAutoSyncIdbClient", () => {
     const reopened = await managed.get();
     const reopenedOrm = reopened.orm as unknown as { users: { all(): { toArray(): Promise<unknown[]> } } };
     expect(await reopenedOrm.users.all().toArray()).toHaveLength(0);
+
+    await managed.close();
   });
 });

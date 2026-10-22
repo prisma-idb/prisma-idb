@@ -16,7 +16,7 @@
 export interface ManagedIdbClientOptions {
   /** IDB database name — passed to `indexedDB.deleteDatabase` on `reset()`. */
   readonly dbName: string;
-  /** IDB factory override — primarily for tests. Defaults to `indexedDB`. */
+  /** IDB factory override — primarily for tests. Defaults to `indexedDB` when `reset()` deletes the database. */
   readonly idbFactory?: IDBFactory;
 }
 
@@ -44,6 +44,7 @@ export interface ManagedIdbClient<TClient> {
  * Wraps `open` (a client factory, e.g. `() => createAutoMigratingIdbClient({...})`)
  * with a module-scoped singleton: `get()` opens once and caches the result,
  * `close()` releases it, `reset()` closes and wipes the underlying database.
+ * Creating the wrapper does not access IndexedDB, so it is safe during server rendering.
  *
  * @example
  * ```ts
@@ -63,7 +64,7 @@ export function createManagedIdbClient<TClient extends { close(): Promise<void> 
   open: () => Promise<TClient>,
   options: ManagedIdbClientOptions
 ): ManagedIdbClient<TClient> {
-  const { dbName, idbFactory = indexedDB } = options;
+  const { dbName, idbFactory } = options;
 
   let client: TClient | null = null;
   let clientPromise: Promise<TClient> | null = null;
@@ -102,7 +103,7 @@ export function createManagedIdbClient<TClient extends { close(): Promise<void> 
       if (clientPromise) await clientPromise.catch(() => {});
       await close();
       await new Promise<void>((resolve, reject) => {
-        const req = idbFactory.deleteDatabase(dbName);
+        const req = (idbFactory ?? indexedDB).deleteDatabase(dbName);
         req.onsuccess = () => resolve();
         req.onerror = () => reject(req.error as Error);
         // Deliberately no-op: `onblocked` only means the request is waiting
