@@ -96,6 +96,25 @@ Returned pull and rejected-push records contain only top-level fields from the c
 
 `db` is your Prisma 8 SQL client. It must have `.transaction(fn)` and `.orm.public.<Model>`. Resolve `scopeKey` from the authenticated session, never the request body or query string.
 
+### HTTP handlers
+
+`createSqlSyncHandlers({ adapter, maxBatchSize?, pullLimit? })` returns `push(request, { db, scopeKey })` and `pull(request, { db, scopeKey })`. Both return a standard `Response`. Authenticate the request before calling either method. The handlers only use the trusted `scopeKey` argument.
+
+The handlers read `x-storage-hash` and delegate the storage hash check to the adapter. With the default `contractCheck: "required"`, a missing or different storage hash returns HTTP 409 with `{ ok: false, reason: "contract-mismatch", expected }`. No database reads or writes occur. Setting the adapter's check to `"off"` also disables it for these handlers.
+
+Push validates JSON and the event envelope. Pull reads the exclusive cursor from `since`; a missing or empty parameter starts from the beginning. Success returns the results or logs array. Malformed input and other adapter refusal outcomes return HTTP 400. Unexpected errors reject the handler promise and reach the app's error middleware.
+
+Hono can pass its raw request directly:
+
+```ts
+import { createSqlSyncHandlers } from "@prisma-idb/sync-server-sql";
+
+const handlers = createSqlSyncHandlers({ adapter: sqlSyncAdapter });
+// Authentication middleware has already populated userId.
+app.post("/api/sync/push", (c) => handlers.push(c.req.raw, { db, scopeKey: c.get("userId") }));
+app.get("/api/sync/pull", (c) => handlers.pull(c.req.raw, { db, scopeKey: c.get("userId") }));
+```
+
 ### Route outcomes
 
 Handle each known failure reason explicitly. The reason unions can grow in future releases; an exhaustive TypeScript check helps detect new reasons when upgrading.

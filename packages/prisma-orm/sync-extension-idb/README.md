@@ -7,40 +7,25 @@ npm install @prisma-idb/sync-extension-idb
 ```
 
 ```ts
-import { ContractMismatchError, createManagedAutoSyncIdbClient } from "@prisma-idb/sync-extension-idb/client";
+import { createManagedAutoSyncIdbClient, createSyncFetchHandlers } from "@prisma-idb/sync-extension-idb/client";
 import { idbSyncExtension } from "@prisma-idb/sync-extension-idb/control";
 import { contractSpace } from "./prisma/contract-space.generated";
 
 const managedDb = createManagedAutoSyncIdbClient({ contractSpace, dbName: "my-app", extensions: [idbSyncExtension] });
 
 const db = await managedDb.get();
-const worker = db.createSyncWorker({
-  pushHandler: async (events, signal, context) => {
-    const response = await fetch("/api/sync/push", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-storage-hash": context.storageHash,
-      },
-      body: JSON.stringify({ events }),
-      signal,
-    });
-    if (response.status === 409) throw new ContractMismatchError();
-    return response.json();
-  },
-  pullHandler: async (since, signal, context) => {
-    const response = await fetch(`/api/sync/pull?since=${since ?? ""}`, {
-      headers: { "x-storage-hash": context.storageHash },
-      signal,
-    });
-    if (response.status === 409) throw new ContractMismatchError();
-    return response.json();
-  },
-});
+const worker = db.createSyncWorker(
+  createSyncFetchHandlers({
+    pushUrl: "/api/sync/push",
+    pullUrl: "/api/sync/pull",
+  })
+);
 worker.start();
 ```
 
-Each handler also receives `context.storageHash`, the emitted client contract's `storage.storageHash`. Send it to the server, which refuses a client on a different contract; throw `ContractMismatchError` from the handler on HTTP 409. See [Contract check](https://prisma-idb.dev/docs/prisma-8/sync/server#contract-check).
+`createSyncFetchHandlers` sends the storage hash and throws `ContractMismatchError` automatically on HTTP 409. It supports custom `fetch`, `headers` and `credentials` options.
+
+Custom handlers also receive `context.storageHash`. Send it to the server, which refuses a client on a different contract; throw `ContractMismatchError` from the handler on HTTP 409. See [Contract check](https://prisma-idb.dev/docs/prisma-8/sync/server#contract-check).
 
 `trackedModels` defaults to `"*"`; pass model names to keep other writes local. Tracked models need keys that are unique across devices, such as `uuid()` or `cuid()`. Auto-incremented keys are rejected for tracked stores.
 
@@ -52,11 +37,11 @@ The server side uses [`@prisma-idb/sync-server`](https://www.npmjs.com/package/@
 
 ## Entry points
 
-| Import                                   | Contains                                                                                                                                          |
-| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `@prisma-idb/sync-extension-idb/client`  | `createSyncIdbClient`, `createAutoMigratingSyncIdbClient`, `createManagedAutoSyncIdbClient`, `createSyncWorker`, `applyPull`, and outbox helpers. |
-| `@prisma-idb/sync-extension-idb/control` | `idbSyncExtension`: the sync stores and their migrations, passed to `extensions`.                                                                 |
-| `@prisma-idb/sync-extension-idb/schemas` | Zod schemas for the push and pull wire formats. Safe to import on a server.                                                                       |
+| Import                                   | Contains                                                                                                                                                                                              |
+| ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `@prisma-idb/sync-extension-idb/client`  | `createSyncIdbClient`, `createAutoMigratingSyncIdbClient`, `createManagedAutoSyncIdbClient`, `createSyncWorker`, `createSyncFetchHandlers`, `ContractMismatchError`, `applyPull`, and outbox helpers. |
+| `@prisma-idb/sync-extension-idb/control` | `idbSyncExtension`: the sync stores and their migrations, passed to `extensions`.                                                                                                                     |
+| `@prisma-idb/sync-extension-idb/schemas` | Zod schemas for the push and pull wire formats. Safe to import on a server.                                                                                                                           |
 
 `applyPull` validates decoded records and keys before opening a write transaction. Both its result and the worker's `pullcompleted` event include `validationFailed`, a subset of `skipped`, for corrupt records, keys or wire values. Valid rows still apply, and corrupt rows advance the pull cursor without changing their per-record version metadata. Extra fields and undeclared enum values are rejected; a newer server shape can require updating the client contract.
 
