@@ -1,5 +1,14 @@
 # @prisma-idb/prisma-orm-benchmark
 
+## 0.0.8
+
+### Patch Changes
+
+- Updated dependencies [[`8e55655`](https://github.com/prisma-idb/prisma-idb/commit/8e55655354a504f8b1458c09f909317fc41281f1), [`0154b39`](https://github.com/prisma-idb/prisma-idb/commit/0154b39c3e4f8795f5d96f9fd17d99b66e1586a4), [`38db64a`](https://github.com/prisma-idb/prisma-idb/commit/38db64a4e0b004237e7672cb1f554669b74a1e92), [`3a15a46`](https://github.com/prisma-idb/prisma-idb/commit/3a15a466cb061de91222b510c57ec1893164368b), [`8940fdf`](https://github.com/prisma-idb/prisma-idb/commit/8940fdfff30365f56de0e1415557a75950dba065), [`f18d6f5`](https://github.com/prisma-idb/prisma-idb/commit/f18d6f55b5d970bad89682fe3fc7292cf07f76ef), [`017de3f`](https://github.com/prisma-idb/prisma-idb/commit/017de3f426b5b5c2f66765256b98d8ea36b5c594), [`fb889c7`](https://github.com/prisma-idb/prisma-idb/commit/fb889c72e65a0b657019de41161fddb3c27e650f), [`1c72afe`](https://github.com/prisma-idb/prisma-idb/commit/1c72afe900a07a13fecdc0e0e8b8f0f0f077f825), [`a92b2f7`](https://github.com/prisma-idb/prisma-idb/commit/a92b2f709e3823efb88dd7e1b65bfbf36ad48fb1), [`1bebea5`](https://github.com/prisma-idb/prisma-idb/commit/1bebea51f01e9f8b3e56c0773d03764c4bb12806), [`1bebea5`](https://github.com/prisma-idb/prisma-idb/commit/1bebea51f01e9f8b3e56c0773d03764c4bb12806), [`1bebea5`](https://github.com/prisma-idb/prisma-idb/commit/1bebea51f01e9f8b3e56c0773d03764c4bb12806), [`92d62c5`](https://github.com/prisma-idb/prisma-idb/commit/92d62c5c869303423185fd1a94a10fbbb33399d0), [`b92a313`](https://github.com/prisma-idb/prisma-idb/commit/b92a3134c7243b1bcbb58756fe8b657e529f899e)]:
+  - @prisma-idb/family-idb@0.14.0
+  - @prisma-idb/client-idb@0.14.0
+  - @prisma-idb/target-idb@0.14.0
+
 ## 0.0.7
 
 ### Patch Changes

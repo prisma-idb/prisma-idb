@@ -1,5 +1,17 @@
 # @prisma-idb/adapter-idb
 
+## 0.14.0
+
+### Minor Changes
+
+- [#356](https://github.com/prisma-idb/prisma-idb/pull/356) [`1bebea5`](https://github.com/prisma-idb/prisma-idb/commit/1bebea51f01e9f8b3e56c0773d03764c4bb12806) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Evaluate list comparisons by element codec and reject unsupported list predicates before scanning.
+
+### Patch Changes
+
+- Updated dependencies [[`1bebea5`](https://github.com/prisma-idb/prisma-idb/commit/1bebea51f01e9f8b3e56c0773d03764c4bb12806)]:
+  - @prisma-idb/target-idb@0.14.0
+  - @prisma-idb/driver-idb@0.14.0
+
 ## 0.13.0
 
 ### Patch Changes
