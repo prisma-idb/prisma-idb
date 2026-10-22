@@ -62,10 +62,15 @@ describe.each(cases)("$scalar lists", ({ scalar, first, equal, second }) => {
 
   it("runs set, single push, addToSet, pull and both pop directions", async () => {
     const { samples } = await fixture(scalar);
-    await samples.create({ id: "a", values: [] });
+    await samples.create({ id: "a", values: [first] });
+    expect((await samples.update((u) => [u["values"]!.addToSet(second)]))?.["values"]).toEqual([first, second]);
     expect((await samples.update((u) => [u["values"]!.set([first, first])]))?.["values"]).toEqual([first, first]);
     expect((await samples.update((u) => [u["values"]!.push(second)]))?.["values"]).toEqual([first, first, second]);
     expect((await samples.update((u) => [u["values"]!.addToSet(equal)]))?.["values"]).toEqual([first, first, second]);
+    if (scalar === "Json") {
+      // pull compares complete elements: a partial object must preserve the larger objects.
+      expect((await samples.update((u) => [u["values"]!.pull({ a: 1 })]))?.["values"]).toEqual([first, first, second]);
+    }
     expect((await samples.update((u) => [u["values"]!.pull(equal)]))?.["values"]).toEqual([second]);
     expect((await samples.update((u) => [u["values"]!.pop(1)]))?.["values"]).toEqual([]);
     await samples.update({ values: [first, second] });

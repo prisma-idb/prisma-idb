@@ -1,28 +1,18 @@
 import { expect, test } from "./helpers";
 
-test("persists scalar lists with defaults, fluent updates, codec equality and projection", async ({ runner, page }) => {
-  expect(await runner.run('orm.scalar_list_samples.create({ id: "a" })')).toEqual({
-    id: "a",
-    tags: [],
-    dates: [],
-    decimals: [],
-  });
+// Real browser coverage: fake-indexeddb cannot prove native structured-clone storage,
+// transaction completion and reopening the persisted database across document navigation.
+// Codec equality, defaults, projection and individual operations are covered in client-idb.
+test("commits scalar-list updates to real IndexedDB across a page reload", async ({ runner, page }) => {
   await runner.run(
-    'orm.scalar_list_samples.update((u) => [u.tags.push("draft"), u.dates.push(new Date("2026-01-01")), u.decimals.push("1.00")])'
+    'orm.scalar_list_samples.create({ id: "a", tags: ["draft"], dates: [new Date("2026-01-01")], decimals: ["1.00"] })'
   );
-  expect(
-    await runner.run('orm.scalar_list_samples.where((m) => m.decimals.eq(["1"])).select("id", "tags").all()')
-  ).toEqual([{ id: "a", tags: ["draft"] }]);
-  await runner.run('orm.scalar_list_samples.updateAll((u) => [u.tags.addToSet("draft")]).toArray()');
+  await runner.run('orm.scalar_list_samples.update((u) => [u.tags.push("saved")])');
   await page.reload();
   expect(await runner.run('orm.scalar_list_samples.findUnique("a")')).toEqual({
     id: "a",
-    tags: ["draft"],
+    tags: ["draft", "saved"],
     dates: ["2026-01-01T00:00:00.000Z"],
     decimals: ["1.00"],
   });
-  expect(await runner.run('orm.scalar_list_samples.updateCount((u) => [u.tags.pull("draft")])')).toBe(1);
-  expect(await runner.run('orm.scalar_list_samples.where((m) => m.tags.eq([])).select("id").all()')).toEqual([
-    { id: "a" },
-  ]);
 });

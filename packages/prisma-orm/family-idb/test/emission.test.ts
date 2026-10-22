@@ -43,7 +43,7 @@ function makeRawWithStorage(storage: Record<string, unknown>) {
 
 // ── emission ──────────────────────────────────────────────────────────────────
 
-/** Exercises scalar and compound metadata together with enum input types. */
+/** Exercises scalar/list types and compound metadata in one generated consumer fixture. */
 const emissionContract = defineContract({
   family: idbFamilyPack,
   target: idbTargetPack,
@@ -59,6 +59,15 @@ const emissionContract = defineContract({
         previousRoles: "Role[]",
         email: "String",
         tags: "Json",
+        strings: "String[]",
+        ints: "Int[]",
+        bigints: "BigInt[]",
+        floats: "Float[]",
+        decimals: "Decimal[]",
+        booleans: "Boolean[]",
+        dates: "DateTime[]",
+        bytes: "Bytes[]",
+        json: "Json[]",
       },
       indexes: { byEmail: { keyPath: "email", unique: true }, byTags: { keyPath: "tags", multiEntry: true } },
     },
@@ -72,7 +81,7 @@ const emissionContract = defineContract({
   },
 });
 
-it("emits compilable consumer types for enum values, compound paths, index flags and unusual store names", () => {
+it("emits compilable consumer types for scalar lists, enum values, compound paths, index flags and unusual store names", () => {
   const contract = emissionContract;
   const generated = generateContractDts(
     contract,
@@ -102,12 +111,46 @@ it("emits compilable consumer types for enum values, compound paths, index flags
  type Row = FieldInputTypes["__unbound__"]["User"];
  type Role = Expect<Equal<Row["role"], "USER" | "ADMIN">>;
  type NullableRole = Expect<Equal<Row["invitedAs"], "USER" | "ADMIN" | null>>;
- type RoleList = Expect<Equal<Row["previousRoles"], ReadonlyArray<"USER" | "ADMIN">>>;
  type Members = Contract["domain"]["namespaces"]["__unbound__"]["enum"]["Role"]["members"];
  type FirstEnumName = Expect<Equal<Members[0]["name"], "USER">>;
  type LastEnumValue = Expect<Equal<Members[1]["value"], "ADMIN">>;
  // @ts-expect-error — enum unions reject undeclared members.
  const rejected: Row["role"] = "OWNER";
+ `,
+    "list-consumer.ts": `
+ import type { FieldInputTypes, FieldOutputTypes } from "./contract";
+ import type { Equal, Expect } from "./assertions";
+ type ExpectedLists = {
+   readonly strings: readonly string[];
+   readonly ints: readonly number[];
+   readonly bigints: readonly bigint[];
+   readonly floats: readonly number[];
+   readonly decimals: readonly string[];
+   readonly booleans: readonly boolean[];
+   readonly dates: readonly Date[];
+   readonly bytes: readonly Uint8Array[];
+   readonly json: readonly unknown[];
+   readonly previousRoles: readonly ("USER" | "ADMIN")[];
+ };
+ type Input = Pick<FieldInputTypes["__unbound__"]["User"], keyof ExpectedLists>;
+ type Output = Pick<FieldOutputTypes["__unbound__"]["User"], keyof ExpectedLists>;
+ // Exact types catch missing array wrappers, nullable elements and unresolved codecs becoming any.
+ type ListInputs = Expect<Equal<Input, ExpectedLists>>;
+ type ListOutputs = Expect<Equal<Output, ExpectedLists>>;
+ // Actual input values and output consumption also exercise the generated public declarations.
+ const input: Input = {
+   strings: ["a"], ints: [1], bigints: [1n], floats: [1.5], decimals: ["1.00"],
+   booleans: [true], dates: [new Date()], bytes: [new Uint8Array([1])],
+   json: [{ a: 1 }], previousRoles: ["ADMIN"],
+ };
+ declare const output: Output;
+ const rows: ExpectedLists[] = [input, output];
+ // @ts-expect-error — lists require arrays, not scalar values.
+ const scalar: Input["strings"] = "a";
+ // @ts-expect-error — DateTime list inputs retain the native Date element type.
+ const date: Input["dates"] = ["2026-01-01"];
+ // @ts-expect-error — enum list outputs retain their declared members.
+ const role: Output["previousRoles"] = ["OWNER"];
  `,
     "storage-consumer.ts": `
  import type { Contract, Stores, StorageHash } from "./contract";

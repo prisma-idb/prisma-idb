@@ -1,8 +1,5 @@
 import { canonicalizeContractToObject } from "@prisma/orm-framework/contract/hashing";
 import idbTargetControl from "@prisma-idb/target-idb/control";
-import { generateContractDts } from "@prisma/orm-toolchain/emitter";
-import { idbCodecLookup } from "@prisma-idb/target-idb/runtime";
-import { idbEmission } from "../src/core/emission";
 import { buildSymbolTable } from "@prisma/orm-framework/psl-parser";
 import { parse } from "@prisma/orm-framework/psl-parser/syntax";
 import { IdbMigrationPlanner } from "@prisma-idb/target-idb/migration";
@@ -142,24 +139,6 @@ describe("scalar lists", () => {
         expect(result.failure.diagnostics).toEqual(
           expect.arrayContaining([expect.objectContaining({ code: "IDB_LIST_INDEX" })])
         );
-    }
-  });
-
-  it("emits input and output arrays for every scalar codec", () => {
-    const codecIds = ["string", "int32", "bigint", "double", "decimal", "bool", "date", "bytes", "json"];
-    for (const [index, scalar] of scalars.slice(0, -1).entries()) {
-      const built = contract(`${scalar}[]`, { values: [] });
-      const emitted = generateContractDts(
-        built,
-        idbEmission,
-        [],
-        { storageHash: built.storage.storageHash, profileHash: built.profileHash },
-        undefined,
-        idbCodecLookup
-      );
-      for (const direction of ["input", "output"]) {
-        expect(emitted).toContain(`ReadonlyArray<CodecTypes["idb/${codecIds[index]}@1"]["${direction}"]>`);
-      }
     }
   });
 
