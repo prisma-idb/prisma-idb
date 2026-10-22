@@ -16,7 +16,7 @@
 export interface ManagedIdbClientOptions {
   /** IDB database name — passed to `indexedDB.deleteDatabase` on `reset()`. */
   readonly dbName: string;
-  /** IDB factory override — primarily for tests. Defaults to `indexedDB` when `reset()` deletes the database. */
+  /** IDB factory override — primarily for tests. Defaults to `indexedDB` when opening or resetting the database. */
   readonly idbFactory?: IDBFactory;
 }
 
@@ -68,6 +68,7 @@ export function createManagedIdbClient<TClient extends { close(): Promise<void> 
 
   let client: TClient | null = null;
   let clientPromise: Promise<TClient> | null = null;
+  let capturedFactory: IDBFactory | undefined;
   // Gate between get() and reset() — set synchronously (no `await` before
   // either reads/writes it) so the two never interleave: see module doc comment.
   let resetPromise: Promise<void> | null = null;
@@ -76,12 +77,15 @@ export function createManagedIdbClient<TClient extends { close(): Promise<void> 
   async function get(): Promise<TClient> {
     if (resetPromise) await resetPromise;
     if (client) return client;
-    clientPromise ??= open().catch((err: unknown) => {
-      // Clear on rejection so a later get() call retries instead of
-      // re-awaiting the same rejected promise forever.
-      clientPromise = null;
-      throw err;
-    });
+    if (!clientPromise) {
+      capturedFactory = idbFactory ?? indexedDB;
+      clientPromise = open().catch((err: unknown) => {
+        // Clear on rejection so a later get() call retries instead of
+        // re-awaiting the same rejected promise forever.
+        clientPromise = null;
+        throw err;
+      });
+    }
 
     const fresh = await clientPromise;
     client = fresh;
@@ -103,7 +107,7 @@ export function createManagedIdbClient<TClient extends { close(): Promise<void> 
       if (clientPromise) await clientPromise.catch(() => {});
       await close();
       await new Promise<void>((resolve, reject) => {
-        const req = (idbFactory ?? indexedDB).deleteDatabase(dbName);
+        const req = (capturedFactory ?? idbFactory ?? indexedDB).deleteDatabase(dbName);
         req.onsuccess = () => resolve();
         req.onerror = () => reject(req.error as Error);
         // Deliberately no-op: `onblocked` only means the request is waiting
@@ -113,6 +117,7 @@ export function createManagedIdbClient<TClient extends { close(): Promise<void> 
         // doc comment above.
         req.onblocked = () => {};
       });
+      capturedFactory = undefined;
     })();
     try {
       await resetPromise;
