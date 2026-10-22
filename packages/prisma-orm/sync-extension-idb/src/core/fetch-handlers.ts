@@ -40,6 +40,7 @@ export function createSyncFetchHandlers(options: SyncFetchHandlersOptions): Sync
         method: "POST",
         headers,
         credentials: options.credentials ?? "same-origin",
+        redirect: "error",
         body: JSON.stringify({ events }),
         signal,
       });
@@ -64,6 +65,7 @@ export function createSyncFetchHandlers(options: SyncFetchHandlersOptions): Sync
       const response = await fetchRequest(url.href, {
         headers,
         credentials: options.credentials ?? "same-origin",
+        redirect: "error",
         signal,
       });
       return logWithRecordSchema.array().parse(await readResponse(response, "Pull"));

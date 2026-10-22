@@ -11,7 +11,7 @@ function echoRequest(input: string | URL | Request, init?: RequestInit): Request
 }
 
 describe("fetch sync handlers", () => {
-  it("sends the storage hash, authentication and cancellation on both requests, retaining endpoint parameters", async () => {
+  it("sends the storage hash, authentication and cancellation on both requests, forbidding redirects and retaining endpoint parameters", async () => {
     let controller = new AbortController();
     const client = createSyncFetchHandlers({
       pushUrl: "https://sync.test/push",
@@ -23,6 +23,7 @@ describe("fetch sync handlers", () => {
         expect(request.headers.get(STORAGE_HASH_HEADER)).toBe("client-contract");
         expect(request.headers.get("authorization")).toBe("Bearer app-token");
         expect(request.credentials).toBe("include");
+        expect(request.redirect).toBe("error");
         controller.abort();
         expect(request.signal.aborted).toBe(true);
         if (request.method === "POST") {
