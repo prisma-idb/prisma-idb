@@ -96,6 +96,25 @@ Returned pull and rejected-push records contain only top-level fields from the c
 
 `db` is your Prisma 8 SQL client. It must have `.transaction(fn)` and `.orm.public.<Model>`. Resolve `scopeKey` from the authenticated session, never the request body or query string.
 
+### Checked foreign keys
+
+Since version 0.7, `@prisma-idb/sync-server-sql` requires these schema shapes for relations checked along ownership paths to `rootModel`:
+
+- Each relation uses one foreign key field and references the parent's single-field primary key. Referencing another `@unique` field or a compound key is unsupported.
+- The referencing foreign key has no database or ORM-generated default, including defaults on nullable fields. Authorization needs its value before insertion.
+- A default on the parent's primary key alone does not violate the foreign key rule.
+
+For example, `ownerId String` with `owner User @relation(fields: [ownerId], references: [id])` is supported when `User.id` is its single-field primary key. `ownerId String @default("system")` is unsupported, even if the application always supplies `ownerId`.
+
+With `syncServer`, `createSqlSyncAdapter` checks these rules at construction. Lower-level push calls check them before opening a transaction. Configuration errors name the unsupported relation or field:
+
+| Error text                                                                                                                                          | Meaning                                                                                                                                      |
+| --------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Unsupported tenant parent join "Board.owner": expected a single-field FK to the parent's key.`                                                     | The checked join must reference the parent's single-field primary key.                                                                       |
+| `Unsupported tenant parent "Board.ownerId": FK defaults must be resolved before ownership checks. Remove the default and supply the FK explicitly.` | Remove the database or ORM-generated default from the referencing field. Supplying a value alone does not make a defaulted schema supported. |
+
+These are sync adapter restrictions. Prisma schemas can otherwise reference [non-ID unique fields](https://docs.prisma.io/docs/orm/prisma-schema/data-model/relations/one-to-many-relations) and define [defaults on fields backing relations](https://docs.prisma.io/docs/orm/reference/prisma-schema-reference#default).
+
 ### HTTP handlers
 
 `createSqlSyncHandlers({ adapter, maxBatchSize?, pullLimit? })` returns `push(request, { db, scopeKey })` and `pull(request, { db, scopeKey })`. Both return a standard `Response`. Authenticate the request before calling either method. The handlers only use the trusted `scopeKey` argument.
@@ -225,6 +244,7 @@ For your own schema pipeline, `prepareSqlSchemaWithSync` takes schema text and r
 
 ## Common mistakes
 
+- **A checked relation references a unique field, a compound key, or has a foreign key default.** Change the relation to reference the parent's single-field primary key. Remove database and ORM-generated defaults from the referencing foreign key, and supply its value explicitly when creating a record. Regenerate the server and client contracts, and migrate the SQL schema to match. See [Checked foreign keys](#checked-foreign-keys) for the configuration errors.
 - **Building the server's database client from the browser's contract.** `db.orm.public.*` and the SQL adapter need the SQL contract (`schema.postgres.generated`). With the browser's `contract` type, model names often still resolve, but queries lose their types: no autocomplete, and no error for a misspelled field.
 - **Wrong capitalization in model names.** Names pass straight through to `db.orm.public[model]`, so `changelog` instead of `Changelog` fails with `Model "changelog" not found on db.orm.public.`
 - **An unlimited custom pull query.** `sqlSyncAdapter.pull` defaults to 50 rows and uses an exclusive changelog cursor. If you use the lower-level methods, limit and page your own changelog query too.

@@ -88,10 +88,17 @@ The same rule applies if `recipeId` points to Bob's `Recipe`.
 
 ### Supported relations
 
-- Checked relations must use a single-field foreign key to the tenant parent's primary key.
+Since version 0.7, these restrictions apply to relations checked along ownership paths to the root model:
+
+- Checked relations must use a single-field foreign key to the tenant parent's single-field primary key. References to other `@unique` fields and compound keys are unsupported.
 - Unsupported checked relations and mismatched `parentReferences` descriptors cause configuration errors.
 - Checked foreign keys cannot have database or ORM-generated defaults. Authorization requires their resolved values before insertion.
+- The default restriction applies to the referencing foreign key. A default on the parent's primary key alone does not violate this rule.
 - With `syncServer`, the adapter validates this metadata at construction. Lower-level calls validate it before opening a transaction.
+
+For example, `ownerId String` with `owner User @relation(fields: [ownerId], references: [id])` is supported when `User.id` is its single-field primary key. `ownerId String @default("system")` is unsupported, even when every create supplies `ownerId`.
+
+An unsupported join throws `Unsupported tenant parent join "Board.owner": expected a single-field FK to the parent's key.` A defaulted foreign key throws `Unsupported tenant parent "Board.ownerId": FK defaults must be resolved before ownership checks. Remove the default and supply the FK explicitly.` Both errors identify the relation or field to change.
 
 ### Historical rows
 
@@ -114,9 +121,13 @@ See [ADR 022](../docs/adrs/ADR%20022%20-%20Rejected%20Pushes%20Reconcile%20to%20
 
 Upgrading both packages tightens create and update acceptance by default. No relation policy configuration is required.
 
-1. Remove database and ORM-generated defaults from checked foreign keys.
-2. Supply those foreign keys explicitly when creating records.
-3. When updating historical rows, replace any tenant parents outside the caller's scope in the same patch.
+1. Change checked relations that reference non-primary unique fields or compound keys to reference the parent's single-field primary key.
+2. Remove database and ORM-generated defaults from checked foreign keys. For example, change `ownerId String @default("system")` to `ownerId String`.
+3. Supply those foreign keys explicitly when creating records.
+4. Regenerate the server and client contracts, and migrate the SQL schema to match.
+5. When updating historical rows, replace any tenant parents outside the caller's scope in the same patch.
+
+See the [server reference](https://prisma-idb.dev/docs/prisma-8/sync/server#checked-foreign-keys) for the supported schema shapes and configuration errors.
 
 ## API
 
