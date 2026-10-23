@@ -28,6 +28,19 @@ const open = await db.orm.todo.where({ done: false }).orderBy({ title: "asc" }).
 
 The `internal` subpath is for companion packages such as `sync-extension-idb`. Application code uses the entry points above. For nested writes, pass a relation callback to `create()` or `update()`; the client supplies the relation mutator.
 
+## Schema enums
+
+Clients expose Prisma 8's runtime enum accessors by namespace and enum name:
+
+```ts
+const Role = db.enums.__unbound__.Role;
+const role: typeof Role.Value = Role.members.ADMIN;
+const roles = Role.values;
+const valid = Role.has(input);
+```
+
+`__unbound__` is the default PSL domain namespace. `members` maps names to application values, including mapped strings. Accessors also provide `names`, `hasName`, `nameOf`, and `ordinalOf`; `Value` is type-only. Existing field types and string literals remain compatible. Auto-migrating clients expose the same accessors.
+
 ## Primary-key updates
 
 `update()`, `updateAll()`, `updateCount()` and the update arm of `upsert()` reject changes to an existing row’s primary key with code `PRIMARY_KEY_CHANGE_UNSUPPORTED`. The entire mutation rolls back, including referential actions and sync outbox changes. The update input types leave out primary-key fields, so typed code can't set one. This applies to models the contract resolves; for any other model name, only the runtime check applies. At runtime, a patch that repeats the existing key is still allowed, and a query with no matching rows performs no write.

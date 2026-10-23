@@ -23,6 +23,31 @@ function dbName(): string {
 }
 
 describe("createAutoMigratingSyncIdbClient", () => {
+  it("shares upstream enum accessors with the raw client after migration", async () => {
+    const withEnums = defineContract({
+      family: idbFamilyPack,
+      target: idbTargetPack,
+      enums: { Role: ["USER", "ADMIN"] },
+      models: { User: { store: "users", key: "id", fields: { id: "String", role: "Role" } } },
+    });
+    const db = await createAutoMigratingSyncIdbClient({
+      contractSpace: buildContractSpaceFixture(withEnums),
+      dbName: dbName(),
+      extensions: [idbSyncExtension],
+    });
+    try {
+      expect(db.enums).toBe(db.rawClient.enums);
+      const Role = db.enums["__unbound__"]!["Role"]!;
+      expect(Role.values).toEqual(["USER", "ADMIN"]);
+      expect(Role.has("ADMIN")).toBe(true);
+      expect(Role.has("OWNER")).toBe(false);
+      const orm = db.orm as unknown as { users: { create(data: unknown): Promise<unknown> } };
+      expect(await orm.users.create({ id: "u1", role: Role.members["ADMIN"] })).toMatchObject({ role: "ADMIN" });
+    } finally {
+      await db.close();
+    }
+  });
+
   it("rehashes the legacy sync space without changing queued outbox records", async () => {
     const space = buildContractSpaceFixture(contract);
     const name = dbName();
