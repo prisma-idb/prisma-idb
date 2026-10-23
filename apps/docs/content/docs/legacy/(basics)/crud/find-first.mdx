@@ -33,11 +33,11 @@ if (user === null) {
 }
 ```
 
-For error handling, use [`findFirstOrThrow`](/docs/crud/find-first-or-throw).
+For error handling, use [`findFirstOrThrow`](/docs/legacy/crud/find-first-or-throw).
 
 ## Filtering
 
-Use the same `where` syntax as [`findMany`](/docs/crud/find-many):
+Use the same `where` syntax as [`findMany`](/docs/legacy/crud/find-many):
 
 ```typescript
 const user = await client.user.findFirst({
@@ -147,6 +147,6 @@ try {
 
 ## See Also
 
-- [findFirstOrThrow](/docs/crud/find-first-or-throw) - With error on not found
-- [findUnique](/docs/crud/find-unique) - Get by unique field
-- [findMany](/docs/crud/find-many) - Get all matching records
+- [findFirstOrThrow](/docs/legacy/crud/find-first-or-throw) - With error on not found
+- [findUnique](/docs/legacy/crud/find-unique) - Get by unique field
+- [findMany](/docs/legacy/crud/find-many) - Get all matching records

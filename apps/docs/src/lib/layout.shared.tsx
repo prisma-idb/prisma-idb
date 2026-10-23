@@ -23,7 +23,7 @@ export function baseOptions(): BaseLayoutProps {
           </svg>
         ),
         text: "View on npm",
-        url: "https://www.npmjs.com/package/@prisma-idb/idb-client-generator",
+        url: "https://www.npmjs.com/package/@prisma-idb/client-idb",
       },
     ],
   };
