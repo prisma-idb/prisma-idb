@@ -1,5 +1,25 @@
 # @prisma-idb/sync-extension-idb
 
+## 0.10.0
+
+### Minor Changes
+
+- [#369](https://github.com/prisma-idb/prisma-idb/pull/369) [`559d040`](https://github.com/prisma-idb/prisma-idb/commit/559d04048d520c008dde8c6cc665a1381ef19d71) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Expose runtime enum accessors through `db.enums` on sync clients, sharing the accessors with `db.rawClient.enums`.
+
+- [#366](https://github.com/prisma-idb/prisma-idb/pull/366) [`03fc5ca`](https://github.com/prisma-idb/prisma-idb/commit/03fc5ca43a7099f478ad7759fa0259318307018d) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Add an `error` event carrying the thrown `Error` when a sync cycle fails. Preserve Error subclasses, stacks, and causes; wrap other thrown values in an Error with the original value as its cause, using a fallback message if string conversion fails. Isolate listener exceptions so all subscribers are notified and sync failures keep their original rejection.
+
+  Failed `forceSync()` calls now set status to `"error"` and emit the event while still rejecting with the original thrown value. Scheduled retries keep their existing backoff. Status values and `statuschange` payloads remain lowercase strings, so this introduces no breaking API change; the legacy generated worker's uppercase status object remains a separate API.
+
+### Patch Changes
+
+- Updated dependencies [[`559d040`](https://github.com/prisma-idb/prisma-idb/commit/559d04048d520c008dde8c6cc665a1381ef19d71)]:
+  - @prisma-idb/client-idb@0.15.0
+  - @prisma-idb/target-idb@0.15.0
+  - @prisma-idb/driver-idb@0.15.0
+  - @prisma-idb/adapter-idb@0.15.0
+  - @prisma-idb/runtime-idb@0.15.0
+  - @prisma-idb/family-idb@0.15.0
+
 ## 0.9.0
 
 ### Minor Changes
