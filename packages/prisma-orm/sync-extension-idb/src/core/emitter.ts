@@ -5,7 +5,7 @@
  */
 
 export interface Emitter<EventMap> {
-  /** Calls every listener registered for `event`, in subscription order. */
+  /** Calls every listener in subscription order, ignoring listener exceptions. */
   emit<K extends keyof EventMap>(event: K, payload: EventMap[K]): void;
   /** Registers a listener. Returns a function that removes it. */
   on<K extends keyof EventMap>(event: K, callback: (payload: EventMap[K]) => void): () => void;
@@ -17,7 +17,13 @@ export function createEmitter<EventMap>(): Emitter<EventMap> {
 
   return {
     emit(event, payload) {
-      for (const callback of listeners.get(event) ?? []) callback(payload as never);
+      for (const callback of listeners.get(event) ?? []) {
+        try {
+          callback(payload as never);
+        } catch {
+          // Subscribers must not interrupt sync work or prevent other notifications.
+        }
+      }
     },
     on(event, callback) {
       let set = listeners.get(event);

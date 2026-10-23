@@ -105,6 +105,81 @@ describe("SyncWorker — state machine", () => {
     expect(second).toEqual(["pushing", "pulling", "idle", "pushing", "pulling", "idle"]);
   });
 
+  it.each([
+    { value: "offline", message: "offline" },
+    {
+      value: {
+        toString() {
+          throw new Error("cannot stringify");
+        },
+      },
+      message: "Sync cycle failed",
+    },
+  ])("wraps non-Error failures with message '$message' while preserving the rejection", async ({ value, message }) => {
+    const worker = createSyncWorker({
+      syncClient: makeStubSyncClient(),
+      pushHandler: async () => [],
+      pullHandler: async () => {
+        throw value;
+      },
+    });
+    const errors: Error[] = [];
+    worker.on("error", (error) => errors.push(error));
+
+    await expect(worker.forceSync()).rejects.toEqual(value);
+
+    expect(errors[0]).toBeInstanceOf(Error);
+    expect(errors[0]).toMatchObject({ message, cause: value });
+  });
+
+  it("preserves the sync failure and notifies remaining subscribers when listeners throw", async () => {
+    const failure = new Error("pull failed");
+    const worker = createSyncWorker({
+      syncClient: makeStubSyncClient(),
+      pushHandler: async () => [],
+      pullHandler: async () => {
+        throw failure;
+      },
+    });
+    const statuses: string[] = [];
+    const errors: Error[] = [];
+    worker.on("statuschange", (status) => {
+      if (status === "error") throw new Error("status listener failed");
+    });
+    worker.on("statuschange", (status) => statuses.push(status));
+    worker.on("error", () => {
+      throw new Error("error listener failed");
+    });
+    worker.on("error", (error) => errors.push(error));
+
+    await expect(worker.forceSync()).rejects.toThrow(failure);
+
+    expect(statuses).toEqual(["pushing", "pulling", "error"]);
+    expect(worker.status).toBe("error");
+    expect(errors).toEqual([failure]);
+  });
+
+  it("suppresses the error event when a statuschange listener stops the worker on error", async () => {
+    const failure = new Error("pull failed");
+    const worker = createSyncWorker({
+      syncClient: makeStubSyncClient(),
+      pushHandler: async () => [],
+      pullHandler: async () => {
+        throw failure;
+      },
+    });
+    const errors: Error[] = [];
+    worker.on("statuschange", (status) => {
+      if (status === "error") worker.stop();
+    });
+    worker.on("error", (error) => errors.push(error));
+
+    await expect(worker.forceSync()).rejects.toThrow(failure);
+
+    expect(worker.status).toBe("stopped");
+    expect(errors).toEqual([]);
+  });
+
   it("start() is a no-op when already running", async () => {
     let pullCalls = 0;
     const worker = createSyncWorker({
@@ -159,11 +234,17 @@ describe("SyncWorker — state machine", () => {
       backoffMaxMs: 5_000,
     });
     const statuses: string[] = [];
+    const errors: Error[] = [];
     worker.on("statuschange", (s) => statuses.push(s));
+    worker.on("error", (error) => {
+      expect(worker.status).toBe("error");
+      errors.push(error);
+    });
 
     worker.start();
     await vi.advanceTimersByTimeAsync(0);
     expect(worker.status).toBe("error");
+    expect(errors).toEqual([new Error("pull failed")]);
 
     // 1st retry: backoffBaseMs * 2^0 = 1000ms
     await vi.advanceTimersByTimeAsync(999);
@@ -307,6 +388,66 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
       }
     });
   }
+
+  it("preserves a push failure whose string conversion throws and records a retryable outbox error", async () => {
+    const { client } = await createTestSyncClient();
+    await asAccessors(client.orm)["users"]!.create({ id: "u1", name: "Alice" });
+    const failure = {
+      toString() {
+        throw new Error("cannot stringify");
+      },
+    };
+    const worker = trackedWorker({
+      syncClient: client,
+      pushHandler: async () => {
+        throw failure;
+      },
+      pullHandler: async () => [],
+    });
+    const errors: Error[] = [];
+    worker.on("error", (error) => errors.push(error));
+
+    await expect(worker.forceSync()).rejects.toEqual(failure);
+
+    expect(worker.status).toBe("error");
+    expect(errors).toEqual([new Error("Sync cycle failed", { cause: failure })]);
+    expect(errors[0]?.cause).toEqual(failure);
+    expect(await scanAll(client, "_idb_sync_outbox")).toMatchObject([
+      { tries: 1, lastError: "Sync cycle failed", synced: false, retryable: true },
+    ]);
+    await client.close();
+  });
+
+  it.each(["push", "pull"] as const)("emits one error for overlapping forced cycles when %s fails", async (during) => {
+    const { client } = await createTestSyncClient();
+    await asAccessors(client.orm)["users"]!.create({ id: "u1", name: "Alice" });
+    const failure = new TypeError("Network request failed", { cause: "offline" });
+    const worker = trackedWorker({
+      syncClient: client,
+      pushHandler: async (events) => {
+        if (during === "push") throw failure;
+        return events.map((event) => ({ id: event.id, success: true }));
+      },
+      pullHandler: async () => {
+        throw failure;
+      },
+    });
+    const errors: Error[] = [];
+    worker.on("error", (error) => {
+      expect(worker.status).toBe("error");
+      errors.push(error);
+    });
+
+    await Promise.all([
+      expect(worker.forceSync()).rejects.toThrow(failure),
+      expect(worker.forceSync()).rejects.toThrow(failure),
+    ]);
+
+    expect(worker.status).toBe("error");
+    expect(errors).toEqual([failure]);
+    expect(errors[0]).toBeInstanceOf(TypeError);
+    expect(errors[0]).toMatchObject({ cause: "offline" });
+  });
 
   describe("acknowledged retention", () => {
     it("continues pushing and pulling when cycle-start pruning fails", async () => {
