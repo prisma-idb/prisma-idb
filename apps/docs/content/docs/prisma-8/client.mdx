@@ -27,6 +27,24 @@ export function getDb(): Promise<IdbClient<Contract>> {
 
 The client applies every pending migration as it was planned, including ones that delete data. Review those when you plan them; see [Destructive changes](/docs/prisma-8/migrations#destructive-changes).
 
+## Use schema enums
+
+Every client exposes Prisma 8's runtime enum accessors under `db.enums`, keyed by domain namespace and enum name. For a PSL schema without an explicit namespace, use `__unbound__`:
+
+```ts
+const Role = db.enums.__unbound__.Role;
+const role: typeof Role.Value = Role.members.ADMIN;
+const roles = Role.values; // ["USER", "ADMIN"] for those declared members
+
+if (Role.has(input)) {
+  // input is narrowed to the enum's value union
+}
+```
+
+`members` maps member names to application values, including explicit stored strings. `names`, `hasName`, `nameOf`, and `ordinalOf` are also available. `Value` is type-only: use `typeof Role.Value` in type positions. Existing field types and string-literal usage keep working. Auto-migrating and sync clients expose the same API; sync clients share it with `db.rawClient.enums`.
+
+Accessors come from the emitted contract, so regenerate it after changing enums. With a client projection, only the enums retained in the client contract are available.
+
 ## Share one client and reset it on logout
 
 `createManagedAutoIdbClient` wraps the same options in a singleton with a safe `reset()`. Use it when the app needs to wipe local data, for example so a different account signing in on the same browser never sees the previous user's rows.
@@ -88,6 +106,7 @@ You don't plan or edit an extension's migrations. The sync extension is currentl
 
 | Member                           | Description                                                                                   |
 | -------------------------------- | --------------------------------------------------------------------------------------------- |
+| `db.enums`                       | Runtime enum accessors keyed by domain namespace and enum name.                               |
 | `db.orm`                         | One accessor per model, such as `db.orm.todo`. See [API](/docs/prisma-8/api).                 |
 | `db.verifyMarker()`              | Resolves to `true` when the database's schema matches the contract.                           |
 | `db.withTransaction(stores, fn)` | Runs low-level plans in one transaction. See [Transactions](/docs/prisma-8/api/transactions). |

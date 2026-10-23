@@ -1,0 +1,34 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`client enum accessors > exposes every PSL enum with mapped values and upstream membership helpers 1`] = `
+{
+  "Role": {
+    "members": {
+      "ADMIN": "ADMIN",
+      "USER": "USER",
+    },
+    "names": [
+      "USER",
+      "ADMIN",
+    ],
+    "values": [
+      "USER",
+      "ADMIN",
+    ],
+  },
+  "Status": {
+    "members": {
+      "ACTIVE": "active",
+      "ARCHIVED": "archived",
+    },
+    "names": [
+      "ACTIVE",
+      "ARCHIVED",
+    ],
+    "values": [
+      "active",
+      "archived",
+    ],
+  },
+}
+`;

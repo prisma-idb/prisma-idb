@@ -16,6 +16,7 @@ import { createIdbRuntime } from "@prisma-idb/runtime-idb/runtime";
 import { idbCodecLookup } from "@prisma-idb/target-idb/runtime";
 import { idbOrm, runOrmTransaction } from "@prisma-idb/client-idb/orm";
 import type { IdbOrmClient, IdbOrmTransaction, IdbContract } from "@prisma-idb/client-idb/orm";
+import { createIdbEnums } from "@prisma-idb/client-idb/internal";
 import type { IdbClient } from "@prisma-idb/client-idb/client";
 import { createEmitter } from "./emitter";
 import { SyncInterceptorExecutor } from "./sync-executor";
@@ -55,6 +56,9 @@ export interface SyncIdbClientOptions<TContract extends IdbContract> {
 export interface SyncIdbClient<TContract extends IdbContract> {
   /** The resolved IDB contract this client was created with. */
   readonly contract: TContract;
+
+  /** Upstream enum accessors shared with the raw client. */
+  readonly enums: IdbClient<TContract>["enums"];
 
   /**
    * Sync-aware ORM client.
@@ -206,6 +210,7 @@ export function createSyncIdbClient<TContract extends IdbContract>(
 
   const rawClient: IdbClient<TContract> = {
     orm: rawOrm,
+    enums: createIdbEnums(options.contract),
     transaction: (rootKeys, fn) => runOrmTransaction({ contract: options.contract, executor: runtime }, rootKeys, fn),
     withTransaction,
     verifyMarker: () => runtime.verifyMarker(),
@@ -220,6 +225,7 @@ export function createSyncIdbClient<TContract extends IdbContract>(
   const client: SyncIdbClient<TContract> = {
     contract: options.contract,
     orm: syncOrm,
+    enums: rawClient.enums,
     transaction: async (rootKeys, fn) => {
       // The executor notifies once per write; collect the entries instead so
       // listeners hear about the whole transaction in a single call.

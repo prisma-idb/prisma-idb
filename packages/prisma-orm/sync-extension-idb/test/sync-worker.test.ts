@@ -31,6 +31,7 @@ function makeStubSyncClient(): SyncIdbClient<never> {
   return {
     contract: { domain: { namespaces: {} }, storage: { storageHash: "stub" } } as never,
     orm: {} as never,
+    enums: {} as never,
     transaction: (async (_rootKeys: string[], fn: (tx: unknown) => unknown) => fn({})) as never,
     withoutTracking: (async (fn: (rawOrm: unknown) => unknown) => fn({})) as never,
     withTransaction: (async (_stores: string[], fn: (scope: unknown) => unknown) => fn(emptyScope)) as never,
@@ -43,6 +44,7 @@ function makeStubSyncClient(): SyncIdbClient<never> {
     [Symbol.asyncDispose]: async () => {},
     rawClient: {
       orm: {} as never,
+      enums: {} as never,
       transaction: (async (_rootKeys: string[], fn: (tx: unknown) => unknown) => fn({})) as never,
       withTransaction: (async (_stores: string[], fn: (scope: unknown) => unknown) => fn(emptyScope)) as never,
       verifyMarker: (async () => ({})) as never,

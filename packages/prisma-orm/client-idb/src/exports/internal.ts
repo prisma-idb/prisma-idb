@@ -9,3 +9,5 @@ export {
   withDecimalIdentityScope,
   IdbDecimalIdentityConflictError,
 } from "../core/decimal-identity";
+
+export { createIdbEnums } from "../core/enum-accessors";

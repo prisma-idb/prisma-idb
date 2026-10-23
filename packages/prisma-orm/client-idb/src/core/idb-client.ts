@@ -1,9 +1,11 @@
+import type { NamespacedEnums } from "@prisma/orm-framework/contract";
 import { IdbAdapter } from "@prisma-idb/adapter-idb/runtime";
 import { createIDBRuntimeDriver } from "@prisma-idb/driver-idb/runtime";
 import type { IdbTransactionScope } from "@prisma-idb/driver-idb/runtime";
 import type { IdbMiddleware } from "@prisma-idb/runtime-idb/runtime";
 import { createIdbRuntime } from "@prisma-idb/runtime-idb/runtime";
 import { idbCodecLookup } from "@prisma-idb/target-idb/runtime";
+import { createIdbEnums } from "./enum-accessors";
 import { withMutationScope } from "./mutation-scope";
 import { idbOrm } from "./idb-orm";
 import type { IdbOrmClient } from "./idb-orm";
@@ -24,6 +26,8 @@ export interface IdbClientOptions<TContract extends IdbContract> {
 /** A typed ORM and the connection and transaction operations that own its lifetime. */
 export interface IdbClient<TContract extends IdbContract> {
   readonly orm: IdbOrmClient<TContract>;
+  /** Upstream enum accessors, keyed by domain namespace and enum name. */
+  readonly enums: NamespacedEnums<TContract>;
   /**
    * Run `fn` in one readwrite transaction over the models behind `rootKeys`.
    *
@@ -109,6 +113,7 @@ export function createIdbClient<TContract extends IdbContract>(
 
   return {
     orm,
+    enums: createIdbEnums(options.contract),
     transaction: (rootKeys, fn) => runOrmTransaction({ contract: options.contract, executor: runtime }, rootKeys, fn),
     withTransaction: <T>(storeNames: string[], fn: (scope: IdbTransactionScope) => Promise<T>) =>
       withMutationScope(runtime, storeNames, fn),
