@@ -289,7 +289,7 @@ export function createSyncWorker<TContract extends IdbContract>(options: SyncWor
       );
     } catch (error) {
       reportContractMismatch(error, "push");
-      const message = error instanceof Error ? error.message : String(error);
+      const message = toSyncError(error).message;
       await syncClient.withTransaction([OUTBOX_STORE, VERSION_META_STORE], async (scope) => {
         for (const { id } of events) await markFailed(scope, id, message);
       });

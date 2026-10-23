@@ -368,6 +368,35 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
     });
   }
 
+  it("preserves a push failure whose string conversion throws and records a retryable outbox error", async () => {
+    const { client } = await createTestSyncClient();
+    await asAccessors(client.orm)["users"]!.create({ id: "u1", name: "Alice" });
+    const failure = {
+      toString() {
+        throw new Error("cannot stringify");
+      },
+    };
+    const worker = trackedWorker({
+      syncClient: client,
+      pushHandler: async () => {
+        throw failure;
+      },
+      pullHandler: async () => [],
+    });
+    const errors: Error[] = [];
+    worker.on("error", (error) => errors.push(error));
+
+    await expect(worker.forceSync()).rejects.toEqual(failure);
+
+    expect(worker.status).toBe("error");
+    expect(errors).toEqual([new Error("Sync cycle failed", { cause: failure })]);
+    expect(errors[0]?.cause).toEqual(failure);
+    expect(await scanAll(client, "_idb_sync_outbox")).toMatchObject([
+      { tries: 1, lastError: "Sync cycle failed", synced: false, retryable: true },
+    ]);
+    await client.close();
+  });
+
   it.each(["push", "pull"] as const)("emits one error for overlapping forced cycles when %s fails", async (during) => {
     const { client } = await createTestSyncClient();
     await asAccessors(client.orm)["users"]!.create({ id: "u1", name: "Alice" });
