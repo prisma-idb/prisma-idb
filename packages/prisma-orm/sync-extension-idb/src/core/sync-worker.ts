@@ -394,7 +394,7 @@ export function createSyncWorker<TContract extends IdbContract>(options: SyncWor
         // Report once per cycle, even when scheduled and forced callers share it.
         if (!stopped) {
           setStatus("error");
-          emit("error", toSyncError(error));
+          if (!stopped) emit("error", toSyncError(error));
         }
         throw error;
       })

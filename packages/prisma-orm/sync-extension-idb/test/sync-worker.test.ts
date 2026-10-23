@@ -159,6 +159,27 @@ describe("SyncWorker — state machine", () => {
     expect(errors).toEqual([failure]);
   });
 
+  it("suppresses the error event when a statuschange listener stops the worker on error", async () => {
+    const failure = new Error("pull failed");
+    const worker = createSyncWorker({
+      syncClient: makeStubSyncClient(),
+      pushHandler: async () => [],
+      pullHandler: async () => {
+        throw failure;
+      },
+    });
+    const errors: Error[] = [];
+    worker.on("statuschange", (status) => {
+      if (status === "error") worker.stop();
+    });
+    worker.on("error", (error) => errors.push(error));
+
+    await expect(worker.forceSync()).rejects.toThrow(failure);
+
+    expect(worker.status).toBe("stopped");
+    expect(errors).toEqual([]);
+  });
+
   it("start() is a no-op when already running", async () => {
     let pullCalls = 0;
     const worker = createSyncWorker({
