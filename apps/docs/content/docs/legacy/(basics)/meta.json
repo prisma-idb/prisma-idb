@@ -1,6 +1,6 @@
 {
-  "title": "Basics",
-  "description": "Get started with the Prisma IDB client",
+  "title": "Legacy generator",
+  "description": "The Prisma 6 and 7 generator, idb-client-generator",
   "icon": "Pyramid",
   "pages": [
     "---Getting Started---",

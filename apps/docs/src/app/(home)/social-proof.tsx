@@ -23,7 +23,7 @@ export function SocialProof() {
       fetch("https://api.github.com/repos/prisma-idb/prisma-idb", {
         signal: controller.signal,
       }).then((r) => r.json()),
-      fetch("https://api.npmjs.org/downloads/point/last-week/@prisma-idb/idb-client-generator", {
+      fetch("https://api.npmjs.org/downloads/point/last-week/@prisma-idb/client-idb", {
         signal: controller.signal,
       }).then((r) => r.json()),
     ]).then(([ghResult, npmResult]) => {
@@ -55,7 +55,7 @@ export function SocialProof() {
         )}
       </a>
       <a
-        href="https://www.npmjs.com/package/@prisma-idb/idb-client-generator"
+        href="https://www.npmjs.com/package/@prisma-idb/client-idb"
         target="_blank"
         rel="noopener noreferrer"
         className="text-fd-muted-foreground hover:text-fd-foreground inline-flex items-center gap-2 rounded-full border border-zinc-200 bg-zinc-50 px-4 py-1.5 shadow-sm transition-colors dark:border-zinc-800 dark:bg-zinc-900 dark:shadow-none"
