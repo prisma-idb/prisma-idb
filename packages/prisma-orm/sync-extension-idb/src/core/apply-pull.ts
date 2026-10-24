@@ -65,14 +65,13 @@ import {
   resolveDecimalKey,
   IdbDecimalIdentityConflictError,
 } from "@prisma-idb/client-idb/internal";
-import type { LogWithRecord, ApplyPullResult, VersionMetaRecord } from "../types";
+import type { LogWithRecord, ApplyPullResult, PullChange, VersionMetaRecord } from "../types";
 
 /**
- * What happened to one pulled row. The first three are *consumed*: the cursor
- * may move past them. `halt` means the row could not be applied now and the
- * page must stop there.
+ * A committed change, an already-consumed entry, or a halt. The cursor can
+ * move past everything except `halt`, which stops the page for a retry.
  */
-type LogOutcome = "applied" | "already-applied" | "invalid" | "halt";
+type LogOutcome = PullChange | "already-applied" | "invalid" | "halt";
 
 /** Applies a changelog page in order and returns the cursor position safe to persist. */
 export async function applyPull<TContract extends IdbContract>(
@@ -80,6 +79,7 @@ export async function applyPull<TContract extends IdbContract>(
   logs: LogWithRecord[]
 ): Promise<ApplyPullResult> {
   let applied = 0;
+  const changes: PullChange[] = [];
   let skipped = 0;
   let validationFailed = 0;
   let halted = false;
@@ -106,14 +106,16 @@ export async function applyPull<TContract extends IdbContract>(
       halted = true;
       break;
     }
-    if (outcome === "applied") applied++;
-    else skipped++;
+    if (typeof outcome === "object") {
+      applied++;
+      changes.push(outcome);
+    } else skipped++;
     if (outcome === "invalid") validationFailed++;
 
     if (lastChangelogId === null || log.changelogId > lastChangelogId) lastChangelogId = log.changelogId;
   }
 
-  return { applied, skipped, validationFailed, halted, lastChangelogId };
+  return { applied, changes, skipped, validationFailed, halted, lastChangelogId };
 }
 
 /**
@@ -203,7 +205,7 @@ async function applyLog<TContract extends IdbContract>(
         localChangePending: false,
       } satisfies VersionMetaRecord);
 
-      return "applied";
+      return { model: log.model, key: identity.key, op: isDelete ? "delete" : log.operation };
     });
   } catch (error) {
     // e.g. a `restrict` referential action or a write failure mid-transaction:

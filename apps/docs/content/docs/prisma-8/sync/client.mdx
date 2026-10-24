@@ -71,6 +71,20 @@ Each row ends in one of four ways:
 
 The `pullcompleted` event reports `halted: true` when a pull stopped early. The next pull restarts at the halted row. A row for a model that is not in the client contract is skipped and does not halt the pull.
 
+### Applied changes
+
+The `pullcompleted` event and the `applyPull` result include `changes: PullChange[]`. Each entry describes one applied changelog entry. Use this list to invalidate queries for affected models and keys.
+
+| Field   | Meaning                                                                                                                                                                                                                            |
+| ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `model` | Prisma model name, such as `"User"`, rather than its IndexedDB store name.                                                                                                                                                         |
+| `key`   | Native IndexedDB key. Compound keys are arrays in the contract's key-field order. Bytes and DateTime components use `Uint8Array` and `Date` values, rather than wire strings. Decimal keys retain the local row's stored spelling. |
+| `op`    | `"create"`, `"update"` or `"delete"`, matching the changelog operation. Revoked ownership (`record: null`) is reported as `"delete"`.                                                                                              |
+
+The list follows page order and can contain the same key more than once. It contains only committed entries: replays, invalid rows, unknown models, the halted row and later rows are excluded. Each event contains only that pull page's changes. An empty page produces an empty list. Referential actions can also affect related rows; those side effects are not separate changelog entries in this list.
+
+`PullChange` is exported from `@prisma-idb/sync-extension-idb/client`. `PullCompletedEvent` and `ApplyPullResult` require the `changes` field.
+
 ### Rejected pushes
 
 When the server rejects an event for good (`retryable: false`), the worker replaces the local row with the server's row from the push result's `record`. A rejected create is removed, a rejected update is replaced by the server's row, and a rejected delete is restored. The change adds no outbox event.
