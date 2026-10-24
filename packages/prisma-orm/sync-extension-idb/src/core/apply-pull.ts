@@ -57,7 +57,7 @@ import { collectDeleteStoreNames, applyReferentialActionsForRow } from "@prisma-
 import { decodeJsonRecord, validateRecord, validateKeyPath } from "@prisma-idb/target-idb/runtime";
 import type { SyncIdbClient } from "./sync-client";
 import { deleteRecord, putRecord } from "./raw-store";
-import { VERSION_META_STORE, versionMetaKey, resolveVersionMeta } from "./version-meta";
+import { VERSION_META_STORE, versionMetaKey, resolveVersionMeta, nativeVersionMetaKey } from "./version-meta";
 import {
   decimalKeysEqual,
   hasDecimalPrimaryKey,
@@ -226,7 +226,12 @@ async function resolvePullIdentity(
 ) {
   const keyPath = getKeyPath(contract, log.model);
   const row = await resolveDecimalKey(scope, contract, log.model, key);
-  const storedKey = row ? extractKeyFromRow(row, keyPath) : (meta?.key ?? key);
+  // Pull metadata can retain wire-form key parts after the application row is deleted.
+  const storedKey = row
+    ? extractKeyFromRow(row, keyPath)
+    : meta
+      ? nativeVersionMetaKey(contract, log.model, meta.key)
+      : key;
   const effectiveRecord = record && preserveDecimalKeySpelling(contract, log.model, record, storedKey);
   let identityKey: unknown = log.keyPath;
   if (hasDecimalPrimaryKey(contract, log.model))
