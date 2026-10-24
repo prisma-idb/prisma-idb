@@ -49,3 +49,17 @@ Invalid shared definitions throw `IdbContractError` from the TypeScript entry po
 ## License
 
 MIT
+
+## Emit a typed contract
+
+Run `prisma-idb contract emit` for the browser config, or
+`prisma-idb contract emit --config prisma.config.postgres.ts` for a SQL config.
+The command uses Prisma's emission operation and publishes `<name>.json`,
+`<name>.d.ts`, and `<name>.runtime.ts` together. A failed publication restores
+previous artifacts. `--output <directory>` overrides the configured JSON path
+and writes `contract.*` in that directory.
+
+Import the default export from `./contract.runtime` (or your configured basename)
+to pass the generated contract directly to runtime APIs without a cast. The
+runtime module also re-exports the generated types. JSON and declarations remain
+available for database commands and migration tooling.

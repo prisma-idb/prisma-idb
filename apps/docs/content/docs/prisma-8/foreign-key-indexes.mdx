@@ -30,7 +30,7 @@ A declared index replaces the implicit one only when its name matches the foreig
 ## 2. Emit and inspect the contract
 
 ```bash
-npx prisma@latest contract emit
+npx prisma-idb contract emit
 ```
 
 Compare the emitted `contract.json` with the previous version. Check `storage.stores.<store>.indexes` for new entries, such as a `userId` index with `keyPath: "userId"` and `unique: false`.

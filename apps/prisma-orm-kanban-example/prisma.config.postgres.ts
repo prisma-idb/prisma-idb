@@ -26,7 +26,7 @@ import { defineConfig } from "@prisma-idb/sync-server/postgres";
  * directly as its ownership-DAG source too — no separate IDB-shaped "full"
  * config exists just to feed it (ADR 014's "Genuinely family-agnostic").
  *
- * Emit with: `pnpm contract:emit:postgres` (now the real `prisma` binary).
+ * Emit with: `pnpm contract:emit:postgres` (the `prisma-idb` binary).
  * Create the schema with: `pnpm db:init`
  * Author a migration with: `pnpm migration:postgres:new`
  */

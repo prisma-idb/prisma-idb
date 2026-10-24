@@ -11,10 +11,12 @@ It executes the authorization checks from [`@prisma-idb/sync-server`](https://ww
 npm install @prisma-idb/sync-server-sql
 ```
 
-2. Create the HTTP handlers from your contracts. Resolve `scopeKey` from the authenticated session.
+2. Emit both configs with `prisma-idb contract emit` (pass `--config prisma.config.postgres.ts` for SQL). Create the HTTP handlers from their typed runtime modules. Resolve `scopeKey` from the authenticated session.
 
 ```ts
 import { createSqlSync } from "@prisma-idb/sync-server-sql";
+import serverContract from "./schema.postgres.generated.runtime";
+import clientContract from "./contract.runtime";
 
 const handlers = createSqlSync({
   contract: serverContract,

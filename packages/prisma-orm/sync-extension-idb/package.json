@@ -37,7 +37,7 @@
     "test": "vitest run",
     "lint": "prettier --check . && eslint .",
     "format": "prettier --write .",
-    "contract:emit": "prisma contract emit --config prisma.config.ts",
+    "contract:emit": "prisma-idb contract emit --config prisma.config.ts",
     "migration:plan": "prisma-idb migration plan --space idb-sync"
   },
   "dependencies": {

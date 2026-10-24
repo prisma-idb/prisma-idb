@@ -4,7 +4,7 @@ import postgres from "@prisma/orm-postgres/runtime";
 import { createSyncServer } from "@prisma-idb/sync-server";
 import type { SyncServerContract } from "@prisma-idb/sync-server";
 import type { Contract } from "./fixtures/schema.generated.d";
-import contractJson from "./fixtures/schema.generated.json" with { type: "json" };
+import contractJson from "./fixtures/schema.generated.runtime";
 import { sqlGetKeyField } from "../src/core/get-key-field";
 import { ormRootFor } from "../src/core/orm-root";
 
@@ -14,7 +14,7 @@ import { ormRootFor } from "../src/core/orm-root";
  * `sqlContractWithSync` appends) — this package's own suite runs
  * against a real Postgres client built from this, not a hand-rolled fake.
  */
-export const testContract = contractJson as unknown as SyncServerContract;
+export const testContract: SyncServerContract = contractJson;
 
 /**
  * The client-projected contract: the server contract minus the synthetic,

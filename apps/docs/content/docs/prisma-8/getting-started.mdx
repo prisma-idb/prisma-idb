@@ -80,7 +80,7 @@ The framework requires `driver` and `db.connection`, but IndexedDB doesn't use t
 Run these four commands:
 
 ```bash
-npx prisma@latest contract emit
+npx prisma-idb contract emit
 npx prisma-idb migration plan
 npx prisma-idb migration contract-space
 npx prisma-idb migration preflight
@@ -88,7 +88,7 @@ npx prisma-idb migration preflight
 
 In order, they:
 
-1. Write `src/prisma/contract.json` and `contract.d.ts`, the typed description of your schema.
+1. Write `src/prisma/contract.json`, `contract.d.ts`, and `contract.runtime.ts`, a typed default export of your schema.
 2. Write the first migration package to `migrations/app/<timestamp>_baseline/`, and a copy of the contract to `migrations/snapshots/`.
 3. Write `src/prisma/contract-space.generated.ts`, which bundles the migrations so your app can import them.
 4. Apply every migration to an in-memory IndexedDB, to check that they run.
