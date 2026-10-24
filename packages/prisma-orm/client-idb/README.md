@@ -26,7 +26,7 @@ const open = await db.orm.todo.where({ done: false }).orderBy({ title: "asc" }).
 | `@prisma-idb/client-idb/client`      | `createIdbClient`, `createManagedIdbClient`: open an already-migrated database.                 |
 | `@prisma-idb/client-idb/orm`         | `idbOrm`, the accessor types, and the `and`, `or` and `not` filter helpers.                     |
 
-The `internal` subpath is for companion packages such as `sync-extension-idb`. Application code uses the entry points above. For nested writes, pass a relation callback to `create()` or `update()`; the client supplies the relation mutator.
+The `internal` subpath supports companion packages such as `sync-extension-idb` and custom managed factories. Other application code uses the entry points above. For nested writes, pass a relation callback to `create()` or `update()`; the client supplies the relation mutator.
 
 ## Schema enums
 
@@ -39,7 +39,7 @@ const roles = Role.values;
 const valid = Role.has(input);
 ```
 
-`__unbound__` is the default PSL domain namespace. `members` maps names to application values, including mapped strings. Accessors also provide `names`, `hasName`, `nameOf`, and `ordinalOf`; `Value` is type-only. Existing field types and string literals remain compatible. Auto-migrating clients expose the same accessors.
+`__unbound__` is the default PSL domain namespace. `members` maps names to application values, including mapped strings. Accessors also provide `names`, `hasName`, `nameOf`, and `ordinalOf`; `Value` is type-only. Existing field types and string literals remain compatible. Auto-migrating clients expose the same accessors. Managed handles expose `managedDb.enums` synchronously with the same type and values, without opening IndexedDB. This also works during server rendering. When wrapping a custom factory with `createManagedIdbClient`, pass `enums: createIdbEnums(contract)` in its options, using `createIdbEnums` from the `internal` subpath and the factory's contract.
 
 ## Delete by primary key
 

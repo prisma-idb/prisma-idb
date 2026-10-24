@@ -239,7 +239,7 @@ Depends on `adapter-idb` and `driver-idb`.
 
 The `./internal` subpath shares `collectDeleteStoreNames` and `applyReferentialActionsForRow` with `sync-extension-idb`. Application code uses the three entry points above. Relation-mutation detection and `autoMigrate` remain source-only implementation helpers.
 
-All three are runtime only. `createManagedIdbClient(open, { dbName })` wraps a client factory. The auto-migrating wrapper accepts the contract space directly.
+All three are runtime only. `createManagedIdbClient(open, { enums, dbName })` wraps a client factory. The auto-migrating wrapper accepts the contract space directly.
 
 The ORM carries immutable query state through the accessor chain. Reads shape a driver plan, collect rows, load relations, then project selected fields. Mutations derive the stores they need before opening one transaction.
 

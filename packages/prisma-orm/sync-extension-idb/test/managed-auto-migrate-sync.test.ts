@@ -7,7 +7,7 @@
  * that gap for the sync-tracked client too.
  */
 import "fake-indexeddb/auto";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, expectTypeOf, it } from "vitest";
 import { defineContract } from "@prisma-idb/family-idb/contract-ts";
 import idbFamilyPack from "@prisma-idb/family-idb/pack";
 import idbTargetPack from "@prisma-idb/target-idb/pack";
@@ -18,8 +18,9 @@ import { buildContractSpaceFixture } from "./_contract-space-fixture";
 const contract = defineContract({
   family: idbFamilyPack,
   target: idbTargetPack,
+  enums: { Role: ["USER", "ADMIN"] },
   models: {
-    User: { store: "users", key: "id", fields: { id: "String", name: "String" } },
+    User: { store: "users", key: "id", fields: { id: "String", name: "String", role: "Role" } },
   },
 });
 
@@ -38,7 +39,7 @@ describe("createManagedAutoSyncIdbClient", () => {
     (globalThis as unknown as { indexedDB: IDBFactory }).indexedDB = new fake.IDBFactory();
   });
 
-  it("can be created without indexedDB and opens a sync-tracked client when it becomes available", async () => {
+  it("reads enums without IndexedDB and opens a sync-tracked client when it becomes available", async () => {
     const browserFactory = globalThis.indexedDB;
     Reflect.deleteProperty(globalThis, "indexedDB");
     const space = buildContractSpaceFixture(contract);
@@ -48,12 +49,15 @@ describe("createManagedAutoSyncIdbClient", () => {
       extensions: [idbSyncExtension],
     });
 
+    expect(managed.enums["__unbound__"]!["Role"]!.members["ADMIN"]).toBe("ADMIN");
     await managed.close();
     globalThis.indexedDB = browserFactory;
 
     const db = await managed.get();
+    expectTypeOf(managed.enums).toEqualTypeOf<typeof db.enums>();
+    expectTypeOf(managed.enums).toEqualTypeOf<typeof db.rawClient.enums>();
     const orm = db.orm as unknown as { users: { create(data: unknown): Promise<unknown> } };
-    await orm.users.create({ id: "u1", name: "Alice" });
+    await orm.users.create({ id: "u1", name: "Alice", role: "USER" });
 
     const outbox = await db.withTransaction(["_idb_sync_outbox"], async (scope) => {
       return scope.execute({ kind: "cursor-scan", storeName: "_idb_sync_outbox" } as never) as Promise<
@@ -78,7 +82,7 @@ describe("createManagedAutoSyncIdbClient", () => {
 
     const db = await managed.get();
     const orm = db.orm as unknown as { users: { create(data: unknown): Promise<unknown> } };
-    await orm.users.create({ id: "u1", name: "Alice" });
+    await orm.users.create({ id: "u1", name: "Alice", role: "USER" });
 
     await managed.reset();
 
