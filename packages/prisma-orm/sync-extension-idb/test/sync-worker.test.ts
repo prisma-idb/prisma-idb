@@ -432,6 +432,60 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
     }
   );
 
+  it("start() resumes syncing and scheduled cycles on the same worker after await stop()", async () => {
+    const { client } = await createTestSyncClient();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const cursors: (string | null)[] = [];
+    const worker = trackedWorker({
+      syncClient: client,
+      pushHandler: async (events) => events.map(({ id }) => ({ id, success: true })),
+      pullHandler: async (cursor) => {
+        cursors.push(cursor);
+        if (cursor === null) return [userLog(changelogId(1), "before-stop")];
+        if (cursor === changelogId(1)) return [userLog(changelogId(2), "after-restart")];
+        return [];
+      },
+      intervalMs: 1_000,
+    });
+    function nextIdle(): Promise<void> {
+      return new Promise((resolve) => {
+        const unsubscribe = worker.on("statuschange", (status) => {
+          if (status === "idle") {
+            unsubscribe();
+            resolve();
+          }
+        });
+      });
+    }
+
+    const firstCycle = nextIdle();
+    worker.start();
+    await firstCycle;
+    await worker.stop();
+    expect(worker.status).toBe("stopped");
+    await asAccessors(client.orm)["users"]!.create({ id: "local", name: "Local" });
+
+    const restartedCycle = nextIdle();
+    worker.start();
+    await restartedCycle;
+
+    expect(worker.status).toBe("idle");
+    expect(await scanAll(client, "users")).toEqual([
+      { id: "after-restart", name: "after-restart" },
+      { id: "before-stop", name: "before-stop" },
+      { id: "local", name: "Local" },
+    ]);
+    expect(await scanAll(client, "_idb_sync_outbox")).toMatchObject([{ synced: true }]);
+    expect(cursors).toEqual([null, changelogId(1)]);
+
+    const scheduledCycle = nextIdle();
+    await vi.advanceTimersByTimeAsync(1_000);
+    await scheduledCycle;
+    expect(cursors).toEqual([null, changelogId(1), changelogId(2)]);
+    await worker.stop();
+    await client.close();
+  });
+
   async function seedAcknowledgedEvents(client: SyncIdbClient<IdbContract>, count: number): Promise<void> {
     await client.withTransaction(["_idb_sync_outbox"], async (scope) => {
       for (let i = 0; i < count; i++) {
