@@ -177,7 +177,7 @@ await db.reset();
 
 `reset()` deletes the cursor, outbox and application data together. This release replaces the sync migration history with a new baseline. Recreate existing browser databases before opening them with this version. Resetting discards queued local edits, so sync them before upgrading when possible.
 
-Set `syncOnReconnect: true` to sync when the browser fires `online` or the page becomes visible. It defaults to `false`. Listeners attach on `start()` and detach on `stop()`. Overlapping events share the active cycle. Outside a browser, this option has no effect.
+Set `syncOnReconnect: true` to sync when the browser fires `online` or the page becomes visible. It defaults to `false`. Listeners attach on `start()` and detach on `stop()`. The `online` event also triggers sync while the page is hidden. Overlapping events share the active cycle. Outside a browser, this option has no effect.
 
 The push and pull response shapes are exported as Zod schemas from `@prisma-idb/sync-extension-idb/schemas`: `pushResultSchema` and `logWithRecordSchema`.
 

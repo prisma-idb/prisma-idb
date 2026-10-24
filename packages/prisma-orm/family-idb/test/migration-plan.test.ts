@@ -446,6 +446,27 @@ describe("migrationPlan — incremental mode", () => {
     expect(meta.to).toBe(CONTRACT_V2.storage.storageHash);
   });
 
+  it("refuses a schema revert before writing a cyclic migration or replacing the bundle", async () => {
+    expect(await migrationPlan(defaultPaths(cwd))).toBe(0);
+    await writeContract(cwd, CONTRACT_V2);
+    expect(await migrationPlan({ ...defaultPaths(cwd), name: "add_version_meta" })).toBe(0);
+    const dirs = await listMigrationDirs(cwd);
+    const bundlePath = join(cwd, "src", "lib", "prisma", "contract-space.generated.ts");
+    const bundle = await readFile(bundlePath, "utf-8");
+
+    await writeContract(cwd, CONTRACT_V1);
+    capturedStderr = "";
+    expect(await migrationPlan({ ...defaultPaths(cwd), name: "revert_version_meta" })).toBe(1);
+    expect(capturedStderr).toContain("already appears in the migration chain");
+    expect(capturedStderr).toContain("No migration package was written");
+    expect(await listMigrationDirs(cwd)).toEqual(dirs);
+    expect(await readFile(bundlePath, "utf-8")).toBe(bundle);
+
+    // A refused revert must leave the existing chain usable.
+    await writeContract(cwd, CONTRACT_V2);
+    expect(await migrationPlan({ ...defaultPaths(cwd), name: "unchanged" })).toBe(0);
+  });
+
   it("ops only cover the delta, not the whole contract", async () => {
     expect(await migrationPlan(defaultPaths(cwd))).toBe(0);
     await writeContract(cwd, CONTRACT_V2);

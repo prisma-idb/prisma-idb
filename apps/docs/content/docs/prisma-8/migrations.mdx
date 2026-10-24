@@ -24,6 +24,8 @@ npx prisma-idb migration preflight
 
 Use `migration plan --out <path>` when your app imports the bundle from a different location. Run `migration contract-space` to repair or regenerate an existing bundle without planning a new package.
 
+App migration chains cannot repeat a storage hash. If a schema change returns to an earlier hash, `migration plan` reports an error before writing a package or updating the bundle.
+
 Commit the new package, the new `migrations/snapshots/` entry and the regenerated files. The next time a user opens the app, the client applies the migration before resolving.
 
 For a brand-new project the steps are the same without `--name`: the first migration is named `baseline`. The [Quick Start](/docs/prisma-8/getting-started#4-create-the-first-migration) walks through it.

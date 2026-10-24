@@ -324,6 +324,14 @@ async function planIncremental(ctx: SharedCtx, existingDirs: readonly string[]):
     return 0;
   }
 
+  if (ctx.isAppSpace && ordered.some((pkg) => pkg.metadata.to === toHash)) {
+    ctx.err(
+      `migration plan: destination ${toHash} already appears in the migration chain.\n` +
+        "Repeated contract hashes are not supported because they create a cycle. No migration package was written.\n"
+    );
+    return 1;
+  }
+
   const timestamp = new Date();
   const dirName = formatMigrationDirName(timestamp, ctx.name);
   const providedInvariants = Array.from(deriveProvidedInvariants(ops));
