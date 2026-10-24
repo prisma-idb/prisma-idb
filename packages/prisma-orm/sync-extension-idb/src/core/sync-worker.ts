@@ -37,7 +37,7 @@ export interface SyncRequestContext {
   readonly storageHash: string;
 }
 
-/** Configures transport handlers, cursor persistence, batching, and retry timing. */
+/** Configures transport handlers, batching, and retry timing. */
 export interface SyncWorkerOptions<TContract extends IdbContract> {
   readonly syncClient: SyncIdbClient<TContract>;
   /**
@@ -50,7 +50,7 @@ export interface SyncWorkerOptions<TContract extends IdbContract> {
     context: SyncRequestContext
   ) => Promise<PushResult[]>;
   /**
-   * Called with the last applied changelog ID (null if none). Returns new logs. See `getCursor`/`setCursor` to persist the ID across reloads.
+   * Called with the last applied changelog ID (null if none). Returns new logs. The ID is persisted in IndexedDB across reloads.
    * Throw `ContractMismatchError` if the server answers 409.
    */
   readonly pullHandler: (
@@ -58,21 +58,6 @@ export interface SyncWorkerOptions<TContract extends IdbContract> {
     signal: AbortSignal,
     context: SyncRequestContext
   ) => Promise<LogWithRecord[]>;
-  /**
-   * Loads the persisted pull cursor. Called once, before the worker's first
-   * pull, so a reload resumes from where the last session stopped instead of
-   * re-pulling from the start (`null`/`undefined` = no cursor stored yet).
-   * Without it the cursor lives in memory only.
-   */
-  readonly getCursor?: () => string | null | undefined | Promise<string | null | undefined>;
-  /**
-   * Persists the pull cursor after a pull advances it. If it throws, the cycle
-   * fails (status `"error"`, normal backoff) and the write is retried on the
-   * next cycle — the applied logs themselves are safe either way, since a
-   * re-pull from an older cursor replays rows `applyPull` already applied and
-   * counts them as consumed.
-   */
-  readonly setCursor?: (changelogId: string) => void | Promise<void>;
   /** Max events per push batch. Default 20. */
   readonly batchSize?: number;
   /** Milliseconds between sync cycles when idle. Default 5000. */
@@ -185,8 +170,8 @@ type SyncEventMap = {
 export interface SyncWorker {
   /** Begin the push/pull loop. No-op if already running. */
   start(): void;
-  /** Stop the loop. In-flight cycle completes; no new cycles start. */
-  stop(): void;
+  /** Stop notifications and new cycles, then wait for the active cycle to settle, including on failure. */
+  stop(): Promise<void>;
   /** Trigger one push/pull cycle immediately, ignoring backoff. */
   forceSync(): Promise<void>;
   /** Register an event listener. Returns an unsubscribe function. */
@@ -215,17 +200,23 @@ export function createSyncWorker<TContract extends IdbContract>(options: SyncWor
   let stopped = false;
   let timer: ReturnType<typeof setTimeout> | null = null;
   let consecutiveFailures = 0;
-  const cursor = createPullCursor(options);
+  const cursor = createPullCursor(syncClient);
   // Shared across tick() and forceSync() so at most one push/pull cycle runs
   // at a time — otherwise both can call getNextBatch concurrently and push
   // the same unsynced events twice.
   let inFlightCycle: Promise<void> | null = null;
+  let stopping: Promise<void> | null = null;
 
-  const { emit, on } = createEmitter<SyncEventMap>();
+  const emitter = createEmitter<SyncEventMap>();
+
+  /** A stopped worker may announce its stopped status, but no later cycle effects. */
+  function emit<K extends keyof SyncEventMap>(event: K, payload: SyncEventMap[K]): void {
+    if (!stopped || (event === "statuschange" && payload === "stopped")) emitter.emit(event, payload);
+  }
 
   /** Publishes a status change only when the observable state changes. */
   function setStatus(next: SyncWorkerStatus): void {
-    if (status === next) return;
+    if (status === next || (stopped && next !== "stopped")) return;
     status = next;
     emit("statuschange", next);
   }
@@ -250,9 +241,9 @@ export function createSyncWorker<TContract extends IdbContract>(options: SyncWor
     let sentAny = false;
     let pullBlocked = false;
     try {
-      for (;;) {
+      while (!stopped) {
         const events = await getNextBatch(syncClient.rawClient, { limit: batchSize, backoff });
-        if (events.length === 0) break;
+        if (stopped || events.length === 0) break;
         sentAny = true;
         const results = await sendBatch(events);
         const counts = await recordPushResults(events, results);
@@ -358,6 +349,7 @@ export function createSyncWorker<TContract extends IdbContract>(options: SyncWor
   async function pullChanges(): Promise<void> {
     setStatus("pulling");
     await cursor.load();
+    if (stopped) return;
     let logs: LogWithRecord[];
     try {
       logs = await withTimeout(
@@ -382,8 +374,9 @@ export function createSyncWorker<TContract extends IdbContract>(options: SyncWor
     } catch {
       // History cleanup is best-effort; a failure must not block pending pushes.
     }
+    if (stopped) return;
     const pullBlocked = await pushPending();
-    if (!pullBlocked) await pullChanges();
+    if (!stopped && !pullBlocked) await pullChanges();
   }
 
   /** Runs `runCycle`, joining an already-in-flight cycle instead of starting a second one. */
@@ -444,7 +437,7 @@ export function createSyncWorker<TContract extends IdbContract>(options: SyncWor
       return status;
     },
     start() {
-      if (timer !== null) return;
+      if (timer !== null || stopping !== null) return;
       stopped = false;
       void tick();
     },
@@ -454,9 +447,17 @@ export function createSyncWorker<TContract extends IdbContract>(options: SyncWor
         clearTimeout(timer);
         timer = null;
       }
+      // Install the drain guard before notifying listeners, which can call start().
+      stopping ??= (inFlightCycle ?? Promise.resolve())
+        .catch(() => {})
+        .finally(() => {
+          stopping = null;
+        });
       setStatus("stopped");
+      return stopping;
     },
     async forceSync() {
+      if (stopped) return;
       if (timer !== null) {
         clearTimeout(timer);
         timer = null;
@@ -475,6 +476,6 @@ export function createSyncWorker<TContract extends IdbContract>(options: SyncWor
         }
       }
     },
-    on,
+    on: emitter.on,
   };
 }
