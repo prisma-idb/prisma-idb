@@ -81,7 +81,7 @@ The `pullcompleted` event and the `applyPull` result include `changes: PullChang
 | `key`   | Native IndexedDB key. Compound keys are arrays in the contract's key-field order. Bytes and DateTime components use `Uint8Array` and `Date` values, rather than wire strings. Decimal keys retain the local row's stored spelling. |
 | `op`    | `"create"`, `"update"` or `"delete"`, matching the changelog operation. Revoked ownership (`record: null`) is reported as `"delete"`.                                                                                              |
 
-The list follows page order and can contain the same key more than once. It contains only committed entries: replays, invalid rows, unknown models, the halted row and later rows are excluded. Each event contains only that pull page's changes. An empty page produces an empty list. Referential actions can also affect related rows; those side effects are not separate changelog entries in this list.
+The list follows page order and can contain the same key more than once. It contains only committed entries: replays, invalid rows, unknown models, the halted row and later rows are excluded. Each event contains only that pull page's changes. An empty page produces an empty list. A delete can cascade to related rows or set their foreign keys to null. Those side effects are not separate changelog entries in this list, so consumers should also invalidate queries for related models.
 
 `PullChange` is exported from `@prisma-idb/sync-extension-idb/client`. `PullCompletedEvent` and `ApplyPullResult` require the `changes` field.
 

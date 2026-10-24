@@ -60,6 +60,7 @@ describe("wire-form SQL keys", () => {
         if (!pulled.ok) throw new Error("pull failed");
         const logs = logWithRecordSchema.array().parse(JSON.parse(JSON.stringify(pulled.logs)));
         expect(await applyPull(client, logs)).toEqual({
+          changes: [],
           applied: 0,
           skipped: 1,
           validationFailed: 1,
@@ -107,6 +108,7 @@ describe("wire-form SQL keys", () => {
       if (!pulled.ok) throw new Error("pull failed");
       expect(pulled.logs).toMatchObject([{ operation: "update", keyPath: "11", record: null }]);
       expect(await applyPull(client, [...pulled.logs])).toEqual({
+        changes: [{ model: "BigItem", key: "11", op: "delete" }],
         applied: 1,
         skipped: 0,
         validationFailed: 0,

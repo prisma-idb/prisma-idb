@@ -924,7 +924,7 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
     ]);
   });
 
-  it.each([false, true])("reports native Bytes keys in contract order (compound: %s)", async (compound) => {
+  it.each([false, true])("reports native Bytes keys after deletion and recreation (compound: %s)", async (compound) => {
     const keyPath = compound ? ["tenant", "id"] : "id";
     const dbName = testDbName();
     (
@@ -939,15 +939,14 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
     const worker = trackedWorker({
       syncClient: client,
       pushHandler: async () => [],
-      pullHandler: async () => [
-        {
-          changelogId: changelogId(1),
+      pullHandler: async () =>
+        (["create", "delete", "delete", "create"] as const).map((operation, index) => ({
+          changelogId: changelogId(index + 1),
           model: "Asset",
-          operation: "create",
+          operation,
           keyPath: compound ? ["t1", "AQI="] : "AQI=",
-          record: { tenant: "t1", id: "AQI=", name: "Remote" },
-        },
-      ],
+          record: operation === "delete" ? null : { tenant: "t1", id: "AQI=", name: "Remote" },
+        })),
     });
     const completed: PullCompletedEvent[] = [];
     worker.on("pullcompleted", (event) => completed.push(event));
@@ -955,7 +954,13 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
       await worker.forceSync();
 
       const key = new Uint8Array([1, 2]);
-      expect(completed[0]?.changes).toEqual([{ model: "Asset", key: compound ? ["t1", key] : key, op: "create" }]);
+      expect(completed[0]?.changes).toEqual(
+        ["create", "delete", "delete", "create"].map((op) => ({
+          model: "Asset",
+          key: compound ? ["t1", key] : key,
+          op,
+        }))
+      );
       expect(await scanAll(client, "assets")).toEqual([{ tenant: "t1", id: key, name: "Remote" }]);
     } finally {
       await worker.stop();
