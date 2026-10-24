@@ -245,7 +245,7 @@ worker.start();
 
 The fetch handlers send the storage hash and raise `ContractMismatchError` on HTTP 409. The worker emits `contractmismatch` so the app can ask the user to reload.
 
-The worker pushes and then pulls every five seconds, and backs off after failures. Call `worker.stop()` and `resetDb()` on sign-out.
+The worker pushes and then pulls every five seconds, and backs off after failures. On sign-out, await `worker.stop()` before `resetDb()`. The worker waits for its active cycle to settle. The pull cursor lives in IndexedDB and is cleared with the data.
 
 ## Check the result
 

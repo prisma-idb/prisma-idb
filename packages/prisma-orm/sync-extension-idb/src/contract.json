@@ -4,6 +4,10 @@
   "target": "idb",
   "profileHash": "40329830af4e39e0774683fbebcdc24dcf983a5da02c5fe6079a2a57579f861c",
   "roots": {
+    "_idb_sync_meta": {
+      "model": "SyncMeta",
+      "namespace": "__unbound__"
+    },
     "_idb_sync_outbox": {
       "model": "OutboxEvent",
       "namespace": "__unbound__"
@@ -117,6 +121,29 @@
               "storeName": "_idb_sync_outbox"
             }
           },
+          "SyncMeta": {
+            "fields": {
+              "id": {
+                "nullable": false,
+                "type": {
+                  "codecId": "idb/string@1",
+                  "kind": "scalar"
+                }
+              },
+              "value": {
+                "nullable": false,
+                "type": {
+                  "codecId": "idb/string@1",
+                  "kind": "scalar"
+                }
+              }
+            },
+            "relations": {},
+            "storage": {
+              "keyPath": "id",
+              "storeName": "_idb_sync_meta"
+            }
+          },
           "VersionMeta": {
             "fields": {
               "id": {
@@ -172,8 +199,30 @@
         "id": "__unbound__"
       }
     },
-    "storageHash": "cfe8e71cbb562d51109a1482ffe5f7ba966af8b14e129021f2e6e31a880ee6b1",
+    "storageHash": "609932199fd5710d371fa966650a1806c1f587c912ff9d8c40f7b2efd84eed70",
     "stores": {
+      "_idb_sync_meta": {
+        "keyPath": "id",
+        "record": {
+          "fields": {
+            "id": {
+              "nullable": false,
+              "type": {
+                "codecId": "idb/string@1",
+                "kind": "scalar"
+              }
+            },
+            "value": {
+              "nullable": false,
+              "type": {
+                "codecId": "idb/string@1",
+                "kind": "scalar"
+              }
+            }
+          },
+          "model": "SyncMeta"
+        }
+      },
       "_idb_sync_outbox": {
         "indexes": {
           "byCreatedAt": {

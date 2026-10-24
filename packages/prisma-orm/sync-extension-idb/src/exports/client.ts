@@ -1,5 +1,5 @@
 export { createSyncIdbClient } from "../core/sync-client";
-export type { SyncIdbClient, SyncIdbClientOptions, SyncClientEventMap } from "../core/sync-client";
+export type { SyncIdbClient, SyncIdbClientOptions, SyncClientEventMap, SyncOutbox } from "../core/sync-client";
 
 export { createAutoMigratingSyncIdbClient } from "../core/auto-migrate-sync";
 export type { AutoMigratingSyncIdbClientOptions } from "../core/auto-migrate-sync";

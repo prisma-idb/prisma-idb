@@ -13,6 +13,7 @@ import idbFamilyPack from "@prisma-idb/family-idb/pack";
 import idbTargetPack from "@prisma-idb/target-idb/pack";
 import { idbSyncExtension } from "../src/exports/control";
 import { createManagedAutoSyncIdbClient } from "../src/exports/client";
+import { changelogId, asAccessors } from "./helpers";
 import { buildContractSpaceFixture } from "./_contract-space-fixture";
 
 const contract = defineContract({
@@ -67,6 +68,71 @@ describe("createManagedAutoSyncIdbClient", () => {
     expect(outbox).toHaveLength(1);
 
     await managed.reset();
+  });
+
+  it("resumes the pull cursor after a client reload and clears it with data on reset", async () => {
+    const managed = createManagedAutoSyncIdbClient({
+      contractSpace: buildContractSpaceFixture(contract),
+      dbName: dbName(),
+      extensions: [idbSyncExtension],
+    });
+    const first = await managed.get();
+    let finishPull!: () => void;
+    let enterPull!: () => void;
+    const pulling = new Promise<void>((resolve) => {
+      enterPull = resolve;
+    });
+    const worker = first.createSyncWorker({
+      pushHandler: async () => [],
+      pullHandler: () =>
+        new Promise((resolve) => {
+          finishPull = () =>
+            resolve([
+              {
+                changelogId: changelogId(7),
+                model: "User",
+                operation: "create",
+                keyPath: "u1",
+                record: { id: "u1", name: "Alice", role: "USER" },
+              },
+            ]);
+          enterPull();
+        }),
+    });
+    const cycle = worker.forceSync();
+    await pulling;
+    const stopping = worker.stop();
+    finishPull();
+    await Promise.all([cycle, stopping]);
+    await managed.close();
+
+    const from: (string | null)[] = [];
+    /** Observe the persisted cursor through the transport after reopening the database. */
+    async function pullAfterReopen(): Promise<void> {
+      const client = await managed.get();
+      const next = client.createSyncWorker({
+        pushHandler: async () => [],
+        pullHandler: async (cursor) => {
+          from.push(cursor);
+          return [];
+        },
+      });
+      await next.forceSync();
+      await next.stop();
+    }
+    await pullAfterReopen();
+    const reloaded = await managed.get();
+    expect(await asAccessors(reloaded.orm)["users"]!.findUnique("u1")).toEqual({
+      id: "u1",
+      name: "Alice",
+      role: "USER",
+    });
+    await managed.reset();
+    await pullAfterReopen();
+    expect(from).toEqual([changelogId(7), null]);
+    const reset = await managed.get();
+    expect(await asAccessors(reset.orm)["users"]!.findUnique("u1")).toBeNull();
+    await managed.close();
   });
 
   it("uses an explicit factory to open and reset without a global indexedDB", async () => {

@@ -34,11 +34,17 @@ Custom handlers also receive `context.storageHash`. Send it to the server, which
 
 `db.on("outboxwrite", callback)` fires after commit, once per tracked IndexedDB write call. Bulk calls can report several entries. Nested or cascading ORM writes can produce several notifications. Rolled-back writes produce none.
 
+`db.outbox.hasPending()` returns `Promise<boolean>`. `db.outbox.pendingCount()` returns `Promise<number>`. Pending events are unsynced and retryable, including those waiting for backoff. Synced events and permanent rejections are excluded.
+
+`db.on("outboxchange", callback)` has no payload. Use it to refresh pending status after tracked appends or push successes and failures, including thrown requests and timeouts. It fires once after each tracked write or transaction commits; a bulk write or push-result batch emits once. Reads and rollbacks emit nothing. Low-level `markSynced` and `markFailed` calls also notify when used inside this client's `withTransaction` or `rawClient.withTransaction`. Direct raw writes to the outbox store do not notify. Notifications belong to this client instance.
+
+Contract mismatches emit only `worker.on("contractmismatch", callback)`, with `{ during: "push" | "pull" }`. They still set status to `"error"`, retry with backoff, and reject `forceSync()` with `ContractMismatchError`. They do not emit the `error` event.
+
 `worker.status` and `statuschange` use lowercase values: `"idle"`, `"pushing"`, `"pulling"`, `"error"`, and `"stopped"`. The legacy generated worker uses uppercase statuses and a different status object. Keep lowercase comparisons when migrating to this package.
 
-`worker.on("error", callback)` receives the thrown `Error` after the status becomes `"error"`. This includes push, pull, timeout, and cursor persistence failures. Error subclasses, stacks, and causes are preserved. A thrown value that is not an `Error` is wrapped with `String(value)` as its message and the original value as its `cause`. If string conversion throws, the message is `"Sync cycle failed"`. Listener exceptions are ignored so other subscribers still receive notifications and sync failures keep their original rejection. Each failed cycle emits once, including when concurrent callers share it. Failures that settle after `stop()` do not emit an error event.
+`worker.on("error", callback)` receives the thrown `Error` after the status becomes `"error"`. This includes push, pull, timeout, and cursor persistence failures, except contract mismatches. Error subclasses, stacks, and causes are preserved. A thrown value that is not an `Error` is wrapped with `String(value)` as its message and the original value as its `cause`. If string conversion throws, the message is `"Sync cycle failed"`. Listener exceptions are ignored so other subscribers still receive notifications and sync failures keep their original rejection. Each failed cycle emits once, including when concurrent callers share it. Failures that settle after `stop()` do not emit an error event.
 
-`forceSync()` reports failures through the same event and sets status to `"error"`. Its promise still rejects with the original thrown value, so callers must handle that rejection. Successful cycles return the status to `"idle"`. Per-event server rejections are reported through `pushcompleted` and outbox errors; they do not emit a cycle error unless the cycle throws.
+`forceSync()` reports failures through `error` or `contractmismatch` and sets status to `"error"`. Its promise still rejects with the original thrown value, so callers must handle that rejection. Successful cycles return the status to `"idle"`. Per-event server rejections are reported through `pushcompleted` and outbox errors; they do not emit a cycle error unless the cycle throws.
 
 The worker automatically keeps the newest 100 successfully acknowledged outbox events per database, ordered by `createdAt` descending and event id descending for ties. It prunes before each cycle's first push, including idle cycles, and after each push-result batch in the same transaction as the results. Unsent and failed events keep their full payload and error, including permanent rejections. Version metadata is preserved. This cleanup applies only to the worker; direct calls to low-level outbox helpers such as `markSynced` do not prune history.
 
@@ -53,6 +59,10 @@ The server side uses [`@prisma-idb/sync-server`](https://www.npmjs.com/package/@
 | `@prisma-idb/sync-extension-idb/schemas` | Zod schemas for the push and pull wire formats. Safe to import on a server.                                                                                                                           |
 
 `applyPull` validates decoded records and keys before opening a write transaction. Both its result and the worker's `pullcompleted` event include `validationFailed`, a subset of `skipped`, for corrupt records, keys or wire values. Valid rows still apply, and corrupt rows advance the pull cursor without changing their per-record version metadata. Extra fields and undeclared enum values are rejected; a newer server shape can require updating the client contract.
+
+The pull cursor is persisted in `_idb_sync_meta` in the same IndexedDB database as application data. The `getCursor` and `setCursor` worker options have been removed. On sign-out, await `worker.stop()` before your managed client's `reset()`. Stopping waits for the active cycle to settle and suppresses subsequent cycle notifications. Resetting clears the cursor with the data.
+
+**Breaking change:** the sync migration history is replaced by one baseline. Recreate existing browser databases before using this version. Resetting discards queued local edits, so sync them before upgrading when possible.
 
 ## Documentation
 
