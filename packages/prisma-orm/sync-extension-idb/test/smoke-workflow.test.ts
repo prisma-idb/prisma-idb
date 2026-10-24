@@ -72,7 +72,13 @@ describe("sync-extension-idb end-to-end", () => {
 
     // The remote-only record was pulled in, then the page halted at p3's
     // update: p3's local create is not pushed yet (localChangePending).
-    expect(firstPull).toEqual({ applied: 1, skipped: 1, validationFailed: 0, halted: true });
+    expect(firstPull).toEqual({
+      applied: 1,
+      changes: [{ model: "Post", key: "p2", op: "create" }],
+      skipped: 1,
+      validationFailed: 0,
+      halted: true,
+    });
     let allPosts = (await scanAll(client, "posts")) as { id: string; title: string }[];
     expect(allPosts.map((p) => p.id).sort()).toEqual(["p1", "p2", "p3"]);
     expect(allPosts.find((p) => p.id === "p3")?.title).toBe("Not yet synced");

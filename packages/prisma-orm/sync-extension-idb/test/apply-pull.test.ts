@@ -71,6 +71,7 @@ describe("applyPull", () => {
       log({ changelogId: changelogId(3), operation: "update", record: { id: "u1", name: 42 } }),
     ]);
     expect(result).toEqual({
+      changes: expect.any(Array),
       applied: 1,
       skipped: 2,
       validationFailed: 2,
@@ -90,6 +91,7 @@ describe("applyPull", () => {
       log({ changelogId: changelogId(4), operation: "delete", record: null, keyPath: 42n }),
     ]);
     expect(result).toEqual({
+      changes: expect.any(Array),
       applied: 0,
       skipped: 4,
       validationFailed: 4,
@@ -112,6 +114,7 @@ describe("applyPull", () => {
       log({ changelogId: changelogId(2), operation: "create", record: { id: "u1", name: "42" } }),
     ]);
     expect(result).toEqual({
+      changes: expect.any(Array),
       applied: 1,
       skipped: 1,
       validationFailed: 1,
@@ -126,7 +129,14 @@ describe("applyPull", () => {
 
     const result = await applyPull(client, [log({ changelogId: "c1", operation: "create" })]);
 
-    expect(result).toEqual({ applied: 1, skipped: 0, validationFailed: 0, halted: false, lastChangelogId: "c1" });
+    expect(result).toEqual({
+      changes: expect.any(Array),
+      applied: 1,
+      skipped: 0,
+      validationFailed: 0,
+      halted: false,
+      lastChangelogId: "c1",
+    });
     expect(await scanAll(client, "users")).toEqual([{ id: "u1", name: "Alice" }]);
     const meta = await getVersionMeta(client, 'User::"u1"');
     expect(meta?.lastAppliedChangeId).toBe("c1");
@@ -141,7 +151,14 @@ describe("applyPull", () => {
       log({ changelogId: "c2", operation: "update", record: { id: "u1", name: "Alicia" } }),
     ]);
 
-    expect(result).toEqual({ applied: 1, skipped: 0, validationFailed: 0, halted: false, lastChangelogId: "c2" });
+    expect(result).toEqual({
+      changes: expect.any(Array),
+      applied: 1,
+      skipped: 0,
+      validationFailed: 0,
+      halted: false,
+      lastChangelogId: "c2",
+    });
     expect(await scanAll(client, "users")).toEqual([{ id: "u1", name: "Alicia" }]);
   });
 
@@ -160,7 +177,14 @@ describe("applyPull", () => {
 
     const result = await applyPull(client, [log({ changelogId: "c3", operation: "delete", record: null })]);
 
-    expect(result).toEqual({ applied: 1, skipped: 0, validationFailed: 0, halted: false, lastChangelogId: "c3" });
+    expect(result).toEqual({
+      changes: expect.any(Array),
+      applied: 1,
+      skipped: 0,
+      validationFailed: 0,
+      halted: false,
+      lastChangelogId: "c3",
+    });
     expect(await scanAll(client, "users")).toHaveLength(0);
     expect(await scanAll(client, "posts")).toHaveLength(0);
   });
@@ -177,7 +201,14 @@ describe("applyPull", () => {
 
     const result = await applyPull(client, [log({ changelogId: "c1", operation: "create" })]);
 
-    expect(result).toEqual({ applied: 0, skipped: 1, validationFailed: 0, halted: true, lastChangelogId: null });
+    expect(result).toEqual({
+      changes: expect.any(Array),
+      applied: 0,
+      skipped: 1,
+      validationFailed: 0,
+      halted: true,
+      lastChangelogId: null,
+    });
     expect(await scanAll(client, "users")).toHaveLength(0);
   });
 
@@ -189,7 +220,14 @@ describe("applyPull", () => {
       log({ changelogId: "c3", operation: "update", record: { id: "u1", name: "Stale" } }),
     ]);
 
-    expect(result).toEqual({ applied: 0, skipped: 1, validationFailed: 0, halted: false, lastChangelogId: "c3" });
+    expect(result).toEqual({
+      changes: expect.any(Array),
+      applied: 0,
+      skipped: 1,
+      validationFailed: 0,
+      halted: false,
+      lastChangelogId: "c3",
+    });
     expect(await scanAll(client, "users")).toEqual([{ id: "u1", name: "Alice" }]);
   });
 
@@ -211,6 +249,7 @@ describe("applyPull", () => {
     const replay = await applyPull(client, page);
 
     expect(replay).toEqual({
+      changes: expect.any(Array),
       applied: 0,
       skipped: 3,
       validationFailed: 0,
@@ -241,7 +280,14 @@ describe("applyPull", () => {
 
       const result = await applyPull(client, page());
 
-      expect(result).toEqual({ applied: 0, skipped: 1, validationFailed: 0, halted: true, lastChangelogId: null });
+      expect(result).toEqual({
+        changes: expect.any(Array),
+        applied: 0,
+        skipped: 1,
+        validationFailed: 0,
+        halted: true,
+        lastChangelogId: null,
+      });
       expect(await scanAll(client, "users")).toEqual([]);
     });
 
@@ -252,6 +298,7 @@ describe("applyPull", () => {
       const result = await applyPull(client, page());
 
       expect(result).toEqual({
+        changes: expect.any(Array),
         applied: 1,
         skipped: 1,
         validationFailed: 0,
@@ -269,6 +316,7 @@ describe("applyPull", () => {
       const retry = await applyPull(client, page().slice(1));
 
       expect(retry).toEqual({
+        changes: expect.any(Array),
         applied: 2,
         skipped: 0,
         validationFailed: 0,
@@ -290,6 +338,7 @@ describe("applyPull", () => {
 
       const held = await applyPull(client, page());
       expect(held).toEqual({
+        changes: expect.any(Array),
         applied: 1,
         skipped: 1,
         validationFailed: 0,
@@ -307,6 +356,7 @@ describe("applyPull", () => {
       });
       const released = await applyPull(client, page().slice(1));
       expect(released).toEqual({
+        changes: expect.any(Array),
         applied: 2,
         skipped: 0,
         validationFailed: 0,
@@ -328,7 +378,14 @@ describe("applyPull", () => {
 
       const result = await applyPull(client, [log({ changelogId: changelogId(2), operation: "delete", record: null })]);
 
-      expect(result).toEqual({ applied: 0, skipped: 1, validationFailed: 0, halted: true, lastChangelogId: null });
+      expect(result).toEqual({
+        changes: expect.any(Array),
+        applied: 0,
+        skipped: 1,
+        validationFailed: 0,
+        halted: true,
+        lastChangelogId: null,
+      });
       expect(await scanAll(client, "users")).toEqual([{ id: "u1", name: "Alice" }]);
     });
 
@@ -348,6 +405,7 @@ describe("applyPull", () => {
       ]);
 
       expect(result).toEqual({
+        changes: expect.any(Array),
         applied: 0,
         skipped: 1,
         validationFailed: 0,
@@ -366,6 +424,7 @@ describe("applyPull", () => {
     ]);
 
     expect(result).toEqual({
+      changes: expect.any(Array),
       applied: 1,
       skipped: 1,
       validationFailed: 0,
@@ -379,7 +438,14 @@ describe("applyPull", () => {
 
     const result = await applyPull(client, [log({ changelogId: "c1", operation: "create", model: "Nonexistent" })]);
 
-    expect(result).toEqual({ applied: 0, skipped: 1, validationFailed: 0, halted: false, lastChangelogId: null });
+    expect(result).toEqual({
+      changes: expect.any(Array),
+      applied: 0,
+      skipped: 1,
+      validationFailed: 0,
+      halted: false,
+      lastChangelogId: null,
+    });
   });
 
   it("treats a create/update log with a null record as a no-op when nothing is materialized locally yet", async () => {
@@ -387,7 +453,14 @@ describe("applyPull", () => {
 
     const result = await applyPull(client, [log({ changelogId: "c1", operation: "create", record: null })]);
 
-    expect(result).toEqual({ applied: 1, skipped: 0, validationFailed: 0, halted: false, lastChangelogId: "c1" });
+    expect(result).toEqual({
+      changes: expect.any(Array),
+      applied: 1,
+      skipped: 0,
+      validationFailed: 0,
+      halted: false,
+      lastChangelogId: "c1",
+    });
     expect(await scanAll(client, "users")).toHaveLength(0);
   });
 
@@ -398,7 +471,14 @@ describe("applyPull", () => {
 
     const result = await applyPull(client, [log({ changelogId: "c2", operation: "update", record: null })]);
 
-    expect(result).toEqual({ applied: 1, skipped: 0, validationFailed: 0, halted: false, lastChangelogId: "c2" });
+    expect(result).toEqual({
+      changes: expect.any(Array),
+      applied: 1,
+      skipped: 0,
+      validationFailed: 0,
+      halted: false,
+      lastChangelogId: "c2",
+    });
     expect(await scanAll(client, "users")).toHaveLength(0);
   });
 
@@ -417,7 +497,14 @@ describe("applyPull", () => {
 
     const result = await applyPull(client, [log({ changelogId: "c3", operation: "update", record: null })]);
 
-    expect(result).toEqual({ applied: 1, skipped: 0, validationFailed: 0, halted: false, lastChangelogId: "c3" });
+    expect(result).toEqual({
+      changes: expect.any(Array),
+      applied: 1,
+      skipped: 0,
+      validationFailed: 0,
+      halted: false,
+      lastChangelogId: "c3",
+    });
     expect(await scanAll(client, "users")).toHaveLength(0);
     expect(await scanAll(client, "posts")).toHaveLength(0);
   });
@@ -437,7 +524,14 @@ describe("applyPull", () => {
       log({ changelogId: "c5", operation: "update", record: { id: "u1", name: "Alicia" } }),
     ]);
 
-    expect(result).toEqual({ applied: 3, skipped: 0, validationFailed: 0, halted: false, lastChangelogId: "c9" });
+    expect(result).toEqual({
+      changes: expect.any(Array),
+      applied: 3,
+      skipped: 0,
+      validationFailed: 0,
+      halted: false,
+      lastChangelogId: "c9",
+    });
   });
   describe("UUID v7 changelog ids", () => {
     it("tracks lastChangelogId as the newest id regardless of input order", async () => {
@@ -455,6 +549,7 @@ describe("applyPull", () => {
       ]);
 
       expect(result).toEqual({
+        changes: expect.any(Array),
         applied: 2,
         skipped: 0,
         validationFailed: 0,
@@ -472,6 +567,7 @@ describe("applyPull", () => {
       ]);
 
       expect(result).toEqual({
+        changes: expect.any(Array),
         applied: 1,
         skipped: 0,
         validationFailed: 0,
@@ -491,6 +587,7 @@ describe("applyPull", () => {
       ]);
 
       expect(result).toEqual({
+        changes: expect.any(Array),
         applied: 0,
         skipped: 1,
         validationFailed: 0,
@@ -534,6 +631,7 @@ describe("applyPull with a compound key", () => {
       { changelogId: changelogId(1), model: "Membership", operation: "create", keyPath, record: membership },
     ]);
     expect(created).toEqual({
+      changes: expect.any(Array),
       applied: 1,
       skipped: 0,
       validationFailed: 0,
@@ -563,6 +661,7 @@ describe("applyPull with a compound key", () => {
       },
     ]);
     expect(result).toEqual({
+      changes: expect.any(Array),
       applied: 0,
       skipped: 3,
       validationFailed: 3,
