@@ -7,6 +7,7 @@ import { idbCommandFamily } from "./family";
 export const BIN_NAME = "prisma-idb";
 
 export const BIN_GROUPS = {
+  contract: { brief: "Typed contract emission", description: "Emit contract artifacts for IDB and SQL projects." },
   migration: {
     brief: "On-disk migration management commands",
     description:
@@ -25,7 +26,7 @@ export function createIdbCli(): Cli {
     commands: idbCommandFamily.commands,
     help: {
       tagline: "IDB-target tooling for Prisma 8",
-      description: "Migration authoring for IndexedDB projects — no live database on the Node side to consult.",
+      description: "Typed contract emission and offline migration authoring for IndexedDB projects.",
     },
   });
 }

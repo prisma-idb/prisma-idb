@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createSyncFetchHandlers } from "../src/core/fetch-handlers";
 import { ContractMismatchError } from "../src/core/contract-mismatch-error";
-import { STORAGE_HASH_HEADER } from "../src/schemas";
 
 const context = { storageHash: "client-contract" };
 
@@ -15,12 +14,12 @@ describe("fetch sync handlers", () => {
     let controller = new AbortController();
     const client = createSyncFetchHandlers({
       pushUrl: "https://sync.test/push",
-      pullUrl: "https://sync.test/pull?tenant=app&since=old",
+      pullUrl: "https://sync.test/pull?tenant=app&since=old&storageHash=stale",
       credentials: "include",
-      headers: { authorization: "Bearer app-token", [STORAGE_HASH_HEADER]: "stale" },
+      headers: { authorization: "Bearer app-token" },
       fetch: async (input, init) => {
         const request = echoRequest(input, init);
-        expect(request.headers.get(STORAGE_HASH_HEADER)).toBe("client-contract");
+        expect(request.headers.has("x-storage-hash")).toBe(false);
         expect(request.headers.get("authorization")).toBe("Bearer app-token");
         expect(request.credentials).toBe("include");
         expect(request.redirect).toBe("error");
@@ -28,9 +27,10 @@ describe("fetch sync handlers", () => {
         expect(request.signal.aborted).toBe(true);
         if (request.method === "POST") {
           expect(request.headers.get("content-type")).toBe("application/json");
-          expect(await request.json()).toEqual({ events: [] });
+          expect(await request.json()).toEqual({ storageHash: context.storageHash, events: [] });
         } else {
           const url = new URL(request.url);
+          expect(url.searchParams.getAll("storageHash")).toEqual([context.storageHash]);
           expect(url.searchParams.get("tenant")).toBe("app");
           expect(url.searchParams.getAll("since")).toEqual(["cursor+/?"]);
         }

@@ -11,33 +11,32 @@ It executes the authorization checks from [`@prisma-idb/sync-server`](https://ww
 npm install @prisma-idb/sync-server-sql
 ```
 
-2. Create the server and adapter from your contracts.
-3. Create HTTP handlers. Resolve `scopeKey` from the authenticated session before calling either handler.
+2. Emit both configs with `prisma-idb contract emit` (pass `--config prisma.config.postgres.ts` for SQL). Create the HTTP handlers from their typed runtime modules. Resolve `scopeKey` from the authenticated session.
 
 ```ts
-import { createSyncServer } from "@prisma-idb/sync-server";
-import { createSqlSyncAdapter, createSqlSyncHandlers, sqlGetKeyField } from "@prisma-idb/sync-server-sql";
+import { createSqlSync } from "@prisma-idb/sync-server-sql";
+import serverContract from "./schema.postgres.generated.runtime";
+import clientContract from "./contract.runtime";
 
-const syncServer = createSyncServer({
+const handlers = createSqlSync({
   contract: serverContract,
   clientContract,
   rootModel: "User",
-  getKeyField: sqlGetKeyField,
+  db, // Or a lazy (request) => db resolver.
+  scopeKey: requireAuthenticatedUserId, // Reject requests without a session.
 });
-const adapter = createSqlSyncAdapter({ contract: serverContract, syncServer });
-const handlers = createSqlSyncHandlers({ adapter });
 
-// Fetch-style endpoint, after authentication:
-return handlers.push(request, { db, scopeKey });
-// Pull endpoint: return handlers.pull(request, { db, scopeKey });
+return handlers.push(request);
+// Pull endpoint: return handlers.pull(request);
 ```
 
-In Hono, pass `c.req.raw`: `handlers.push(c.req.raw, { db, scopeKey })` or `handlers.pull(c.req.raw, { db, scopeKey })`.
-No Hono dependency is required. Authentication stays in your middleware or route.
+In Hono, pass `c.req.raw`: `handlers.push(c.req.raw)` or `handlers.pull(c.req.raw)`.
+No Hono dependency is required. Authenticate in middleware or the scope resolver.
+The scope resolver runs before the database resolver. Both accept asynchronous functions.
 
-The handlers read `x-storage-hash`, validate push JSON, and return JSON arrays on success.
-They map contract mismatches to HTTP 409 and malformed input to HTTP 400.
-Pull reads the exclusive cursor from `since`; an absent or empty value starts from the beginning.
+Push reads `{ storageHash, events }` from JSON. Pull reads `storageHash` and the exclusive cursor `since` from the query string.
+A different hash returns HTTP 409. Malformed or missing fields return HTTP 400.
+An absent or empty cursor starts from the beginning. Every pull response sets `Cache-Control: no-store`.
 Options `maxBatchSize` and `pullLimit` override the adapter's default limits.
 Unexpected database errors reject the promise for your app's error middleware.
 

@@ -13,13 +13,13 @@ A migration advances the database to a new stored record shape, object-store lay
 After editing `schema.prisma`, run:
 
 ```bash
-npx prisma@latest contract emit
+npx prisma-idb contract emit
 npx prisma-idb migration plan --name add-todo-priority
 npx prisma-idb migration contract-space
 npx prisma-idb migration preflight
 ```
 
-1. `contract emit` updates `contract.json` and `contract.d.ts`.
+1. `prisma-idb contract emit` updates `contract.json`, `contract.d.ts`, and `contract.runtime.ts` together.
 2. `migration plan` compares the new contract with the one the newest migration ends at, and writes the difference as a new package under `migrations/app/`. `--name` sets the folder name, and is required for every migration after the first.
 3. `migration contract-space` regenerates the module that bundles the migrations into your app.
 4. `migration preflight` checks that the emitted contract matches the chain head, and that the whole chain applies and produces the head contract's stores and indexes.

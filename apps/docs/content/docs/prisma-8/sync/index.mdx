@@ -77,7 +77,7 @@ contract: prismaIdbContract("src/prisma/schema.prisma", { projection: "client" }
 Emit the contract and plan a migration, as for any schema change:
 
 ```bash
-npx prisma@latest contract emit
+npx prisma-idb contract emit
 npx prisma-idb migration plan --name add-sync
 npx prisma-idb migration contract-space
 npx prisma-idb migration preflight
@@ -146,7 +146,7 @@ If your schema already declares a `Changelog` model or `ChangeOperation` enum, d
 Create the Postgres tables:
 
 ```bash
-npx prisma@latest contract emit --config prisma.config.postgres.ts
+npx prisma-idb contract emit --config prisma.config.postgres.ts
 npx prisma@latest db init --config prisma.config.postgres.ts
 ```
 
@@ -155,31 +155,26 @@ After later schema changes, run `contract emit` and `db update` with the same `-
 </Step>
 <Step>
 
-Create the sync server once, at startup. Import both generated contracts and cast them to their generated types:
+Create the sync server once, at startup. Import both generated typed runtime modules:
 
 ```ts
 // src/server/sync.ts
-import { createSyncServer } from "@prisma-idb/sync-server";
-import { createSqlSyncAdapter, createSqlSyncHandlers, sqlGetKeyField } from "@prisma-idb/sync-server-sql";
-import type { Contract as ServerContract } from "../prisma/schema.postgres.generated";
-import type { Contract as ClientContract } from "../prisma/contract";
-import serverContractJson from "../prisma/schema.postgres.generated.json" with { type: "json" };
-import clientContractJson from "../prisma/contract.json" with { type: "json" };
+import { createSqlSync } from "@prisma-idb/sync-server-sql";
+import { db } from "./db"; // Your Prisma 8 Postgres client.
+import { requireAuthenticatedUserId } from "./auth"; // Reject requests without a session.
+import serverContract from "../prisma/schema.postgres.generated.runtime";
+import clientContract from "../prisma/contract.runtime";
 
-const serverContract = serverContractJson as unknown as ServerContract;
-
-export const syncServer = createSyncServer({
+export const syncHandlers = createSqlSync({
   contract: serverContract,
-  clientContract: clientContractJson as unknown as ClientContract,
+  clientContract,
   rootModel: "User",
-  getKeyField: sqlGetKeyField,
+  db,
+  scopeKey: requireAuthenticatedUserId,
 });
-
-const sqlSyncAdapter = createSqlSyncAdapter({ contract: serverContract, syncServer });
-export const syncHandlers = createSqlSyncHandlers({ adapter: sqlSyncAdapter });
 ```
 
-`createSyncServer` throws at startup if a synced model has no relation path to `User`, or the relations form a cycle.
+`createSqlSync` throws at startup if a synced model has no relation path to `User`, or the relations form a cycle.
 
 </Step>
 <Step>
@@ -189,17 +184,13 @@ Add the push endpoint. It checks each event against the signed-in user and appli
 ```ts
 // POST /api/sync/push
 import { syncHandlers } from "./sync";
-import { getAuthenticatedUserId } from "./auth"; // your session lookup
-import { db } from "./db"; // your Prisma 8 Postgres client
 
 export async function POST(req: Request) {
-  const scopeKey = await getAuthenticatedUserId(req);
-  if (!scopeKey) return Response.json({ error: "Unauthorized" }, { status: 401 });
-  return syncHandlers.push(req, { db, scopeKey });
+  return syncHandlers.push(req);
 }
 ```
 
-The handlers read the client's contract storage hash from a request header and return HTTP 409 when it is missing or differs from the server's. They also validate push bodies and return HTTP 400 for malformed input. See [Contract check](/docs/prisma-8/sync/server#contract-check).
+The handlers read `storageHash` from the push body and pull query. They return HTTP 409 when it differs from the server's hash. They also validate push bodies and return HTTP 400 for malformed input. See [Contract check](/docs/prisma-8/sync/server#contract-check).
 
 `applyPush` decodes wire values and validates each event. It applies events in order, checking ownership and writing the record and its `Changelog` row in one transaction. It stops at the first retryable failure so dependent events remain pending until their parent succeeds.
 
@@ -211,13 +202,9 @@ Add the pull endpoint. It reads the user's changelog after the client's last pos
 ```ts
 // GET /api/sync/pull?since=<changelogId>
 import { syncHandlers } from "./sync";
-import { getAuthenticatedUserId } from "./auth";
-import { db } from "./db";
 
 export async function GET(req: Request) {
-  const scopeKey = await getAuthenticatedUserId(req);
-  if (!scopeKey) return Response.json({ error: "Unauthorized" }, { status: 401 });
-  return syncHandlers.pull(req, { db, scopeKey });
+  return syncHandlers.pull(req);
 }
 ```
 
