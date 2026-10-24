@@ -1,5 +1,13 @@
 # @prisma-idb/sync-server
 
+## 0.8.4
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @prisma-idb/target-idb@0.15.1
+  - @prisma-idb/family-idb@0.15.1
+
 ## 0.8.3
 
 ### Patch Changes

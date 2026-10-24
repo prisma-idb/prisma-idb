@@ -1,5 +1,17 @@
 # @prisma-idb/sync-extension-idb
 
+## 0.10.1
+
+### Patch Changes
+
+- Updated dependencies [[`e12724c`](https://github.com/prisma-idb/prisma-idb/commit/e12724cca4a748d6ae18468c5aa388930254b4da)]:
+  - @prisma-idb/client-idb@0.15.1
+  - @prisma-idb/target-idb@0.15.1
+  - @prisma-idb/driver-idb@0.15.1
+  - @prisma-idb/adapter-idb@0.15.1
+  - @prisma-idb/runtime-idb@0.15.1
+  - @prisma-idb/family-idb@0.15.1
+
 ## 0.10.0
 
 ### Minor Changes
