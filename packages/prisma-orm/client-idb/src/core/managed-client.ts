@@ -2,7 +2,7 @@
  * `createManagedIdbClient` — a singleton, race-safe wrapper around any IDB
  * client factory (`createIdbClient`, `createAutoMigratingIdbClient`, or a
  * sync-extension factory like `createAutoMigratingSyncIdbClient` — anything
- * returning a `close(): Promise<void>`-shaped client).
+ * returning a client with `enums` and `close(): Promise<void>`).
  *
  * Every consumer of this package that wants a module-level singleton client
  * plus a "wipe local data" reset (e.g. on logout) needs the same race-safety:
@@ -13,7 +13,10 @@
  * discussion in the kanban example's `db.ts` history.
  */
 
-export interface ManagedIdbClientOptions {
+/** Configures the enum accessors and database lifecycle for a managed client. */
+export interface ManagedIdbClientOptions<TEnums = unknown> {
+  /** Enum accessors derived from the same contract used by the client factory. */
+  readonly enums: TEnums;
   /** IDB database name — passed to `indexedDB.deleteDatabase` on `reset()`. */
   readonly dbName: string;
   /** IDB factory override — primarily for tests. Defaults to `indexedDB` when opening or resetting the database. */
@@ -21,7 +24,9 @@ export interface ManagedIdbClientOptions {
 }
 
 /** A shared client handle with coordinated opening and database reset. */
-export interface ManagedIdbClient<TClient> {
+export interface ManagedIdbClient<TClient extends { readonly enums: unknown }> {
+  /** Contract-derived enum accessors, available without opening IndexedDB. */
+  readonly enums: TClient["enums"];
   /** Opens the client on first call and caches it; concurrent calls share one open. */
   get(): Promise<TClient>;
   /** Closes the cached client, if any. Safe to call when nothing is open. */
@@ -49,10 +54,11 @@ export interface ManagedIdbClient<TClient> {
  * @example
  * ```ts
  * import { createManagedIdbClient } from '@prisma-idb/client-idb/client';
+ * import { createIdbEnums } from '@prisma-idb/client-idb/internal';
  *
  * const db = createManagedIdbClient(
  *   () => createAutoMigratingIdbClient({ contractSpace, dbName: 'my-app' }),
- *   { dbName: 'my-app' }
+ *   { enums: createIdbEnums(contractSpace.contractJson), dbName: 'my-app' }
  * );
  *
  * const client = await db.get();
@@ -60,9 +66,9 @@ export interface ManagedIdbClient<TClient> {
  * await db.reset();
  * ```
  */
-export function createManagedIdbClient<TClient extends { close(): Promise<void> }>(
+export function createManagedIdbClient<TClient extends { readonly enums: unknown; close(): Promise<void> }>(
   open: () => Promise<TClient>,
-  options: ManagedIdbClientOptions
+  options: ManagedIdbClientOptions<TClient["enums"]>
 ): ManagedIdbClient<TClient> {
   const { dbName, idbFactory } = options;
 
@@ -126,5 +132,5 @@ export function createManagedIdbClient<TClient extends { close(): Promise<void> 
     }
   }
 
-  return { get, close, reset };
+  return { enums: options.enums, get, close, reset };
 }

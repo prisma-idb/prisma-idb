@@ -2,7 +2,8 @@ import { describe, expect, expectTypeOf, it } from "vitest";
 import { buildSymbolTable } from "@prisma/orm-framework/psl-parser";
 import { parse } from "@prisma/orm-framework/psl-parser/syntax";
 import { interpretPslDocumentToIdbContract } from "@prisma-idb/family-idb/contract-psl";
-import { createIdbClient } from "../src/exports/client";
+import { createIdbEnums } from "../src/exports/internal";
+import { createIdbClient, createManagedIdbClient } from "../src/exports/client";
 import { createAutoMigratingIdbClient } from "../src/exports/client-auto";
 import { buildContractSpaceFixture } from "./_contract-space-fixture";
 
@@ -77,6 +78,12 @@ describe("client enum accessors", () => {
     } as const;
     const db = createIdbClient({ contract: typed, dbName: `enum-accessors-${++dbCounter}` });
     try {
+      const managed = createManagedIdbClient(async () => db, {
+        dbName: "typed-enum-accessors",
+        enums: createIdbEnums(typed),
+      });
+      expectTypeOf(managed.enums).toEqualTypeOf<typeof db.enums>();
+      expectTypeOf(managed.enums.__unbound__.Role.members.ADMIN).toEqualTypeOf<"ADMIN">();
       const Role = db.enums.__unbound__.Role;
       const literal: typeof Role.Value = "USER";
       expectTypeOf(Role.members.ADMIN).toEqualTypeOf<"ADMIN">();

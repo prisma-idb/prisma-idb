@@ -18,6 +18,8 @@ All three functions come from `@prisma-idb/sync-extension-idb/client`.
 
 The options are the same as `createAutoMigratingIdbClient`'s, plus `trackedModels`: an array of model names to record for sync, or `"*"` for every model, the default. Writes to other models stay local. Tracked models must use keys that are unique across devices, such as `uuid()` or `cuid()`. Sync rejects tracked stores with `autoincrement()` keys. Include `idbSyncExtension` from `@prisma-idb/sync-extension-idb/control` in `extensions`, so the database gets the sync stores, `_idb_sync_outbox` and `_idb_sync_version_meta`.
 
+The managed handle exposes `managedDb.enums` synchronously with the same type and values as `db.enums`. Reading enum values does not open IndexedDB and works during server rendering, even when no `indexedDB` global exists. Use `await managedDb.get()` when you need database operations.
+
 ## Client members
 
 | Member                            | Description                                                                                           |

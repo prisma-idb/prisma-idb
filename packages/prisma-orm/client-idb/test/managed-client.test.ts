@@ -1,9 +1,20 @@
 import { IDBFactory } from "fake-indexeddb";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, expectTypeOf, it, vi } from "vitest";
+import { defineContract } from "@prisma-idb/family-idb/contract-ts";
+import idbFamilyPack from "@prisma-idb/family-idb/pack";
+import idbTargetPack from "@prisma-idb/target-idb/pack";
+import { createIdbEnums } from "../src/exports/internal";
 import { createManagedIdbClient } from "../src/core/managed-client";
 
 const dbName = "managed-client";
+const contract = defineContract({
+  family: idbFamilyPack,
+  target: idbTargetPack,
+  enums: { Role: ["USER", "ADMIN"] },
+  models: { User: { store: "users", key: "id", fields: { id: "String", role: "Role" } } },
+});
 
+/** Open the database used to exercise managed lifecycle behavior. */
 function openDatabase(factory: IDBFactory, version = 1): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const request = factory.open(dbName, version);
@@ -12,9 +23,10 @@ function openDatabase(factory: IDBFactory, version = 1): Promise<IDBDatabase> {
   });
 }
 
+/** Adapt a real database connection to a client with enum accessors. */
 async function openClient(factory = indexedDB) {
   const database = await openDatabase(factory);
-  return { close: async () => database.close() };
+  return { enums: createIdbEnums(contract), close: async () => database.close() };
 }
 
 afterEach(() => vi.unstubAllGlobals());
@@ -24,7 +36,10 @@ describe("createManagedIdbClient factory lifecycle", () => {
     const original = new IDBFactory();
     const replacement = new IDBFactory();
     vi.stubGlobal("indexedDB", undefined);
-    const managed = createManagedIdbClient(() => openClient(), { dbName });
+    Reflect.deleteProperty(globalThis, "indexedDB");
+    const managed = createManagedIdbClient(() => openClient(), { enums: createIdbEnums(contract), dbName });
+    expect(managed.enums["__unbound__"]!["Role"]!.values).toEqual(["USER", "ADMIN"]);
+    expectTypeOf(managed.enums).toEqualTypeOf<Awaited<ReturnType<typeof openClient>>["enums"]>();
     vi.stubGlobal("indexedDB", original);
 
     const opening = managed.get();
@@ -40,7 +55,7 @@ describe("createManagedIdbClient factory lifecycle", () => {
     const original = new IDBFactory();
     const replacement = new IDBFactory();
     vi.stubGlobal("indexedDB", original);
-    const managed = createManagedIdbClient(() => openClient(), { dbName });
+    const managed = createManagedIdbClient(() => openClient(), { enums: createIdbEnums(contract), dbName });
     await managed.get();
     await managed.reset();
 
@@ -56,7 +71,7 @@ describe("createManagedIdbClient factory lifecycle", () => {
     const replacement = new IDBFactory();
     (await openDatabase(original, 2)).close();
     vi.stubGlobal("indexedDB", original);
-    const managed = createManagedIdbClient(() => openClient(), { dbName });
+    const managed = createManagedIdbClient(() => openClient(), { enums: createIdbEnums(contract), dbName });
 
     await expect(managed.get()).rejects.toMatchObject({ name: "VersionError" });
     vi.stubGlobal("indexedDB", replacement);
@@ -74,6 +89,7 @@ describe("createManagedIdbClient factory lifecycle", () => {
     (await openDatabase(replacement)).close();
     vi.stubGlobal("indexedDB", replacement);
     const managed = createManagedIdbClient(() => openClient(original), {
+      enums: createIdbEnums(contract),
       dbName,
       idbFactory: original,
     });

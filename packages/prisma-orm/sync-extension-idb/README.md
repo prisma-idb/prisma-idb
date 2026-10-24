@@ -65,4 +65,6 @@ MIT
 
 ## Schema enums
 
+Managed sync handles expose `managedDb.enums` synchronously, without opening IndexedDB. Its type and values match the opened client's `db.enums`, so enum access also works during server rendering.
+
 Sync clients expose Prisma 8 runtime enum accessors through `db.enums`, shared with `db.rawClient.enums`. For the default PSL namespace, use `db.enums.__unbound__.Role.members.ADMIN` or `db.enums.__unbound__.Role.values`. Membership checks such as `Role.has(value)` narrow to the declared value union. Existing field types and string literals keep working.

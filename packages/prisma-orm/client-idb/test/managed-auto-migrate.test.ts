@@ -8,7 +8,7 @@
  * that the wrapper actually closes that gap.
  */
 import "fake-indexeddb/auto";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, expectTypeOf, it } from "vitest";
 import { defineContract } from "@prisma-idb/family-idb/contract-ts";
 import idbFamilyPack from "@prisma-idb/family-idb/pack";
 import idbTargetPack from "@prisma-idb/target-idb/pack";
@@ -28,8 +28,9 @@ function dbName(): string {
 const v1 = defineContract({
   family: idbFamilyPack,
   target: idbTargetPack,
+  enums: { Role: ["USER", "ADMIN"] },
   models: {
-    User: { store: "users", key: "id", fields: { id: "String", email: "String" } },
+    User: { store: "users", key: "id", fields: { id: "String", email: "String", role: "Role" } },
   },
 });
 
@@ -43,15 +44,21 @@ describe("createManagedAutoIdbClient", () => {
     (globalThis as unknown as { indexedDB: IDBFactory }).indexedDB = new fake.IDBFactory();
   });
 
-  it("migrates and opens a working client from a single dbName", async () => {
+  it("reads enums without IndexedDB, then migrates and opens the client", async () => {
+    const browserFactory = globalThis.indexedDB;
+    Reflect.deleteProperty(globalThis, "indexedDB");
     const name = dbName();
     const space = buildContractSpaceFixture([v1]);
     const managed = createManagedAutoIdbClient({ contractSpace: space, dbName: name });
 
+    expect(managed.enums["__unbound__"]!["Role"]!.values).toEqual(["USER", "ADMIN"]);
+    globalThis.indexedDB = browserFactory;
+
     const client = await managed.get();
+    expectTypeOf(managed.enums).toEqualTypeOf<typeof client.enums>();
     const users = asRecord(client.orm)["users"]!;
-    await users.create({ id: "u1", email: "alice@example.com" });
-    expect(await users.findUnique("u1")).toMatchObject({ email: "alice@example.com" });
+    await users.create({ id: "u1", email: "alice@example.com", role: "USER" });
+    expect(await users.findUnique("u1")).toMatchObject({ email: "alice@example.com", role: "USER" });
 
     await managed.close();
   });
@@ -72,7 +79,7 @@ describe("createManagedAutoIdbClient", () => {
 
     const client = await managed.get();
     const users = asRecord(client.orm)["users"]!;
-    await users.create({ id: "u1", email: "alice@example.com" });
+    await users.create({ id: "u1", email: "alice@example.com", role: "USER" });
 
     await managed.reset();
 
