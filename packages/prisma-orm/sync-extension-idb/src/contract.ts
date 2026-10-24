@@ -28,6 +28,11 @@ export const syncContract = defineContract({
         byCreatedAt: { keyPath: "createdAt", unique: false },
       },
     },
+    SyncMeta: {
+      store: "_idb_sync_meta",
+      key: "id",
+      fields: { id: "String", value: "String" },
+    },
     VersionMeta: {
       store: "_idb_sync_version_meta",
       key: "id",

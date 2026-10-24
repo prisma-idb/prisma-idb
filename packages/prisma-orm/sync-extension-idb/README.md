@@ -54,6 +54,10 @@ The server side uses [`@prisma-idb/sync-server`](https://www.npmjs.com/package/@
 
 `applyPull` validates decoded records and keys before opening a write transaction. Both its result and the worker's `pullcompleted` event include `validationFailed`, a subset of `skipped`, for corrupt records, keys or wire values. Valid rows still apply, and corrupt rows advance the pull cursor without changing their per-record version metadata. Extra fields and undeclared enum values are rejected; a newer server shape can require updating the client contract.
 
+The pull cursor is persisted in `_idb_sync_meta` in the same IndexedDB database as application data. The `getCursor` and `setCursor` worker options have been removed. On sign-out, await `worker.stop()` before your managed client's `reset()`. Stopping waits for the active cycle to settle and suppresses subsequent cycle notifications. Resetting clears the cursor with the data.
+
+**Breaking change:** the sync migration history is replaced by one baseline. Recreate existing browser databases before using this version. Resetting discards queued local edits, so sync them before upgrading when possible.
+
 ## Documentation
 
 - [Sync tutorial](https://prisma-idb.dev/docs/prisma-8/sync)
