@@ -93,7 +93,7 @@ describe("createManagedAutoSyncIdbClient", () => {
                 model: "User",
                 operation: "create",
                 keyPath: "u1",
-                record: { id: "u1", name: "Alice" },
+                record: { id: "u1", name: "Alice", role: "USER" },
               },
             ]);
           enterPull();
@@ -122,7 +122,11 @@ describe("createManagedAutoSyncIdbClient", () => {
     }
     await pullAfterReopen();
     const reloaded = await managed.get();
-    expect(await asAccessors(reloaded.orm)["users"]!.findUnique("u1")).toEqual({ id: "u1", name: "Alice" });
+    expect(await asAccessors(reloaded.orm)["users"]!.findUnique("u1")).toEqual({
+      id: "u1",
+      name: "Alice",
+      role: "USER",
+    });
     await managed.reset();
     await pullAfterReopen();
     expect(from).toEqual([changelogId(7), null]);
