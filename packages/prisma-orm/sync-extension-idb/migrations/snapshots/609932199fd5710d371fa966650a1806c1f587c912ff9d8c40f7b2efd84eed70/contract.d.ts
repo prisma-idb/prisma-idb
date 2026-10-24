@@ -12,7 +12,7 @@ import type {
   StorageHashBase,
 } from "@prisma/orm-framework/contract/types";
 
-export type StorageHash = StorageHashBase<"20005ac86953ae2786743ec34740cfeae4a653c80c9d7ad7f387bc81c73b87cf">;
+export type StorageHash = StorageHashBase<"609932199fd5710d371fa966650a1806c1f587c912ff9d8c40f7b2efd84eed70">;
 export type ExecutionHash = ExecutionHashBase<string>;
 export type ProfileHash = ProfileHashBase<"40329830af4e39e0774683fbebcdc24dcf983a5da02c5fe6079a2a57579f861c">;
 
@@ -27,12 +27,18 @@ export type FieldOutputTypes = {
       readonly id: CodecTypes["idb/string@1"]["output"];
       readonly lastAttemptedAt: CodecTypes["idb/date@1"]["output"] | null;
       readonly lastError: CodecTypes["idb/string@1"]["output"] | null;
+      readonly migrationError: CodecTypes["idb/string@1"]["output"] | null;
       readonly operation: CodecTypes["idb/string@1"]["output"];
       readonly payload: CodecTypes["idb/json@1"]["output"];
       readonly retryable: CodecTypes["idb/bool@1"]["output"];
       readonly synced: CodecTypes["idb/bool@1"]["output"];
       readonly syncedAt: CodecTypes["idb/date@1"]["output"] | null;
       readonly tries: CodecTypes["idb/int32@1"]["output"];
+      readonly versionMetaId: CodecTypes["idb/string@1"]["output"] | null;
+    };
+    readonly SyncMeta: {
+      readonly id: CodecTypes["idb/string@1"]["output"];
+      readonly value: CodecTypes["idb/string@1"]["output"];
     };
     readonly VersionMeta: {
       readonly id: CodecTypes["idb/string@1"]["output"];
@@ -51,12 +57,18 @@ export type FieldInputTypes = {
       readonly id: CodecTypes["idb/string@1"]["input"];
       readonly lastAttemptedAt: CodecTypes["idb/date@1"]["input"] | null;
       readonly lastError: CodecTypes["idb/string@1"]["input"] | null;
+      readonly migrationError: CodecTypes["idb/string@1"]["input"] | null;
       readonly operation: CodecTypes["idb/string@1"]["input"];
       readonly payload: CodecTypes["idb/json@1"]["input"];
       readonly retryable: CodecTypes["idb/bool@1"]["input"];
       readonly synced: CodecTypes["idb/bool@1"]["input"];
       readonly syncedAt: CodecTypes["idb/date@1"]["input"] | null;
       readonly tries: CodecTypes["idb/int32@1"]["input"];
+      readonly versionMetaId: CodecTypes["idb/string@1"]["input"] | null;
+    };
+    readonly SyncMeta: {
+      readonly id: CodecTypes["idb/string@1"]["input"];
+      readonly value: CodecTypes["idb/string@1"]["input"];
     };
     readonly VersionMeta: {
       readonly id: CodecTypes["idb/string@1"]["input"];
@@ -75,12 +87,19 @@ export namespace Models {
     id: CodecTypes["idb/string@1"]["output"];
     lastAttemptedAt: CodecTypes["idb/date@1"]["output"] | null;
     lastError: CodecTypes["idb/string@1"]["output"] | null;
+    migrationError: CodecTypes["idb/string@1"]["output"] | null;
     operation: CodecTypes["idb/string@1"]["output"];
     payload: CodecTypes["idb/json@1"]["output"];
     retryable: CodecTypes["idb/bool@1"]["output"];
     synced: CodecTypes["idb/bool@1"]["output"];
     syncedAt: CodecTypes["idb/date@1"]["output"] | null;
     tries: CodecTypes["idb/int32@1"]["output"];
+    versionMetaId: CodecTypes["idb/string@1"]["output"] | null;
+    readonly [RelationKeys]?: never;
+  };
+  export type unbound_SyncMeta = {
+    id: CodecTypes["idb/string@1"]["output"];
+    value: CodecTypes["idb/string@1"]["output"];
     readonly [RelationKeys]?: never;
   };
   export type unbound_VersionMeta = {
@@ -96,6 +115,7 @@ export namespace Models {
 export declare const models: {
   __unbound__: {
     OutboxEvent: Models.unbound_OutboxEvent;
+    SyncMeta: Models.unbound_SyncMeta;
     VersionMeta: Models.unbound_VersionMeta;
   };
 };
@@ -105,6 +125,23 @@ export type TypeMaps = IdbTypeMaps<CodecTypes, FieldOutputTypes, FieldInputTypes
 type ContractBase = Omit<
   ContractType<{
     readonly stores: {
+      readonly _idb_sync_meta: {
+        readonly keyPath: "id";
+        readonly record: {
+          readonly fields: {
+            readonly id: {
+              readonly nullable: false;
+              readonly type: { readonly codecId: "idb/string@1"; readonly kind: "scalar" };
+            };
+            readonly value: {
+              readonly nullable: false;
+              readonly type: { readonly codecId: "idb/string@1"; readonly kind: "scalar" };
+            };
+          };
+          readonly model: "SyncMeta";
+        };
+        readonly indexes: Record<string, never>;
+      };
       readonly _idb_sync_outbox: {
         readonly keyPath: "id";
         readonly record: {
@@ -126,6 +163,10 @@ type ContractBase = Omit<
               readonly type: { readonly codecId: "idb/date@1"; readonly kind: "scalar" };
             };
             readonly lastError: {
+              readonly nullable: true;
+              readonly type: { readonly codecId: "idb/string@1"; readonly kind: "scalar" };
+            };
+            readonly migrationError: {
               readonly nullable: true;
               readonly type: { readonly codecId: "idb/string@1"; readonly kind: "scalar" };
             };
@@ -152,6 +193,10 @@ type ContractBase = Omit<
             readonly tries: {
               readonly nullable: false;
               readonly type: { readonly codecId: "idb/int32@1"; readonly kind: "scalar" };
+            };
+            readonly versionMetaId: {
+              readonly nullable: true;
+              readonly type: { readonly codecId: "idb/string@1"; readonly kind: "scalar" };
             };
           };
           readonly model: "OutboxEvent";
@@ -200,6 +245,10 @@ type ContractBase = Omit<
   readonly target: "idb";
   readonly targetFamily: "idb";
   readonly roots: {
+    readonly _idb_sync_meta: {
+      readonly namespace: "__unbound__" & NamespaceId;
+      readonly model: "SyncMeta";
+    };
     readonly _idb_sync_outbox: {
       readonly namespace: "__unbound__" & NamespaceId;
       readonly model: "OutboxEvent";
@@ -235,6 +284,10 @@ type ContractBase = Omit<
                 readonly nullable: true;
                 readonly type: { readonly kind: "scalar"; readonly codecId: "idb/string@1" };
               };
+              readonly migrationError: {
+                readonly nullable: true;
+                readonly type: { readonly kind: "scalar"; readonly codecId: "idb/string@1" };
+              };
               readonly operation: {
                 readonly nullable: false;
                 readonly type: { readonly kind: "scalar"; readonly codecId: "idb/string@1" };
@@ -259,9 +312,27 @@ type ContractBase = Omit<
                 readonly nullable: false;
                 readonly type: { readonly kind: "scalar"; readonly codecId: "idb/int32@1" };
               };
+              readonly versionMetaId: {
+                readonly nullable: true;
+                readonly type: { readonly kind: "scalar"; readonly codecId: "idb/string@1" };
+              };
             };
             readonly relations: Record<string, never>;
             readonly storage: { readonly storeName: "_idb_sync_outbox"; readonly keyPath: "id" };
+          };
+          readonly SyncMeta: {
+            readonly fields: {
+              readonly id: {
+                readonly nullable: false;
+                readonly type: { readonly kind: "scalar"; readonly codecId: "idb/string@1" };
+              };
+              readonly value: {
+                readonly nullable: false;
+                readonly type: { readonly kind: "scalar"; readonly codecId: "idb/string@1" };
+              };
+            };
+            readonly relations: Record<string, never>;
+            readonly storage: { readonly storeName: "_idb_sync_meta"; readonly keyPath: "id" };
           };
           readonly VersionMeta: {
             readonly fields: {

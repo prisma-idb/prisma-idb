@@ -1,17 +1,27 @@
 [
   {
     "kind": "createObjectStore",
+    "id": "object-store._idb_sync_meta.create",
+    "label": "Create object store \"_idb_sync_meta\"",
+    "operationClass": "additive",
+    "storeName": "_idb_sync_meta",
+    "def": {
+      "keyPath": "id"
+    }
+  },
+  {
+    "kind": "createObjectStore",
     "id": "object-store._idb_sync_outbox.create",
     "label": "Create object store \"_idb_sync_outbox\"",
     "operationClass": "additive",
     "storeName": "_idb_sync_outbox",
     "def": {
+      "keyPath": "id",
       "indexes": {
         "byCreatedAt": {
           "keyPath": "createdAt"
         }
-      },
-      "keyPath": "id"
+      }
     }
   },
   {

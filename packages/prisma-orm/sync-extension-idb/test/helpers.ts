@@ -32,6 +32,7 @@ export const OUTBOX_STORE: StoreSpec = {
   name: "_idb_sync_outbox",
   keyPath: "id",
 };
+export const SYNC_META_STORE: StoreSpec = { name: "_idb_sync_meta", keyPath: "id" };
 export const VERSION_META_STORE: StoreSpec = { name: "_idb_sync_version_meta", keyPath: "id" };
 
 export function openTestDb(name: string, stores: StoreSpec[]): Promise<IDBDatabase> {
@@ -138,7 +139,13 @@ export async function createTestSyncClient(options?: {
   trackedModels?: ReadonlyArray<string> | "*";
 }): Promise<{ client: SyncIdbClient<IdbContract>; dbName: string; contract: IdbContract }> {
   const name = testDbName();
-  const bootstrapDb = await openTestDb(name, [USERS_STORE, POSTS_STORE, OUTBOX_STORE, VERSION_META_STORE]);
+  const bootstrapDb = await openTestDb(name, [
+    USERS_STORE,
+    POSTS_STORE,
+    OUTBOX_STORE,
+    VERSION_META_STORE,
+    SYNC_META_STORE,
+  ]);
   bootstrapDb.close();
   const contract = testContract();
   const client = createSyncIdbClient({

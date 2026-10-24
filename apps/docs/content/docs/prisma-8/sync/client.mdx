@@ -116,24 +116,22 @@ The worker automatically keeps the newest 100 successfully acknowledged outbox e
 
 A failed push, including a request that throws or times out, stays retryable however many times it fails, unless the server says it can never succeed. Events are pushed in order, so an event that is waiting out its backoff holds back the events behind it. After 10 failed tries, `pushcompleted` carries `stalled: { eventId, tries, lastError }` for the oldest event. Show it to the user: the outbox is stuck behind that event, and pulls pause until it clears.
 
-| Option             | Default  | Description                                                                                                                                          |
-| ------------------ | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `pushHandler`      | Required | `(events, signal, context) => Promise<PushResult[]>`. Sends events to your push endpoint.                                                            |
-| `pullHandler`      | Required | `(fromChangelogId, signal, context) => Promise<LogWithRecord[]>`. Fetches changes after `fromChangelogId`, which is `null` on the first pull.        |
-| `getCursor`        | None     | `() => string \| null \| Promise<string \| null>`. Loads the saved pull cursor once, before the first pull. Without it the cursor is in memory only. |
-| `setCursor`        | None     | `(changelogId) => void \| Promise<void>`. Saves the cursor after a pull advances it. A throw fails the cycle and the save is retried.                |
-| `batchSize`        | `20`     | Outbox events pushed per request.                                                                                                                    |
-| `intervalMs`       | `5000`   | Time between cycles while idle.                                                                                                                      |
-| `backoffBaseMs`    | `1000`   | Wait after the first failure. Doubles with each failure in a row. Applies to failed cycles and to each outbox event.                                 |
-| `backoffMaxMs`     | `30000`  | The longest wait, for both.                                                                                                                          |
-| `requestTimeoutMs` | `30000`  | Aborts a handler call through its `signal` after this long.                                                                                          |
+| Option             | Default  | Description                                                                                                                                   |
+| ------------------ | -------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pushHandler`      | Required | `(events, signal, context) => Promise<PushResult[]>`. Sends events to your push endpoint.                                                     |
+| `pullHandler`      | Required | `(fromChangelogId, signal, context) => Promise<LogWithRecord[]>`. Fetches changes after `fromChangelogId`, which is `null` on the first pull. |
+| `batchSize`        | `20`     | Outbox events pushed per request.                                                                                                             |
+| `intervalMs`       | `5000`   | Time between cycles while idle.                                                                                                               |
+| `backoffBaseMs`    | `1000`   | Wait after the first failure. Doubles with each failure in a row. Applies to failed cycles and to each outbox event.                          |
+| `backoffMaxMs`     | `30000`  | The longest wait, for both.                                                                                                                   |
+| `requestTimeoutMs` | `30000`  | Aborts a handler call through its `signal` after this long.                                                                                   |
 
 Custom handlers receive `context.storageHash`, the emitted client contract's `storage.storageHash`. Send it with the request, for example in a header, and forward it to the server's `pull` and `applyPush`. If the server answers 409, throw `ContractMismatchError` (exported from `@prisma-idb/sync-extension-idb/client`) from the handler. The worker keeps the pull cursor, the queued edits and their payloads. It emits `contractmismatch` with `{ during: "push" | "pull" }`, sets status to `"error"`, emits `error` with the thrown error, and retries with backoff. Use the event to ask the user to reload. See [Contract check](/docs/prisma-8/sync/server#contract-check).
 
 | Method or property | Description                                                                                                                               |
 | ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------- |
 | `start()`          | Starts the loop. Does nothing if it's running.                                                                                            |
-| `stop()`           | Lets the current cycle finish, then stops.                                                                                                |
+| `stop()`           | Returns `Promise<void>`. Stops notifications and new cycles, then waits for the active cycle to settle.                                   |
 | `forceSync()`      | Runs a cycle now, ignoring any backoff.                                                                                                   |
 | `status`           | `"idle"`, `"pushing"`, `"pulling"`, `"error"` or `"stopped"`.                                                                             |
 | `on(event, cb)`    | Subscribes to `"statuschange"`, `"error"`, `"pushcompleted"`, `"pullcompleted"` or `"contractmismatch"`. Returns an unsubscribe function. |
@@ -144,7 +142,18 @@ The `error` event receives the thrown `Error` after status becomes `"error"`. It
 
 `forceSync()` also sets the error status and emits `error`, while its promise rejects with the original thrown value. Handle that rejection when calling it. A successful cycle returns the status to `"idle"`. Per-event server rejections use `pushcompleted` and the outbox error fields; they do not emit a cycle error unless the cycle throws.
 
-Most apps also call `forceSync()` on the browser's `online` event, and `stop()` on sign-out.
+The pull cursor is stored in `_idb_sync_meta` in the same IndexedDB database as your data. New clients resume from that cursor. A failed cursor write fails the cycle and is retried after the next successful pull. `getCursor` and `setCursor` options have been removed.
+
+On sign-out, await `worker.stop()` before calling your managed client's `reset()`. The active request may finish or reach `requestTimeoutMs`; its database writes settle before `stop()` resolves. The worker emits `"stopped"` immediately and suppresses subsequent cycle notifications. `start()` does nothing while stopping. `forceSync()` does nothing once stopped; call `start()` to restart the loop.
+
+```ts
+await worker.stop();
+await db.reset();
+```
+
+`reset()` deletes the cursor, outbox and application data together. This release replaces the sync migration history with a new baseline. Recreate existing browser databases before opening them with this version. Resetting discards queued local edits, so sync them before upgrading when possible.
+
+Most apps also call `forceSync()` on the browser's `online` event.
 
 The push and pull response shapes are exported as Zod schemas from `@prisma-idb/sync-extension-idb/schemas`: `pushResultSchema` and `logWithRecordSchema`.
 

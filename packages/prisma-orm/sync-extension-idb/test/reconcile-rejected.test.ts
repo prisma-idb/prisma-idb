@@ -10,6 +10,7 @@ import { createSyncIdbClient } from "../src/exports/client";
 import {
   OUTBOX_STORE,
   VERSION_META_STORE,
+  SYNC_META_STORE,
   asAccessors,
   createTestSyncClient,
   keyGet,
@@ -107,7 +108,9 @@ describe("a push the server rejected for good", () => {
   ])("reconciles a rejected create whose key is Bytes ($name key)", async ({ compound }) => {
     const keyPath = compound ? ["tenant", "id"] : "id";
     const dbName = testDbName();
-    (await openTestDb(dbName, [{ name: "assets", keyPath }, OUTBOX_STORE, VERSION_META_STORE])).close();
+    (
+      await openTestDb(dbName, [{ name: "assets", keyPath }, OUTBOX_STORE, VERSION_META_STORE, SYNC_META_STORE])
+    ).close();
     const contract = defineContract({
       family: idbFamilyPack,
       target: idbTargetPack,

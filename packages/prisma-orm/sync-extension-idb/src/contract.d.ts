@@ -12,7 +12,7 @@ import type {
   StorageHashBase,
 } from "@prisma/orm-framework/contract/types";
 
-export type StorageHash = StorageHashBase<"cfe8e71cbb562d51109a1482ffe5f7ba966af8b14e129021f2e6e31a880ee6b1">;
+export type StorageHash = StorageHashBase<"609932199fd5710d371fa966650a1806c1f587c912ff9d8c40f7b2efd84eed70">;
 export type ExecutionHash = ExecutionHashBase<string>;
 export type ProfileHash = ProfileHashBase<"40329830af4e39e0774683fbebcdc24dcf983a5da02c5fe6079a2a57579f861c">;
 
@@ -35,6 +35,10 @@ export type FieldOutputTypes = {
       readonly syncedAt: CodecTypes["idb/date@1"]["output"] | null;
       readonly tries: CodecTypes["idb/int32@1"]["output"];
       readonly versionMetaId: CodecTypes["idb/string@1"]["output"] | null;
+    };
+    readonly SyncMeta: {
+      readonly id: CodecTypes["idb/string@1"]["output"];
+      readonly value: CodecTypes["idb/string@1"]["output"];
     };
     readonly VersionMeta: {
       readonly id: CodecTypes["idb/string@1"]["output"];
@@ -61,6 +65,10 @@ export type FieldInputTypes = {
       readonly syncedAt: CodecTypes["idb/date@1"]["input"] | null;
       readonly tries: CodecTypes["idb/int32@1"]["input"];
       readonly versionMetaId: CodecTypes["idb/string@1"]["input"] | null;
+    };
+    readonly SyncMeta: {
+      readonly id: CodecTypes["idb/string@1"]["input"];
+      readonly value: CodecTypes["idb/string@1"]["input"];
     };
     readonly VersionMeta: {
       readonly id: CodecTypes["idb/string@1"]["input"];
@@ -89,6 +97,11 @@ export namespace Models {
     versionMetaId: CodecTypes["idb/string@1"]["output"] | null;
     readonly [RelationKeys]?: never;
   };
+  export type unbound_SyncMeta = {
+    id: CodecTypes["idb/string@1"]["output"];
+    value: CodecTypes["idb/string@1"]["output"];
+    readonly [RelationKeys]?: never;
+  };
   export type unbound_VersionMeta = {
     id: CodecTypes["idb/string@1"]["output"];
     key: CodecTypes["idb/json@1"]["output"];
@@ -102,6 +115,7 @@ export namespace Models {
 export declare const models: {
   __unbound__: {
     OutboxEvent: Models.unbound_OutboxEvent;
+    SyncMeta: Models.unbound_SyncMeta;
     VersionMeta: Models.unbound_VersionMeta;
   };
 };
@@ -111,6 +125,23 @@ export type TypeMaps = IdbTypeMaps<CodecTypes, FieldOutputTypes, FieldInputTypes
 type ContractBase = Omit<
   ContractType<{
     readonly stores: {
+      readonly _idb_sync_meta: {
+        readonly keyPath: "id";
+        readonly record: {
+          readonly fields: {
+            readonly id: {
+              readonly nullable: false;
+              readonly type: { readonly codecId: "idb/string@1"; readonly kind: "scalar" };
+            };
+            readonly value: {
+              readonly nullable: false;
+              readonly type: { readonly codecId: "idb/string@1"; readonly kind: "scalar" };
+            };
+          };
+          readonly model: "SyncMeta";
+        };
+        readonly indexes: Record<string, never>;
+      };
       readonly _idb_sync_outbox: {
         readonly keyPath: "id";
         readonly record: {
@@ -214,6 +245,10 @@ type ContractBase = Omit<
   readonly target: "idb";
   readonly targetFamily: "idb";
   readonly roots: {
+    readonly _idb_sync_meta: {
+      readonly namespace: "__unbound__" & NamespaceId;
+      readonly model: "SyncMeta";
+    };
     readonly _idb_sync_outbox: {
       readonly namespace: "__unbound__" & NamespaceId;
       readonly model: "OutboxEvent";
@@ -284,6 +319,20 @@ type ContractBase = Omit<
             };
             readonly relations: Record<string, never>;
             readonly storage: { readonly storeName: "_idb_sync_outbox"; readonly keyPath: "id" };
+          };
+          readonly SyncMeta: {
+            readonly fields: {
+              readonly id: {
+                readonly nullable: false;
+                readonly type: { readonly kind: "scalar"; readonly codecId: "idb/string@1" };
+              };
+              readonly value: {
+                readonly nullable: false;
+                readonly type: { readonly kind: "scalar"; readonly codecId: "idb/string@1" };
+              };
+            };
+            readonly relations: Record<string, never>;
+            readonly storage: { readonly storeName: "_idb_sync_meta"; readonly keyPath: "id" };
           };
           readonly VersionMeta: {
             readonly fields: {
