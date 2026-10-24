@@ -15,14 +15,14 @@ After editing `schema.prisma`, run:
 ```bash
 npx prisma-idb contract emit
 npx prisma-idb migration plan --name add-todo-priority
-npx prisma-idb migration contract-space
 npx prisma-idb migration preflight
 ```
 
 1. `prisma-idb contract emit` updates `contract.json`, `contract.d.ts`, and `contract.runtime.ts` together.
-2. `migration plan` compares the new contract with the one the newest migration ends at, and writes the difference as a new package under `migrations/app/`. `--name` sets the folder name, and is required for every migration after the first.
-3. `migration contract-space` regenerates the module that bundles the migrations into your app.
-4. `migration preflight` checks that the emitted contract matches the chain head, and that the whole chain applies and produces the head contract's stores and indexes.
+2. `migration plan` compares the new contract with the one the newest migration ends at, and writes the difference as a new package under `migrations/app/`. It also regenerates `contract-space.generated.ts` beside the resolved contract. `--name` sets the folder name, and is required for every migration after the first.
+3. `migration preflight` checks that the emitted contract matches the chain head, and that the whole chain applies and produces the head contract's stores and indexes.
+
+Use `migration plan --out <path>` when your app imports the bundle from a different location. Run `migration contract-space` to repair or regenerate an existing bundle without planning a new package.
 
 Commit the new package, the new `migrations/snapshots/` entry and the regenerated files. The next time a user opens the app, the client applies the migration before resolving.
 
@@ -97,15 +97,15 @@ If you're writing an extension, pass `--space <id>` to `migration plan` to write
 
 All three commands read `prisma.config.ts`, so the flags below are only needed to override it.
 
-| Command                    | Flag                             | Default                            | Meaning                                              |
-| -------------------------- | -------------------------------- | ---------------------------------- | ---------------------------------------------------- |
-| All                        | `--config <path>`                | `prisma.config.ts`                 | The config file.                                     |
-| `migration plan`           | `--name <slug>`                  | `baseline` for the first migration | The package's folder name. Required after the first. |
-|                            | `--space <id>`                   | `app`                              | The chain to plan. Only extension authors set this.  |
-|                            | `--contract <path>`              | The config's contract output       | The emitted `contract.json`.                         |
-|                            | `--migrations-dir <path>`        | The config's `migrations.dir`      | The migrations folder.                               |
-| `migration contract-space` | `--out <path>`                   | Next to `contract.json`            | Where to write the generated module.                 |
-|                            | `--contract`, `--migrations-dir` | As above                           |                                                      |
-| `migration preflight`      | `--migrations-dir <path>`        | The config's `migrations.dir`      |                                                      |
+| Command                                      | Flag                             | Default                            | Meaning                                              |
+| -------------------------------------------- | -------------------------------- | ---------------------------------- | ---------------------------------------------------- |
+| All                                          | `--config <path>`                | `prisma.config.ts`                 | The config file.                                     |
+| `migration plan`                             | `--name <slug>`                  | `baseline` for the first migration | The package's folder name. Required after the first. |
+|                                              | `--space <id>`                   | `app`                              | The chain to plan. Only extension authors set this.  |
+|                                              | `--contract <path>`              | The config's contract output       | The emitted `contract.json`.                         |
+|                                              | `--migrations-dir <path>`        | The config's `migrations.dir`      | The migrations folder.                               |
+| `migration plan`, `migration contract-space` | `--out <path>`                   | Next to `contract.json`            | Where to write the generated module.                 |
+|                                              | `--contract`, `--migrations-dir` | As above                           |                                                      |
+| `migration preflight`                        | `--migrations-dir <path>`        | The config's `migrations.dir`      |                                                      |
 
 The `prisma` CLI's read-only commands also work: `prisma migration list`, `migration status` and `migration check`. The commands that need a live database, such as `prisma db verify`, explain that IndexedDB only exists in the browser.

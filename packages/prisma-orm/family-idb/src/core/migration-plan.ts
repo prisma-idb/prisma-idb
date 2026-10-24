@@ -13,13 +13,16 @@ import { keepInternalSpecifiers } from "@prisma/orm-framework/components/emissio
 import { computeMigrationHash } from "@prisma/orm-toolchain/migration-tools/hash";
 import { formatMigrationDirName } from "@prisma/orm-toolchain/migration-tools/io";
 import { deriveProvidedInvariants } from "@prisma/orm-toolchain/migration-tools/invariants";
-import { join, relative } from "pathe";
+import { dirname, join, relative } from "pathe";
+import { generateContractSpace } from "./contract-space-codegen";
 import { chainOrderByMetadata } from "./chain-order";
 
 /** Input paths, naming, and output hooks for planning an on-disk migration. */
 export interface MigrationPlanOptions {
   readonly migrationsDir: string;
   readonly contractPath: string;
+  /** Generated app module path. Defaults to contract-space.generated.ts next to the contract. */
+  readonly outPath?: string;
   /**
    * Directory slug. Defaults to `"baseline"` when this turns out to be a
    * fresh (greenfield) space. **Required** when a prior migration package
@@ -98,15 +101,25 @@ export async function migrationPlan(opts: MigrationPlanOptions): Promise<number>
 
   const ctx: SharedCtx = { ...opts, out, err, spaceId, isAppSpace, targetDir, dirLabel };
 
+  let exitCode: number;
   if (existingDirs.length === 0) {
     err(
       `migration plan: no existing migrations found under ${dirLabel} — generating a full baseline.\n` +
         "If you expected an incremental migration, check --migrations-dir / your config's migrations.dir.\n"
     );
-    return planGreenfield(ctx);
+    exitCode = await planGreenfield(ctx);
+  } else {
+    exitCode = await planIncremental(ctx, existingDirs);
   }
+  if (exitCode !== 0 || !isAppSpace) return exitCode;
 
-  return planIncremental(ctx, existingDirs);
+  return generateContractSpace({
+    migrationsDir: opts.migrationsDir,
+    contractPath: opts.contractPath,
+    outPath: opts.outPath ?? join(dirname(opts.contractPath), "contract-space.generated.ts"),
+    out,
+    err,
+  });
 }
 
 /** Resolved paths and output hooks shared by baseline and incremental planning. */
@@ -355,6 +368,7 @@ interface WritePackageInput {
   readonly logVerb: string;
 }
 
+/** Persists the migration artifacts and pins the head for extension spaces. */
 async function writeMigrationPackage(ctx: SharedCtx, input: WritePackageInput): Promise<void> {
   const packageDir = join(ctx.targetDir, input.dirName);
   await mkdir(packageDir, { recursive: true });
@@ -386,9 +400,7 @@ async function writeMigrationPackage(ctx: SharedCtx, input: WritePackageInput): 
       `  from: ${input.fromLabel}\n` +
       `  to:   ${input.toHash}\n` +
       `  ops:  ${input.ops.length} operation${input.ops.length === 1 ? "" : "s"}\n` +
-      (ctx.isAppSpace
-        ? "\nNext: run `prisma-idb migration contract-space` to bundle into contract-space.generated.ts\n"
-        : extensionSpaceNote)
+      extensionSpaceNote
   );
 }
 

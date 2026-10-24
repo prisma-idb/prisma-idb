@@ -4,8 +4,8 @@
  * One journey drives the CLI commands in the order a developer runs them on a real project, in a
  * temp directory, with contract JSON fixtures derived from `apps/prisma-orm-usage`:
  *
- *   Phase 1 (baseline):  migration plan, contract-space, preflight
- *   Phase 2 (add posts): migration plan --name, contract-space, preflight
+ *   Phase 1 (baseline):  migration plan, preflight
+ *   Phase 2 (add posts): migration plan --name, preflight
  *
  * What each command computes (baseline and incremental package contents, hashes, snapshots, the
  * `--name` requirement) is covered without a subprocess in `family-idb/test/migration-plan.test.ts`.
@@ -19,7 +19,7 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { cli, getMigrationDirs, setupTmpProject, writeRawContractJson } from "./_helpers";
+import { cli, getMigrationDirs, importContractSpace, setupTmpProject, writeRawContractJson } from "./_helpers";
 
 // ── Contract fixtures ────────────────────────────────────────────────────────
 // Exact JSON snapshots from apps/prisma-orm-usage: the "no-posts" state
@@ -128,9 +128,9 @@ const CONTRACT_V2_WITH_POSTS = {
 
 // ── Tests ────────────────────────────────────────────────────────────────────
 
-// The journey spawns six CLI subprocesses in sequence; a loaded CI runner can exceed the 30 s default.
+// The journey spawns CLI subprocesses in sequence; a loaded CI runner can exceed the 30 s default.
 describe("migration pipeline e2e", { timeout: 120_000 }, () => {
-  it("plan → contract-space → preflight for a baseline, then the same three for an incremental migration", async () => {
+  it("plan bundles a baseline and an incremental migration that both pass preflight", async () => {
     // Regression: a command that writes output the next command cannot read, such as a plan whose
     // snapshot fails preflight, or a contract-space module that omits the newest package.
     const cwd = await setupTmpProject("e2e-full-pipeline");
@@ -143,10 +143,9 @@ describe("migration pipeline e2e", { timeout: 120_000 }, () => {
     const [baselineDir] = await getMigrationDirs(cwd);
     expect(await getMigrationDirs(cwd)).toHaveLength(1);
 
-    const space1 = await cli(["migration", "contract-space"], { cwd });
-    expect(space1.exitCode).toBe(0);
-    expect(space1.stderr).toContain("1 migration");
-    expect(await readFile(contractSpacePath, "utf-8")).toContain(baselineDir);
+    const space1 = await importContractSpace(cwd, contractSpacePath);
+    expect(space1.headRef.hash).toBe(V1_STORAGE_HASH);
+    expect(space1.migrations.map(({ dirName }) => dirName)).toEqual([baselineDir]);
 
     const preflight1 = await cli(["migration", "preflight"], { cwd });
     expect(preflight1.exitCode).toBe(0);
@@ -167,12 +166,9 @@ describe("migration pipeline e2e", { timeout: 120_000 }, () => {
     expect(dirs).toHaveLength(2);
     const addPostsDir = dirs.find((dir) => dir !== baselineDir)!;
 
-    const space2 = await cli(["migration", "contract-space"], { cwd });
-    expect(space2.exitCode).toBe(0);
-    expect(space2.stderr).toContain("2 migration");
-    const generated = await readFile(contractSpacePath, "utf-8");
-    expect(generated).toContain(baselineDir);
-    expect(generated).toContain(addPostsDir);
+    const space2 = await importContractSpace(cwd, contractSpacePath);
+    expect(space2.headRef.hash).toBe(V2_STORAGE_HASH);
+    expect(space2.migrations.map(({ dirName }) => dirName)).toEqual([baselineDir, addPostsDir]);
 
     const preflight2 = await cli(["migration", "preflight"], { cwd });
     expect(preflight2.exitCode).toBe(0);

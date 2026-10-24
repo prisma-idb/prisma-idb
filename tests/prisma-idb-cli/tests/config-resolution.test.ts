@@ -12,7 +12,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { cli, setupTmpProject, writeMinimalIdbConfig } from "./_helpers";
+import { cli, importContractSpace, setupTmpProject, writeMinimalIdbConfig } from "./_helpers";
 
 const MINIMAL_CONTRACT = { storage: { storageHash: "sha256:cfg-test", stores: { users: { keyPath: "id" } } } };
 
@@ -35,6 +35,9 @@ describe("prisma-idb — config-driven path resolution", () => {
 
     const entries = await getMigrationDirsAt(cwd, "db-migrations");
     expect(entries).toHaveLength(1);
+    const space = await importContractSpace(cwd, join(cwd, "src", "contract-space.generated.ts"));
+    expect(space.headRef.hash).toBe(MINIMAL_CONTRACT.storage.storageHash);
+    expect(space.migrations.map(({ dirName }) => dirName)).toEqual(entries);
   });
 
   it("regression: reproduces sync-extension-idb's exact config shape (contract.output at src/, extension space)", async () => {
@@ -66,13 +69,25 @@ describe("prisma-idb — config-driven path resolution", () => {
     await writeContractAt(cwd, "elsewhere/contract.json");
 
     const { exitCode } = await cli(
-      ["migration", "plan", "--contract", "elsewhere/contract.json", "--migrations-dir", "elsewhere-migrations"],
+      [
+        "migration",
+        "plan",
+        "--contract",
+        "elsewhere/contract.json",
+        "--migrations-dir",
+        "elsewhere-migrations",
+        "--out",
+        "generated/space.ts",
+      ],
       { cwd }
     );
     expect(exitCode).toBe(0);
 
     const entries = await getMigrationDirsAt(cwd, "elsewhere-migrations");
     expect(entries).toHaveLength(1);
+    const space = await importContractSpace(cwd, join(cwd, "generated", "space.ts"));
+    expect(space.headRef.hash).toBe(MINIMAL_CONTRACT.storage.storageHash);
+    expect(space.migrations.map(({ dirName }) => dirName)).toEqual(entries);
   });
 
   it("fails clearly when the config's family isn't idb", async () => {
