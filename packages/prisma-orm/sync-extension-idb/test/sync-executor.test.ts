@@ -398,6 +398,8 @@ describe("SyncInterceptorExecutor.transaction() — relational mutations", () =>
 
     const firings: { modelName: string; key: unknown }[][] = [];
     client.on("outboxwrite", (entries) => firings.push([...entries]));
+    const pending: Promise<number>[] = [];
+    client.on("outboxchange", () => pending.push(client.outbox.pendingCount()));
 
     await users.createAll([
       { id: "u1", name: "Alice" },
@@ -406,6 +408,7 @@ describe("SyncInterceptorExecutor.transaction() — relational mutations", () =>
 
     expect(firings).toHaveLength(1);
     expect(firings[0]!.map((e) => e.key).sort()).toEqual(["u1", "u2"]);
+    expect(await Promise.all(pending)).toEqual([2]);
   });
 
   it("orders a cascade's child-delete outbox events strictly before the parent's — required for the server-side ownership walk", async () => {

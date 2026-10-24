@@ -5,6 +5,7 @@
  * transaction. `rawClient.transaction()` is the untracked counterpart.
  */
 import { describe, expect, it, vi } from "vitest";
+import { markFailed, markSynced } from "../src/exports/client";
 import { IdbTransactionCommittedEarlyError } from "@prisma-idb/client-idb/client";
 import { IdbRecordValidationError } from "@prisma-idb/client-idb/orm";
 import { asAccessors, createTestSyncClient, scanAll, type TestStoreAccessor } from "./helpers";
@@ -129,6 +130,8 @@ describe("SyncIdbClient.transaction()", () => {
   it("records outbox rows for every tracked write and notifies once the transaction commits", async () => {
     const { client } = await createTestSyncClient();
     const emitted: number[] = [];
+    const changes: Promise<number>[] = [];
+    client.on("outboxchange", () => changes.push(client.outbox.pendingCount()));
     client.on("outboxwrite", (entries) => emitted.push(entries.length));
     let emittedInsideCallback = -1;
 
@@ -136,10 +139,12 @@ describe("SyncIdbClient.transaction()", () => {
       await tx["users"]!.create({ id: "u1", name: "Alice" });
       await tx["posts"]!.create({ id: "p1", title: "First", authorId: "u1" });
       emittedInsideCallback = emitted.length;
+      expect(changes).toEqual([]);
     });
 
     expect(emittedInsideCallback).toBe(0);
     expect(emitted).toEqual([2]);
+    expect(await Promise.all(changes)).toEqual([2]);
     const outbox = await scanAll(client, "_idb_sync_outbox");
     expect(outbox.map((row) => row["entityType"]).sort()).toEqual(["Post", "User"]);
   });
@@ -147,6 +152,8 @@ describe("SyncIdbClient.transaction()", () => {
   it("leaves no outbox rows and sends no notification when the callback throws", async () => {
     const { client } = await createTestSyncClient();
     const emitted: number[] = [];
+    const changes: Promise<number>[] = [];
+    client.on("outboxchange", () => changes.push(client.outbox.pendingCount()));
     client.on("outboxwrite", (entries) => emitted.push(entries.length));
 
     await expect(
@@ -157,6 +164,7 @@ describe("SyncIdbClient.transaction()", () => {
     ).rejects.toThrow("boom");
 
     expect(emitted).toEqual([]);
+    expect(await Promise.all(changes)).toEqual([]);
     expect(await scanAll(client, "_idb_sync_outbox")).toEqual([]);
     expect(await scanAll(client, "users")).toEqual([]);
   });
@@ -215,5 +223,42 @@ describe("SyncIdbClient.rawClient.transaction()", () => {
 
     expect(await scanAll(client, "users")).toHaveLength(1);
     expect(await scanAll(client, "_idb_sync_outbox")).toEqual([]);
+  });
+});
+
+// A failed batch must not make subscribers display status that never committed.
+describe("outbox status transactions", () => {
+  it("publishes mark-synced and mark-failed changes after commit, and suppresses aborted or empty batches", async () => {
+    const { client } = await createTestSyncClient();
+    await asAccessors(client.orm)["users"]!.createAll([
+      { id: "u1", name: "Alice" },
+      { id: "u2", name: "Bob" },
+    ]);
+    const [first, second] = await scanAll(client, "_idb_sync_outbox");
+    const pending: Promise<number>[] = [];
+    const unsubscribe = client.on("outboxchange", () => pending.push(client.outbox.pendingCount()));
+    const stores = ["_idb_sync_outbox", "_idb_sync_version_meta"];
+    await client.withTransaction(stores, (scope) => markSynced(scope, "missing"));
+    await expect(
+      client.withTransaction(stores, async (scope) => {
+        await markSynced(scope, first!["id"] as string);
+        await markFailed(scope, second!["id"] as string, "rejected", false);
+        throw new Error("abort batch");
+      })
+    ).rejects.toThrow("abort batch");
+    expect(await client.outbox.pendingCount()).toBe(2);
+    expect(pending).toEqual([]);
+
+    await client.withTransaction(stores, async (scope) => {
+      await markSynced(scope, first!["id"] as string);
+      await markFailed(scope, second!["id"] as string, "rejected", false);
+      expect(pending).toEqual([]);
+    });
+    expect(await Promise.all(pending)).toEqual([0]);
+    unsubscribe();
+    await asAccessors(client.orm)["users"]!.create({ id: "u3", name: "Carol" });
+    expect(await client.outbox.hasPending()).toBe(true);
+    expect(await Promise.all(pending)).toEqual([0]);
+    await client.close();
   });
 });

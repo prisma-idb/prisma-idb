@@ -158,7 +158,7 @@ export interface ContractMismatchEvent {
 /** Payload types for lifecycle, failure, push, pull, and contract-mismatch notifications. */
 type SyncEventMap = {
   statuschange: SyncWorkerStatus;
-  /** A failed cycle, emitted after status becomes "error". */
+  /** A failed cycle other than a contract mismatch, emitted after status becomes "error". */
   error: Error;
   pushcompleted: PushCompletedEvent;
   pullcompleted: PullCompletedEvent;
@@ -387,7 +387,7 @@ export function createSyncWorker<TContract extends IdbContract>(options: SyncWor
         // Report once per cycle, even when scheduled and forced callers share it.
         if (!stopped) {
           setStatus("error");
-          if (!stopped) emit("error", toSyncError(error));
+          if (!stopped && !(error instanceof ContractMismatchError)) emit("error", toSyncError(error));
         }
         throw error;
       })

@@ -19,6 +19,7 @@ import type { IdbOrmClient, IdbOrmTransaction, IdbContract } from "@prisma-idb/c
 import { createIdbEnums } from "@prisma-idb/client-idb/internal";
 import type { IdbClient } from "@prisma-idb/client-idb/client";
 import { createEmitter } from "./emitter";
+import { countPendingEvents, getNextBatch, hasOutboxChanges } from "./outbox-store";
 import { SyncInterceptorExecutor } from "./sync-executor";
 import type { SyncWorkerOptions } from "./sync-worker";
 import { createSyncWorker } from "./sync-worker";
@@ -26,14 +27,21 @@ import type { OutboxWriteEntry } from "../types";
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
-/**
- * Events `SyncIdbClient.on(...)` can subscribe to. Just one today —
- * `"outboxwrite"` — but keyed the same way as `SyncWorker`'s `SyncEventMap`
- * (see sync-worker.ts), and both subscribe through the same emitter.
- */
+/** Events published after tracked appends or outbox status changes commit. */
 export type SyncClientEventMap = {
+  /** The entries appended by a tracked write. */
   outboxwrite: readonly OutboxWriteEntry[];
+  /** A tracked append or mark-synced/mark-failed transaction committed. */
+  outboxchange: void;
 };
+
+/** Pending events are unsynced and retryable, including those waiting for backoff. */
+export interface SyncOutbox {
+  /** Whether at least one event remains pending. */
+  hasPending(): Promise<boolean>;
+  /** The number of pending events. Synced and permanently rejected events are excluded. */
+  pendingCount(): Promise<number>;
+}
 
 /** Configures the migrated database and the models whose writes should be tracked. */
 export interface SyncIdbClientOptions<TContract extends IdbContract> {
@@ -67,6 +75,9 @@ export interface SyncIdbClient<TContract extends IdbContract> {
    * an outbox event (and updates VersionMeta) alongside the model write.
    */
   readonly orm: IdbOrmClient<TContract>;
+
+  /** Read committed pending status without accessing the underlying outbox store. */
+  readonly outbox: SyncOutbox;
 
   /**
    * Run a callback with the raw ORM, bypassing outbox tracking.
@@ -106,16 +117,11 @@ export interface SyncIdbClient<TContract extends IdbContract> {
   ): ReturnType<typeof createSyncWorker<TContract>>;
 
   /**
-   * Subscribe to sync-client events. Just `"outboxwrite"` today — fired once
-   * per tracked IDB write call, after its outbox event(s) have committed,
-   * with the `OutboxWriteEntry[]` that call wrote (model, operation, key,
-   * payload — see that type's doc comment for exactly what "once per call"
-   * covers for batched writes like `createAll()` or a cascade delete).
-   * Prefer this over re-deriving "did anything change" after every
-   * individual `db.orm.*` call site — subscribe once, e.g. to recompute a
-   * pending-count badge, or to react to specific models/operations directly
-   * from the entries instead of a full outbox rescan. Returns an unsubscribe
-   * function.
+   * Subscribe to committed outbox changes. `outboxwrite` carries appended entries;
+   * `outboxchange` has no payload and also fires after mark-synced/mark-failed.
+   * Each tracked write or transaction emits once, including bulk operations.
+   * Nested or cascading ORM writes can use several transactions and notifications.
+   * Rolled-back writes emit neither event. Returns an unsubscribe function.
    */
   on<K extends keyof SyncClientEventMap>(event: K, callback: (payload: SyncClientEventMap[K]) => void): () => void;
 
@@ -196,17 +202,33 @@ export function createSyncIdbClient<TContract extends IdbContract>(
     contract: options.contract as Record<string, unknown>,
   });
 
+  /** Keeps append details and status notifications at the same commit boundary. */
+  function onOutboxWrite(entries: readonly OutboxWriteEntry[]): void {
+    emit("outboxwrite", entries);
+    emit("outboxchange", undefined);
+  }
+
   const syncConfig = { contract: options.contract, trackedModels };
   const syncExecutor = new SyncInterceptorExecutor(runtime, {
     ...syncConfig,
-    onOutboxWrite: (entries) => emit("outboxwrite", entries),
+    onOutboxWrite,
   });
 
   const syncOrm = idbOrm({ contract: options.contract, executor: syncExecutor });
   const rawOrm = idbOrm({ contract: options.contract, executor: runtime });
 
-  const withTransaction = <T>(storeNames: string[], fn: (scope: IdbTransactionScope) => Promise<T>) =>
-    runInTransaction(runtime, storeNames, (scope) => fn(withDecimalIdentityScope(scope, options.contract)));
+  /** Publishes one status notification only after all outbox updates commit. */
+  const withTransaction = async <T>(storeNames: string[], fn: (scope: IdbTransactionScope) => Promise<T>) => {
+    let outboxChanged = false;
+    const result = await runInTransaction(runtime, storeNames, async (scope) => {
+      const scoped = withDecimalIdentityScope(scope, options.contract);
+      const result = await fn(scoped);
+      outboxChanged = hasOutboxChanges(scoped);
+      return result;
+    });
+    if (outboxChanged) emit("outboxchange", undefined);
+    return result;
+  };
 
   const rawClient: IdbClient<TContract> = {
     orm: rawOrm,
@@ -226,6 +248,10 @@ export function createSyncIdbClient<TContract extends IdbContract>(
     contract: options.contract,
     orm: syncOrm,
     enums: rawClient.enums,
+    outbox: {
+      hasPending: async () => (await getNextBatch(rawClient, { limit: 1 })).length > 0,
+      pendingCount: () => countPendingEvents(rawClient),
+    },
     transaction: async (rootKeys, fn) => {
       // The executor notifies once per write; collect the entries instead so
       // listeners hear about the whole transaction in a single call.
@@ -238,7 +264,7 @@ export function createSyncIdbClient<TContract extends IdbContract>(
         return await runOrmTransaction({ contract: options.contract, executor }, rootKeys, fn);
       } finally {
         // Entries arrive only when the transaction commits, so a rollback emits nothing.
-        if (written.length > 0) emit("outboxwrite", written);
+        if (written.length > 0) onOutboxWrite(written);
       }
     },
     withoutTracking: <T>(fn: (rawOrm: IdbOrmClient<TContract>) => Promise<T>) => fn(rawOrm),

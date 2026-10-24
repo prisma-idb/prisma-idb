@@ -32,6 +32,7 @@ function makeStubSyncClient(): SyncIdbClient<never> {
     contract: { domain: { namespaces: {} }, storage: { storageHash: "stub" } } as never,
     orm: {} as never,
     enums: {} as never,
+    outbox: { hasPending: async () => false, pendingCount: async () => 0 },
     transaction: (async (_rootKeys: string[], fn: (tx: unknown) => unknown) => fn({})) as never,
     withoutTracking: (async (fn: (rawOrm: unknown) => unknown) => fn({})) as never,
     withTransaction: (async (_stores: string[], fn: (scope: unknown) => unknown) => fn(emptyScope)) as never,
@@ -485,6 +486,53 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
     await worker.stop();
     await client.close();
   });
+
+  it.each(["success", "retryable", "permanent", "transport"] as const)(
+    "publishes committed outbox status once per push batch (%s)",
+    async (outcome) => {
+      const { client } = await createTestSyncClient();
+      expect(await client.outbox.hasPending()).toBe(false);
+      expect(await client.outbox.pendingCount()).toBe(0);
+      await asAccessors(client.orm)["users"]!.createAll([
+        { id: "u1", name: "Alice" },
+        { id: "u2", name: "Bob" },
+      ]);
+      expect(await client.outbox.hasPending()).toBe(true);
+      expect(await client.outbox.pendingCount()).toBe(2);
+      const snapshots: Promise<{ pending: boolean; count: number; rows: unknown[] }>[] = [];
+      client.on("outboxchange", () => {
+        snapshots.push(
+          Promise.all([
+            client.outbox.hasPending(),
+            client.outbox.pendingCount(),
+            scanAll(client, "_idb_sync_outbox"),
+          ]).then(([pending, count, rows]) => ({ pending, count, rows }))
+        );
+      });
+      const worker = trackedWorker({
+        syncClient: client,
+        pushHandler: async (events) => {
+          if (outcome === "transport") throw new Error("offline");
+          return events.map(({ id }) => ({
+            id,
+            success: outcome === "success",
+            retryable: outcome !== "permanent",
+            error: "rejected",
+          }));
+        },
+        pullHandler: async () => [],
+      });
+
+      if (outcome === "transport") await expect(worker.forceSync()).rejects.toThrow("offline");
+      else await worker.forceSync();
+
+      const pending = outcome === "retryable" || outcome === "transport";
+      const row = outcome === "success" ? { synced: true, tries: 0 } : { synced: false, tries: 1, retryable: pending };
+      expect(await Promise.all(snapshots)).toMatchObject([{ pending, count: pending ? 2 : 0, rows: [row, row] }]);
+      await worker.stop();
+      await client.close();
+    }
+  );
 
   async function seedAcknowledgedEvents(client: SyncIdbClient<IdbContract>, count: number): Promise<void> {
     await client.withTransaction(["_idb_sync_outbox"], async (scope) => {
@@ -941,11 +989,14 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
         }).pullHandler,
       });
       const mismatches: ContractMismatchEvent[] = [];
+      const errors: Error[] = [];
       worker.on("contractmismatch", (event) => mismatches.push(event));
+      worker.on("error", (error) => errors.push(error));
 
       await expect(worker.forceSync()).rejects.toBeInstanceOf(ContractMismatchError);
 
       expect(mismatches).toEqual([{ during: "pull" }]);
+      expect(errors).toEqual([]);
       await worker.stop();
       const from: (string | null)[] = [];
       const recovered = trackedWorker({
@@ -980,11 +1031,14 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
         pullHandler: async () => [],
       });
       const mismatches: ContractMismatchEvent[] = [];
+      const errors: Error[] = [];
       worker.on("contractmismatch", (event) => mismatches.push(event));
+      worker.on("error", (error) => errors.push(error));
 
       await expect(worker.forceSync()).rejects.toBeInstanceOf(ContractMismatchError);
 
       expect(mismatches).toEqual([{ during: "push" }]);
+      expect(errors).toEqual([]);
       const [refused] = await scanAll(client, "_idb_sync_outbox");
       expect(refused).toMatchObject({
         id: queued[0]!["id"],
