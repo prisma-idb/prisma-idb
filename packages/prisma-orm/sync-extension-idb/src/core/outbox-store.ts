@@ -24,6 +24,22 @@ export const OUTBOX_STORE = "_idb_sync_outbox";
 /** An event the next push may still send: not yet synced, and the server has not ruled it out. */
 const isPending = (event: OutboxEvent) => !event.synced && event.retryable;
 
+// A scope can change several rows; its owner publishes one notification after commit.
+const changedScopes = new WeakSet<IdbTransactionScope>();
+
+/** Whether markSynced or markFailed changed an outbox row in this scope. */
+export function hasOutboxChanges(scope: IdbTransactionScope): boolean {
+  return changedScopes.has(scope);
+}
+
+/** Counts unsynced, retryable events, including those waiting for retry backoff. */
+export async function countPendingEvents<TContract extends IdbContract>(client: IdbClient<TContract>): Promise<number> {
+  return client.withTransaction(
+    [OUTBOX_STORE],
+    async (scope) => (await scanStore<OutboxEvent>(scope, OUTBOX_STORE)).filter(isPending).length
+  );
+}
+
 // ── Read helpers ──────────────────────────────────────────────────────────────
 
 /** How long a failed event waits before its next attempt: `baseMs`, doubling per failed try, capped at `maxMs`. */
@@ -185,6 +201,7 @@ export async function markSynced(scope: IdbTransactionScope, id: string): Promis
   if (!existing) return;
   await putRecord(scope, OUTBOX_STORE, { ...existing, synced: true, syncedAt: new Date() });
   await clearLocalChangePending(scope, existing.versionMetaId ?? null);
+  changedScopes.add(scope);
 }
 
 /**
@@ -219,4 +236,5 @@ export async function markFailed(
     retryable,
   });
   if (!retryable) await clearLocalChangePending(scope, existing.versionMetaId ?? null);
+  changedScopes.add(scope);
 }
