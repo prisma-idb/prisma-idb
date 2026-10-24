@@ -10,6 +10,7 @@
  * both layers, so they can't diverge.
  */
 
+import { createIdbEnums } from "./enum-accessors";
 import { createAutoMigratingIdbClient } from "./auto-migrate";
 import type { AutoMigrateClientOptions } from "./auto-migrate";
 import type { IdbClient } from "./idb-client";
@@ -33,6 +34,7 @@ export function createManagedAutoIdbClient<TContract extends IdbContract>(
   options: AutoMigrateClientOptions<TContract>
 ): ManagedIdbClient<IdbClient<TContract>> {
   return createManagedIdbClient(() => createAutoMigratingIdbClient(options), {
+    enums: createIdbEnums(options.contractSpace.contractJson),
     dbName: options.dbName,
     ...(options.factory !== undefined ? { idbFactory: options.factory } : {}),
   });
