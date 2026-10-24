@@ -20,7 +20,7 @@ export const testContract = contractJson as unknown as SyncServerContract;
  * The client-projected contract: the server contract minus the synthetic,
  * server-only `Changelog` model (and its enum), as `@idb.exclude` would drop it.
  */
-const testClientContract = (() => {
+export const testClientContract = (() => {
   const {
     models,
     enum: enums,

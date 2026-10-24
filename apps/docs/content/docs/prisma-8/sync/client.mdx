@@ -85,9 +85,9 @@ Avoid user-chosen natural-key unique constraints on models that clients create o
 
 `createSyncFetchHandlers({ pushUrl, pullUrl, fetch?, headers?, credentials? })` returns `pushHandler` and `pullHandler` for a worker. Relative URLs require a browser location. Outside a browser, use absolute URLs.
 
-The handlers send `x-storage-hash`, forward cancellation, validate response shapes, and raise `ContractMismatchError` on HTTP 409. Other non-success statuses throw an ordinary error. Pull replaces the `since` parameter with the last applied cursor and retains other endpoint parameters. The first pull removes any existing `since` parameter.
+The handlers send `storageHash` in the push body and pull query, forward cancellation, validate response shapes, and raise `ContractMismatchError` on HTTP 409. Other non-success statuses throw an ordinary error. Pull replaces the `since` parameter with the last applied cursor and retains other endpoint parameters. The first pull removes any existing `since` parameter.
 
-`headers` accepts `HeadersInit`. The helper sets the current storage hash and push content type. `credentials` defaults to `"same-origin"`. Pass a custom `fetch` function for dynamic authentication, such as refreshing a bearer token.
+`headers` accepts `HeadersInit`. The helper sets the push content type. `credentials` defaults to `"same-origin"`. Pass a custom `fetch` function for dynamic authentication, such as refreshing a bearer token.
 
 ```ts
 import { createSyncFetchHandlers } from "@prisma-idb/sync-extension-idb/client";
@@ -128,7 +128,7 @@ A failed push, including a request that throws or times out, stays retryable how
 | `backoffMaxMs`     | `30000`  | The longest wait, for both.                                                                                                                          |
 | `requestTimeoutMs` | `30000`  | Aborts a handler call through its `signal` after this long.                                                                                          |
 
-Custom handlers receive `context.storageHash`, the emitted client contract's `storage.storageHash`. Send it with the request, for example in a header, and forward it to the server's `pull` and `applyPush`. If the server answers 409, throw `ContractMismatchError` (exported from `@prisma-idb/sync-extension-idb/client`) from the handler. The worker keeps the pull cursor, the queued edits and their payloads. It emits `contractmismatch` with `{ during: "push" | "pull" }`, sets status to `"error"`, emits `error` with the thrown error, and retries with backoff. Use the event to ask the user to reload. See [Contract check](/docs/prisma-8/sync/server#contract-check).
+Custom handlers receive `context.storageHash`, the emitted client contract's `storage.storageHash`. Send it with the request, in the push body or pull query, and forward it to the server's `pull` and `applyPush`. If the server answers 409, throw `ContractMismatchError` (exported from `@prisma-idb/sync-extension-idb/client`) from the handler. The worker keeps the pull cursor, the queued edits and their payloads. It emits `contractmismatch` with `{ during: "push" | "pull" }`, sets status to `"error"`, emits `error` with the thrown error, and retries with backoff. Use the event to ask the user to reload. See [Contract check](/docs/prisma-8/sync/server#contract-check).
 
 | Method or property | Description                                                                                                                               |
 | ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------- |
