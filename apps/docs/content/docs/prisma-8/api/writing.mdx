@@ -61,10 +61,27 @@ const user = await db.orm.user.upsert({
 
 ## Delete
 
-`delete()` removes the row with a primary key. For a compound key, pass the values as an array:
+`delete()` removes the row with a primary key and returns the deleted row. If no row matches, it throws `PrismaClientKnownRequestError` with code `P2025`. For a compound key, pass the values as an array in the order declared in the schema:
 
 ```ts
-await db.orm.todo.delete(todoId);
+const deleted = await db.orm.todo.delete(todoId);
+```
+
+Catch a missing row with the exported Prisma error class:
+
+```ts
+import { PrismaClientKnownRequestError } from "@prisma-idb/client-idb/orm";
+
+try {
+  const deleted = await db.orm.todo.delete(todoId);
+  console.log(deleted.id);
+} catch (error) {
+  if (error instanceof PrismaClientKnownRequestError && error.code === "P2025") {
+    console.log("The todo no longer exists.");
+  } else {
+    throw error;
+  }
+}
 ```
 
 `deleteAll()` removes every matching row and returns them. `deleteCount()` returns how many were removed.

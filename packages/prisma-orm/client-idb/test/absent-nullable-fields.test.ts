@@ -106,6 +106,11 @@ describe("rows stored without a nullable field", () => {
     expect(await users.where({ id: "u2" }).first()).toEqual({ id: "u2", name: "Bob", nickname: null });
   });
 
+  it("returns absent nullable fields as null when deleting with or without child relations", async () => {
+    expect(await users.delete("u2" as never)).toEqual({ id: "u2", name: "Bob", nickname: null });
+    expect(await posts.delete("p1" as never)).toEqual({ id: "p1", authorId: "u1", title: "Hello", subtitle: null });
+  });
+
   it("keeps the field in a select() projection", async () => {
     const rows = (await users.select("id", "nickname").all().toArray()) as Row[];
     expect(byId(rows)).toEqual([

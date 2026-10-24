@@ -35,6 +35,7 @@
     "@prisma-idb/driver-idb": "workspace:*",
     "@prisma-idb/runtime-idb": "workspace:*",
     "@prisma-idb/target-idb": "workspace:*",
+    "@prisma/client-runtime-utils": "7.10.0",
     "@prisma/orm-framework": "8.0.0-rc.18"
   },
   "devDependencies": {

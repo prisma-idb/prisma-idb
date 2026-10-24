@@ -152,7 +152,7 @@ describe("delete — restrict (default)", () => {
   it("succeeds when no child records exist", async () => {
     const orm = idbOrm({ contract: restrictContract, executor });
     await orm["users"]!.create({ id: "u1", name: "Alice" } as never);
-    await orm["users"]!.delete("u1" as never);
+    await expect(orm["users"]!.delete("u1" as never)).resolves.toEqual({ id: "u1", name: "Alice" });
     expect(await getAllRows(db, "users")).toHaveLength(0);
   });
 });
@@ -225,7 +225,7 @@ describe("delete — cascade", () => {
     await orm["users"]!.create({ id: "u1", name: "Alice" } as never);
     await orm["posts"]!.create({ id: "p1", title: "Post 1", authorId: "u1" } as never);
     await orm["posts"]!.create({ id: "p2", title: "Post 2", authorId: "u1" } as never);
-    await orm["users"]!.delete("u1" as never);
+    await expect(orm["users"]!.delete("u1" as never)).resolves.toEqual({ id: "u1", name: "Alice" });
     expect(await getAllRows(db, "users")).toHaveLength(0);
     expect(await getAllRows(db, "posts")).toHaveLength(0);
   });
@@ -243,10 +243,17 @@ describe("delete — cascade", () => {
     expect(posts[0]?.["id"]).toBe("p2");
   });
 
-  it("delete of nonexistent key is a no-op", async () => {
+  it("delete of nonexistent key throws P2025 before applying child actions", async () => {
     const orm = idbOrm({ contract: cascadeContract, executor });
-    await orm["users"]!.delete("ghost" as never);
-    expect(await getAllRows(db, "users")).toHaveLength(0);
+    await orm["users"]!.create({ id: "u1", name: "Alice" } as never);
+    await orm["posts"]!.create({ id: "p1", title: "Post", authorId: "u1" } as never);
+    await expect(orm["users"]!.delete("ghost" as never)).rejects.toMatchObject({
+      name: "PrismaClientKnownRequestError",
+      code: "P2025",
+      meta: { modelName: "User" },
+    });
+    expect(await getAllRows(db, "users")).toHaveLength(1);
+    expect(await getAllRows(db, "posts")).toHaveLength(1);
   });
 
   it("honors onDelete stored on the FK-side relation", async () => {
@@ -298,7 +305,7 @@ describe("delete — setNull", () => {
     const orm = idbOrm({ contract: setNullContract, executor });
     await orm["users"]!.create({ id: "u1", name: "Alice" } as never);
     await orm["posts"]!.create({ id: "p1", title: "Post", authorId: "u1" } as never);
-    await orm["users"]!.delete("u1" as never);
+    await expect(orm["users"]!.delete("u1" as never)).resolves.toEqual({ id: "u1", name: "Alice" });
     expect(await getAllRows(db, "users")).toHaveLength(0);
     const posts = await getAllRows(db, "posts");
     expect(posts).toHaveLength(1);

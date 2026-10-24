@@ -994,6 +994,9 @@ importers:
       '@prisma-idb/target-idb':
         specifier: workspace:*
         version: link:../target-idb
+      '@prisma/client-runtime-utils':
+        specifier: 7.10.0
+        version: 7.10.0
       '@prisma/orm-framework':
         specifier: 8.0.0-rc.18
         version: 8.0.0-rc.18(typescript@6.0.3)

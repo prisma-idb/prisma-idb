@@ -35,6 +35,7 @@ import type { IdbReferentialAction } from "@prisma-idb/target-idb/pack";
 import type { IdbQueryExecutor } from "./executor";
 import { assertEnumValues } from "./enum-validation";
 import { assertValidRecord } from "./record-validation";
+import { deleteRecordNotFound } from "./record-not-found";
 import {
   applyUpdateDefaults,
   completeCreateRecord,
@@ -1499,16 +1500,16 @@ export async function applyReferentialActionsForRow(
   }
 }
 
-/** Load a keyed row, apply its child actions, and delete it in one transaction. */
+/** Delete a keyed row with its child actions atomically, or throw `P2025` before committing if missing. */
 export async function executeDeleteWithReferentialActions(options: {
   executor: IdbQueryExecutorWithTransaction;
   contract: IdbContract;
   modelName: string;
   key: IDBValidKey;
-}): Promise<void> {
+}): Promise<Record<string, unknown>> {
   const { executor, contract, modelName, key } = options;
   const storeNames = collectDeleteStoreNames(contract, modelName);
-  await withMutationScope(executor, storeNames, async (scope) => {
+  return withMutationScope(executor, storeNames, async (scope) => {
     const storeName = getStoreName(contract, modelName);
     const meta = makePlanMeta(contract);
     const keyPath = getKeyPath(contract, modelName);
@@ -1517,10 +1518,10 @@ export async function executeDeleteWithReferentialActions(options: {
     const where = andExpr(fields.map((field, i) => fieldFilter(field, "eq", values[i])));
     const rows = await readMutationRows(scope, contract, modelName, where, 1);
     const row = rows[0];
-    if (!row) return [];
+    if (!row) throw deleteRecordNotFound(modelName);
     await applyReferentialActionsForRow(scope, contract, modelName, row);
     await scope.execute({ meta, kind: "delete", storeName, key } as IdbAtomicPlan);
-    return [];
+    return row;
   });
 }
 

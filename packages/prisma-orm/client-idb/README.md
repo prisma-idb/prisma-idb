@@ -41,6 +41,10 @@ const valid = Role.has(input);
 
 `__unbound__` is the default PSL domain namespace. `members` maps names to application values, including mapped strings. Accessors also provide `names`, `hasName`, `nameOf`, and `ordinalOf`; `Value` is type-only. Existing field types and string literals remain compatible. Auto-migrating clients expose the same accessors.
 
+## Delete by primary key
+
+`delete(key)` returns the deleted row. If no row matches, it throws `PrismaClientKnownRequestError` with code `P2025`. Referential actions apply in the same transaction before the deleted row is returned.
+
 ## Primary-key updates
 
 `update()`, `updateAll()`, `updateCount()` and the update arm of `upsert()` reject changes to an existing row’s primary key with code `PRIMARY_KEY_CHANGE_UNSUPPORTED`. The entire mutation rolls back, including referential actions and sync outbox changes. The update input types leave out primary-key fields, so typed code can't set one. This applies to models the contract resolves; for any other model name, only the runtime check applies. At runtime, a patch that repeats the existing key is still allowed, and a query with no matching rows performs no write.
