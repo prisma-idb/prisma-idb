@@ -29,7 +29,7 @@
     "test": "pnpm contract:emit:postgres && pnpm db:create && pnpm db:init && vitest run",
     "lint": "prettier --check . && eslint .",
     "format": "prettier --write .",
-    "contract:emit:postgres": "prisma contract emit --config prisma.config.ts",
+    "contract:emit:postgres": "prisma-idb contract emit --config prisma.config.ts",
     "db:create": "node scripts/ensure-test-db.mjs",
     "db:init": "prisma db init --config prisma.config.ts"
   },

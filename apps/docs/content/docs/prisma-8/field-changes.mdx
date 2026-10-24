@@ -23,7 +23,7 @@ model Todo {
 Run these commands from the app directory:
 
 ```bash
-npx prisma@latest contract emit
+npx prisma-idb contract emit
 npx prisma-idb migration plan --name add-migration-error
 ```
 
@@ -77,7 +77,7 @@ After that deployment, clients running the old bundle receive HTTP 409 on push a
 For example, add `priority Int @default(0)` to `Todo`. Emit and plan as above, using a new migration name:
 
 ```bash
-npx prisma@latest contract emit
+npx prisma-idb contract emit
 npx prisma-idb migration plan --name add-priority
 ```
 

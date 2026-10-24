@@ -28,6 +28,7 @@ test-results
 src/lib/prisma/schema.postgres.generated.prisma
 src/lib/prisma/schema.postgres.generated.json
 src/lib/prisma/schema.postgres.generated.d.ts
+src/lib/prisma/schema.postgres.generated.runtime.ts
 
 # `db init`/`db update` write here: which migration hash *this* local
 # Postgres currently sits at. Per-environment state, not portable history —

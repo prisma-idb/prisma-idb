@@ -11,7 +11,7 @@ import { syncContract } from "./src/contract";
  * contract-space package layout — `prisma.config.ts` at the package root,
  * per the convention every extension package follows; rc.5 unified naming).
  *
- * This wires the **framework-generic** CLI (`prisma contract emit`) so
+ * This wires the companion CLI (`prisma-idb contract emit`) so
  * `src/contract.json` + `src/contract.d.ts` are real emitted artifacts
  * instead of a live TS object imported directly — matching the ADR 212
  * package layout `src/exports/control.ts` JSON-imports from.

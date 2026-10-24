@@ -17,7 +17,7 @@ import idbDriver from "@prisma-idb/driver-idb/control";
  * 012 and `prisma.config.postgres.ts` (the real server, which parses
  * this same schema.prisma through the SQL family instead).
  *
- * Emit with: `pnpm contract:emit` (the `prisma` binary). Plan/bundle/
+ * Emit with: `pnpm contract:emit` (the `prisma-idb` binary). Plan/bundle/
  * preflight migrations with `prisma-idb migration ...`.
  */
 export default definePrismaConfig({

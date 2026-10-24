@@ -423,7 +423,9 @@
           "onCreate": {
             "id": "literal",
             "kind": "generator",
-            "params": {}
+            "params": {
+              "value": false
+            }
           },
           "ref": {
             "entry": "user",
@@ -446,7 +448,9 @@
           "onCreate": {
             "id": "literal",
             "kind": "generator",
-            "params": {}
+            "params": {
+              "value": false
+            }
           },
           "ref": {
             "entry": "user",
