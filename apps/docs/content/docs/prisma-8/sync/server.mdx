@@ -59,7 +59,7 @@ Takes the pushed events, each `{ id, model, operation, payload, wireKey }`, and 
 
 Run the check inside the same transaction as the write, just before it. Checking before the transaction opens would let another request change the record's owner in between. `sqlSyncAdapter.applyPushEvent` does this for you.
 
-The request body has a different shape from these events: the client sends `entityType` and a raw `payload`. Validate it with `pushRequestBodySchema` from `@prisma-idb/sync-extension-idb/schemas`, then pass its events to `sqlSyncAdapter.applyPush`, as the [tutorial](/docs/prisma-8/sync#4-set-up-the-server) shows. The schemas entrypoint has no browser-only code, so it is safe to import on the server. `applyPush` decodes wire values and maps them to validation inputs.
+The request body has a different shape from these events: the client sends `entityType` and a raw `payload`. `createSqlSync` validates it with `pushRequestBodySchema` from `@prisma-idb/sync-extension-idb/schemas`, then passes its events to the SQL adapter. See the [tutorial](/docs/prisma-8/sync#4-set-up-the-server). The schemas entrypoint has no browser-only code, so it is safe to import on the server. `applyPush` decodes wire values and maps them to validation inputs.
 
 ## `buildPullQueries(logs, { scopeKey })`
 
@@ -117,21 +117,30 @@ These are sync adapter restrictions. Prisma schemas can otherwise reference [non
 
 ### HTTP handlers
 
-`createSqlSyncHandlers({ adapter, maxBatchSize?, pullLimit? })` returns `push(request, { db, scopeKey })` and `pull(request, { db, scopeKey })`. Both return a standard `Response`. Authenticate the request before calling either method. The handlers only use the trusted `scopeKey` argument.
+`createSqlSync({ contract, clientContract, rootModel, db, scopeKey, maxBatchSize?, pullLimit? })` creates the server and SQL adapter with SQL key resolution and default batch limits. It returns `push(request)` and `pull(request)`. Both return a standard `Response`.
 
-The handlers read `x-storage-hash` and delegate the storage hash check to the adapter. With the default `contractCheck: "required"`, a missing or different storage hash returns HTTP 409 with `{ ok: false, reason: "contract-mismatch", expected }`. No database reads or writes occur. Setting the adapter's check to `"off"` also disables it for these handlers.
+`db` and `scopeKey` accept a value or a resolver `(request: Request) => value | Promise<value>`. Resolve the scope from the authenticated session. Reject unauthenticated requests in the resolver or middleware. The scope resolver runs before the database resolver. Neither route reads the scope from the body or URL.
 
-Push validates JSON and the event envelope. Pull reads the exclusive cursor from `since`; a missing or empty parameter starts from the beginning. Success returns the results or logs array. Malformed input and other adapter refusal outcomes return HTTP 400. Unexpected errors reject the handler promise and reach the app's error middleware.
+Push reads `{ storageHash, events }` from JSON. Pull reads `storageHash` and the exclusive cursor `since` from the query string. A different hash returns HTTP 409 with `{ ok: false, reason: "contract-mismatch", expected }` before any database operation. Missing or malformed request fields return HTTP 400. An absent or empty `since` starts from the beginning.
+
+Every pull response sets `Cache-Control: no-store`, because the URL does not identify the authenticated user. The pull transport adds no custom headers. Application authentication headers can still require a CORS preflight.
+
+Success returns the results or logs array. Other adapter refusal outcomes return HTTP 400. Unexpected errors reject the handler promise and reach the app's error middleware.
 
 Hono can pass its raw request directly:
 
 ```ts
-import { createSqlSyncHandlers } from "@prisma-idb/sync-server-sql";
+import { createSqlSync } from "@prisma-idb/sync-server-sql";
 
-const handlers = createSqlSyncHandlers({ adapter: sqlSyncAdapter });
-// Authentication middleware has already populated userId.
-app.post("/api/sync/push", (c) => handlers.push(c.req.raw, { db, scopeKey: c.get("userId") }));
-app.get("/api/sync/pull", (c) => handlers.pull(c.req.raw, { db, scopeKey: c.get("userId") }));
+const handlers = createSqlSync({
+  contract: serverContract,
+  clientContract,
+  rootModel: "User",
+  db,
+  scopeKey: requireAuthenticatedUserId, // Reject requests without a session.
+});
+app.post("/api/sync/push", (c) => handlers.push(c.req.raw));
+app.get("/api/sync/pull", (c) => handlers.pull(c.req.raw));
 ```
 
 ### Route outcomes

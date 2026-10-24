@@ -11,9 +11,6 @@
  */
 import { z } from "zod";
 
-/** HTTP header shared by the fetch sync client and server handlers. */
-export const STORAGE_HASH_HEADER = "x-storage-hash";
-
 /** One entry of a push request body's `events[]` — the fields a server actually needs out of a client `OutboxEvent` to authorize and apply it. */
 export const pushEventSchema = z.object({
   id: z.string(),
@@ -24,12 +21,21 @@ export const pushEventSchema = z.object({
 /** The validated wire shape of one pushed event. */
 export type PushEventBody = z.infer<typeof pushEventSchema>;
 
-/** A push endpoint's full request body, as sent by `SyncWorkerOptions.pushHandler` (`{ events }`). */
+/** A push endpoint's full request body, as sent by `SyncWorkerOptions.pushHandler` (`{ storageHash, events }`). */
 export const pushRequestBodySchema = z.object({
+  storageHash: z.string(),
   events: z.array(pushEventSchema),
 });
 /** The validated wire shape of a push batch. */
 export type PushRequestBody = z.infer<typeof pushRequestBodySchema>;
+
+/** Query parameters accepted by the GET pull endpoint. */
+export const pullRequestQuerySchema = z.object({
+  storageHash: z.string(),
+  since: z.string().optional(),
+});
+/** The validated query parameters of a pull request. */
+export type PullRequestQuery = z.infer<typeof pullRequestQuerySchema>;
 
 /** Per-event push result — what a push endpoint must respond with. */
 export const pushResultSchema = z.object({
