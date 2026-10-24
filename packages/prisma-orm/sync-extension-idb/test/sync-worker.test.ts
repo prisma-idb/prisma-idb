@@ -73,6 +73,87 @@ describe("SyncWorker — state machine", () => {
     vi.useRealTimers();
   });
 
+  it("coalesces reconnect and visible-page events, detaches on stop, and reattaches on restart", async () => {
+    const browserWindow = new EventTarget();
+    const browserDocument = Object.assign(new EventTarget(), { visibilityState: "hidden" });
+    vi.stubGlobal("window", browserWindow);
+    vi.stubGlobal("document", browserDocument);
+    const worker = createSyncWorker({
+      syncClient: makeStubSyncClient(),
+      pushHandler: async () => [],
+      pullHandler: async () => [],
+      syncOnReconnect: true,
+    });
+    const statuses: string[] = [];
+    worker.on("statuschange", (status) => statuses.push(status));
+    try {
+      worker.start();
+      await vi.advanceTimersByTimeAsync(0);
+      statuses.length = 0;
+      browserDocument.dispatchEvent(new Event("visibilitychange"));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(statuses).toEqual([]);
+
+      browserWindow.dispatchEvent(new Event("online"));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(statuses).toEqual(["pushing", "pulling", "idle"]);
+      statuses.length = 0;
+
+      browserWindow.dispatchEvent(new Event("online"));
+      browserDocument.visibilityState = "visible";
+      browserDocument.dispatchEvent(new Event("visibilitychange"));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(statuses).toEqual(["pushing", "pulling", "idle"]);
+      await worker.stop();
+
+      // A restarted worker must not retain subscriptions to its previous browser targets.
+      const nextWindow = new EventTarget();
+      const nextDocument = Object.assign(new EventTarget(), { visibilityState: "visible" });
+      vi.stubGlobal("window", nextWindow);
+      vi.stubGlobal("document", nextDocument);
+      worker.start();
+      await vi.advanceTimersByTimeAsync(0);
+      statuses.length = 0;
+      browserWindow.dispatchEvent(new Event("online"));
+      browserDocument.dispatchEvent(new Event("visibilitychange"));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(statuses).toEqual([]);
+
+      nextDocument.dispatchEvent(new Event("visibilitychange"));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(statuses).toEqual(["pushing", "pulling", "idle"]);
+    } finally {
+      await worker.stop();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("leaves browser events to the consumer unless syncOnReconnect is enabled", async () => {
+    const browserWindow = new EventTarget();
+    const browserDocument = Object.assign(new EventTarget(), { visibilityState: "visible" });
+    vi.stubGlobal("window", browserWindow);
+    vi.stubGlobal("document", browserDocument);
+    const worker = createSyncWorker({
+      syncClient: makeStubSyncClient(),
+      pushHandler: async () => [],
+      pullHandler: async () => [],
+    });
+    const statuses: string[] = [];
+    worker.on("statuschange", (status) => statuses.push(status));
+    try {
+      worker.start();
+      await vi.advanceTimersByTimeAsync(0);
+      statuses.length = 0;
+      browserWindow.dispatchEvent(new Event("online"));
+      browserDocument.dispatchEvent(new Event("visibilitychange"));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(statuses).toEqual([]);
+    } finally {
+      await worker.stop();
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("transitions idle -> pushing -> pulling -> idle on a clean cycle", async () => {
     const statuses: string[] = [];
     const worker = createSyncWorker({

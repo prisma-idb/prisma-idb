@@ -58,6 +58,8 @@ export interface SyncWorkerOptions<TContract extends IdbContract> {
     signal: AbortSignal,
     context: SyncRequestContext
   ) => Promise<LogWithRecord[]>;
+  /** Sync on browser online and visible-page events while started. Default false. */
+  readonly syncOnReconnect?: boolean;
   /** Max events per push batch. Default 20. */
   readonly batchSize?: number;
   /** Milliseconds between sync cycles when idle. Default 5000. */
@@ -195,6 +197,7 @@ export function createSyncWorker<TContract extends IdbContract>(options: SyncWor
     backoffBaseMs = 1_000,
     backoffMaxMs = 30_000,
     requestTimeoutMs = 30_000,
+    syncOnReconnect = false,
   } = options;
   const backoff = { baseMs: backoffBaseMs, maxMs: backoffMaxMs };
 
@@ -434,17 +437,44 @@ export function createSyncWorker<TContract extends IdbContract>(options: SyncWor
     }
   }
 
-  return {
+  let removeReconnectListeners: (() => void) | null = null;
+
+  /** Attaches browser listeners once per started lifecycle, including after restart. */
+  function listenForReconnect(): void {
+    if (!syncOnReconnect || removeReconnectListeners !== null) return;
+    const browserWindow = typeof window === "undefined" ? undefined : window;
+    const browserDocument = typeof document === "undefined" ? undefined : document;
+    /** Shares overlapping event requests through the worker's exclusive cycle. */
+    function reconnect(): void {
+      // runExclusive reports failures through the error event; event handlers have no caller to reject to.
+      void worker.forceSync().catch(() => {});
+    }
+    /** A hidden-page event must not initiate network work. */
+    function visibilityChanged(): void {
+      if (browserDocument?.visibilityState === "visible") reconnect();
+    }
+    browserWindow?.addEventListener("online", reconnect);
+    browserDocument?.addEventListener("visibilitychange", visibilityChanged);
+    removeReconnectListeners = () => {
+      browserWindow?.removeEventListener("online", reconnect);
+      browserDocument?.removeEventListener("visibilitychange", visibilityChanged);
+      removeReconnectListeners = null;
+    };
+  }
+
+  const worker: SyncWorker = {
     get status() {
       return status;
     },
     start() {
       if (timer !== null || stopping !== null) return;
       stopped = false;
+      listenForReconnect();
       void tick();
     },
     stop() {
       stopped = true;
+      removeReconnectListeners?.();
       if (timer !== null) {
         clearTimeout(timer);
         timer = null;
@@ -480,4 +510,5 @@ export function createSyncWorker<TContract extends IdbContract>(options: SyncWor
     },
     on: emitter.on,
   };
+  return worker;
 }

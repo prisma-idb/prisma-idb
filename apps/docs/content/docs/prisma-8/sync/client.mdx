@@ -143,6 +143,7 @@ A failed push, including a request that throws or times out, stays retryable how
 | ------------------ | -------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
 | `pushHandler`      | Required | `(events, signal, context) => Promise<PushResult[]>`. Sends events to your push endpoint.                                                     |
 | `pullHandler`      | Required | `(fromChangelogId, signal, context) => Promise<LogWithRecord[]>`. Fetches changes after `fromChangelogId`, which is `null` on the first pull. |
+| `syncOnReconnect`  | `false`  | Sync on `online` and when the page becomes visible while the worker is started.                                                               |
 | `batchSize`        | `20`     | Outbox events pushed per request.                                                                                                             |
 | `intervalMs`       | `5000`   | Time between cycles while idle.                                                                                                               |
 | `backoffBaseMs`    | `1000`   | Wait after the first failure. Doubles with each failure in a row. Applies to failed cycles and to each outbox event.                          |
@@ -176,7 +177,7 @@ await db.reset();
 
 `reset()` deletes the cursor, outbox and application data together. This release replaces the sync migration history with a new baseline. Recreate existing browser databases before opening them with this version. Resetting discards queued local edits, so sync them before upgrading when possible.
 
-Most apps also call `forceSync()` on the browser's `online` event.
+Set `syncOnReconnect: true` to sync when the browser fires `online` or the page becomes visible. It defaults to `false`. Listeners attach on `start()` and detach on `stop()`. Overlapping events share the active cycle. Outside a browser, this option has no effect.
 
 The push and pull response shapes are exported as Zod schemas from `@prisma-idb/sync-extension-idb/schemas`: `pushResultSchema` and `logWithRecordSchema`.
 
