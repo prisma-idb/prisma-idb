@@ -26,8 +26,8 @@ async function installWorker(page: Page, awaitPeer: () => Promise<void>): Promis
         await w.awaitPeer();
         const response = await fetch("/api/sync/push", {
           method: "POST",
-          headers: { "content-type": "application/json", "x-storage-hash": context.storageHash },
-          body: JSON.stringify({ events }),
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ storageHash: context.storageHash, events }),
         });
         if (!response.ok) throw new Error(`Push failed: ${response.status}`);
         return response.json();
@@ -80,7 +80,7 @@ async function readLocalState(page: Page) {
 async function pullChanges(page: Page) {
   return page.evaluate(async () => {
     const hash = (window as unknown as HarnessWindow).__syncHarness.syncClient.contract.storage.storageHash;
-    const response = await fetch("/api/sync/pull", { headers: { "x-storage-hash": hash } });
+    const response = await fetch(`/api/sync/pull?${new URLSearchParams({ storageHash: hash })}`);
     return { status: response.status, logs: await response.json() };
   });
 }

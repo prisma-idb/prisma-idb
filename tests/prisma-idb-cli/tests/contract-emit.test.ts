@@ -153,4 +153,22 @@ void wrongKey;
     const runtime = await import(pathToFileURL(join(cwd, "custom/contract.runtime.ts")).href);
     expect(runtime.default.targetFamily).toBe("sql");
   });
+
+  it("requires a configured contract even when the output directory is overridden", async () => {
+    const cwd = await project();
+    await writeFile(
+      join(cwd, "prisma.config.postgres.ts"),
+      `
+import { definePrismaConfig } from "@prisma/cli-engine";
+import { defineConfig } from "@prisma-idb/sync-server/postgres";
+const { contract, ...orm } = defineConfig({ schema: "schema.prisma" });
+export default definePrismaConfig({ orm });
+`
+    );
+    const result = await cli(["contract", "emit", "--config", "prisma.config.postgres.ts", "--output", "custom"], {
+      cwd,
+    });
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stderr).toContain("orm.contract must be configured");
+  });
 });
