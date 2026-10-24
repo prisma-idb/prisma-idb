@@ -78,10 +78,15 @@ export const contractEmitCommand = defineCommand({
   },
   handler: async (args, ctx) => {
     try {
+      const contract = ctx.config.contract;
+      if (!contract) {
+        throw new CliStructuredError(
+          "IDB-CLI.CONTRACT_REQUIRED",
+          "orm.contract must be configured to emit a contract."
+        );
+      }
       const output =
-        args.flags.output === undefined
-          ? ctx.config.contract?.output
-          : resolve(ctx.cwd, args.flags.output, "contract.json");
+        args.flags.output === undefined ? contract.output : resolve(ctx.cwd, args.flags.output, "contract.json");
       if (!output?.endsWith(".json")) {
         throw new CliStructuredError("IDB-CLI.CONTRACT_OUTPUT", "contract.output must name a .json file.");
       }
@@ -94,7 +99,7 @@ export const contractEmitCommand = defineCommand({
         const stage = await mkdtemp(join(dirname(jsonPath), ".contract-emit-"));
         try {
           const emitted = await executeContractEmit({
-            config: { ...ctx.config, contract: { ...ctx.config.contract!, output: join(stage, basename(jsonPath)) } },
+            config: { ...ctx.config, contract: { ...contract, output: join(stage, basename(jsonPath)) } },
             cwd: ctx.cwd,
             // Preserve the consumer's package resolution while upstream writes into staging.
             projectDir: ctx.config.baseDir ?? ctx.cwd,

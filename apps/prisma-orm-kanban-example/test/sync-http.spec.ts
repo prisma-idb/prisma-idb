@@ -1,7 +1,11 @@
 import { expect, test, type APIRequestContext, type APIRequest } from "@playwright/test";
 import contract from "../src/lib/prisma/contract.json" with { type: "json" };
 
-const headers = { "x-storage-hash": contract.storage.storageHash };
+const storageHash = contract.storage.storageHash;
+
+function pullUrl(params: Record<string, string> = {}) {
+  return `/api/sync/pull?${new URLSearchParams({ storageHash, ...params })}`;
+}
 
 /** Creates a real session while keeping each account's cookies in its own HTTP client. */
 async function account(requestFactory: APIRequest, baseURL: string) {
@@ -15,7 +19,7 @@ async function account(requestFactory: APIRequest, baseURL: string) {
     };
     const request = await requestFactory.newContext({
       baseURL,
-      extraHTTPHeaders: { ...headers, cookie: cookies.map(({ name, value }) => `${name}=${value}`).join("; ") },
+      extraHTTPHeaders: { cookie: cookies.map(({ name, value }) => `${name}=${value}`).join("; ") },
     });
     return { request, userId: user.id };
   } finally {
@@ -25,7 +29,7 @@ async function account(requestFactory: APIRequest, baseURL: string) {
 
 /** Sends the public wire payload, including a forged scope to detect routes trusting the body. */
 async function push(request: APIRequestContext, scopeKey: string, events: unknown[]) {
-  const response = await request.post("/api/sync/push", { data: { scopeKey, events } });
+  const response = await request.post("/api/sync/push", { data: { storageHash, scopeKey, events } });
   expect(response.status()).toBe(200);
   return response.json();
 }
@@ -46,8 +50,8 @@ test("HTTP sync uses the session account despite forged push and pull scopes", a
   baseURL,
   request,
 }) => {
-  expect((await request.get("/api/sync/pull", { headers })).status()).toBe(401);
-  expect((await request.post("/api/sync/push", { headers, data: { events: [] } })).status()).toBe(401);
+  expect((await request.get(pullUrl())).status()).toBe(401);
+  expect((await request.post("/api/sync/push", { data: { storageHash, events: [] } })).status()).toBe(401);
   const owner = await account(playwright.request, baseURL!);
   const other = await account(playwright.request, baseURL!);
   try {
@@ -72,8 +76,8 @@ test("HTTP sync uses the session account despite forged push and pull scopes", a
       { id: forged.id, success: false, error: "SCOPE_VIOLATION", retryable: false },
     ]);
 
-    const ownPull = await owner.request.get(`/api/sync/pull?scopeKey=${other.userId}`);
-    const otherPull = await other.request.get(`/api/sync/pull?scopeKey=${owner.userId}`);
+    const ownPull = await owner.request.get(pullUrl({ scopeKey: other.userId }));
+    const otherPull = await other.request.get(pullUrl({ scopeKey: owner.userId }));
     expect(ownPull.status()).toBe(200);
     expect(otherPull.status()).toBe(200);
     const ownLogs = await ownPull.json();
@@ -101,24 +105,17 @@ test("refused HTTP contracts leave writes unapplied and a saved pull cursor usab
     expect(
       (
         await owner.request.post("/api/sync/push", {
-          headers: { "x-storage-hash": "old-contract" },
-          data: { events: [pending] },
+          data: { storageHash: "old-contract", events: [pending] },
         })
       ).status()
     ).toBe(409);
-    const initial = await owner.request.get("/api/sync/pull");
+    const initial = await owner.request.get(pullUrl());
     const cursor = (await initial.json())[0].changelogId as string;
-    expect(
-      (
-        await owner.request.get(`/api/sync/pull?since=${cursor}`, {
-          headers: { "x-storage-hash": "old-contract" },
-        })
-      ).status()
-    ).toBe(409);
-    const unchanged = await owner.request.get(`/api/sync/pull?since=${cursor}`);
+    expect((await owner.request.get(pullUrl({ since: cursor, storageHash: "old-contract" }))).status()).toBe(409);
+    const unchanged = await owner.request.get(pullUrl({ since: cursor }));
     expect(await unchanged.json()).toEqual([]);
     expect(await push(owner.request, owner.userId, [pending])).toEqual([{ id: pending.id, success: true }]);
-    const resumed = await owner.request.get(`/api/sync/pull?since=${cursor}`);
+    const resumed = await owner.request.get(pullUrl({ since: cursor }));
     expect(await resumed.json()).toMatchObject([
       { model: "Board", keyPath: pending.payload.id, record: pending.payload },
     ]);
