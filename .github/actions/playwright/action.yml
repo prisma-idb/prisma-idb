@@ -24,12 +24,20 @@ runs:
       working-directory: ${{ inputs.working-directory }}
       run: echo "version=$(pnpm exec playwright --version | awk '{print $2}')" >> "$GITHUB_OUTPUT"
 
+    # Playwright downloads a different WebKit and Firefox build for each Ubuntu release, and
+    # each build links against that release's system libraries (for example libicu). A cache
+    # saved on one release breaks on another, so the cache key includes the distribution.
+    - name: Get runner distribution
+      id: distro
+      shell: bash
+      run: echo "id=$(. /etc/os-release && echo "$ID-$VERSION_ID")" >> "$GITHUB_OUTPUT"
+
     - name: Cache Playwright browsers
       id: cache
       uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
       with:
         path: ~/.cache/ms-playwright
-        key: playwright-${{ runner.os }}-${{ steps.version.outputs.version }}-${{ inputs.browsers }}
+        key: playwright-${{ steps.distro.outputs.id }}-${{ steps.version.outputs.version }}-${{ inputs.browsers }}
 
     - name: Install Playwright browsers
       if: steps.cache.outputs.cache-hit != 'true'

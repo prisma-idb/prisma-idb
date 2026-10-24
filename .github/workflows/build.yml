@@ -70,6 +70,7 @@ jobs:
           paths: |
             packages/prisma-orm
             apps/prisma-orm-usage
+            .github/actions/playwright
             pnpm-lock.yaml
 
       - id: prisma_idb_kanban_e2e
@@ -79,6 +80,7 @@ jobs:
           paths: |
             packages/prisma-orm
             apps/prisma-orm-kanban-example
+            .github/actions/playwright
             pnpm-lock.yaml
 
   lint:
