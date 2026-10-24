@@ -43,7 +43,7 @@ const valid = Role.has(input);
 
 ## Delete by primary key
 
-`delete(key)` returns the deleted row, or `null` if no row matches. A missing key does not throw. Referential actions apply in the same transaction before the deleted row is returned.
+`delete(key)` returns the deleted row. If no row matches, it throws `PrismaClientKnownRequestError` with code `P2025`. Referential actions apply in the same transaction before the deleted row is returned.
 
 ## Primary-key updates
 

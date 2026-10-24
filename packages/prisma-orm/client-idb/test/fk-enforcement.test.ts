@@ -243,10 +243,17 @@ describe("delete — cascade", () => {
     expect(posts[0]?.["id"]).toBe("p2");
   });
 
-  it("delete of nonexistent key returns null", async () => {
+  it("delete of nonexistent key throws P2025 before applying child actions", async () => {
     const orm = idbOrm({ contract: cascadeContract, executor });
-    await expect(orm["users"]!.delete("ghost" as never)).resolves.toBeNull();
-    expect(await getAllRows(db, "users")).toHaveLength(0);
+    await orm["users"]!.create({ id: "u1", name: "Alice" } as never);
+    await orm["posts"]!.create({ id: "p1", title: "Post", authorId: "u1" } as never);
+    await expect(orm["users"]!.delete("ghost" as never)).rejects.toMatchObject({
+      name: "PrismaClientKnownRequestError",
+      code: "P2025",
+      meta: { modelName: "User" },
+    });
+    expect(await getAllRows(db, "users")).toHaveLength(1);
+    expect(await getAllRows(db, "posts")).toHaveLength(1);
   });
 
   it("honors onDelete stored on the FK-side relation", async () => {

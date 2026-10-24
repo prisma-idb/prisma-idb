@@ -58,6 +58,7 @@ import { type IdbGroupedAccessor, createGroupedAccessor } from "./grouped-access
 import type { IdbQueryExecutor } from "./executor";
 import { assertEnumValues } from "./enum-validation";
 import { assertValidRecord } from "./record-validation";
+import { deleteRecordNotFound } from "./record-not-found";
 import { assertUniqueLookup, snapshotLookup } from "./unique-lookup";
 import { applyUpdateDefaults, completeCreateRecord, createMutationDefaultsCache } from "./mutation-defaults";
 import { loadRelation } from "./relation-loader";
@@ -277,8 +278,8 @@ export interface IdbStoreAccessor<
   /** Look up a single row by primary key. Returns `null` if not found. */
   findUnique(key: KeyType<TContract, ModelName>): Promise<DefaultModelRow<TContract, ModelName> | null>;
 
-  /** Delete by primary key and return the deleted row, or `null` if no row matches. */
-  delete(key: KeyType<TContract, ModelName>): Promise<DefaultModelRow<TContract, ModelName> | null>;
+  /** Delete by primary key and return the deleted row. Throws `P2025` if no row matches. */
+  delete(key: KeyType<TContract, ModelName>): Promise<DefaultModelRow<TContract, ModelName>>;
 
   /**
    * Update the first row matching the accumulated `.where()` filter.
@@ -622,8 +623,8 @@ export class IdbStoreAccessorImpl<
       : (absentAsNull(this.#contract, this.#modelName)(row) as DefaultModelRow<TContract, ModelName>);
   }
 
-  /** Return a deleted row after applying any required child actions, or `null` if it is missing. */
-  async delete(key: KeyType<TContract, ModelName>): Promise<DefaultModelRow<TContract, ModelName> | null> {
+  /** Return a deleted row after applying child actions, or throw `P2025` if it is missing. */
+  async delete(key: KeyType<TContract, ModelName>): Promise<DefaultModelRow<TContract, ModelName>> {
     if (hasEnforceableChildRelations(this.#contract, this.#modelName)) {
       const row = await executeDeleteWithReferentialActions({
         executor: requireTransactionExecutor(this.#executor),
@@ -631,7 +632,7 @@ export class IdbStoreAccessorImpl<
         modelName: this.#modelName,
         key: key as IDBValidKey,
       });
-      return row as DefaultModelRow<TContract, ModelName> | null;
+      return row as DefaultModelRow<TContract, ModelName>;
     }
     const groupingKey = this.#newGroupingKey();
     const meta = this.#planMeta(groupingKey);
@@ -643,9 +644,8 @@ export class IdbStoreAccessorImpl<
     };
     const rows = await this.#executor.query(plan).toArray();
     const row = rows[0];
-    return row === undefined
-      ? null
-      : (absentAsNull(this.#contract, this.#modelName)(row) as DefaultModelRow<TContract, ModelName>);
+    if (row === undefined) throw deleteRecordNotFound(this.#modelName);
+    return absentAsNull(this.#contract, this.#modelName)(row) as DefaultModelRow<TContract, ModelName>;
   }
 
   /** Update the first matching row with scalar or nested relation validation. */

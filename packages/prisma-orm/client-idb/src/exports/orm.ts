@@ -87,3 +87,5 @@ export type {
   IdbUpdateAccessor,
   IdbUpdateCallback,
 } from "../core/field-updates";
+
+export { PrismaClientKnownRequestError } from "@prisma/client-runtime-utils";

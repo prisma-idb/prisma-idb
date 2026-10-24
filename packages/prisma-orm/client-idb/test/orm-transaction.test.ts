@@ -54,7 +54,7 @@ type Row = Record<string, unknown>;
 type LooseAccessor = {
   create(data: Row): Promise<Row>;
   findUnique(key: string): Promise<Row | null>;
-  delete(key: string): Promise<void>;
+  delete(key: string): Promise<Row>;
   all(): PromiseLike<Row[]> & { toArray(): Promise<Row[]> };
   where(filter: Row): { all(): { toArray(): Promise<Row[]> } };
   include(relation: string): { all(): { toArray(): Promise<Row[]> } };
@@ -232,6 +232,24 @@ describe("db.transaction()", () => {
   });
 
   describe("abort rules", () => {
+    it.each(["users", "tags"] as const)(
+      "rolls back earlier writes when a missing %s delete is caught",
+      async (root) => {
+        let deletionError: unknown;
+        await expect(
+          db.transaction(["users", "tags"], async (tx) => {
+            await tx.tags.create({ id: "t1", label: "rollback" });
+            await tx[root].delete("missing").catch((error: unknown) => {
+              deletionError = error;
+            });
+          })
+        ).rejects.toThrow();
+
+        expect(deletionError).toMatchObject({ code: "P2025" });
+        expect(await db.orm.tags.all().toArray()).toEqual([]);
+      }
+    );
+
     it("aborts the transaction when the callback catches a failed operation", async () => {
       await expect(
         db.transaction(["users", "posts"], async (tx) => {

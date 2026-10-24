@@ -17,6 +17,7 @@ import { createIDBRuntimeDriver } from "@prisma-idb/driver-idb/runtime";
 import type { IdbRuntimeDriverInstance } from "@prisma-idb/driver-idb/runtime";
 import type { IdbQueryPlan } from "@prisma-idb/adapter-idb/runtime";
 import { idbOrm } from "../src/exports/orm";
+import { PrismaClientKnownRequestError } from "@prisma/client-runtime-utils";
 import type { IdbQueryExecutor, IdbQueryExecutorWithTransaction, IdbStoreAccessor } from "../src/exports/orm";
 
 // ── Test-only cast helper ─────────────────────────────────────────────────────
@@ -368,9 +369,12 @@ describe("IdbStoreAccessor — findUnique / delete", () => {
     expect(row).toBeNull();
   });
 
-  it("delete() returns null for a nonexistent key", async () => {
+  it("delete() throws P2025 for a nonexistent key without changing existing rows", async () => {
     const client = makeClient();
-    await expect(client["users"]!.delete("nonexistent")).resolves.toBeNull();
+    const deletion = client["users"]!.delete("nonexistent");
+    await expect(deletion).rejects.toBeInstanceOf(PrismaClientKnownRequestError);
+    await expect(deletion).rejects.toMatchObject({ code: "P2025", meta: { modelName: "User" } });
+    expect(await client["users"]!.findUnique("u1")).toEqual(ALICE);
   });
 });
 
