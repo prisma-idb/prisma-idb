@@ -8,6 +8,7 @@
  * it to both layers.
  */
 
+import { createIdbEnums } from "@prisma-idb/client-idb/internal";
 import { createManagedIdbClient } from "@prisma-idb/client-idb/client";
 import type { ManagedIdbClient } from "@prisma-idb/client-idb/client";
 import type { IdbContract } from "@prisma-idb/client-idb/orm";
@@ -36,6 +37,7 @@ export function createManagedAutoSyncIdbClient<TContract extends IdbContract>(
   options: AutoMigratingSyncIdbClientOptions<TContract>
 ): ManagedIdbClient<SyncIdbClient<TContract>> {
   return createManagedIdbClient(() => createAutoMigratingSyncIdbClient(options), {
+    enums: createIdbEnums(options.contractSpace.contractJson),
     dbName: options.dbName,
     ...(options.factory !== undefined ? { idbFactory: options.factory } : {}),
   });
