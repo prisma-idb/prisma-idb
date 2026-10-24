@@ -55,6 +55,12 @@ describe("db.transaction() types", () => {
     expectTypeOf<ReturnType<typeof run>>().resolves.toMatchTypeOf<Rows["User"][]>();
   });
 
+  it("preserves the deleted row type and null in the transaction result", () => {
+    const remove = () => db.transaction(["users"], (tx) => tx.users.delete("u1"));
+    void remove;
+    expectTypeOf<ReturnType<typeof remove>>().resolves.toEqualTypeOf<{ id: string; name: string } | null>();
+  });
+
   it("rejects a key that is not a root of the contract", () => {
     // @ts-expect-error "nope" is not a root of the contract.
     const unknown = () => db.transaction(["nope"], async () => undefined);

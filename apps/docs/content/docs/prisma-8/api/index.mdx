@@ -50,7 +50,7 @@ Import `createAutoMigratingIdbClient` or `createManagedAutoIdbClient` from `@pri
 | `updateAll(patch)`    | Updates every matching row.                              | The updated rows.            |
 | `updateCount(patch)`  | Same as `updateAll`.                                     | How many rows were updated.  |
 | `upsert(args)`        | Updates or creates a row using a complete unique lookup. | The row.                     |
-| `delete(key)`         | Deletes the row with this primary key. Ignores `where`.  | Nothing.                     |
+| `delete(key)`         | Deletes the row with this primary key. Ignores `where`.  | The deleted row, or `null`.  |
 | `deleteAll()`         | Deletes every matching row.                              | The deleted rows.            |
 | `deleteCount()`       | Same as `deleteAll`.                                     | How many rows were deleted.  |
 

@@ -277,8 +277,8 @@ export interface IdbStoreAccessor<
   /** Look up a single row by primary key. Returns `null` if not found. */
   findUnique(key: KeyType<TContract, ModelName>): Promise<DefaultModelRow<TContract, ModelName> | null>;
 
-  /** Delete the row with the given primary key. */
-  delete(key: KeyType<TContract, ModelName>): Promise<void>;
+  /** Delete by primary key and return the deleted row, or `null` if no row matches. */
+  delete(key: KeyType<TContract, ModelName>): Promise<DefaultModelRow<TContract, ModelName> | null>;
 
   /**
    * Update the first row matching the accumulated `.where()` filter.
@@ -622,16 +622,16 @@ export class IdbStoreAccessorImpl<
       : (absentAsNull(this.#contract, this.#modelName)(row) as DefaultModelRow<TContract, ModelName>);
   }
 
-  /** Delete a keyed row with child actions when its relations require them. */
-  async delete(key: KeyType<TContract, ModelName>): Promise<void> {
+  /** Return a deleted row after applying any required child actions, or `null` if it is missing. */
+  async delete(key: KeyType<TContract, ModelName>): Promise<DefaultModelRow<TContract, ModelName> | null> {
     if (hasEnforceableChildRelations(this.#contract, this.#modelName)) {
-      await executeDeleteWithReferentialActions({
+      const row = await executeDeleteWithReferentialActions({
         executor: requireTransactionExecutor(this.#executor),
         contract: this.#contract,
         modelName: this.#modelName,
         key: key as IDBValidKey,
       });
-      return;
+      return row as DefaultModelRow<TContract, ModelName> | null;
     }
     const groupingKey = this.#newGroupingKey();
     const meta = this.#planMeta(groupingKey);
@@ -641,9 +641,11 @@ export class IdbStoreAccessorImpl<
       ast,
       idbPlan: { meta, kind: "delete", storeName: this.#storeName, key: key as IDBValidKey },
     };
-    // The driver echoes the deleted row, but this API returns void — drain
-    // via toArray() just to execute the plan and discard the result.
-    await this.#executor.query(plan).toArray();
+    const rows = await this.#executor.query(plan).toArray();
+    const row = rows[0];
+    return row === undefined
+      ? null
+      : (absentAsNull(this.#contract, this.#modelName)(row) as DefaultModelRow<TContract, ModelName>);
   }
 
   /** Update the first matching row with scalar or nested relation validation. */

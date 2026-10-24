@@ -361,17 +361,16 @@ describe("IdbStoreAccessor — findUnique / delete", () => {
     expect(row).toBeNull();
   });
 
-  it("delete() removes a record", async () => {
+  it("delete() returns the deleted record", async () => {
     const client = makeClient();
-    await client["users"]!.delete("u1");
+    await expect(client["users"]!.delete("u1")).resolves.toEqual(ALICE);
     const row = await client["users"]!.findUnique("u1");
     expect(row).toBeNull();
   });
 
-  it("delete() is a no-op for nonexistent key", async () => {
+  it("delete() returns null for a nonexistent key", async () => {
     const client = makeClient();
-    // Should not throw
-    await expect(client["users"]!.delete("nonexistent")).resolves.toBeUndefined();
+    await expect(client["users"]!.delete("nonexistent")).resolves.toBeNull();
   });
 });
 
