@@ -47,7 +47,7 @@ The lower-level `adapter.applyPush` and `adapter.pull` remain available for cust
 
 `pull` and `applyPush` compare `clientStorageHash` with `syncServer.clientStorageHash` before they read or write anything. A missing or different storage hash returns `{ ok: false, reason: "contract-mismatch", expected }`. Answer it with HTTP 409. The browser worker then keeps its pull cursor and queued edits, and retries after the user updates.
 
-Set `contractCheck: "off"` only if your deploys keep clients and server on one contract. The default is `"required"`. See the [server guide](https://prisma-idb.dev/docs/prisma-8/sync/server#contract-check) for how the digest is computed.
+`createSqlSync` always requires a matching storage hash. To opt out, use the lower-level `createSqlSyncAdapter` with `contractCheck: "off"` and implement your HTTP routes around its `pull` and `applyPush` methods. Set this option only if your deploys keep clients and server on one contract. The adapter's default is `"required"`. See the [server guide](https://prisma-idb.dev/docs/prisma-8/sync/server#contract-check) for how the digest is computed.
 
 ## Tenant parent rules
 
