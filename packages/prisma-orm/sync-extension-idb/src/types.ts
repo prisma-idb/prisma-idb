@@ -77,9 +77,21 @@ export interface PushResult {
   record?: Record<string, unknown> | null;
 }
 
-/** Stats returned by `applyPull`. */
+/** One changelog entry committed locally by a pull. */
+export interface PullChange {
+  /** Prisma model name, rather than its IndexedDB store name. */
+  model: string;
+  /** Native IndexedDB key; compound keys follow the contract's key-field order. */
+  key: IDBValidKey;
+  /** Changelog operation, with revoked ownership reported as a delete. */
+  op: "create" | "update" | "delete";
+}
+
+/** Stats and committed changes returned by `applyPull`. */
 export interface ApplyPullResult {
   applied: number;
+  /** Applied changelog entries in page order, excluding skipped or rolled-back writes. */
+  changes: PullChange[];
   /** Rows not applied: already applied, invalid, for an unknown model, or the row the page halted at. Rows after a halt are not counted. */
   skipped: number;
   /** Subset of skipped: invalid decoded records, keys, or wire values. */

@@ -26,10 +26,10 @@
  *   default `prisma.config.ts`; returns the project cwd.
  */
 
-import { mkdir, mkdtemp, readdir, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { computeMigrationHash } from "@prisma/orm-toolchain/migration-tools/hash";
 import { execa } from "execa";
 
@@ -221,3 +221,27 @@ export const createPostsStoreOp = {
   storeName: "posts",
   def: { keyPath: "id" },
 } as const;
+
+/** Imports a generated bundle in a fresh process, resolving its real runtime and JSON imports. */
+export async function importContractSpace(
+  cwd: string,
+  outPath: string
+): Promise<{
+  headRef: { hash: string };
+  migrations: { dirName: string }[];
+}> {
+  await symlink(fileURLToPath(new URL("../node_modules", import.meta.url)), join(cwd, "node_modules"), "dir").catch(
+    (error: NodeJS.ErrnoException) => {
+      if (error.code !== "EEXIST") throw error;
+    }
+  );
+  await writeFile(join(cwd, "package.json"), JSON.stringify({ type: "module" }));
+  const { stdout } = await execa(process.execPath, [
+    "--import",
+    import.meta.resolve("tsx"),
+    "--input-type=module",
+    "-e",
+    `const { contractSpace } = await import(${JSON.stringify(pathToFileURL(outPath).href)}); console.log(JSON.stringify(contractSpace));`,
+  ]);
+  return JSON.parse(stdout);
+}

@@ -73,6 +73,87 @@ describe("SyncWorker — state machine", () => {
     vi.useRealTimers();
   });
 
+  it("coalesces reconnect and visible-page events, detaches on stop, and reattaches on restart", async () => {
+    const browserWindow = new EventTarget();
+    const browserDocument = Object.assign(new EventTarget(), { visibilityState: "hidden" });
+    vi.stubGlobal("window", browserWindow);
+    vi.stubGlobal("document", browserDocument);
+    const worker = createSyncWorker({
+      syncClient: makeStubSyncClient(),
+      pushHandler: async () => [],
+      pullHandler: async () => [],
+      syncOnReconnect: true,
+    });
+    const statuses: string[] = [];
+    worker.on("statuschange", (status) => statuses.push(status));
+    try {
+      worker.start();
+      await vi.advanceTimersByTimeAsync(0);
+      statuses.length = 0;
+      browserDocument.dispatchEvent(new Event("visibilitychange"));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(statuses).toEqual([]);
+
+      browserWindow.dispatchEvent(new Event("online"));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(statuses).toEqual(["pushing", "pulling", "idle"]);
+      statuses.length = 0;
+
+      browserWindow.dispatchEvent(new Event("online"));
+      browserDocument.visibilityState = "visible";
+      browserDocument.dispatchEvent(new Event("visibilitychange"));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(statuses).toEqual(["pushing", "pulling", "idle"]);
+      await worker.stop();
+
+      // A restarted worker must not retain subscriptions to its previous browser targets.
+      const nextWindow = new EventTarget();
+      const nextDocument = Object.assign(new EventTarget(), { visibilityState: "visible" });
+      vi.stubGlobal("window", nextWindow);
+      vi.stubGlobal("document", nextDocument);
+      worker.start();
+      await vi.advanceTimersByTimeAsync(0);
+      statuses.length = 0;
+      browserWindow.dispatchEvent(new Event("online"));
+      browserDocument.dispatchEvent(new Event("visibilitychange"));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(statuses).toEqual([]);
+
+      nextDocument.dispatchEvent(new Event("visibilitychange"));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(statuses).toEqual(["pushing", "pulling", "idle"]);
+    } finally {
+      await worker.stop();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("leaves browser events to the consumer unless syncOnReconnect is enabled", async () => {
+    const browserWindow = new EventTarget();
+    const browserDocument = Object.assign(new EventTarget(), { visibilityState: "visible" });
+    vi.stubGlobal("window", browserWindow);
+    vi.stubGlobal("document", browserDocument);
+    const worker = createSyncWorker({
+      syncClient: makeStubSyncClient(),
+      pushHandler: async () => [],
+      pullHandler: async () => [],
+    });
+    const statuses: string[] = [];
+    worker.on("statuschange", (status) => statuses.push(status));
+    try {
+      worker.start();
+      await vi.advanceTimersByTimeAsync(0);
+      statuses.length = 0;
+      browserWindow.dispatchEvent(new Event("online"));
+      browserDocument.dispatchEvent(new Event("visibilitychange"));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(statuses).toEqual([]);
+    } finally {
+      await worker.stop();
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("transitions idle -> pushing -> pulling -> idle on a clean cycle", async () => {
     const statuses: string[] = [];
     const worker = createSyncWorker({
@@ -926,26 +1007,94 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
     expect((await scanAll(client, "_idb_sync_outbox")).every((event) => event["synced"])).toBe(true);
   });
 
-  it("applies pulled logs via applyPull and emits pullcompleted", async () => {
+  it("reports applied creates, updates and deletes, including ownership revocations, without skipped entries", async () => {
     const { client } = await createTestSyncClient();
-
+    await client.withoutTracking(async (orm) => {
+      for (const id of ["updated", "deleted", "revoked"]) {
+        await asAccessors(orm)["users"]!.create({ id, name: "Before" });
+      }
+    });
+    const created = userLog(changelogId(1), "created");
     const worker = trackedWorker({
       syncClient: client,
       pushHandler: async () => [],
       pullHandler: async () => [
-        { changelogId: "c1", model: "User", operation: "create", keyPath: "u1", record: { id: "u1", name: "Remote" } },
+        created,
+        { ...userLog(changelogId(2), "updated"), operation: "update", record: { id: "updated", name: "After" } },
+        { ...userLog(changelogId(3), "deleted"), operation: "delete", record: null },
+        { ...userLog(changelogId(4), "revoked"), operation: "update", record: null },
+        created,
+        { ...userLog(changelogId(5), "invalid"), record: { id: "invalid", name: 42 } },
+        { ...userLog(changelogId(6), "unknown"), model: "Unknown" },
       ],
     });
-
-    let pullCompleted: PullCompletedEvent | undefined;
-    worker.on("pullcompleted", (p) => {
-      pullCompleted = p;
-    });
+    const completed: PullCompletedEvent[] = [];
+    worker.on("pullcompleted", (event) => completed.push(event));
 
     await worker.forceSync();
 
-    expect(pullCompleted).toEqual({ applied: 1, skipped: 0, validationFailed: 0, halted: false });
-    expect(await scanAll(client, "users")).toEqual([{ id: "u1", name: "Remote" }]);
+    expect(completed).toEqual([
+      {
+        applied: 4,
+        changes: [
+          { model: "User", key: "created", op: "create" },
+          { model: "User", key: "updated", op: "update" },
+          { model: "User", key: "deleted", op: "delete" },
+          { model: "User", key: "revoked", op: "delete" },
+        ],
+        skipped: 3,
+        validationFailed: 1,
+        halted: false,
+      },
+    ]);
+    expect(await scanAll(client, "users")).toEqual([
+      { id: "created", name: "created" },
+      { id: "updated", name: "After" },
+    ]);
+  });
+
+  it.each([false, true])("reports native Bytes keys after deletion and recreation (compound: %s)", async (compound) => {
+    const keyPath = compound ? ["tenant", "id"] : "id";
+    const dbName = testDbName();
+    (
+      await openTestDb(dbName, [{ name: "assets", keyPath }, OUTBOX_STORE, VERSION_META_STORE, SYNC_META_STORE])
+    ).close();
+    const contract = defineContract({
+      family: idbFamilyPack,
+      target: idbTargetPack,
+      models: { Asset: { store: "assets", key: keyPath, fields: { tenant: "String", id: "Bytes", name: "String" } } },
+    }) as unknown as IdbContract;
+    const client = createSyncIdbClient({ contract, dbName, trackedModels: "*" });
+    const worker = trackedWorker({
+      syncClient: client,
+      pushHandler: async () => [],
+      pullHandler: async () =>
+        (["create", "delete", "delete", "create"] as const).map((operation, index) => ({
+          changelogId: changelogId(index + 1),
+          model: "Asset",
+          operation,
+          keyPath: compound ? ["t1", "AQI="] : "AQI=",
+          record: operation === "delete" ? null : { tenant: "t1", id: "AQI=", name: "Remote" },
+        })),
+    });
+    const completed: PullCompletedEvent[] = [];
+    worker.on("pullcompleted", (event) => completed.push(event));
+    try {
+      await worker.forceSync();
+
+      const key = new Uint8Array([1, 2]);
+      expect(completed[0]?.changes).toEqual(
+        ["create", "delete", "delete", "create"].map((op) => ({
+          model: "Asset",
+          key: compound ? ["t1", key] : key,
+          op,
+        }))
+      );
+      expect(await scanAll(client, "assets")).toEqual([{ tenant: "t1", id: key, name: "Remote" }]);
+    } finally {
+      await worker.stop();
+      await client.close();
+    }
   });
   describe("contract check", () => {
     it("passes the client contract's storage hash to both handlers", async () => {
@@ -1090,7 +1239,15 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
         const completed: PullCompletedEvent[] = [];
         worker.on("pullcompleted", (event) => completed.push(event));
         await worker.forceSync();
-        expect(completed).toEqual([{ applied: 1, skipped: 1, validationFailed: 1, halted: false }]);
+        expect(completed).toEqual([
+          {
+            applied: 1,
+            changes: [{ model: "User", key: "u9", op: "create" }],
+            skipped: 1,
+            validationFailed: 1,
+            halted: false,
+          },
+        ]);
         await worker.stop();
         const restarted = trackedWorker({
           syncClient: client,
@@ -1123,12 +1280,20 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
         },
       });
 
+      const completed: PullCompletedEvent[] = [];
+      worker.on("pullcompleted", (event) => completed.push(event));
       await worker.forceSync();
       await worker.forceSync();
       await worker.forceSync();
       await worker.forceSync();
 
       expect(cursors).toEqual([null, changelogId(9), changelogId(10), changelogId(11)]);
+      expect(completed.map((event) => event.changes)).toEqual([
+        [{ model: "User", key: "u9", op: "create" }],
+        [{ model: "User", key: "u10", op: "create" }],
+        [{ model: "User", key: "u11", op: "create" }],
+        [],
+      ]);
     });
 
     it("never moves the cursor back when a batch only carries older ids", async () => {
@@ -1202,6 +1367,12 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
         expect(from).toEqual([null, reload ? null : changelogId(2)]);
         expect(pulls[0]).toEqual({
           applied: reload ? 0 : 2,
+          changes: reload
+            ? []
+            : [
+                { model: "User", key: "u3", op: "create" },
+                { model: "User", key: "u4", op: "create" },
+              ],
           skipped: reload ? 2 : 0,
           validationFailed: 0,
           halted: false,
@@ -1246,6 +1417,14 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
       await worker.forceSync();
 
       expect(pulls.map((p) => p.halted)).toEqual([true, false]);
+      expect(pulls.map((p) => p.changes)).toEqual([
+        [{ model: "User", key: "u1", op: "create" }],
+        [
+          { model: "User", key: "u2", op: "create" },
+          { model: "User", key: "u3", op: "create" },
+          { model: "User", key: "u4", op: "create" },
+        ],
+      ]);
       expect(from).toEqual([null, changelogId(1)]);
       expect(await scanAll(client, "users")).toHaveLength(4);
     });

@@ -1,3 +1,4 @@
+import { resolve } from "pathe";
 import { flag } from "@prisma/cli-engine";
 import { CliStructuredError, notOk, ok } from "@prisma/cli-engine/protocol";
 import { createCollectingSink, presentationsFromSink } from "../collecting-sink";
@@ -9,7 +10,7 @@ export const migrationPlanCommand = defineIdbCommand({
     summary: "Plan the next IDB migration package (auto-detects baseline vs. incremental)",
     description:
       "Compares the emitted contract against the latest on-disk migration state and\n" +
-      "produces a new migration package with the required operations. Offline —\n" +
+      "produces a new migration package and regenerates the app contract-space module. Offline —\n" +
       "never opens IndexedDB (there is no live database on the Node side to consult).",
     examples: ["migration plan", "migration plan --name add-posts", "migration plan --space idb-sync"],
   },
@@ -18,6 +19,10 @@ export const migrationPlanCommand = defineIdbCommand({
       name: flag.string({
         brief: 'Directory slug (default: "baseline" for a fresh space; required otherwise)',
         placeholder: "slug",
+      }),
+      out: flag.string({
+        brief: "Generated app module path (default: colocated with the resolved contract.json)",
+        placeholder: "path",
       }),
       space: flag.string({
         brief: 'Contract-space id (default: "app"). Only extension authors set this.',
@@ -44,6 +49,7 @@ export const migrationPlanCommand = defineIdbCommand({
       contractPath,
       out: sink.out,
       err: sink.err,
+      ...(args.flags.out !== undefined && { outPath: resolve(ctx.cwd, args.flags.out) }),
       ...(args.flags.name !== undefined && { name: args.flags.name }),
       ...(args.flags.space !== undefined && { spaceId: args.flags.space }),
     });

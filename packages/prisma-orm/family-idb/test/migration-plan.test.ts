@@ -31,7 +31,6 @@ import { parse } from "@prisma/orm-framework/psl-parser/syntax";
 import { interpretPslDocumentToIdbContract } from "../src/core/psl-interpreter";
 import { runPreflight } from "../src/core/preflight";
 import { migrationPlan } from "../src/core/migration-plan";
-import { generateContractSpace } from "../src/core/contract-space-codegen";
 
 const MINIMAL_CONTRACT = {
   storage: {
@@ -447,6 +446,27 @@ describe("migrationPlan — incremental mode", () => {
     expect(meta.to).toBe(CONTRACT_V2.storage.storageHash);
   });
 
+  it("refuses a schema revert before writing a cyclic migration or replacing the bundle", async () => {
+    expect(await migrationPlan(defaultPaths(cwd))).toBe(0);
+    await writeContract(cwd, CONTRACT_V2);
+    expect(await migrationPlan({ ...defaultPaths(cwd), name: "add_version_meta" })).toBe(0);
+    const dirs = await listMigrationDirs(cwd);
+    const bundlePath = join(cwd, "src", "lib", "prisma", "contract-space.generated.ts");
+    const bundle = await readFile(bundlePath, "utf-8");
+
+    await writeContract(cwd, CONTRACT_V1);
+    capturedStderr = "";
+    expect(await migrationPlan({ ...defaultPaths(cwd), name: "revert_version_meta" })).toBe(1);
+    expect(capturedStderr).toContain("already appears in the migration chain");
+    expect(capturedStderr).toContain("No migration package was written");
+    expect(await listMigrationDirs(cwd)).toEqual(dirs);
+    expect(await readFile(bundlePath, "utf-8")).toBe(bundle);
+
+    // A refused revert must leave the existing chain usable.
+    await writeContract(cwd, CONTRACT_V2);
+    expect(await migrationPlan({ ...defaultPaths(cwd), name: "unchanged" })).toBe(0);
+  });
+
   it("ops only cover the delta, not the whole contract", async () => {
     expect(await migrationPlan(defaultPaths(cwd))).toBe(0);
     await writeContract(cwd, CONTRACT_V2);
@@ -473,7 +493,12 @@ describe("migrationPlan — incremental mode", () => {
     expect(capturedStderr).toContain("  - versionMeta\n");
 
     capturedStderr = "";
-    await writeContract(cwd, CONTRACT_V2);
+    await writeContract(cwd, {
+      storage: {
+        storageHash: "sha256:contractv4",
+        stores: { ...CONTRACT_V2.storage.stores, auditLog: { keyPath: "id" } },
+      },
+    });
     expect(await migrationPlan({ ...defaultPaths(cwd), name: "readd_version_meta" })).toBe(0);
     expect(capturedStderr).not.toMatch(/deletes data/);
   });
@@ -611,23 +636,6 @@ describe("migrationPlan — spaceId (extension-space mode)", () => {
     const rootEntries = await readdir(join(cwd, "migrations"), { withFileTypes: true });
     const extDirs = rootEntries.filter((e) => e.isDirectory() && e.name !== "refs" && e.name !== "snapshots");
     expect(extDirs).toHaveLength(2);
-  });
-});
-
-// ── Integration: migrationPlan → generateContractSpace ───────────────────────
-
-describe("migrationPlan → generateContractSpace integration", () => {
-  it("the package produced by a greenfield plan is consumable by generateContractSpace", async () => {
-    expect(await migrationPlan(defaultPaths(cwd))).toBe(0);
-
-    const outPath = join(cwd, "src", "lib", "prisma", "contract-space.generated.ts");
-    const spaceCode = await generateContractSpace({ ...defaultPaths(cwd), outPath });
-    expect(spaceCode).toBe(0);
-
-    const generated = await readFile(outPath, "utf-8");
-    expect(generated).toContain("_baseline");
-    expect(generated).toContain("contractSpaceFromJson");
-    expect(generated).toContain("_meta.to");
   });
 });
 

@@ -28,6 +28,7 @@ export type {
   LogWithRecord,
   PushResult,
   ApplyPullResult,
+  PullChange,
   VersionMetaRecord,
 } from "../types";
 
