@@ -125,7 +125,7 @@ Push reads `{ storageHash, events }` from JSON. Pull reads `storageHash` and the
 
 Every pull response sets `Cache-Control: no-store`, because the URL does not identify the authenticated user. The pull transport adds no custom headers. Application authentication headers can still require a CORS preflight.
 
-Success returns the results or logs array. A write policy violation returns HTTP 403. Other adapter refusal outcomes return HTTP 400. Unexpected errors reject the handler promise and reach the app's error middleware.
+Success returns the results or logs array. A write policy violation returns HTTP 403. A `contract-mismatch` returns HTTP 409. Other adapter refusal outcomes return HTTP 400. Unexpected errors reject the handler promise and reach the app's error middleware.
 
 Hono can pass its raw request directly:
 
