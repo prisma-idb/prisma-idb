@@ -2,6 +2,8 @@ import type { GetKeyField, SyncServer, SyncPushEvent, SyncServerContract } from 
 import type { ContractMismatchOutcome } from "./contract-check-gate";
 import { applyPushEventDecoded, decodeFailureResult, decodeWireEvent } from "./push";
 import type { SqlPushResult } from "./push";
+import type { ModelWritePolicies } from "./write-policy";
+import { violatesWritePolicy } from "./write-policy";
 import { withCurrentRecord } from "./rejected-record";
 
 /**
@@ -40,6 +42,7 @@ export interface ApplyPushInput {
  * 400/413) instead of returning per-event results. `contract-mismatch` is a
  * well-behaved client on an outdated contract: answer 409, which the client
  * treats as retryable. Nothing was applied in any of these cases.
+ * A `write-policy-violation` rejects the whole batch (HTTP 403).
  * The `reason` union may gain new values in future releases; callers should
  * handle each known reason explicitly and review new values when upgrading.
  */
@@ -47,6 +50,7 @@ export type ApplyPushOutcome =
   | { readonly ok: true; readonly results: readonly SqlPushResult[] }
   | { readonly ok: false; readonly reason: "batch-too-large"; readonly maxBatchSize: number; readonly received: number }
   | { readonly ok: false; readonly reason: "duplicate-event-id"; readonly eventId: string }
+  | { readonly ok: false; readonly reason: "write-policy-violation"; readonly eventId: string }
   | ContractMismatchOutcome;
 
 /**
@@ -69,7 +73,8 @@ export async function applyPush(
   syncServer: SyncServer,
   contract: SyncServerContract,
   getKeyField: GetKeyField,
-  input: ApplyPushInput
+  input: ApplyPushInput,
+  writePolicies: ModelWritePolicies = {}
 ): Promise<ApplyPushOutcome> {
   const { events, scopeKey, maxBatchSize = DEFAULT_MAX_PUSH_BATCH_SIZE } = input;
 
@@ -83,6 +88,13 @@ export async function applyPush(
   for (const event of events) {
     if (seen.has(event.id)) return { ok: false, reason: "duplicate-event-id", eventId: event.id };
     seen.add(event.id);
+  }
+
+  // Preflight the entire batch before any event opens a transaction.
+  for (const event of events) {
+    if (violatesWritePolicy(writePolicies, event.entityType, event)) {
+      return { ok: false, reason: "write-policy-violation", eventId: event.id };
+    }
   }
 
   const { pushEvents, resolved } = decodeWireEvents(contract, getKeyField, events);

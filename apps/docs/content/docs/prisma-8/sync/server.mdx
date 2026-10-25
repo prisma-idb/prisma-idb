@@ -117,7 +117,7 @@ These are sync adapter restrictions. Prisma schemas can otherwise reference [non
 
 ### HTTP handlers
 
-`createSqlSync({ contract, clientContract, rootModel, db, scopeKey, maxBatchSize?, pullLimit? })` creates the server and SQL adapter with SQL key resolution and default batch limits. It returns `push(request)` and `pull(request)`. Both return a standard `Response`.
+`createSqlSync({ contract, clientContract, rootModel, db, scopeKey, maxBatchSize?, pullLimit?, writePolicies? })` creates the server and SQL adapter with SQL key resolution and default batch limits. It returns `push(request)` and `pull(request)`. Both return a standard `Response`.
 
 `db` and `scopeKey` accept a value or a resolver `(request: Request) => value | Promise<value>`. Resolve the scope from the authenticated session. Reject unauthenticated requests in the resolver or middleware. The scope resolver runs before the database resolver. Neither route reads the scope from the body or URL.
 
@@ -125,7 +125,7 @@ Push reads `{ storageHash, events }` from JSON. Pull reads `storageHash` and the
 
 Every pull response sets `Cache-Control: no-store`, because the URL does not identify the authenticated user. The pull transport adds no custom headers. Application authentication headers can still require a CORS preflight.
 
-Success returns the results or logs array. Other adapter refusal outcomes return HTTP 400. Unexpected errors reject the handler promise and reach the app's error middleware.
+Success returns the results or logs array. A write policy violation returns HTTP 403. A `contract-mismatch` returns HTTP 409. Other adapter refusal outcomes return HTTP 400. Unexpected errors reject the handler promise and reach the app's error middleware.
 
 Hono can pass its raw request directly:
 
@@ -143,16 +143,55 @@ app.post("/api/sync/push", (c) => handlers.push(c.req.raw));
 app.get("/api/sync/pull", (c) => handlers.pull(c.req.raw));
 ```
 
+### Write policies
+
+`createSqlSync` and `createSqlSyncAdapter` accept `writePolicies`, keyed by contract model name:
+
+```ts
+writePolicies: {
+  User: {
+    operations: ["update"],
+    writableFields: ["name", "image", "autoUpdate"],
+  },
+}
+```
+
+This example allows User profile updates. It forbids User creation, deletion, and writes to other fields, including future fields.
+Adapter construction throws if a policy names a model absent from the contract.
+Models without a policy retain ordinary write access, subject to ownership and contract validation.
+Both allowlists are required for each configured model. An empty `operations` list forbids all writes.
+
+`writableFields` applies to top-level create payload fields and update patch fields.
+Include the primary key in this list when allowing creates.
+The `key` in update and delete payloads identifies the target and needs no field permission.
+A primary key explicitly included in an update patch still requires permission, even if unchanged.
+An empty field list permits no create or update fields. Deletes need only the `"delete"` operation permission.
+A listed JSON field permits its whole value; policies do not filter nested JSON keys.
+Policies apply to sync writes, not direct writes through the application's SQL client.
+
+The adapter checks every event before writing any event.
+A forbidden operation or field rejects the whole batch with `{ ok: false, reason: "write-policy-violation", eventId }`.
+`createSqlSync` returns HTTP 403. Custom routes using `applyPush` must map this reason to 403.
+Neither model records nor changelog rows from the batch are written.
+The lower-level `applyPushEvent` returns non-retryable `WRITE_POLICY_VIOLATION` for a forbidden single event.
+
+**Client effect:** `createSyncFetchHandlers` throws on HTTP 403.
+The worker keeps the whole batch queued and retries with backoff, including otherwise permitted edits.
+It does not reconcile or discard the rejected batch. Pending pushes block pulls.
+Listen for the worker's `pushcompleted` event and check its `stalled` field to detect an outbox stuck after repeated failures.
+Avoid generating edits to server-owned fields. To recover existing forbidden edits, the application must discard or replace them, or the server must permit them.
+
 ### Route outcomes
 
 Handle each known failure reason explicitly. The reason unions can grow in future releases; an exhaustive TypeScript check helps detect new reasons when upgrading.
 
-| Helper      | Failure reason         | Meaning                                                                                                                                                                                              |
-| ----------- | ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `applyPush` | `"batch-too-large"`    | No writes. Includes `maxBatchSize` and `received`.                                                                                                                                                   |
-| `applyPush` | `"duplicate-event-id"` | No writes. Includes the repeated `eventId`.                                                                                                                                                          |
-| both        | `"contract-mismatch"`  | Nothing read or written. The client's storage hash is missing or differs from the server's. Includes `expected`. Answer HTTP 409. See [Contract check](#contract-check).                             |
-| `pull`      | `"invalid-cursor"`     | No pull query. The cursor must be a UUID v7 changelog id. `null` and `undefined` start at the beginning. An empty string is invalid; convert an empty query parameter to `null`, as in the tutorial. |
+| Helper      | Failure reason             | Meaning                                                                                                                                                                                              |
+| ----------- | -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `applyPush` | `"batch-too-large"`        | No writes. Includes `maxBatchSize` and `received`.                                                                                                                                                   |
+| `applyPush` | `"write-policy-violation"` | No writes. Includes the forbidden `eventId`. HTTP 403; the client keeps the entire batch queued.                                                                                                     |
+| `applyPush` | `"duplicate-event-id"`     | No writes. Includes the repeated `eventId`.                                                                                                                                                          |
+| both        | `"contract-mismatch"`      | Nothing read or written. The client's storage hash is missing or differs from the server's. Includes `expected`. Answer HTTP 409. See [Contract check](#contract-check).                             |
+| `pull`      | `"invalid-cursor"`         | No pull query. The cursor must be a UUID v7 changelog id. `null` and `undefined` start at the beginning. An empty string is invalid; convert an empty query parameter to `null`, as in the tutorial. |
 
 `pull` throws `RangeError` for a limit that is not a positive, finite integer. Database and ORM errors reject the pull promise.
 

@@ -12,6 +12,8 @@ import { applyPushEvent as applyPushEventImpl, toSyncPushPayload } from "./push"
 import { resolvePullRecord as resolvePullRecordImpl } from "./resolve-pull-record";
 import { applyPush as applyPushImpl } from "./apply-push";
 import { pull as pullImpl } from "./pull";
+import type { ModelWritePolicies } from "./write-policy";
+import { violatesWritePolicy } from "./write-policy";
 
 /** Binds SQL execution to its contract, ownership server, and contract-check policy. */
 export interface CreateSqlSyncAdapterOptions {
@@ -31,6 +33,8 @@ export interface CreateSqlSyncAdapterOptions {
    * @default "required"
    */
   readonly contractCheck?: ContractCheck;
+  /** Rejects a whole push batch if any event violates its model's policy. */
+  readonly writePolicies?: ModelWritePolicies;
 }
 
 /** SQL push and pull operations bound to one contract and ownership configuration. */
@@ -53,8 +57,8 @@ export interface SqlSyncAdapter {
     operation: "create" | "update" | "delete"
   ): Promise<Record<string, unknown> | null>;
   /**
-   * The whole push route in one call: validates ownership, applies every
-   * event in order, and returns one result per event. Requires `syncServer`.
+   * The whole push route: preflights write policies, validates ownership,
+   * and applies events in order. Requires `syncServer`.
    */
   applyPush(db: unknown, input: ApplyPushInput): Promise<ApplyPushOutcome>;
   /**
@@ -71,9 +75,21 @@ export interface SqlSyncAdapter {
  * built once per app, not per request.
  */
 export function createSqlSyncAdapter(options: CreateSqlSyncAdapterOptions): SqlSyncAdapter {
-  const { contract, getKeyField = sqlGetKeyField, syncServer, contractCheck = "required" } = options;
+  const {
+    contract,
+    getKeyField = sqlGetKeyField,
+    syncServer,
+    contractCheck = "required",
+    writePolicies = {},
+  } = options;
+  const models = new Set(Object.keys(domainModelsAtDefaultNamespace(contract.domain)));
+  for (const model of Object.keys(writePolicies)) {
+    if (!models.has(model)) {
+      throw new Error(`createSqlSyncAdapter: write policy model "${model}" is not in the contract.`);
+    }
+  }
   if (syncServer) {
-    for (const model of Object.keys(domainModelsAtDefaultNamespace(contract.domain))) {
+    for (const model of models) {
       const paths = resolveAuthorizationPaths(contract, syncServer.rootModel, model);
       assertNoParentDefaults(contract, model, resolveParentReferenceChecks(contract, getKeyField, model, paths));
     }
@@ -87,8 +103,12 @@ export function createSqlSyncAdapter(options: CreateSqlSyncAdapterOptions): SqlS
   return {
     getKeyField: (model) => getKeyField(contract, model),
     toSyncPushPayload,
-    applyPushEvent: (db, event, model, check, scopeKey) =>
-      applyPushEventImpl(db, contract, getKeyField, event, model, check, scopeKey),
+    applyPushEvent: async (db, event, model, check, scopeKey) => {
+      if (violatesWritePolicy(writePolicies, model, event)) {
+        return { id: event.id, success: false, error: "WRITE_POLICY_VIOLATION", retryable: false };
+      }
+      return applyPushEventImpl(db, contract, getKeyField, event, model, check, scopeKey);
+    },
     resolvePullRecord: async (db, model, check, keyPath, operation) =>
       resolvePullRecordImpl(
         db,
@@ -103,7 +123,7 @@ export function createSqlSyncAdapter(options: CreateSqlSyncAdapterOptions): SqlS
     applyPush: async (db, input) => {
       const server = requireSyncServer("applyPush");
       const mismatch = findContractMismatch(server, contractCheck, input.clientStorageHash);
-      return mismatch ?? applyPushImpl(db, server, contract, getKeyField, input);
+      return mismatch ?? applyPushImpl(db, server, contract, getKeyField, input, writePolicies);
     },
     pull: async (db, input) => {
       const server = requireSyncServer("pull");

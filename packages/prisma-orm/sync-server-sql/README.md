@@ -43,6 +43,45 @@ Unexpected database errors reject the promise for your app's error middleware.
 Use `createSyncFetchHandlers` from `@prisma-idb/sync-extension-idb/client` on the client to send the storage hash and raise `ContractMismatchError` automatically.
 The lower-level `adapter.applyPush` and `adapter.pull` remain available for custom transports.
 
+## Protect server-owned fields
+
+Pass `writePolicies` to `createSqlSync` or `createSqlSyncAdapter`. Use contract model and field names.
+
+```ts
+const handlers = createSqlSync({
+  contract: serverContract,
+  clientContract,
+  rootModel: "User",
+  db,
+  scopeKey: requireAuthenticatedUserId,
+  writePolicies: {
+    User: { operations: ["update"], writableFields: ["name", "image", "autoUpdate"] },
+  },
+});
+```
+
+This policy permits profile updates and rejects User creates, deletes, and updates to any other field, including future fields.
+Adapter construction throws if a policy names a model absent from the contract.
+Models without a policy keep their ordinary write behavior. Ownership and contract validation still apply.
+For each configured model, both allowlists are required. An empty `operations` list forbids all writes.
+
+`writableFields` lists top-level fields in create payloads and update patches. Include the primary key when allowing creates.
+The update's `key` and delete's `key` identify the target; they do not count as writable fields.
+An explicitly supplied primary key in an update patch still needs to be listed, even if unchanged.
+An empty field list permits no create or update fields. It does not restrict deletes when `"delete"` is allowed.
+The policy does not filter fields inside a JSON value or restrict writes made directly through the application's SQL client.
+
+The adapter checks the entire batch before applying any event.
+A violation returns `{ ok: false, reason: "write-policy-violation", eventId }`; the HTTP helper answers 403.
+No record or changelog writes from that batch are applied, including earlier permitted events.
+Custom routes using `applyPush` must map this reason to HTTP 403.
+The lower-level `applyPushEvent` enforces the same policy and returns non-retryable `WRITE_POLICY_VIOLATION` for its single event.
+
+With `createSyncFetchHandlers`, HTTP 403 throws. The worker keeps the whole batch queued and retries with backoff.
+It does not reconcile or discard these edits, and pending pushes block pulls. Permitted edits in that batch remain queued too.
+Listen for the worker's `pushcompleted` event and check its `stalled` field to detect an outbox stuck after repeated failures.
+Keep server-owned fields out of client writes. Existing forbidden edits require an application recovery flow to discard or replace them, or a policy change that permits them.
+
 ## Contract check
 
 `pull` and `applyPush` compare `clientStorageHash` with `syncServer.clientStorageHash` before they read or write anything. A missing or different storage hash returns `{ ok: false, reason: "contract-mismatch", expected }`. Answer it with HTTP 409. The browser worker then keeps its pull cursor and queued edits, and retries after the user updates.
@@ -132,16 +171,16 @@ See the [server reference](https://prisma-idb.dev/docs/prisma-8/sync/server#chec
 
 Returned pull and rejected-push records contain only top-level fields from the client contract. Authorization uses the full server row before projection, so server-only ownership foreign keys still work. Projection happens before wire encoding.
 
-`createSqlSyncAdapter({ contract, syncServer?, getKeyField?, contractCheck? })` returns:
+`createSqlSyncAdapter({ contract, syncServer?, getKeyField?, contractCheck?, writePolicies? })` returns:
 
-| Member                                                                   | Does                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| ------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `applyPush(db, { events, scopeKey, maxBatchSize?, clientStorageHash? })` | The whole push route: validates ownership and applies events in order until the first retryable failure. Returns `{ ok: true, results }` (the processed prefix, including that failure) or `{ ok: false, reason }` for a batch over `maxBatchSize` (default 1000, `"batch-too-large"`) a repeated event id (`"duplicate-event-id"`) or a contract mismatch (`"contract-mismatch"`). Nothing is applied when `ok` is false. Needs `syncServer`.                        |
-| `pull(db, { scopeKey, lastChangelogId?, limit?, clientStorageHash? })`   | The whole pull route: the next `limit` (default 50) changes after `lastChangelogId` (a UUID v7 string, exclusive), each re-authorized and resolved to its current `record` (`null` if deleted or no longer the user's). Returns `{ ok: true, logs }` or `{ ok: false, reason: "invalid-cursor" }` or `{ ok: false, reason: "contract-mismatch", expected }`. Needs `syncServer`. Invalid `limit` values (non-positive, non-integer or non-finite) throw `RangeError`. |
-| `getKeyField(model)`                                                     | The model's primary-key field.                                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| `toSyncPushPayload(operation, payload, keyField)`                        | Turns a pushed payload into the shape `validatePush` expects.                                                                                                                                                                                                                                                                                                                                                                                                         |
-| `applyPushEvent(db, event, model, check, scopeKey)`                      | In one transaction: checks ownership, writes the record and its `Changelog` row. Safe to repeat.                                                                                                                                                                                                                                                                                                                                                                      |
-| `resolvePullRecord(db, model, check, keyPath, operation)`                | The current record with only client-contract fields, if the user still owns it, or `null`. Needs `syncServer`.                                                                                                                                                                                                                                                                                                                                                        |
+| Member                                                                   | Does                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| ------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `applyPush(db, { events, scopeKey, maxBatchSize?, clientStorageHash? })` | The whole push route: validates ownership and applies events in order until the first retryable failure. Returns `{ ok: true, results }` (the processed prefix, including that failure) or `{ ok: false, reason }` for a batch over `maxBatchSize` (default 1000, `"batch-too-large"`) a repeated event id (`"duplicate-event-id"`), a contract mismatch (`"contract-mismatch"`) or a write policy violation (`"write-policy-violation"`, with `eventId`). Nothing is applied when `ok` is false. Needs `syncServer`. |
+| `pull(db, { scopeKey, lastChangelogId?, limit?, clientStorageHash? })`   | The whole pull route: the next `limit` (default 50) changes after `lastChangelogId` (a UUID v7 string, exclusive), each re-authorized and resolved to its current `record` (`null` if deleted or no longer the user's). Returns `{ ok: true, logs }` or `{ ok: false, reason: "invalid-cursor" }` or `{ ok: false, reason: "contract-mismatch", expected }`. Needs `syncServer`. Invalid `limit` values (non-positive, non-integer or non-finite) throw `RangeError`.                                                 |
+| `getKeyField(model)`                                                     | The model's primary-key field.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `toSyncPushPayload(operation, payload, keyField)`                        | Turns a pushed payload into the shape `validatePush` expects.                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `applyPushEvent(db, event, model, check, scopeKey)`                      | In one transaction: checks ownership, writes the record and its `Changelog` row. Safe to repeat.                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `resolvePullRecord(db, model, check, keyPath, operation)`                | The current record with only client-contract fields, if the user still owns it, or `null`. Needs `syncServer`.                                                                                                                                                                                                                                                                                                                                                                                                        |
 
 `db` is your Prisma 8 SQL client; it needs `.transaction(fn)` and `.orm.public.<Model>`.
 
@@ -155,7 +194,7 @@ Push results stop at the first retryable failure. Later events are omitted even 
 
 The `reason` unions in `ApplyPushOutcome` and `PullOutcome` may gain new values in future releases. Handle each known reason explicitly, and review new values when upgrading (an exhaustive TypeScript check can flag them).
 
-The package exports `createSqlSyncAdapter`, `sqlGetKeyField` (a `getKeyField` resolver for `createSyncServer`), the defaults `DEFAULT_MAX_PUSH_BATCH_SIZE` and `DEFAULT_PULL_LIMIT`, and the types the adapter's methods use: `CreateSqlSyncAdapterOptions`, `SqlSyncAdapter`, `ApplyPushInput`, `ApplyPushOutcome`, `SqlPushWireEvent`, `SqlPushEvent`, `SqlPushResult`, `PullInput`, `PullOutcome` and `SqlPullLog`.
+The package exports `createSqlSyncAdapter`, `sqlGetKeyField` (a `getKeyField` resolver for `createSyncServer`), the defaults `DEFAULT_MAX_PUSH_BATCH_SIZE` and `DEFAULT_PULL_LIMIT`, and the types the adapter's methods use: `CreateSqlSyncAdapterOptions`, `SqlSyncAdapter`, `ApplyPushInput`, `ApplyPushOutcome`, `SqlPushWireEvent`, `SqlPushEvent`, `SqlPushResult`, `PullInput`, `PullOutcome`, `SqlPullLog`, `ModelWritePolicy` and `ModelWritePolicies`.
 
 ## Documentation
 
