@@ -1,5 +1,14 @@
 # @prisma-idb/prisma-orm-benchmark
 
+## 0.0.12
+
+### Patch Changes
+
+- Updated dependencies [[`3227da2`](https://github.com/prisma-idb/prisma-idb/commit/3227da2debdb89ec80ee48e2d333a17f2fa10a44), [`f1d3134`](https://github.com/prisma-idb/prisma-idb/commit/f1d31345542f3a67eb7785592bdcf38ed14c23e9), [`e73e50a`](https://github.com/prisma-idb/prisma-idb/commit/e73e50ad12a97c63413b67a69772d7523e33bf4a)]:
+  - @prisma-idb/client-idb@0.16.0
+  - @prisma-idb/family-idb@0.16.0
+  - @prisma-idb/target-idb@0.16.0
+
 ## 0.0.11
 
 ### Patch Changes

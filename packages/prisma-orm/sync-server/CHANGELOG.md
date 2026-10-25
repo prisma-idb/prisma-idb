@@ -1,5 +1,17 @@
 # @prisma-idb/sync-server
 
+## 0.9.0
+
+### Minor Changes
+
+- [#375](https://github.com/prisma-idb/prisma-idb/pull/375) [`f1d3134`](https://github.com/prisma-idb/prisma-idb/commit/f1d31345542f3a67eb7785592bdcf38ed14c23e9) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Document typed Postgres contract emission through `prisma-idb contract emit`. Import the emitted `.runtime.ts` module directly for sync setup without casting JSON to the generated contract type. Release with the companion sync packages' breaking transport update.
+
+### Patch Changes
+
+- Updated dependencies [[`f1d3134`](https://github.com/prisma-idb/prisma-idb/commit/f1d31345542f3a67eb7785592bdcf38ed14c23e9), [`e73e50a`](https://github.com/prisma-idb/prisma-idb/commit/e73e50ad12a97c63413b67a69772d7523e33bf4a)]:
+  - @prisma-idb/family-idb@0.16.0
+  - @prisma-idb/target-idb@0.16.0
+
 ## 0.8.4
 
 ### Patch Changes
