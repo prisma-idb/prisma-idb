@@ -25,13 +25,13 @@ const open = await db.orm.todo.where({ done: false }).orderBy({ title: "asc" }).
 
 ## How it fits together
 
-| Step                  | Where it runs | What happens                                                            |
-| --------------------- | ------------- | ----------------------------------------------------------------------- |
-| Write `schema.prisma` | Your editor   | You describe your models.                                               |
-| Emit the contract     | CLI           | `prisma contract emit` writes `contract.json` and its types.            |
-| Plan a migration      | CLI           | `prisma-idb migration plan` writes a migration package you commit.      |
-| Bundle migrations     | CLI           | `prisma-idb migration contract-space` writes a module your app imports. |
-| Open the database     | Browser       | The client applies pending migrations, then you query.                  |
+| Step                  | Where it runs | What happens                                                                                     |
+| --------------------- | ------------- | ------------------------------------------------------------------------------------------------ |
+| Write `schema.prisma` | Your editor   | You describe your models.                                                                        |
+| Emit the contract     | CLI           | `prisma-idb contract emit` writes `contract.json`, its declarations, and a typed runtime module. |
+| Plan a migration      | CLI           | `prisma-idb migration plan` writes a migration package you commit.                               |
+| Bundle migrations     | CLI           | `prisma-idb migration contract-space` writes a module your app imports.                          |
+| Open the database     | Browser       | The client applies pending migrations, then you query.                                           |
 
 ## Where to go next
 

@@ -2,6 +2,7 @@
 test/fixtures/schema.generated.prisma
 test/fixtures/schema.generated.json
 test/fixtures/schema.generated.d.ts
+test/fixtures/schema.generated.runtime.ts
 
 # Bootstrap-only (`db init`, never authored migrations) — fully derived
 # per-environment state, not portable history.

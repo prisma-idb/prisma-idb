@@ -1281,12 +1281,30 @@ importers:
 
   tests/prisma-idb-cli:
     devDependencies:
+      '@prisma-idb/adapter-idb':
+        specifier: workspace:*
+        version: link:../../packages/prisma-orm/adapter-idb
+      '@prisma-idb/driver-idb':
+        specifier: workspace:*
+        version: link:../../packages/prisma-orm/driver-idb
       '@prisma-idb/family-idb':
         specifier: workspace:*
         version: link:../../packages/prisma-orm/family-idb
+      '@prisma-idb/sync-server':
+        specifier: workspace:*
+        version: link:../../packages/prisma-orm/sync-server
+      '@prisma-idb/sync-server-sql':
+        specifier: workspace:*
+        version: link:../../packages/prisma-orm/sync-server-sql
+      '@prisma-idb/target-idb':
+        specifier: workspace:*
+        version: link:../../packages/prisma-orm/target-idb
       '@prisma/cli-engine':
         specifier: 0.7.0
         version: 0.7.0(@prisma/management-api-sdk@1.80.0)(magicast@0.5.4)
+      '@prisma/orm-postgres':
+        specifier: 8.0.0-rc.18
+        version: 8.0.0-rc.18(@prisma/cli-engine@0.7.0(@prisma/management-api-sdk@1.80.0)(magicast@0.5.4))(magicast@0.5.4)(temporal-polyfill@1.0.6)(typanion@3.14.0)(typescript@6.0.3)(vite@8.2.1(@types/node@24.13.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.15)(yaml@2.9.1))
       '@prisma/orm-toolchain':
         specifier: 8.0.0-rc.18
         version: 8.0.0-rc.18(@prisma/cli-engine@0.7.0(@prisma/management-api-sdk@1.80.0)(magicast@0.5.4))(magicast@0.5.4)(typanion@3.14.0)(typescript@6.0.3)(vite@8.2.1(@types/node@24.13.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.15)(yaml@2.9.1))
@@ -1296,6 +1314,9 @@ importers:
       execa:
         specifier: ^10.0.1
         version: 10.0.1
+      typescript:
+        specifier: ^6.0.3
+        version: 6.0.3
       vitest:
         specifier: ^4.1.11
         version: 4.1.11(@types/node@24.13.6)(vite@8.2.1(@types/node@24.13.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.15)(yaml@2.9.1))

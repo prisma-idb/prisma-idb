@@ -44,6 +44,8 @@ Before you add a test, read the [testing guidelines](../docs/testing-guidelines.
 
 Type-check (catches things vitest/esbuild won't):
 
+The Kanban app check emits its PostgreSQL contract and requires `DATABASE_URL`. Copy `apps/prisma-orm-kanban-example/.env.example` to `apps/prisma-orm-kanban-example/.env`, or export `DATABASE_URL` in your shell before running the root check. Static checks do not require a running database. See the [app validation instructions](../apps/prisma-orm-kanban-example/README.md#validate-changes).
+
 ```bash
 pnpm check
 ```

@@ -1,4 +1,4 @@
-import { STORAGE_HASH_HEADER, logWithRecordSchema, pushResultSchema } from "../schemas";
+import { logWithRecordSchema, pushResultSchema } from "../schemas";
 import { ContractMismatchError } from "./contract-mismatch-error";
 import type { SyncWorkerOptions } from "./sync-worker";
 import type { IdbContract } from "@prisma-idb/client-idb/orm";
@@ -35,13 +35,12 @@ export function createSyncFetchHandlers(options: SyncFetchHandlersOptions): Sync
     async pushHandler(events, signal, context) {
       const headers = new Headers(options.headers);
       headers.set("content-type", "application/json");
-      headers.set(STORAGE_HASH_HEADER, context.storageHash);
       const response = await fetchRequest(options.pushUrl, {
         method: "POST",
         headers,
         credentials: options.credentials ?? "same-origin",
         redirect: "error",
-        body: JSON.stringify({ events }),
+        body: JSON.stringify({ storageHash: context.storageHash, events }),
         signal,
       });
       return pushResultSchema
@@ -60,10 +59,9 @@ export function createSyncFetchHandlers(options: SyncFetchHandlersOptions): Sync
       // Replace any stale cursor in the endpoint URL; retain its other parameters.
       if (fromChangelogId) url.searchParams.set("since", fromChangelogId);
       else url.searchParams.delete("since");
-      const headers = new Headers(options.headers);
-      headers.set(STORAGE_HASH_HEADER, context.storageHash);
+      url.searchParams.set("storageHash", context.storageHash);
       const response = await fetchRequest(url.href, {
-        headers,
+        headers: new Headers(options.headers),
         credentials: options.credentials ?? "same-origin",
         redirect: "error",
         signal,

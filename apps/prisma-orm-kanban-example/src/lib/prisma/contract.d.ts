@@ -406,7 +406,7 @@ type ContractBase = Omit<
           readonly onCreate: {
             readonly id: "literal";
             readonly kind: "generator";
-            readonly params: {};
+            readonly params: { readonly value: false };
           };
           readonly ref: {
             readonly entry: "user";
@@ -426,7 +426,7 @@ type ContractBase = Omit<
           readonly onCreate: {
             readonly id: "literal";
             readonly kind: "generator";
-            readonly params: {};
+            readonly params: { readonly value: false };
           };
           readonly ref: {
             readonly entry: "user";

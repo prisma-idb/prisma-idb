@@ -139,14 +139,14 @@ contract: prismaIdbContract("src/prisma/schema.prisma", { projection: "client" }
 
 `prisma.config.ts` wraps an `orm` section built with `defineConfig` from `@prisma-idb/family-idb/config-types`. The [Quick Start](/docs/prisma-8/getting-started#3-configure-the-clis) shows a complete file.
 
-| Field            | Value for IndexedDB                                          | What it does                                                                                  |
-| ---------------- | ------------------------------------------------------------ | --------------------------------------------------------------------------------------------- |
-| `family`         | `@prisma-idb/family-idb/control`                             | The database family.                                                                          |
-| `target`         | `@prisma-idb/target-idb/control`                             | The target within the family. Carries the migration planner.                                  |
-| `adapter`        | `@prisma-idb/adapter-idb/control`                            | Maps Prisma types to how IndexedDB stores them.                                               |
-| `driver`         | `@prisma-idb/driver-idb/control`                             | Required by the framework. No CLI command can reach a browser database, so this is a stub.    |
-| `db.connection`  | Any string, such as `":memory:"`                             | Required by the framework, unused. The database name is chosen in the browser, with `dbName`. |
-| `contract`       | `prismaIdbContract("path/to/schema.prisma", { projection })` | The schema to read. `contract emit` writes `contract.json` and `contract.d.ts` next to it.    |
-| `migrations.dir` | `"migrations"`                                               | Where `prisma-idb migration plan` writes migration packages.                                  |
+| Field            | Value for IndexedDB                                          | What it does                                                                                                                  |
+| ---------------- | ------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------- |
+| `family`         | `@prisma-idb/family-idb/control`                             | The database family.                                                                                                          |
+| `target`         | `@prisma-idb/target-idb/control`                             | The target within the family. Carries the migration planner.                                                                  |
+| `adapter`        | `@prisma-idb/adapter-idb/control`                            | Maps Prisma types to how IndexedDB stores them.                                                                               |
+| `driver`         | `@prisma-idb/driver-idb/control`                             | Required by the framework. No CLI command can reach a browser database, so this is a stub.                                    |
+| `db.connection`  | Any string, such as `":memory:"`                             | Required by the framework, unused. The database name is chosen in the browser, with `dbName`.                                 |
+| `contract`       | `prismaIdbContract("path/to/schema.prisma", { projection })` | The schema to read. `prisma-idb contract emit` writes `contract.json`, `contract.d.ts`, and `contract.runtime.ts` next to it. |
+| `migrations.dir` | `"migrations"`                                               | Where `prisma-idb migration plan` writes migration packages.                                                                  |
 
 Both `prisma` and `prisma-idb` read this file, so neither needs `--contract` or `--migrations-dir` flags. Pass `--config <path>` if the file isn't in the project root.

@@ -1,24 +1,19 @@
-import { createSyncServer } from "@prisma-idb/sync-server";
-import { createSqlSyncAdapter, createSqlSyncHandlers, sqlGetKeyField } from "@prisma-idb/sync-server-sql";
-import type { Contract as ClientContract } from "../prisma/contract";
-import type { Contract as ServerContract } from "../prisma/schema.postgres.generated.d";
-import clientContractJson from "../prisma/contract.json" with { type: "json" };
-import serverContractJson from "../prisma/schema.postgres.generated.json" with { type: "json" };
+import { error } from "@sveltejs/kit";
+import { auth } from "$lib/server/auth";
+import { getPostgres } from "$lib/server/db";
+import { createSqlSync } from "@prisma-idb/sync-server-sql";
+import clientContract from "../prisma/contract.runtime";
+import serverContract from "../prisma/schema.postgres.generated.runtime";
 
-const serverContract = serverContractJson as unknown as ServerContract;
-
-const syncServer = createSyncServer({
-  contract: serverContract, // real Postgres contract (src/lib/server/db.ts) — no IDB-shaped stand-in
-  clientContract: clientContractJson as unknown as ClientContract,
+/** Shared sync endpoints; the session determines the trusted scope on each request. */
+export const syncHandlers = createSqlSync({
+  contract: serverContract,
+  clientContract,
   rootModel: "User",
-  // sqlGetKeyField (@prisma-idb/sync-server-sql): every model this app
-  // syncs uses a single-field key, so its "compound keys aren't supported"
-  // limitation is a real one, not a silently-ignored one — nothing in
-  // push/+server.ts or pull/+server.ts handles a composite `key`.
-  getKeyField: sqlGetKeyField,
+  db: getPostgres,
+  scopeKey: async (request) => {
+    const session = await auth.api.getSession({ headers: request.headers });
+    if (!session?.user.id) error(401, "Unauthorized");
+    return session.user.id;
+  },
 });
-
-export const sqlSyncAdapter = createSqlSyncAdapter({ contract: serverContract, syncServer });
-
-/** HTTP boundary shared by both authenticated sync routes. */
-export const syncHandlers = createSqlSyncHandlers({ adapter: sqlSyncAdapter });

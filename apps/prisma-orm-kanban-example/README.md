@@ -21,6 +21,8 @@ To use Google sign-in, set `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` in the 
 
 ## Validate changes
 
+The `check` and `check:watch` scripts emit the PostgreSQL contract before running Svelte checks. They require `DATABASE_URL` in the app's `.env` (copy `.env.example` as shown above) or exported in your shell. Contract emission and static checks do not require a running database.
+
 Keep Postgres running while you run the browser tests. They cover local records, login, offline reloads, and cross-device sync, including moving a todo between boards while offline and syncing it after reconnecting.
 
 ```sh

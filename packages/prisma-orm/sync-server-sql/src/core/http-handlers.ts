@@ -1,33 +1,49 @@
-import { STORAGE_HASH_HEADER, pushRequestBodySchema } from "@prisma-idb/sync-extension-idb/schemas";
+import { pullRequestQuerySchema, pushRequestBodySchema } from "@prisma-idb/sync-extension-idb/schemas";
+import { createSyncServer } from "@prisma-idb/sync-server";
+import type { CreateSyncServerOptions } from "@prisma-idb/sync-server";
+import { sqlGetKeyField } from "./get-key-field";
+import { createSqlSyncAdapter } from "./create-adapter";
 import type { SqlSyncAdapter } from "./create-adapter";
 
-/** Configuration shared by the fetch-compatible push and pull endpoints. */
-export interface SqlSyncHandlersOptions {
-  readonly adapter: SqlSyncAdapter;
-  /** Maximum events accepted in one push. Defaults to the adapter's limit. */
+/** A trusted application value, resolved separately for each authenticated request. */
+export type SqlSyncResolver<T> = T | ((request: Request) => T | Promise<T>);
+
+/** Creates SQL sync endpoints with the default SQL key resolver and batch limits. */
+export interface CreateSqlSyncOptions extends Pick<
+  CreateSyncServerOptions,
+  "contract" | "clientContract" | "rootModel"
+> {
+  readonly db: SqlSyncResolver<object>;
+  /** Resolve from the authenticated session, never from the request body or URL. */
+  readonly scopeKey: SqlSyncResolver<string>;
   readonly maxBatchSize?: number;
-  /** Maximum changelog rows returned by one pull. Defaults to the adapter's limit. */
   readonly pullLimit?: number;
 }
 
-/** Trusted application context, resolved after authenticating the request. */
-export interface SqlSyncRequestContext {
-  readonly db: unknown;
-  /** Resolve from the authenticated session, never from the request body or URL. */
-  readonly scopeKey: string;
+/** Fetch-compatible endpoints. In Hono, pass `c.req.raw` as the request. */
+export interface SqlSync {
+  push(request: Request): Promise<Response>;
+  pull(request: Request): Promise<Response>;
 }
 
-/** Fetch-compatible endpoints. In Hono, pass `c.req.raw` as the request. */
-export interface SqlSyncHandlers {
-  push(request: Request, context: SqlSyncRequestContext): Promise<Response>;
-  pull(request: Request, context: SqlSyncRequestContext): Promise<Response>;
+/** Internal SQL execution settings shared by the two HTTP routes. */
+interface HandlerOptions {
+  readonly adapter: SqlSyncAdapter;
+  readonly maxBatchSize?: number;
+  readonly pullLimit?: number;
+}
+
+/** Authenticated application context for one request. */
+interface RequestContext {
+  readonly db: object;
+  readonly scopeKey: string;
 }
 
 /** Validates the HTTP push envelope before applying events in the trusted scope. */
 async function handlePush(
-  { adapter, maxBatchSize }: SqlSyncHandlersOptions,
+  { adapter, maxBatchSize }: HandlerOptions,
   request: Request,
-  { db, scopeKey }: SqlSyncRequestContext
+  { db, scopeKey }: RequestContext
 ): Promise<Response> {
   let body: unknown;
   try {
@@ -43,7 +59,7 @@ async function handlePush(
     events: parsed.data.events,
     scopeKey,
     ...(maxBatchSize === undefined ? {} : { maxBatchSize }),
-    clientStorageHash: request.headers.get(STORAGE_HASH_HEADER),
+    clientStorageHash: parsed.data.storageHash,
   });
   if (outcome.ok) return Response.json(outcome.results);
   switch (outcome.reason) {
@@ -58,15 +74,19 @@ async function handlePush(
 
 /** Reads the URL cursor and maps pull outcomes to HTTP responses. */
 async function handlePull(
-  { adapter, pullLimit }: SqlSyncHandlersOptions,
+  { adapter, pullLimit }: HandlerOptions,
   request: Request,
-  { db, scopeKey }: SqlSyncRequestContext
+  { db, scopeKey }: RequestContext
 ): Promise<Response> {
+  const parsed = pullRequestQuerySchema.safeParse(Object.fromEntries(new URL(request.url).searchParams));
+  if (!parsed.success) {
+    return Response.json({ error: "Malformed query parameters", details: parsed.error.issues }, { status: 400 });
+  }
   const outcome = await adapter.pull(db, {
     scopeKey,
-    lastChangelogId: new URL(request.url).searchParams.get("since") || null,
+    lastChangelogId: parsed.data.since || null,
     ...(pullLimit === undefined ? {} : { limit: pullLimit }),
-    clientStorageHash: request.headers.get(STORAGE_HASH_HEADER),
+    clientStorageHash: parsed.data.storageHash,
   });
   if (outcome.ok) return Response.json(outcome.logs);
   switch (outcome.reason) {
@@ -79,13 +99,35 @@ async function handlePull(
 }
 
 /**
- * Creates HTTP endpoints around the adapter's contract and ownership checks.
- * Authenticate before calling these handlers. Unexpected database errors reject
- * the promise so the application's normal error middleware can handle them.
+ * Creates SQL sync endpoints bound to the full and projected contracts.
+ * Resolvers must authenticate requests and reject unauthenticated callers.
+ * Unexpected errors reject so the application's error middleware can handle them.
  */
-export function createSqlSyncHandlers(options: SqlSyncHandlersOptions): SqlSyncHandlers {
+export function createSqlSync(options: CreateSqlSyncOptions): SqlSync {
+  const syncServer = createSyncServer({
+    contract: options.contract,
+    clientContract: options.clientContract,
+    rootModel: options.rootModel,
+    getKeyField: sqlGetKeyField,
+  });
+  const handlers: HandlerOptions = {
+    adapter: createSqlSyncAdapter({ contract: options.contract, syncServer }),
+    ...(options.maxBatchSize === undefined ? {} : { maxBatchSize: options.maxBatchSize }),
+    ...(options.pullLimit === undefined ? {} : { pullLimit: options.pullLimit }),
+  };
+  /** Resolve the session before acquiring a database connection. */
+  async function context(request: Request): Promise<RequestContext> {
+    const scopeKey = typeof options.scopeKey === "function" ? await options.scopeKey(request) : options.scopeKey;
+    const db = typeof options.db === "function" ? await options.db(request) : options.db;
+    return { db, scopeKey };
+  }
   return {
-    push: (request, context) => handlePush(options, request, context),
-    pull: (request, context) => handlePull(options, request, context),
+    push: async (request) => handlePush(handlers, request, await context(request)),
+    pull: async (request) => {
+      const response = await handlePull(handlers, request, await context(request));
+      // The URL does not identify the authenticated user whose records it contains.
+      response.headers.set("Cache-Control", "no-store");
+      return response;
+    },
   };
 }

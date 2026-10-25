@@ -12,5 +12,5 @@ export type { ApplyPushInput, ApplyPushOutcome, SqlPushWireEvent } from "../core
 export { DEFAULT_PULL_LIMIT } from "../core/pull";
 export type { PullInput, PullOutcome, SqlPullLog } from "../core/pull";
 
-export { createSqlSyncHandlers } from "../core/http-handlers";
-export type { SqlSyncHandlersOptions, SqlSyncRequestContext, SqlSyncHandlers } from "../core/http-handlers";
+export { createSqlSync } from "../core/http-handlers";
+export type { CreateSqlSyncOptions, SqlSyncResolver, SqlSync } from "../core/http-handlers";
