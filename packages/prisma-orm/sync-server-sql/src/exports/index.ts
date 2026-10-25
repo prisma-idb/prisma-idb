@@ -14,3 +14,5 @@ export type { PullInput, PullOutcome, SqlPullLog } from "../core/pull";
 
 export { createSqlSync } from "../core/http-handlers";
 export type { CreateSqlSyncOptions, SqlSyncResolver, SqlSync } from "../core/http-handlers";
+
+export type { ModelWritePolicy, ModelWritePolicies } from "../core/write-policy";

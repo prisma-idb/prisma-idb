@@ -3,6 +3,7 @@ import { createSyncServer } from "@prisma-idb/sync-server";
 import type { CreateSyncServerOptions } from "@prisma-idb/sync-server";
 import { sqlGetKeyField } from "./get-key-field";
 import { createSqlSyncAdapter } from "./create-adapter";
+import type { ModelWritePolicies } from "./write-policy";
 import type { SqlSyncAdapter } from "./create-adapter";
 
 /** A trusted application value, resolved separately for each authenticated request. */
@@ -18,6 +19,8 @@ export interface CreateSqlSyncOptions extends Pick<
   readonly scopeKey: SqlSyncResolver<string>;
   readonly maxBatchSize?: number;
   readonly pullLimit?: number;
+  /** Per-model client operation and field allowlists, checked before any batch writes. */
+  readonly writePolicies?: ModelWritePolicies;
 }
 
 /** Fetch-compatible endpoints. In Hono, pass `c.req.raw` as the request. */
@@ -63,6 +66,8 @@ async function handlePush(
   });
   if (outcome.ok) return Response.json(outcome.results);
   switch (outcome.reason) {
+    case "write-policy-violation":
+      return Response.json(outcome, { status: 403 });
     case "contract-mismatch":
       return Response.json(outcome, { status: 409 });
     case "batch-too-large":
@@ -111,7 +116,11 @@ export function createSqlSync(options: CreateSqlSyncOptions): SqlSync {
     getKeyField: sqlGetKeyField,
   });
   const handlers: HandlerOptions = {
-    adapter: createSqlSyncAdapter({ contract: options.contract, syncServer }),
+    adapter: createSqlSyncAdapter({
+      contract: options.contract,
+      syncServer,
+      ...(options.writePolicies === undefined ? {} : { writePolicies: options.writePolicies }),
+    }),
     ...(options.maxBatchSize === undefined ? {} : { maxBatchSize: options.maxBatchSize }),
     ...(options.pullLimit === undefined ? {} : { pullLimit: options.pullLimit }),
   };
