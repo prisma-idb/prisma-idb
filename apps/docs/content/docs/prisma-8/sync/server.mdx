@@ -157,6 +157,7 @@ writePolicies: {
 ```
 
 This example allows User profile updates. It forbids User creation, deletion, and writes to other fields, including future fields.
+Adapter construction throws if a policy names a model absent from the contract.
 Models without a policy retain ordinary write access, subject to ownership and contract validation.
 Both allowlists are required for each configured model. An empty `operations` list forbids all writes.
 
@@ -177,6 +178,7 @@ The lower-level `applyPushEvent` returns non-retryable `WRITE_POLICY_VIOLATION` 
 **Client effect:** `createSyncFetchHandlers` throws on HTTP 403.
 The worker keeps the whole batch queued and retries with backoff, including otherwise permitted edits.
 It does not reconcile or discard the rejected batch. Pending pushes block pulls.
+Listen for the worker's `pushcompleted` event and check its `stalled` field to detect an outbox stuck after repeated failures.
 Avoid generating edits to server-owned fields. To recover existing forbidden edits, the application must discard or replace them, or the server must permit them.
 
 ### Route outcomes

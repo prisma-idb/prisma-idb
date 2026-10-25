@@ -61,6 +61,7 @@ const handlers = createSqlSync({
 ```
 
 This policy permits profile updates and rejects User creates, deletes, and updates to any other field, including future fields.
+Adapter construction throws if a policy names a model absent from the contract.
 Models without a policy keep their ordinary write behavior. Ownership and contract validation still apply.
 For each configured model, both allowlists are required. An empty `operations` list forbids all writes.
 
@@ -78,6 +79,7 @@ The lower-level `applyPushEvent` enforces the same policy and returns non-retrya
 
 With `createSyncFetchHandlers`, HTTP 403 throws. The worker keeps the whole batch queued and retries with backoff.
 It does not reconcile or discard these edits, and pending pushes block pulls. Permitted edits in that batch remain queued too.
+Listen for the worker's `pushcompleted` event and check its `stalled` field to detect an outbox stuck after repeated failures.
 Keep server-owned fields out of client writes. Existing forbidden edits require an application recovery flow to discard or replace them, or a policy change that permits them.
 
 ## Contract check

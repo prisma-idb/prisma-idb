@@ -2,6 +2,7 @@ import type { SqlPushEvent } from "./push";
 
 /** Limits client writes to a model's listed operations and fields. */
 export interface ModelWritePolicy {
+  /** Permitted sync operations. An empty list forbids all writes. */
   readonly operations: readonly ("create" | "update" | "delete")[];
   /** Create payload fields and update patch fields. Delete keys are not writes. */
   readonly writableFields: readonly string[];
@@ -15,7 +16,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** Checks raw fields before decoding can discard unknown or server-owned fields. */
+/** Returns true when a policy forbids the event, checking raw fields before decoding discards them. */
 export function violatesWritePolicy(policies: ModelWritePolicies, model: string, event: SqlPushEvent): boolean {
   const policy = Object.hasOwn(policies, model) ? policies[model] : undefined;
   if (!policy) return false;

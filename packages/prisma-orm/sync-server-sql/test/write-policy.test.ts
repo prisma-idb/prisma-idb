@@ -18,19 +18,39 @@ async function push(writePolicies: ModelWritePolicies, events: readonly SqlPushW
 }
 
 describe("per-model write policies", () => {
-  it("allows listed create fields, update patches, and deletes without treating delete keys as writes", async () => {
+  it("rejects a policy for a model absent from the contract", () => {
+    expect(() =>
+      createSqlSyncAdapter({
+        contract: testContract,
+        writePolicies: { Usr: { operations: ["update"], writableFields: ["name"] } },
+      })
+    ).toThrow('createSqlSyncAdapter: write policy model "Usr" is not in the contract.');
+  });
+
+  it("allows creates with listed payload fields", async () => {
     const db = await testDb();
     expect(
       await push({ User: { operations: ["create"], writableFields: ["id", "name"] } }, [
         { id: "create", entityType: "User", operation: "create", payload: { id: "u1", name: "Ann" } },
       ])
     ).toEqual({ ok: true, results: [{ id: "create", success: true }] });
+    expect(await db.orm.public.User.where({ id: "u1" }).first()).toMatchObject({ name: "Ann" });
+  });
+
+  it("allows updates with listed patch fields without treating the target key as a write", async () => {
+    const db = await testDb();
+    await seed(db, { User: [{ id: "u1", name: "Ann" }] });
     expect(
       await push({ User: { operations: ["update"], writableFields: ["name"] } }, [
         { id: "update", entityType: "User", operation: "update", payload: { key: "u1", patch: { name: "Ana" } } },
       ])
     ).toEqual({ ok: true, results: [{ id: "update", success: true }] });
     expect(await db.orm.public.User.where({ id: "u1" }).first()).toMatchObject({ name: "Ana" });
+  });
+
+  it("allows deletes without treating the target key as a write", async () => {
+    const db = await testDb();
+    await seed(db, { User: [{ id: "u1", name: "Ann" }] });
     expect(
       await push({ User: { operations: ["delete"], writableFields: [] } }, [
         { id: "delete", entityType: "User", operation: "delete", payload: { key: "u1" } },
@@ -117,8 +137,16 @@ describe("per-model write policies", () => {
     expect(await db.orm.public.Board.all().toArray()).toEqual([]);
     expect(await db.orm.public.User.where({ id: "u1" }).first()).toMatchObject({ name: "Ann" });
     expect(await db.orm.public.Changelog.all().toArray()).toEqual([]);
-    // The same unconfigured model still has ordinary write access on its own.
-    expect(await (await handlers.push(request([board]))).json()).toEqual([{ id: "board", success: true }]);
+  });
+
+  it("allows writes to a model without a policy", async () => {
+    const db = await testDb();
+    await seed(db, { User: [{ id: "u1", name: "Ann" }] });
+    expect(
+      await push({ User: { operations: ["update"], writableFields: ["name"] } }, [
+        { id: "board", entityType: "Board", operation: "create", payload: { id: "b1", ownerId: "u1" } },
+      ])
+    ).toEqual({ ok: true, results: [{ id: "board", success: true }] });
     expect(await db.orm.public.Board.where({ id: "b1" }).first()).toMatchObject({ ownerId: "u1" });
   });
 
@@ -135,13 +163,11 @@ describe("per-model write policies", () => {
   it("enforces the policy through the lower-level single-event API", async () => {
     const db = await testDb();
     await seed(db, { User: [{ id: "u1", name: "Ann" }] });
-    const event = { id: "denied", model: "User", operation: "delete" as const, payload: { id: "u1" }, wireKey: "u1" };
-    const { check } = testSyncServer.validatePush([event], { scopeKey: "u1" })[0]!;
     const result = await adapter({ User: { operations: ["update"], writableFields: ["name"] } }).applyPushEvent(
       db,
-      { ...event, payload: { key: "u1" } },
+      { id: "denied", operation: "delete", payload: { key: "u1" } },
       "User",
-      check,
+      { kind: "root", keyField: "id", key: "u1", scopeKey: "u1", authorized: true },
       "u1"
     );
     expect(result).toEqual({ id: "denied", success: false, error: "WRITE_POLICY_VIOLATION", retryable: false });

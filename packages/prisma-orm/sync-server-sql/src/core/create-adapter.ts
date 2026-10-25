@@ -82,8 +82,14 @@ export function createSqlSyncAdapter(options: CreateSqlSyncAdapterOptions): SqlS
     contractCheck = "required",
     writePolicies = {},
   } = options;
+  const models = new Set(Object.keys(domainModelsAtDefaultNamespace(contract.domain)));
+  for (const model of Object.keys(writePolicies)) {
+    if (!models.has(model)) {
+      throw new Error(`createSqlSyncAdapter: write policy model "${model}" is not in the contract.`);
+    }
+  }
   if (syncServer) {
-    for (const model of Object.keys(domainModelsAtDefaultNamespace(contract.domain))) {
+    for (const model of models) {
       const paths = resolveAuthorizationPaths(contract, syncServer.rootModel, model);
       assertNoParentDefaults(contract, model, resolveParentReferenceChecks(contract, getKeyField, model, paths));
     }
