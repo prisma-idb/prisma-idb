@@ -1,5 +1,37 @@
 # @prisma-idb/sync-extension-idb
 
+## 0.11.0
+
+### Minor Changes
+
+- [#372](https://github.com/prisma-idb/prisma-idb/pull/372) [`3227da2`](https://github.com/prisma-idb/prisma-idb/commit/3227da2debdb89ec80ee48e2d333a17f2fa10a44) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Expose typed enums synchronously on managed sync handles without opening IndexedDB, including during server rendering.
+
+- [#377](https://github.com/prisma-idb/prisma-idb/pull/377) [`5773e88`](https://github.com/prisma-idb/prisma-idb/commit/5773e8838bd6418fb5e7be4934281348fc052c28) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Report applied changelog entries in `pullcompleted` and `applyPull` results as `{ model, key, op }` changes. Use native IndexedDB keys, preserve compound-key order, and report ownership revocations as deletes. Skipped or rolled-back entries are excluded.
+
+  `PullCompletedEvent` and `ApplyPullResult` now require the `changes` field.
+
+- [#375](https://github.com/prisma-idb/prisma-idb/pull/375) [`5075d4d`](https://github.com/prisma-idb/prisma-idb/commit/5075d4d7cf77567ae0bfba9a9907c384cf108fff) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Move the sync storage hash from a custom header into the push JSON body and pull query. Remove `STORAGE_HASH_HEADER` and require the hash in the request schemas. Breaking: deploy the updated client and server together.
+
+- [#374](https://github.com/prisma-idb/prisma-idb/pull/374) [`6fa2057`](https://github.com/prisma-idb/prisma-idb/commit/6fa205759889c0fca9ac273e0bbee222d8b6b383) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Add `outbox.hasPending()`, `outbox.pendingCount()`, and committed `outboxchange` notifications for tracked writes and push results.
+
+  Breaking: contract mismatches now emit only `contractmismatch`, without a duplicate `error` event. `forceSync()` still rejects and the worker still enters the error status.
+
+- [#377](https://github.com/prisma-idb/prisma-idb/pull/377) [`868c2bc`](https://github.com/prisma-idb/prisma-idb/commit/868c2bc77ea6b72cb8bbc3eb7dfbed625c87bf09) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Add the opt-in `syncOnReconnect` worker option to sync on browser online and visible-page events. Overlapping events share the active cycle, and stopping removes the listeners.
+
+- [#374](https://github.com/prisma-idb/prisma-idb/pull/374) [`9731dc5`](https://github.com/prisma-idb/prisma-idb/commit/9731dc571031d131407056bd62ea0feb1a3f6c77) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Make `worker.stop()` wait for the active cycle and suppress later cycle notifications. Await it before resetting on sign-out. Store the pull cursor in IndexedDB so it survives reloads and is cleared by `reset()`; remove `getCursor` and `setCursor` options.
+
+  Replace the sync migration history with one baseline that includes the meta store. Existing browser databases must be recreated. Resetting discards queued local edits, so sync them before upgrading when possible.
+
+### Patch Changes
+
+- Updated dependencies [[`3227da2`](https://github.com/prisma-idb/prisma-idb/commit/3227da2debdb89ec80ee48e2d333a17f2fa10a44), [`f1d3134`](https://github.com/prisma-idb/prisma-idb/commit/f1d31345542f3a67eb7785592bdcf38ed14c23e9), [`e73e50a`](https://github.com/prisma-idb/prisma-idb/commit/e73e50ad12a97c63413b67a69772d7523e33bf4a)]:
+  - @prisma-idb/client-idb@0.16.0
+  - @prisma-idb/family-idb@0.16.0
+  - @prisma-idb/target-idb@0.16.0
+  - @prisma-idb/driver-idb@0.16.0
+  - @prisma-idb/adapter-idb@0.16.0
+  - @prisma-idb/runtime-idb@0.16.0
+
 ## 0.10.1
 
 ### Patch Changes

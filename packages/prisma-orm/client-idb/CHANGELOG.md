@@ -1,5 +1,19 @@
 # @prisma-idb/client-idb
 
+## 0.16.0
+
+### Minor Changes
+
+- [#372](https://github.com/prisma-idb/prisma-idb/pull/372) [`3227da2`](https://github.com/prisma-idb/prisma-idb/commit/3227da2debdb89ec80ee48e2d333a17f2fa10a44) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Expose typed enums on managed handles without opening IndexedDB. Breaking: `createManagedIdbClient` now requires `enums` in its options; wrapped clients must expose the same enum type. Auto-migrating managed clients build the accessors automatically.
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @prisma-idb/target-idb@0.16.0
+  - @prisma-idb/driver-idb@0.16.0
+  - @prisma-idb/adapter-idb@0.16.0
+  - @prisma-idb/runtime-idb@0.16.0
+
 ## 0.15.1
 
 ### Patch Changes
