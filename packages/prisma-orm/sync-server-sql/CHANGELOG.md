@@ -1,5 +1,11 @@
 # @prisma-idb/sync-server-sql
 
+## 0.10.0
+
+### Minor Changes
+
+- [#382](https://github.com/prisma-idb/prisma-idb/pull/382) [`36e15b6`](https://github.com/prisma-idb/prisma-idb/commit/36e15b6cab47e698e61cf34841bb2d0c39523848) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Add per-model `writePolicies` with operation and writable-field allowlists. Reject a forbidden push batch before any record or changelog writes and return HTTP 403 from the Fetch handlers. Enforce the same policy for lower-level single-event writes.
+
 ## 0.9.0
 
 ### Minor Changes
