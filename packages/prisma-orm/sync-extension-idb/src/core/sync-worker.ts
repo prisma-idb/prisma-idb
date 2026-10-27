@@ -170,14 +170,24 @@ type SyncEventMap = {
   contractmismatch: ContractMismatchEvent;
 };
 
+/** Options for the cycle started by `forceSync`. */
+export interface ForceSyncOptions {
+  /** Bypass pending events' retry delays for this cycle. Default false. */
+  readonly overrideBackoff?: boolean;
+}
+
 /** Controls one serialized push and pull loop and exposes its notifications. */
 export interface SyncWorker {
   /** Begin the push/pull loop. No-op if already running. */
   start(): void;
   /** Stop notifications and new cycles, then wait for the active cycle to settle, including on failure. */
   stop(): Promise<void>;
-  /** Trigger one push/pull cycle immediately, ignoring backoff. */
-  forceSync(): Promise<void>;
+  /**
+   * Start a cycle without waiting for the scheduled loop. Event retry delays still
+   * apply unless `overrideBackoff` is true. Concurrent calls join the active cycle
+   * without changing its options.
+   */
+  forceSync(options?: ForceSyncOptions): Promise<void>;
   /** Register an event listener. Returns an unsubscribe function. */
   on<K extends keyof SyncEventMap>(event: K, cb: (payload: SyncEventMap[K]) => void): () => void;
   /** Current worker status. */
@@ -238,16 +248,20 @@ export function createSyncWorker<TContract extends IdbContract>(options: SyncWor
   /**
    * Pushes batches until the outbox has nothing left to send now: it is empty,
    * or its oldest event is waiting out a retry backoff. Returns whether a
-   * retryable event remains, in which case the cycle must not pull.
+   * retryable event remains, in which case the cycle must not pull. The override
+   * bypasses event delays, but a retryable failure still ends this push phase.
    */
-  async function pushPending(): Promise<boolean> {
+  async function pushPending(overrideBackoff: boolean): Promise<boolean> {
     setStatus("pushing");
     const totals = { synced: 0, failed: 0, unreconciled: 0 };
     let sentAny = false;
     let pullBlocked = false;
     try {
       while (!stopped) {
-        const events = await getNextBatch(syncClient.rawClient, { limit: batchSize, backoff });
+        const events = await getNextBatch(syncClient.rawClient, {
+          limit: batchSize,
+          ...(!overrideBackoff && { backoff }),
+        });
         if (stopped || events.length === 0) break;
         sentAny = true;
         const results = await sendBatch(events);
@@ -373,21 +387,21 @@ export function createSyncWorker<TContract extends IdbContract>(options: SyncWor
   }
 
   /** Push first, then pull only if nothing is left to push. The two never overlap, so a pull never lands on an unsent local edit. */
-  async function runCycle(): Promise<void> {
+  async function runCycle(overrideBackoff: boolean): Promise<void> {
     try {
       await syncClient.withTransaction([OUTBOX_STORE], pruneSyncedEvents);
     } catch {
       // History cleanup is best-effort; a failure must not block pending pushes.
     }
     if (stopped) return;
-    const pullBlocked = await pushPending();
+    const pullBlocked = await pushPending(overrideBackoff);
     if (!stopped && !pullBlocked) await pullChanges();
   }
 
-  /** Runs `runCycle`, joining an already-in-flight cycle instead of starting a second one. */
-  function runExclusive(): Promise<void> {
+  /** Starts a cycle with its own retry policy, or joins the active cycle without changing that policy. */
+  function runExclusive(overrideBackoff = false): Promise<void> {
     if (inFlightCycle !== null) return inFlightCycle;
-    inFlightCycle = runCycle()
+    inFlightCycle = runCycle(overrideBackoff)
       .catch((error: unknown) => {
         // Report once per cycle, even when scheduled and forced callers share it.
         if (!stopped) {
@@ -488,14 +502,14 @@ export function createSyncWorker<TContract extends IdbContract>(options: SyncWor
       setStatus("stopped");
       return stopping;
     },
-    async forceSync() {
+    async forceSync(options) {
       if (stopped) return;
       if (timer !== null) {
         clearTimeout(timer);
         timer = null;
       }
       try {
-        await runExclusive();
+        await runExclusive(options?.overrideBackoff);
         // stop() may have run while runExclusive() was in flight; don't
         // clobber the "stopped" status it already set.
         if (!stopped) {

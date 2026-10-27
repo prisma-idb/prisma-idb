@@ -10,6 +10,7 @@ export { createSyncWorker } from "../core/sync-worker";
 export type {
   SyncWorker,
   SyncWorkerOptions,
+  ForceSyncOptions,
   SyncWorkerStatus,
   PushCompletedEvent,
   PullCompletedEvent,

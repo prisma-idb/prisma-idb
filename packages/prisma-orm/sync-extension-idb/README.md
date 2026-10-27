@@ -46,6 +46,16 @@ Contract mismatches emit only `worker.on("contractmismatch", callback)`, with `{
 
 Set `syncOnReconnect: true` to sync when the browser fires `online` or the page becomes visible. It defaults to `false`. Listeners attach on `start()` and detach on `stop()`. The `online` event also triggers sync while the page is hidden. Overlapping events share the active cycle. Outside a browser, this option has no effect.
 
+`forceSync(options?: ForceSyncOptions)` starts a cycle immediately, skipping the scheduled loop wait. It respects pending events' retry delays by default. Set `overrideBackoff: true` to bypass those delays for the cycle it starts. `ForceSyncOptions` is exported from `@prisma-idb/sync-extension-idb/client`.
+
+```ts
+await worker.forceSync(); // Respect event retry delays (the default).
+await worker.forceSync({ overrideBackoff: false }); // Same behavior.
+await worker.forceSync({ overrideBackoff: true }); // Retry pending events now.
+```
+
+Concurrent calls join the active cycle without changing its options or starting another cycle. The override preserves event order, attempt counts and the `stalled` signal. It does not resend permanent rejections. Another retryable failure ends the push phase, and pulls stay blocked until pending events clear. Later cycles use the configured backoff again.
+
 `forceSync()` reports failures through `error` or `contractmismatch` and sets status to `"error"`. Its promise still rejects with the original thrown value, so callers must handle that rejection. Successful cycles return the status to `"idle"`. Per-event server rejections are reported through `pushcompleted` and outbox errors; they do not emit a cycle error unless the cycle throws.
 
 The worker automatically keeps the newest 100 successfully acknowledged outbox events per database, ordered by `createdAt` descending and event id descending for ties. It prunes before each cycle's first push, including idle cycles, and after each push-result batch in the same transaction as the results. Unsent and failed events keep their full payload and error, including permanent rejections. Version metadata is preserved. This cleanup applies only to the worker; direct calls to low-level outbox helpers such as `markSynced` do not prune history.
