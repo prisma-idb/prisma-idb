@@ -152,13 +152,23 @@ A failed push, including a request that throws or times out, stays retryable how
 
 Custom handlers receive `context.storageHash`, the emitted client contract's `storage.storageHash`. Send it with the request, in the push body or pull query, and forward it to the server's `pull` and `applyPush`. If the server answers 409, throw `ContractMismatchError` (exported from `@prisma-idb/sync-extension-idb/client`) from the handler. The worker keeps the pull cursor, the queued edits and their payloads. It emits `contractmismatch` with `{ during: "push" | "pull" }`, sets status to `"error"`, retries with backoff, and does not emit `error` for that mismatch. Use the event to ask the user to reload. See [Contract check](/docs/prisma-8/sync/server#contract-check).
 
-| Method or property | Description                                                                                                                               |
-| ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| `start()`          | Starts the loop. Does nothing if it's running.                                                                                            |
-| `stop()`           | Returns `Promise<void>`. Stops notifications and new cycles, then waits for the active cycle to settle.                                   |
-| `forceSync()`      | Runs a cycle now, ignoring any backoff.                                                                                                   |
-| `status`           | `"idle"`, `"pushing"`, `"pulling"`, `"error"` or `"stopped"`.                                                                             |
-| `on(event, cb)`    | Subscribes to `"statuschange"`, `"error"`, `"pushcompleted"`, `"pullcompleted"` or `"contractmismatch"`. Returns an unsubscribe function. |
+| Method or property    | Description                                                                                                                               |
+| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `start()`             | Starts the loop. Does nothing if it's running.                                                                                            |
+| `stop()`              | Returns `Promise<void>`. Stops notifications and new cycles, then waits for the active cycle to settle.                                   |
+| `forceSync(options?)` | Runs a cycle now. Respects event retry delays unless `overrideBackoff` is true.                                                           |
+| `status`              | `"idle"`, `"pushing"`, `"pulling"`, `"error"` or `"stopped"`.                                                                             |
+| `on(event, cb)`       | Subscribes to `"statuschange"`, `"error"`, `"pushcompleted"`, `"pullcompleted"` or `"contractmismatch"`. Returns an unsubscribe function. |
+
+`forceSync(options?: ForceSyncOptions)` starts a cycle immediately, skipping the scheduled loop wait. It respects pending events' retry delays by default. Set `overrideBackoff: true` to bypass those delays for the cycle it starts. `ForceSyncOptions` is exported from `@prisma-idb/sync-extension-idb/client`.
+
+```ts
+await worker.forceSync(); // Respect event retry delays (the default).
+await worker.forceSync({ overrideBackoff: false }); // Same behavior.
+await worker.forceSync({ overrideBackoff: true }); // Retry pending events now.
+```
+
+Concurrent calls join the active cycle without changing its options or starting another cycle. The override preserves event order, attempt counts and the `stalled` signal. It does not resend permanent rejections. Another retryable failure ends the push phase, and pulls stay blocked until pending events clear. Later cycles use the configured backoff again.
 
 `statuschange` receives the same lowercase string as `status`. The legacy generated worker uses uppercase statuses and a different status object. Use lowercase comparisons when migrating to this package.
 

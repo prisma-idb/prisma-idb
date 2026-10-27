@@ -424,7 +424,7 @@ describe("SyncWorker — state machine", () => {
 
     const first = worker.forceSync();
     await vi.advanceTimersByTimeAsync(0);
-    const second = worker.forceSync();
+    const second = worker.forceSync({ overrideBackoff: true });
 
     resolvePull?.();
     await Promise.all([first, second]);
@@ -1453,6 +1453,101 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
       expect(calls).toEqual(["push:2", "push:2", "push:1", "pull"]);
     });
 
+    it("overrides event backoff for one cycle, drains in order, and resumes pull", async () => {
+      vi.useFakeTimers({ toFake: ["Date"], now: new Date("2026-01-01T00:00:00Z") });
+      const { client } = await createTestSyncClient();
+      await asAccessors(client.orm)["users"]!.create({ id: "u1", name: "Alice" });
+      let serverUp = false;
+      const delivered: unknown[] = [];
+      const from: (string | null)[] = [];
+      const worker = trackedWorker({
+        syncClient: client,
+        batchSize: 1,
+        pushHandler: async (events) => {
+          if (!serverUp) return [{ id: events[0]!.id, success: false, error: "offline", retryable: true }];
+          delivered.push(...events.map((event) => event.payload));
+          return events.map((event) => ({ id: event.id, success: true }));
+        },
+        pullHandler: async (cursor) => {
+          from.push(cursor);
+          return cursor === null ? [userLog(changelogId(1), "remote")] : [];
+        },
+      });
+
+      await worker.forceSync();
+      vi.setSystemTime(Date.now() + 1);
+      await asAccessors(client.orm)["users"]!.create({ id: "u2", name: "Bob" });
+      serverUp = true;
+      await worker.forceSync();
+      await worker.forceSync({ overrideBackoff: false });
+      expect(delivered).toEqual([]);
+      expect(from).toEqual([]);
+
+      await worker.forceSync({ overrideBackoff: true });
+      expect(delivered).toEqual([
+        { id: "u1", name: "Alice" },
+        { id: "u2", name: "Bob" },
+      ]);
+      expect(await client.outbox.hasPending()).toBe(false);
+      expect(await scanAll(client, "users")).toEqual([
+        { id: "remote", name: "remote" },
+        { id: "u1", name: "Alice" },
+        { id: "u2", name: "Bob" },
+      ]);
+      await worker.forceSync();
+      expect(from).toEqual([null, changelogId(1)]);
+    });
+
+    it.each(["retryable result", "throw", "timeout"] as const)(
+      "records one failed override attempt on %s and preserves later backoff and the pull cursor",
+      async (failure) => {
+        vi.useFakeTimers({ toFake: ["Date"], now: new Date("2026-01-01T00:00:00Z") });
+        const { client } = await createTestSyncClient();
+        let serverUp = false;
+        const from: (string | null)[] = [];
+        const worker = trackedWorker({
+          syncClient: client,
+          requestTimeoutMs: 10,
+          pushHandler: async (events) => {
+            if (serverUp) return events.map((event) => ({ id: event.id, success: true }));
+            if (failure === "throw") throw new Error("offline");
+            if (failure === "timeout") return new Promise(() => {});
+            return events.map((event) => ({ id: event.id, success: false, error: "offline", retryable: true }));
+          },
+          pullHandler: async (cursor) => {
+            from.push(cursor);
+            return cursor === null ? [userLog(changelogId(1), "remote")] : [];
+          },
+        });
+        const pushes: PushCompletedEvent[] = [];
+        worker.on("pushcompleted", (event) => pushes.push(event));
+        await worker.forceSync();
+        await asAccessors(client.orm)["users"]!.create({ id: "u1", name: "Alice" });
+
+        for (const options of [undefined, { overrideBackoff: true }]) {
+          const cycle = worker.forceSync(options);
+          if (failure === "retryable result") await cycle;
+          else await expect(cycle).rejects.toThrow(failure === "throw" ? "offline" : "timed out");
+        }
+        expect(await scanAll(client, "_idb_sync_outbox")).toEqual([
+          expect.objectContaining({ synced: false, retryable: true, tries: 2, lastError: expect.any(String) }),
+        ]);
+        expect(pushes.at(-1)).toMatchObject({ pullBlocked: true });
+        expect(from).toEqual([null]);
+        expect(await scanAll(client, "_idb_sync_meta")).toEqual([{ id: "pull-cursor", value: changelogId(1) }]);
+
+        serverUp = true;
+        await worker.forceSync();
+        await worker.forceSync({ overrideBackoff: false });
+        expect(await client.outbox.hasPending()).toBe(true);
+        expect(from).toEqual([null]);
+        vi.setSystemTime(Date.now() + 2_000);
+        await worker.forceSync();
+        expect(await client.outbox.hasPending()).toBe(false);
+        expect(from).toEqual([null, changelogId(1)]);
+      }
+    );
+
     it("skips the pull while a retryable event remains, and pulls once it succeeds", async () => {
       const { client } = await createTestSyncClient();
       await asAccessors(client.orm)["users"]!.create({ id: "u1", name: "Alice" });
@@ -1506,15 +1601,15 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
       vi.useFakeTimers({ toFake: ["Date"], now: new Date("2026-01-01T00:00:00Z") });
       try {
         for (let i = 0; i < 12; i++) {
-          await worker.forceSync();
           vi.setSystemTime(Date.now() + 30_000);
+          await worker.forceSync();
         }
         expect(attempts).toHaveLength(12);
         expect(pushes[9]).toMatchObject({ stalled: { tries: 10, lastError: "db down" } });
         expect(pushes[8]?.stalled).toBeUndefined();
 
         serverUp = true;
-        await worker.forceSync();
+        await worker.forceSync({ overrideBackoff: true });
       } finally {
         vi.useRealTimers();
       }
