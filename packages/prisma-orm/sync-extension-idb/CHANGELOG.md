@@ -1,5 +1,11 @@
 # @prisma-idb/sync-extension-idb
 
+## 0.12.0
+
+### Minor Changes
+
+- [#384](https://github.com/prisma-idb/prisma-idb/pull/384) [`23e8186`](https://github.com/prisma-idb/prisma-idb/commit/23e8186d90c7426e1d998122e2b422eaa2daa901) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Add `forceSync({ overrideBackoff: true })` to retry pending outbox events immediately for one sync cycle. Calls without the option continue to respect event retry delays. Export `ForceSyncOptions` and clarify the default behavior.
+
 ## 0.11.0
 
 ### Minor Changes

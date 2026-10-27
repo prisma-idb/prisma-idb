@@ -1,5 +1,12 @@
 # @prisma-idb/sync-server-sql
 
+## 0.10.1
+
+### Patch Changes
+
+- Updated dependencies [[`23e8186`](https://github.com/prisma-idb/prisma-idb/commit/23e8186d90c7426e1d998122e2b422eaa2daa901)]:
+  - @prisma-idb/sync-extension-idb@0.12.0
+
 ## 0.10.0
 
 ### Minor Changes
