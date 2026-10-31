@@ -6,6 +6,16 @@ icon: GitMerge
 
 ## Authoritative Schema DAG
 
+<Callout type="warn" title="Root model fields are not write-protected">
+  By default, the sync engine authorizes records by their ownership path to the `rootModel`, but it does **not** restrict
+  which fields of the root model itself a client may change. An authenticated client can push an update to any field on
+  its own root record, for example changing a `User`'s `email` to one that belongs to someone else (email squatting).
+  Validate or reject these updates on your server before applying them.
+
+  This is fixed in the new Prisma 8 version of sync, where write policies control which fields a client may modify. This
+  generator and library will be deprecated soon. See the [Prisma 8 sync docs](/docs/prisma-8/sync) and plan to migrate.
+</Callout>
+
 The authoritative schema DAG (Directed Acyclic Graph) defines how local changes are scoped and applied, ensuring data consistency across clients and the server. This structure manages dependencies between models during synchronization.
 
 ### Scoping Schema
