@@ -28,7 +28,7 @@ const user: User = await client.user.findFirstOrThrow({
 // Type is User, not User | null
 ```
 
-Compare with [`findFirst`](/docs/crud/find-first) which returns `null` if no match.
+Compare with [`findFirst`](/docs/legacy/crud/find-first) which returns `null` if no match.
 
 ## Error Handling
 
@@ -90,7 +90,7 @@ try {
 
 ## Filtering
 
-Same as [`findFirst`](/docs/crud/find-first):
+Same as [`findFirst`](/docs/legacy/crud/find-first):
 
 ```typescript
 const user = await client.user.findFirstOrThrow({
@@ -130,6 +130,6 @@ const userWithProfile = await client.user.findFirstOrThrow({
 
 ## See Also
 
-- [findFirst](/docs/crud/find-first) - Returns null if not found
-- [findUniqueOrThrow](/docs/crud/find-unique-or-throw) - By unique field
-- [findUnique](/docs/crud/find-unique) - Returns null if not found
+- [findFirst](/docs/legacy/crud/find-first) - Returns null if not found
+- [findUniqueOrThrow](/docs/legacy/crud/find-unique-or-throw) - By unique field
+- [findUnique](/docs/legacy/crud/find-unique) - Returns null if not found

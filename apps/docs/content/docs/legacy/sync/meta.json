@@ -9,7 +9,7 @@
     "...(implementation)"
   ],
   "root": true,
-  "title": "Sync",
-  "description": "The bi-directional sync system in Prisma IDB",
+  "title": "Legacy sync",
+  "description": "Sync for the Prisma 6 and 7 generator",
   "icon": "CloudSync"
 }

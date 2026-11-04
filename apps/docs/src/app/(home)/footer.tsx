@@ -11,14 +11,15 @@ interface FooterLink {
 
 const footerLinks: Record<string, FooterLink[]> = {
   "Get Started": [
-    { label: "Quick Start", href: "/docs/quick-start" },
-    { label: "Sync Guide", href: "/docs/sync" },
-    { label: "API Reference", href: "/docs" },
+    { label: "Quick Start", href: "/docs/prisma-8/getting-started" },
+    { label: "Sync Guide", href: "/docs/prisma-8/sync" },
+    { label: "API Reference", href: "/docs/prisma-8/api" },
+    { label: "Legacy generator (Prisma 6 and 7)", href: "/docs/legacy" },
   ],
   Project: [
     { label: "GitHub", href: GITHUB_URL, external: true },
-    { label: "npm", href: "https://www.npmjs.com/package/@prisma-idb/idb-client-generator", external: true },
-    { label: "Live Demo", href: "https://kanban.prisma-idb.dev/", external: true },
+    { label: "npm", href: "https://www.npmjs.com/package/@prisma-idb/client-idb", external: true },
+    { label: "Live Demo", href: "https://next-kanban.prisma-idb.dev/", external: true },
   ],
 };
 

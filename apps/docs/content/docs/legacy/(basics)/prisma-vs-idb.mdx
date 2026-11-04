@@ -79,7 +79,7 @@ IndexedDB has no query language. The IDB client uses a different strategy:
 4. **Pagination:** `cursor`, `skip`, and `take` are applied after sorting — cursor locates the starting record, skip offsets from there, and take limits the result count.
 5. **Relation loading:** `include` and `select` trigger separate lookups into related object stores, joined in memory.
 
-This means performance characteristics differ from SQL databases. Large datasets with complex filters may be slower than their SQL equivalents. Proper use of [indexes](/docs/indexes) helps significantly.
+This means performance characteristics differ from SQL databases. Large datasets with complex filters may be slower than their SQL equivalents. Proper use of [indexes](/docs/legacy/indexes) helps significantly.
 
 ## Type System
 

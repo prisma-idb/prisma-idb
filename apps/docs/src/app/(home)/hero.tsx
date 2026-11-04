@@ -12,7 +12,7 @@ export function Hero() {
 
       <div className="relative mx-auto max-w-3xl text-center">
         <p className="text-fd-muted-foreground animate-fade-in-up mb-5 text-sm font-medium tracking-widest uppercase">
-          Prisma generator for IndexedDB
+          Prisma 8 client for IndexedDB
         </p>
         <h1
           className={`${GeistSans.className} text-fd-foreground animate-fade-in-up text-3xl leading-[1.15] font-medium tracking-tight sm:text-5xl`}
@@ -25,8 +25,8 @@ export function Hero() {
           className="text-fd-muted-foreground animate-fade-in-up mx-auto mt-6 max-w-2xl text-base leading-relaxed sm:text-lg"
           style={{ animationDelay: "0.15s" }}
         >
-          A Prisma generator that creates a type-safe IndexedDB client with the API you already know — plus an optional
-          sync engine that handles conflict resolution, ownership, and offline-first data for you.
+          A typed IndexedDB client for Prisma 8. Write your schema once, migrate the browser database with versioned
+          migrations, and add an optional sync engine that handles ownership and offline-first data for you.
         </p>
 
         <div
@@ -34,7 +34,7 @@ export function Hero() {
           style={{ animationDelay: "0.24s" }}
         >
           <Link
-            href="/docs/quick-start"
+            href="/docs/prisma-8/getting-started"
             className="text-fd-primary-foreground inline-flex items-center gap-2 rounded-md bg-[hsl(32,100%,50%)] px-6 py-2.5 text-sm font-medium tracking-wide shadow-md shadow-[hsl(32,100%,50%)]/30 transition-all hover:bg-[hsl(32,100%,45%)] hover:shadow-lg hover:shadow-[hsl(32,100%,50%)]/30"
           >
             <BookOpen className="h-3.5 w-3.5" />
@@ -42,7 +42,7 @@ export function Hero() {
             <ChevronRight className="h-3.5 w-3.5" />
           </Link>
           <Link
-            href="https://kanban.prisma-idb.dev/"
+            href="https://next-kanban.prisma-idb.dev/"
             className="text-fd-foreground border-fd-border bg-fd-card hover:bg-fd-accent/10 inline-flex items-center gap-2 rounded-md border px-6 py-2.5 text-sm font-medium tracking-wide shadow-sm transition-colors"
           >
             <Rocket className="h-3.5 w-3.5" />

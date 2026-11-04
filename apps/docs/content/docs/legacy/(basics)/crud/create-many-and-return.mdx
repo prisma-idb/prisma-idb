@@ -29,7 +29,7 @@ const users: User[] = await client.user.createManyAndReturn({
 });
 ```
 
-Compare with [`createMany`](/docs/crud/create-many) which only returns a count.
+Compare with [`createMany`](/docs/legacy/crud/create-many) which only returns a count.
 
 ## With Selection
 
@@ -116,6 +116,6 @@ for (const user of users) {
 
 ## See Also
 
-- [createMany](/docs/crud/create-many) - Batch without getting results
-- [create](/docs/crud/create) - Create single record
-- [Transactions](/docs/transactions) - Atomic operations
+- [createMany](/docs/legacy/crud/create-many) - Batch without getting results
+- [create](/docs/legacy/crud/create) - Create single record
+- [Transactions](/docs/legacy/transactions) - Atomic operations

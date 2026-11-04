@@ -28,7 +28,7 @@ const user: User = await client.user.findUniqueOrThrow({
 // Type is User, not User | null
 ```
 
-Compare with [`findUnique`](/docs/crud/find-unique) which returns `null` if not found.
+Compare with [`findUnique`](/docs/legacy/crud/find-unique) which returns `null` if not found.
 
 ## By Primary Key
 
@@ -139,7 +139,7 @@ const userWithProfile = await client.user.findUniqueOrThrow({
 
 ## Performance
 
-Same performance characteristics as [`findUnique`](/docs/crud/find-unique) - fast index-based lookup:
+Same performance characteristics as [`findUnique`](/docs/legacy/crud/find-unique) - fast index-based lookup:
 
 ```typescript
 const user = await client.user.findUniqueOrThrow({
@@ -168,6 +168,6 @@ if (user === null) {
 
 ## See Also
 
-- [findUnique](/docs/crud/find-unique) - Returns null if not found
-- [findFirstOrThrow](/docs/crud/find-first-or-throw) - First matching with throw
-- [findFirst](/docs/crud/find-first) - Returns null if not found
+- [findUnique](/docs/legacy/crud/find-unique) - Returns null if not found
+- [findFirstOrThrow](/docs/legacy/crud/find-first-or-throw) - First matching with throw
+- [findFirst](/docs/legacy/crud/find-first) - Returns null if not found
