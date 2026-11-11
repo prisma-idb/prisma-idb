@@ -15,6 +15,7 @@ function formatNumber(n: number): string {
 
 export function SocialProof() {
   const [stats, setStats] = useState<Stats>({ stars: null, downloads: null });
+  const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -34,6 +35,7 @@ export function SocialProof() {
         stars: typeof rawStars === "number" && Number.isFinite(rawStars) ? rawStars : null,
         downloads: typeof rawDownloads === "number" && Number.isFinite(rawDownloads) ? rawDownloads : null,
       });
+      setLoaded(true);
     });
 
     return () => controller.abort();
@@ -50,6 +52,8 @@ export function SocialProof() {
         <Star className="h-3.5 w-3.5 text-amber-500" />
         {stats.stars !== null ? (
           <span>{formatNumber(stats.stars)} stars</span>
+        ) : loaded ? (
+          <span>Star on GitHub</span>
         ) : (
           <span className="bg-fd-muted inline-block h-5 w-14 animate-pulse rounded" />
         )}
@@ -63,6 +67,8 @@ export function SocialProof() {
         <Download className="h-3.5 w-3.5 text-emerald-500" />
         {stats.downloads !== null ? (
           <span>{formatNumber(stats.downloads)}/wk</span>
+        ) : loaded ? (
+          <span>npm</span>
         ) : (
           <span className="bg-fd-muted inline-block h-5 w-14 animate-pulse rounded" />
         )}
