@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { GeistSans } from "geist/font/sans";
-import { ChevronRight, BookOpen, Rocket } from "lucide-react";
+import { ArrowRight, ChevronRight, BookOpen, Rocket } from "lucide-react";
 import { SocialProof } from "./social-proof";
 
 export function Hero() {
@@ -11,9 +11,17 @@ export function Hero() {
       </div>
 
       <div className="relative mx-auto max-w-3xl text-center">
-        <p className="text-fd-muted-foreground animate-fade-in-up mb-5 text-sm font-medium tracking-widest uppercase">
-          Prisma generator for IndexedDB
-        </p>
+        <a
+          href="https://pris.ly/manifesto-2026"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-fd-muted-foreground hover:text-fd-foreground animate-fade-in-up group mb-6 inline-flex items-center gap-2 rounded-full border border-zinc-200 bg-zinc-50 px-3.5 py-1.5 text-sm shadow-sm transition-colors dark:border-zinc-800 dark:bg-zinc-900 dark:shadow-none"
+        >
+          <span className="h-1.5 w-1.5 rounded-full bg-[hsl(32,100%,50%)]" aria-hidden="true" />
+          <span className="sm:hidden">Named in the Prisma ORM manifesto</span>
+          <span className="hidden sm:inline">Named a standout extension in the Prisma ORM manifesto</span>
+          <ArrowRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" />
+        </a>
         <h1
           className={`${GeistSans.className} text-fd-foreground animate-fade-in-up text-3xl leading-[1.15] font-medium tracking-tight sm:text-5xl`}
           style={{ animationDelay: "0.06s" }}
@@ -22,11 +30,17 @@ export function Hero() {
         </h1>
 
         <p
-          className="text-fd-muted-foreground animate-fade-in-up mx-auto mt-6 max-w-2xl text-base leading-relaxed sm:text-lg"
+          className="text-fd-muted-foreground animate-fade-in-up mx-auto mt-6 max-w-2xl text-base leading-relaxed text-balance sm:text-lg"
           style={{ animationDelay: "0.15s" }}
         >
-          A Prisma generator that creates a type-safe IndexedDB client with the API you already know — plus an optional
-          sync engine that handles conflict resolution, ownership, and offline-first data for you.
+          A type-safe IndexedDB client generated from your Prisma schema, with the Prisma Client API you already know.
+          Add optional sync for offline-first apps, with conflict resolution and ownership rules.
+        </p>
+        <p
+          className="text-fd-muted-foreground animate-fade-in-up mt-3 text-sm text-balance"
+          style={{ animationDelay: "0.2s" }}
+        >
+          Works with Prisma ORM 6&nbsp;and&nbsp;7. Prisma 8 support is in preview.
         </p>
 
         <div
