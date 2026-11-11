@@ -15,10 +15,11 @@ export function Hero() {
           href="https://pris.ly/manifesto-2026"
           target="_blank"
           rel="noopener noreferrer"
-          className="text-fd-muted-foreground hover:text-fd-foreground animate-fade-in-up group mb-6 inline-flex items-center gap-1.5 rounded-full border border-zinc-200 bg-zinc-50 px-3 py-1.5 text-[11px] whitespace-nowrap shadow-sm transition-colors sm:gap-2 sm:px-3.5 sm:text-sm dark:border-zinc-800 dark:bg-zinc-900 dark:shadow-none"
+          className="text-fd-muted-foreground hover:text-fd-foreground animate-fade-in-up group mb-6 inline-flex items-center gap-2 rounded-full border border-zinc-200 bg-zinc-50 px-3.5 py-1.5 text-sm shadow-sm transition-colors dark:border-zinc-800 dark:bg-zinc-900 dark:shadow-none"
         >
           <span className="h-1.5 w-1.5 rounded-full bg-[hsl(32,100%,50%)]" aria-hidden="true" />
-          Named a standout extension in the Prisma ORM manifesto
+          <span className="sm:hidden">Named in the Prisma ORM manifesto</span>
+          <span className="hidden sm:inline">Named a standout extension in the Prisma ORM manifesto</span>
           <ArrowRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" />
         </a>
         <h1
