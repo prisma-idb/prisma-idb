@@ -40,7 +40,7 @@ export function Hero() {
           className="text-fd-muted-foreground animate-fade-in-up mt-3 text-sm text-balance"
           style={{ animationDelay: "0.2s" }}
         >
-          Works with Prisma ORM 6 and 7. Prisma 8 support is in preview.
+          Works with Prisma ORM 6&nbsp;and&nbsp;7. Prisma 8 support is in preview.
         </p>
 
         <div
