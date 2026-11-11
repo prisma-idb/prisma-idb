@@ -11,8 +11,20 @@ export function Hero() {
       </div>
 
       <div className="relative mx-auto max-w-3xl text-center">
-        <p className="text-fd-muted-foreground animate-fade-in-up mb-5 text-sm font-medium tracking-widest uppercase">
-          Prisma generator for IndexedDB
+        <p className="text-fd-muted-foreground animate-fade-in-up mb-2 text-sm font-medium tracking-widest uppercase">
+          IndexedDB for Prisma ORM 8 · generator for 6 &amp; 7
+        </p>
+        <p className="text-fd-muted-foreground animate-fade-in-up mb-5 text-sm">
+          Named in the{" "}
+          <a
+            href="https://pris.ly/manifesto-2026"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-fd-foreground hover:text-fd-accent underline underline-offset-4"
+          >
+            Prisma ORM manifesto
+          </a>{" "}
+          as one of two standout community extensions.
         </p>
         <h1
           className={`${GeistSans.className} text-fd-foreground animate-fade-in-up text-3xl leading-[1.15] font-medium tracking-tight sm:text-5xl`}
