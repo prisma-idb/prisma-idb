@@ -1,5 +1,11 @@
 # @prisma-idb/target-idb
 
+## 0.16.1
+
+### Patch Changes
+
+- [#389](https://github.com/prisma-idb/prisma-idb/pull/389) [`6e7ff35`](https://github.com/prisma-idb/prisma-idb/commit/6e7ff3584887e1056715ea9a40f47ad9cb84221d) Thanks [@jarrodldavis](https://github.com/jarrodldavis)! - Make `unique` optional in `IdbIndexDefinition` to match the canonicalised contract, which omits `unique: false`.
+
 ## 0.16.0
 
 ## 0.15.1
