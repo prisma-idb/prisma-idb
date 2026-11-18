@@ -111,7 +111,7 @@ async function withDatabase(
       const store = request.result.createObjectStore("items", { keyPath: "id" });
       for (const [name, index] of Object.entries(definition.indexes ?? {}))
         store.createIndex(name, index.keyPath as string | string[], {
-          unique: index.unique,
+          unique: index.unique ?? false,
           multiEntry: index.multiEntry ?? false,
         });
     };

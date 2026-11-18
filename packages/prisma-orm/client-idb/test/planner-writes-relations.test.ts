@@ -87,7 +87,7 @@ async function withDatabase(
       for (const [storeName, definition] of Object.entries(contract.storage.stores)) {
         const store = request.result.createObjectStore(storeName, { keyPath: definition.keyPath as string | string[] });
         for (const [name, index] of Object.entries(definition.indexes ?? {}))
-          store.createIndex(name, index.keyPath as string | string[], { unique: index.unique });
+          store.createIndex(name, index.keyPath as string | string[], { unique: index.unique ?? false });
       }
     };
     request.onsuccess = () => resolve(request.result);
