@@ -70,7 +70,7 @@ export function buildCatalog(contract: IdbContract, storeName: string, modelName
     primaryKey: source(store.keyPath, true, false),
     indexes: Object.freeze(
       Object.entries(store.indexes ?? {}).map(([name, index]) =>
-        source(index.keyPath, index.unique, index.multiEntry ?? false, name)
+        source(index.keyPath, index.unique ?? false, index.multiEntry ?? false, name)
       )
     ),
     fields: Object.freeze(fields),

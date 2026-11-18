@@ -69,7 +69,7 @@ export function applyOneDdlOp(
       const store = tx.objectStore(op.storeName);
       if (!store.indexNames.contains(op.indexName)) {
         store.createIndex(op.indexName, toDomKeyPath(op.def.keyPath), {
-          unique: op.def.unique,
+          unique: op.def.unique ?? false,
           ...(op.def.multiEntry !== undefined && { multiEntry: op.def.multiEntry }),
         });
       }

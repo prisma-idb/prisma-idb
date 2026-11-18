@@ -111,7 +111,7 @@ export type IdbRecordFieldType =
  */
 export type IdbIndexDefinition = {
   readonly keyPath: IdbKeyPath;
-  readonly unique: boolean;
+  readonly unique?: boolean;
   readonly multiEntry?: boolean;
 };
 
