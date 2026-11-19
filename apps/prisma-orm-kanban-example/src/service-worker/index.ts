@@ -2,12 +2,13 @@
 /// <reference lib="esnext" />
 /// <reference lib="webworker" />
 
-import { build, files, version } from "$service-worker";
+import { version } from "$app/env";
+import { assets, immutable } from "$app/manifest";
 
 const sw = self as unknown as ServiceWorkerGlobalScope;
 const CACHE_PREFIX = "prisma-idb-kanban";
 const CACHE_NAME = `${CACHE_PREFIX}-${version}`;
-const PRECACHE_URLS = ["/", ...build, ...files];
+const PRECACHE_URLS = ["/", ...immutable.map(({ path }) => path), ...assets.map(({ path }) => path)];
 
 sw.addEventListener("install", (event) => {
   event.waitUntil(
