@@ -13,7 +13,7 @@ import idbFamilyPack from "@prisma-idb/family-idb/pack";
 import idbTargetPack from "@prisma-idb/target-idb/pack";
 import { idbSyncExtension } from "../src/exports/control";
 import { createManagedAutoSyncIdbClient } from "../src/exports/client";
-import { changelogId, asAccessors } from "./helpers";
+import { changelogId, asAccessors, lastPage } from "./helpers";
 import { buildContractSpaceFixture } from "./_contract-space-fixture";
 
 const contract = defineContract({
@@ -87,15 +87,17 @@ describe("createManagedAutoSyncIdbClient", () => {
       pullHandler: () =>
         new Promise((resolve) => {
           finishPull = () =>
-            resolve([
-              {
-                changelogId: changelogId(7),
-                model: "User",
-                operation: "create",
-                keyPath: "u1",
-                record: { id: "u1", name: "Alice", role: "USER" },
-              },
-            ]);
+            resolve(
+              lastPage([
+                {
+                  changelogId: changelogId(7),
+                  model: "User",
+                  operation: "create",
+                  keyPath: "u1",
+                  record: { id: "u1", name: "Alice", role: "USER" },
+                },
+              ])
+            );
           enterPull();
         }),
     });
@@ -114,7 +116,7 @@ describe("createManagedAutoSyncIdbClient", () => {
         pushHandler: async () => [],
         pullHandler: async (cursor) => {
           from.push(cursor);
-          return [];
+          return lastPage([]);
         },
       });
       await next.forceSync();

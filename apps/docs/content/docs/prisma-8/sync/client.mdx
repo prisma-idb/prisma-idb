@@ -90,7 +90,7 @@ The `pullcompleted` event and the `applyPull` result include `changes: PullChang
 | `key`   | Native IndexedDB key. Compound keys are arrays in the contract's key-field order. Bytes and DateTime components use `Uint8Array` and `Date` values, rather than wire strings. Decimal keys retain the local row's stored spelling. |
 | `op`    | `"create"`, `"update"` or `"delete"`, matching the changelog operation. Revoked ownership (`record: null`) is reported as `"delete"`.                                                                                              |
 
-The list follows page order and can contain the same key more than once. It contains only committed entries: replays, invalid rows, unknown models, the halted row and later rows are excluded. Each event contains only that pull page's changes. An empty page produces an empty list. A delete can cascade to related rows or set their foreign keys to null. Those side effects are not separate changelog entries in this list, so consumers should also invalidate queries for related models.
+The list follows page order and can contain the same key more than once. It contains only committed entries: replays, invalid rows, unknown models, the halted row and later rows are excluded. Each event contains only that pull page's changes, and a cycle that pulls several pages emits one event per page. An empty page produces an empty list. A delete can cascade to related rows or set their foreign keys to null. Those side effects are not separate changelog entries in this list, so consumers should also invalidate queries for related models.
 
 `PullChange` is exported from `@prisma-idb/sync-extension-idb/client`. `PullCompletedEvent` and `ApplyPullResult` require the `changes` field.
 
@@ -133,22 +133,22 @@ worker.on("error", (error) => {
 worker.start();
 ```
 
-The worker doesn't start on its own. Each cycle first pushes: it sends batches of outbox events until none is left to send. It then pulls, but only if no retryable event remains in the outbox. This keeps a pull from landing on an edit the server has not seen. A cycle repeats every `intervalMs` while idle, and backs off after failures.
+The worker doesn't start on its own. Each cycle first pushes: it sends batches of outbox events until none is left to send. It then pulls, but only if no retryable event remains in the outbox. This keeps a pull from landing on an edit the server has not seen. While the server reports more pages, the cycle keeps pulling, pushing any new edits between pages under the same rule. A first sync therefore catches up in one cycle instead of one page per `intervalMs`. A cycle repeats every `intervalMs` while idle, and backs off after failures.
 
 The worker automatically keeps the newest 100 successfully acknowledged outbox events per database, ordered by `createdAt` descending and event id descending for ties. It prunes before each cycle's first push, including idle cycles, and after each push-result batch in the same transaction as the results. Unsent and failed events keep their full payload and error, including permanent rejections. Version metadata is preserved. This cleanup applies only to the worker; direct calls to low-level outbox helpers such as `markSynced` do not prune history.
 
 A failed push, including a request that throws or times out, stays retryable however many times it fails, unless the server says it can never succeed. Events are pushed in order, so an event that is waiting out its backoff holds back the events behind it. After 10 failed tries, `pushcompleted` carries `stalled: { eventId, tries, lastError }` for the oldest event. Show it to the user: the outbox is stuck behind that event, and pulls pause until it clears.
 
-| Option             | Default  | Description                                                                                                                                   |
-| ------------------ | -------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| `pushHandler`      | Required | `(events, signal, context) => Promise<PushResult[]>`. Sends events to your push endpoint.                                                     |
-| `pullHandler`      | Required | `(fromChangelogId, signal, context) => Promise<LogWithRecord[]>`. Fetches changes after `fromChangelogId`, which is `null` on the first pull. |
-| `syncOnReconnect`  | `false`  | Sync on `online` and when the page becomes visible while the worker is started.                                                               |
-| `batchSize`        | `20`     | Outbox events pushed per request.                                                                                                             |
-| `intervalMs`       | `5000`   | Time between cycles while idle.                                                                                                               |
-| `backoffBaseMs`    | `1000`   | Wait after the first failure. Doubles with each failure in a row. Applies to failed cycles and to each outbox event.                          |
-| `backoffMaxMs`     | `30000`  | The longest wait, for both.                                                                                                                   |
-| `requestTimeoutMs` | `30000`  | Aborts a handler call through its `signal` after this long.                                                                                   |
+| Option             | Default  | Description                                                                                                                                        |
+| ------------------ | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pushHandler`      | Required | `(events, signal, context) => Promise<PushResult[]>`. Sends events to your push endpoint.                                                          |
+| `pullHandler`      | Required | `(fromChangelogId, signal, context) => Promise<PullPage>`. Fetches `{ logs, hasMore }` after `fromChangelogId`, which is `null` on the first pull. |
+| `syncOnReconnect`  | `false`  | Sync on `online` and when the page becomes visible while the worker is started.                                                                    |
+| `batchSize`        | `20`     | Outbox events pushed per request.                                                                                                                  |
+| `intervalMs`       | `5000`   | Time between cycles while idle.                                                                                                                    |
+| `backoffBaseMs`    | `1000`   | Wait after the first failure. Doubles with each failure in a row. Applies to failed cycles and to each outbox event.                               |
+| `backoffMaxMs`     | `30000`  | The longest wait, for both.                                                                                                                        |
+| `requestTimeoutMs` | `30000`  | Aborts a handler call through its `signal` after this long.                                                                                        |
 
 Custom handlers receive `context.storageHash`, the emitted client contract's `storage.storageHash`. Send it with the request, in the push body or pull query, and forward it to the server's `pull` and `applyPush`. If the server answers 409, throw `ContractMismatchError` (exported from `@prisma-idb/sync-extension-idb/client`) from the handler. The worker keeps the pull cursor, the queued edits and their payloads. It emits `contractmismatch` with `{ during: "push" | "pull" }`, sets status to `"error"`, retries with backoff, and does not emit `error` for that mismatch. Use the event to ask the user to reload. See [Contract check](/docs/prisma-8/sync/server#contract-check).
 
@@ -189,7 +189,7 @@ await db.reset();
 
 Set `syncOnReconnect: true` to sync when the browser fires `online` or the page becomes visible. It defaults to `false`. Listeners attach on `start()` and detach on `stop()`. The `online` event also triggers sync while the page is hidden. Overlapping events share the active cycle. Outside a browser, this option has no effect.
 
-The push and pull response shapes are exported as Zod schemas from `@prisma-idb/sync-extension-idb/schemas`: `pushResultSchema` and `logWithRecordSchema`.
+The push and pull response shapes are exported as Zod schemas from `@prisma-idb/sync-extension-idb/schemas`: `pushResultSchema` and `pullResponseSchema`. A pull response is `{ logs, hasMore }`, and `logWithRecordSchema` describes one entry of `logs`.
 
 <Cards>
   <Card title="Sync server" href="/docs/prisma-8/sync/server" />

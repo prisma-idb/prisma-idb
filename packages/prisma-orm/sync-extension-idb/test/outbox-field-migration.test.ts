@@ -9,7 +9,7 @@ import { createAutoMigratingSyncIdbClient } from "../src/exports/client";
 import { idbSyncExtension } from "../src/exports/control";
 import { syncContract } from "../src/contract";
 import { buildContractSpaceFixture } from "./_contract-space-fixture";
-import { asAccessors, scanAll } from "./helpers";
+import { asAccessors, scanAll, lastPage } from "./helpers";
 
 const contract = defineContract({
   family: idbFamily,
@@ -55,7 +55,7 @@ describe("nullable outbox fields", () => {
               : { id: event.id, success: false, retryable: false, error: "rejected" }
           );
         },
-        pullHandler: async () => [],
+        pullHandler: async () => lastPage(),
       });
       await worker.forceSync();
       await worker.stop();

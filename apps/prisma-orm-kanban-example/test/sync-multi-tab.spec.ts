@@ -32,7 +32,7 @@ async function installWorker(page: Page, awaitPeer: () => Promise<void>): Promis
         if (!response.ok) throw new Error(`Push failed: ${response.status}`);
         return response.json();
       },
-      pullHandler: async () => [],
+      pullHandler: async () => ({ logs: [], hasMore: false }),
     });
   });
 }
@@ -81,7 +81,8 @@ async function pullChanges(page: Page) {
   return page.evaluate(async () => {
     const hash = (window as unknown as HarnessWindow).__syncHarness.syncClient.contract.storage.storageHash;
     const response = await fetch(`/api/sync/pull?${new URLSearchParams({ storageHash: hash })}`);
-    return { status: response.status, logs: await response.json() };
+    const body = (await response.json()) as { logs: unknown[] };
+    return { status: response.status, logs: body.logs };
   });
 }
 

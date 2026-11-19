@@ -48,9 +48,9 @@ describe("sync HTTP handlers", () => {
     expect(await response.json()).toEqual([{ id: "e1", success: true }]);
     const pullResponse = await handlers.pull(new Request(`https://sync.test/pull?storageHash=${context.storageHash}`));
     expect(pullResponse.headers.get("cache-control")).toBe("no-store");
-    const logs = await client.pullHandler(null, signal, context);
+    const { logs } = await client.pullHandler(null, signal, context);
     expect(logs).toMatchObject([{ model: "User", record: { id: "u1", name: "Ann" } }]);
-    expect(await client.pullHandler(logs[0]!.changelogId, signal, context)).toEqual([]);
+    expect(await client.pullHandler(logs[0]!.changelogId, signal, context)).toEqual({ logs: [], hasMore: false });
 
     expect(await client.pushHandler([], signal, context)).toEqual([]);
   });
@@ -81,7 +81,7 @@ describe("sync HTTP handlers", () => {
           headers: { authorization: `Bearer ${id}` },
         })
       );
-      expect(await response.json()).toMatchObject([{ record: { id, name: id } }]);
+      expect(await response.json()).toMatchObject({ logs: [{ record: { id, name: id } }], hasMore: false });
     }
     await expect(scoped.pull(new Request("https://sync.test/pull"))).rejects.toThrow("Unauthorized");
   });
@@ -118,7 +118,7 @@ describe("sync HTTP handlers", () => {
       await expect(client.pushHandler([], signal, oldContext)).rejects.toBeInstanceOf(ContractMismatchError);
       await expect(client.pullHandler(null, signal, oldContext)).rejects.toBeInstanceOf(ContractMismatchError);
       const accepted = await client.pullHandler(null, signal, context);
-      expect(accepted).toEqual([]);
+      expect(accepted).toEqual({ logs: [], hasMore: false });
     }
   );
 

@@ -17,6 +17,7 @@ import {
   openTestDb,
   scanAll,
   testDbName,
+  lastPage,
 } from "./helpers";
 
 type TestClient = Awaited<ReturnType<typeof createTestSyncClient>>["client"];
@@ -36,7 +37,7 @@ async function syncOnce(
   const worker = createSyncWorker({
     syncClient: client,
     pushHandler: async (events) => events.map(answer),
-    pullHandler: async () => [],
+    pullHandler: async () => lastPage(),
     ...options,
   });
   workers.push(worker);
@@ -230,7 +231,7 @@ describe("a push the server rejected for good", () => {
                 : accept(event)
             )
             .reverse(),
-        pullHandler: async () => [],
+        pullHandler: async () => lastPage(),
       });
       workers.push(worker);
       await worker.forceSync();

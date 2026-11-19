@@ -424,6 +424,7 @@ describe("pull", () => {
     expect(await bigAdapter.pull(db, { scopeKey: "1", lastChangelogId: logs.at(-1)!.changelogId })).toEqual({
       ok: true,
       logs: [],
+      hasMore: false,
     });
   });
 
@@ -459,7 +460,14 @@ describe("pull", () => {
       });
     }
     const outcome = await adapter.pull(db, { scopeKey: "u1" });
-    expect(outcome.ok && outcome.logs).toHaveLength(50);
+    if (!outcome.ok) throw new Error(outcome.reason);
+    expect(outcome.logs).toHaveLength(50);
+    expect(outcome.hasMore).toBe(true);
+    const rest = await adapter.pull(db, { scopeKey: "u1", lastChangelogId: outcome.logs.at(-1)!.changelogId });
+    expect(rest.ok && [rest.logs.length, rest.hasMore]).toEqual([1, false]);
+    // A page that ends exactly at the last row has nothing more after it.
+    const exact = await adapter.pull(db, { scopeKey: "u1", limit: 51 });
+    expect(exact.ok && [exact.logs.length, exact.hasMore]).toEqual([51, false]);
   });
 
   it("pairs reordered ownership checks by changelog id and preserves page order", async () => {
@@ -528,7 +536,11 @@ describe("pull", () => {
     const all = await adapter.pull(db, { scopeKey: "u1" });
     if (!all.ok) throw new Error("unexpected");
     const last = all.logs.at(-1)!.changelogId;
-    expect(await adapter.pull(db, { scopeKey: "u1", lastChangelogId: last })).toEqual({ ok: true, logs: [] });
+    expect(await adapter.pull(db, { scopeKey: "u1", lastChangelogId: last })).toEqual({
+      ok: true,
+      logs: [],
+      hasMore: false,
+    });
   });
 
   it("returns record: null for deletes and for rows that changed owner since the push", async () => {

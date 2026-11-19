@@ -85,14 +85,14 @@ Returned pull and rejected-push records contain only top-level fields from the c
 
 `createSqlSyncAdapter({ contract, syncServer, getKeyField?, contractCheck? })` from `@prisma-idb/sync-server-sql` binds the server contract and ownership graph once at startup. `getKeyField` defaults to `sqlGetKeyField`. `applyPush`, `pull` and `resolvePullRecord` require `syncServer`. The other methods work without it. The package also exports `sqlGetKeyField`, `DEFAULT_MAX_PUSH_BATCH_SIZE` (1000) and `DEFAULT_PULL_LIMIT` (50), plus the adapter's option, input and result types.
 
-| Member                                                                   | Result                                                                                                                                                                                                               |
-| ------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `applyPush(db, { events, scopeKey, clientStorageHash?, maxBatchSize? })` | Validates and applies events in order. Returns `{ ok: true, results }` through the first retryable failure. Rejects oversized batches and duplicate event ids before any writes. The default maximum is 1000 events. |
-| `pull(db, { scopeKey, clientStorageHash?, lastChangelogId?, limit? })`   | Reads the next page, checks current ownership and resolves each record. Returns `{ ok: true, logs }`. The default page size is 50. The cursor is exclusive.                                                          |
-| `getKeyField(model)`                                                     | The model's primary-key field.                                                                                                                                                                                       |
-| `toSyncPushPayload(operation, payload, keyField)`                        | Maps a decoded payload to the shape `validatePush` expects.                                                                                                                                                          |
-| `applyPushEvent(db, event, model, check, scopeKey)`                      | Checks ownership, writes the record and inserts its `Changelog` row in one transaction. Repeated event ids do not apply twice.                                                                                       |
-| `resolvePullRecord(db, model, check, keyPath, operation)`                | Returns the current record with only client-contract fields if the user still owns it, or `null`. Needs `syncServer`.                                                                                                |
+| Member                                                                   | Result                                                                                                                                                                                                                  |
+| ------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `applyPush(db, { events, scopeKey, clientStorageHash?, maxBatchSize? })` | Validates and applies events in order. Returns `{ ok: true, results }` through the first retryable failure. Rejects oversized batches and duplicate event ids before any writes. The default maximum is 1000 events.    |
+| `pull(db, { scopeKey, clientStorageHash?, lastChangelogId?, limit? })`   | Reads the next page, checks current ownership and resolves each record. Returns `{ ok: true, logs, hasMore }`; `hasMore` is true if more changes follow the page. The default page size is 50. The cursor is exclusive. |
+| `getKeyField(model)`                                                     | The model's primary-key field.                                                                                                                                                                                          |
+| `toSyncPushPayload(operation, payload, keyField)`                        | Maps a decoded payload to the shape `validatePush` expects.                                                                                                                                                             |
+| `applyPushEvent(db, event, model, check, scopeKey)`                      | Checks ownership, writes the record and inserts its `Changelog` row in one transaction. Repeated event ids do not apply twice.                                                                                          |
+| `resolvePullRecord(db, model, check, keyPath, operation)`                | Returns the current record with only client-contract fields if the user still owns it, or `null`. Needs `syncServer`.                                                                                                   |
 
 `db` is your Prisma 8 SQL client. It must have `.transaction(fn)` and `.orm.public.<Model>`. Resolve `scopeKey` from the authenticated session, never the request body or query string.
 
@@ -125,7 +125,7 @@ Push reads `{ storageHash, events }` from JSON. Pull reads `storageHash` and the
 
 Every pull response sets `Cache-Control: no-store`, because the URL does not identify the authenticated user. The pull transport adds no custom headers. Application authentication headers can still require a CORS preflight.
 
-Success returns the results or logs array. A write policy violation returns HTTP 403. A `contract-mismatch` returns HTTP 409. Other adapter refusal outcomes return HTTP 400. Unexpected errors reject the handler promise and reach the app's error middleware.
+Push success returns the results array. Pull success returns `{ logs, hasMore }`. A write policy violation returns HTTP 403. A `contract-mismatch` returns HTTP 409. Other adapter refusal outcomes return HTTP 400. Unexpected errors reject the handler promise and reach the app's error middleware.
 
 Hono can pass its raw request directly:
 
@@ -295,7 +295,7 @@ For your own schema pipeline, `prepareSqlSchemaWithSync` takes schema text and r
 - **A checked relation references a unique field, a compound key, or has a foreign key default.** Change the relation to reference the parent's single-field primary key. Remove database and ORM-generated defaults from the referencing foreign key, and supply its value explicitly when creating a record. Regenerate the server and client contracts, and migrate the SQL schema to match. See [Checked foreign keys](#checked-foreign-keys) for the configuration errors.
 - **Building the server's database client from the browser's contract.** `db.orm.public.*` and the SQL adapter need the SQL contract (`schema.postgres.generated`). With the browser's `contract` type, model names often still resolve, but queries lose their types: no autocomplete, and no error for a misspelled field.
 - **Wrong capitalization in model names.** Names pass straight through to `db.orm.public[model]`, so `changelog` instead of `Changelog` fails with `Model "changelog" not found on db.orm.public.`
-- **An unlimited custom pull query.** `sqlSyncAdapter.pull` defaults to 50 rows and uses an exclusive changelog cursor. If you use the lower-level methods, limit and page your own changelog query too.
+- **An unlimited custom pull query.** `sqlSyncAdapter.pull` defaults to 50 rows and uses an exclusive changelog cursor. If you use the lower-level methods, limit and page your own changelog query too, and return `hasMore` so the worker keeps pulling until it catches up.
 
 <Cards>
   <Card title="Sync tutorial" href="/docs/prisma-8/sync" />

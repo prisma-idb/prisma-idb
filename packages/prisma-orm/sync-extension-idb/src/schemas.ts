@@ -77,3 +77,15 @@ export const logWithRecordSchema = z.union([
 ]);
 /** A pulled record or an explicit key-validation failure from the server. */
 export type LogWithRecordBody = z.infer<typeof logWithRecordSchema>;
+
+/**
+ * A pull endpoint's response: one page of changes, oldest first. `hasMore`
+ * is true if more changes follow the page, so the client pulls again from
+ * the page's last `changelogId` without waiting for its next sync cycle.
+ */
+export const pullResponseSchema = z.object({
+  logs: z.array(logWithRecordSchema),
+  hasMore: z.boolean(),
+});
+/** The validated wire shape of one pull page. */
+export type PullResponseBody = z.infer<typeof pullResponseSchema>;

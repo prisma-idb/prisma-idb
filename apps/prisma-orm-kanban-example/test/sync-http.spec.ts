@@ -80,13 +80,17 @@ test("HTTP sync uses the session account despite forged push and pull scopes", a
     const otherPull = await other.request.get(pullUrl({ scopeKey: owner.userId }));
     expect(ownPull.status()).toBe(200);
     expect(otherPull.status()).toBe(200);
-    const ownLogs = await ownPull.json();
+    const ownPage = await ownPull.json();
+    const ownLogs = ownPage.logs;
+    expect(ownPage.hasMore).toBe(false);
     expect(ownLogs).toMatchObject([{ model: "Board", keyPath: ownBoard.payload.id, record: ownBoard.payload }]);
     expect(ownLogs).toHaveLength(1);
-    expect(await otherPull.json()).toMatchObject([
+    const otherPage = await otherPull.json();
+    expect(otherPage.hasMore).toBe(false);
+    expect(otherPage.logs).toMatchObject([
       { model: "Board", keyPath: otherBoard.payload.id, record: otherBoard.payload },
     ]);
-    expect(await otherPull.json()).toHaveLength(1);
+    expect(otherPage.logs).toHaveLength(1);
   } finally {
     await owner.request.dispose();
     await other.request.dispose();
@@ -110,16 +114,16 @@ test("refused HTTP contracts leave writes unapplied and a saved pull cursor usab
       ).status()
     ).toBe(409);
     const initial = await owner.request.get(pullUrl());
-    const cursor = (await initial.json())[0].changelogId as string;
+    const cursor = (await initial.json()).logs[0].changelogId as string;
     expect((await owner.request.get(pullUrl({ since: cursor, storageHash: "old-contract" }))).status()).toBe(409);
     const unchanged = await owner.request.get(pullUrl({ since: cursor }));
-    expect(await unchanged.json()).toEqual([]);
+    expect(await unchanged.json()).toEqual({ logs: [], hasMore: false });
     expect(await push(owner.request, owner.userId, [pending])).toEqual([{ id: pending.id, success: true }]);
     const resumed = await owner.request.get(pullUrl({ since: cursor }));
-    expect(await resumed.json()).toMatchObject([
-      { model: "Board", keyPath: pending.payload.id, record: pending.payload },
-    ]);
-    expect(await resumed.json()).toHaveLength(1);
+    const resumedPage = await resumed.json();
+    expect(resumedPage.hasMore).toBe(false);
+    expect(resumedPage.logs).toMatchObject([{ model: "Board", keyPath: pending.payload.id, record: pending.payload }]);
+    expect(resumedPage.logs).toHaveLength(1);
   } finally {
     await owner.request.dispose();
   }
