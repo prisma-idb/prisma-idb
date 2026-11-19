@@ -1,5 +1,5 @@
-import { browser } from "$app/environment";
-import { PUBLIC_POSTHOG_HOST, PUBLIC_POSTHOG_PROJECT_TOKEN } from "$env/static/public";
+import { browser } from "$app/env";
+import { PUBLIC_POSTHOG_HOST, PUBLIC_POSTHOG_PROJECT_TOKEN } from "$app/env/public";
 import { initializeClient } from "$lib/clients/idb-client";
 import posthog from "posthog-js";
 

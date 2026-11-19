@@ -1,4 +1,4 @@
-import { browser } from "$app/environment";
+import { browser } from "$app/env";
 import { PrismaIDBClient } from "$lib/prisma-idb/client/prisma-idb-client";
 
 let client: PrismaIDBClient | undefined;

@@ -17,6 +17,7 @@
         {
           title: "Dashboard",
           url: "/dashboard",
+          route: "/(app)/dashboard",
           icon: BlocksIcon,
         },
       ],
@@ -52,7 +53,7 @@
                   onclick={() => sidebar.setOpenMobile(false)}
                 >
                   {#snippet child({ props })}
-                    <a href={resolve(item.url)} {...props}>
+                    <a href={resolve(item.route)} {...props}>
                       <item.icon />
                       <span>{item.title}</span>
                     </a>

@@ -1,4 +1,4 @@
-import { env } from "$env/dynamic/private";
+import * as env from "$app/env/private";
 import { getRequestEvent } from "$app/server";
 import { betterAuth } from "better-auth";
 import { anonymous } from "better-auth/plugins";

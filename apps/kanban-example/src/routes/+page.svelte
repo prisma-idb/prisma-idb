@@ -81,7 +81,7 @@
       </div>
 
       <div class="mb-16 flex flex-col justify-center gap-4 sm:flex-row">
-        <a href={resolve("/dashboard")}>
+        <a href={resolve("/(app)/dashboard")}>
           <Button size="lg" class="w-full sm:w-auto">
             <Code class="mr-2 h-4 w-4" />
             Open App
