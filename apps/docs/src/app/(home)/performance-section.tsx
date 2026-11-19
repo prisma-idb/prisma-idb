@@ -2,9 +2,9 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { GeistSans } from "geist/font/sans";
 import { GeistMono } from "geist/font/mono";
 import { ChevronRight, Loader2, AlertCircle } from "lucide-react";
+import { Section, SectionHeader } from "./section";
 
 const PUBLIC_BENCHMARK_SNAPSHOT_URL =
   "https://cdn.jsdelivr.net/gh/prisma-idb/prisma-idb@benchmark-data/prisma-orm/latest.json";
@@ -150,35 +150,28 @@ export function PerformanceSection() {
   }, []);
 
   return (
-    <section className="border-fd-border/60 border-t px-6 py-16 sm:py-24 lg:px-8">
-      <div className="mx-auto max-w-5xl">
-        <div className="mb-12 text-center sm:mb-14">
-          <h2 className={`${GeistSans.className} text-fd-foreground mb-4 text-3xl font-bold sm:text-4xl`}>
-            Built for speed. Measured honestly.
-          </h2>
-          <p className="text-fd-muted-foreground mx-auto max-w-2xl text-base leading-relaxed">
-            Time per query at the 95th percentile, in real Chrome against real IndexedDB. Straight from the latest CI
-            run on <code className="text-fd-accent text-[13px]">main</code>.
-          </p>
-        </div>
+    <Section>
+      <SectionHeader eyebrow="Performance" title="Built for speed. Measured honestly.">
+        Time per query at the 95th percentile, in real Chrome against real IndexedDB. Straight from the latest CI run on{" "}
+        <code className="text-fd-accent text-[0.9em]">main</code>.
+      </SectionHeader>
 
-        {state.status === "loading" ? (
-          <PerformancePlaceholder
-            icon={<Loader2 className="text-fd-muted-foreground h-5 w-5 animate-spin" />}
-            title="Loading latest benchmark snapshot…"
-            description="Fetching the most recent CI run from the public benchmark feed."
-          />
-        ) : state.status === "unavailable" ? (
-          <PerformancePlaceholder
-            icon={<AlertCircle className="h-5 w-5 text-amber-500 dark:text-amber-400" />}
-            title="No benchmark snapshot is available yet."
-            description="As soon as the benchmark workflow finishes a run on main, the latest results will appear here."
-          />
-        ) : (
-          <PerformanceContent snapshot={state.snapshot} />
-        )}
-      </div>
-    </section>
+      {state.status === "loading" ? (
+        <PerformancePlaceholder
+          icon={<Loader2 className="text-fd-muted-foreground h-5 w-5 animate-spin" />}
+          title="Loading latest benchmark snapshot…"
+          description="Fetching the most recent CI run from the public benchmark feed."
+        />
+      ) : state.status === "unavailable" ? (
+        <PerformancePlaceholder
+          icon={<AlertCircle className="h-5 w-5 text-amber-500 dark:text-amber-400" />}
+          title="No benchmark snapshot is available yet."
+          description="As soon as the benchmark workflow finishes a run on main, the latest results will appear here."
+        />
+      ) : (
+        <PerformanceContent snapshot={state.snapshot} />
+      )}
+    </Section>
   );
 }
 

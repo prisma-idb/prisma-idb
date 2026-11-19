@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, type ReactNode } from "react";
+import { useId, useRef, type ReactNode } from "react";
 import Link from "next/link";
 import { ArrowRight, X } from "lucide-react";
 
@@ -26,6 +26,8 @@ interface GetStartedDialogProps {
 /** A button that asks which Prisma version the reader uses, then links to that version's quick start. */
 export function GetStartedDialog({ className, children }: GetStartedDialogProps) {
   const dialogRef = useRef<HTMLDialogElement>(null);
+  // The page renders this dialog more than once, so its title id must be unique.
+  const titleId = useId();
 
   return (
     <>
@@ -35,7 +37,7 @@ export function GetStartedDialog({ className, children }: GetStartedDialogProps)
 
       <dialog
         ref={dialogRef}
-        aria-labelledby="get-started-title"
+        aria-labelledby={titleId}
         // Close when the backdrop, which is part of the dialog element, is clicked.
         onClick={(event) => {
           if (event.target === event.currentTarget) event.currentTarget.close();
@@ -45,7 +47,7 @@ export function GetStartedDialog({ className, children }: GetStartedDialogProps)
         <div className="p-6">
           <div className="mb-5 flex items-start justify-between gap-4">
             <div>
-              <h2 id="get-started-title" className="text-lg font-semibold">
+              <h2 id={titleId} className="text-lg font-semibold">
                 Which Prisma version do you use?
               </h2>
               <p className="text-fd-muted-foreground mt-1 text-sm">The setup and the API differ between versions.</p>
