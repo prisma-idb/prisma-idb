@@ -34,10 +34,10 @@
     "db:init": "prisma db init --config prisma.config.ts"
   },
   "dependencies": {
-    "@prisma-idb/sync-server": "workspace:*",
     "@prisma-idb/sync-extension-idb": "workspace:*",
-    "@prisma/orm-framework": "8.0.0-rc.18",
-    "@prisma-idb/target-idb": "workspace:*"
+    "@prisma-idb/sync-server": "workspace:*",
+    "@prisma-idb/target-idb": "workspace:*",
+    "@prisma/orm-framework": "8.0.0-rc.18"
   },
   "peerDependencies": {
     "@prisma/orm-postgres": "8.0.0-rc.18"
@@ -48,20 +48,20 @@
     }
   },
   "devDependencies": {
+    "@prisma-idb/client-idb": "workspace:*",
+    "@prisma-idb/family-idb": "workspace:*",
     "@prisma/cli-engine": "0.7.0",
     "@prisma/orm-postgres": "8.0.0-rc.18",
     "@prisma/orm-toolchain": "8.0.0-rc.18",
     "@types/node": "^24.13.3",
     "@types/pg": "^8.21.0",
-    "dotenv": "^17.4.2",
+    "dotenv": "^18.0.10",
+    "fake-indexeddb": "^6.2.5",
     "pg": "^8.23.0",
     "prisma": "8.0.0-rc.23",
-    "tsdown": "^0.22.14",
+    "tsdown": "^0.23.7",
     "typescript": "^6.0.3",
-    "vitest": "^4.1.11",
-    "@prisma-idb/client-idb": "workspace:*",
-    "@prisma-idb/family-idb": "workspace:*",
-    "fake-indexeddb": "^6.2.5"
+    "vitest": "^5.1.1"
   },
   "publishConfig": {
     "access": "public"

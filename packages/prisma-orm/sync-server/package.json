@@ -40,16 +40,16 @@
   },
   "dependencies": {
     "@prisma-idb/family-idb": "workspace:*",
+    "@prisma-idb/target-idb": "workspace:*",
     "@prisma/orm-family-sql": "8.0.0-rc.18",
     "@prisma/orm-framework": "8.0.0-rc.18",
-    "@prisma/orm-postgres": "8.0.0-rc.18",
-    "@prisma-idb/target-idb": "workspace:*"
+    "@prisma/orm-postgres": "8.0.0-rc.18"
   },
   "devDependencies": {
     "@types/node": "^24.13.3",
-    "tsdown": "^0.22.14",
+    "tsdown": "^0.23.7",
     "typescript": "^6.0.3",
-    "vitest": "^4.1.11"
+    "vitest": "^5.1.1"
   },
   "publishConfig": {
     "access": "public"
