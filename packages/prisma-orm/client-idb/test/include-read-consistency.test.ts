@@ -107,7 +107,10 @@ describe("include() reads one consistent state", () => {
     await db.orm.users.create(alice);
     await db.orm.posts.create(post);
   });
-  afterEach(() => db.close());
+  afterEach(() => {
+    vi.restoreAllMocks();
+    db.close();
+  });
 
   it("returns a parent with the children it had when the read began", async () => {
     const write = deleteAliceOnceReadStarts("users");
