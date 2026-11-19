@@ -321,7 +321,7 @@ export function withDecimalIdentityExecutor(contract: IdbContract, executor: Idb
           const scope = await transaction(body.kind === "batch" ? [...body.storeNames] : [body.storeName], "readwrite");
           try {
             const rows: Record<string, unknown>[] = [];
-            for (const op of ops) rows.push(...(await scope.execute(op)));
+            for (const op of ops) for (const row of await scope.execute(op)) rows.push(row);
             await scope.commit();
             for (const row of rows) yield row as Row;
           } catch (error) {

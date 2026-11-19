@@ -16,6 +16,8 @@ import { defineContract } from "@prisma-idb/family-idb/contract-ts";
 import idbFamilyPack from "@prisma-idb/family-idb/pack";
 import idbTargetPack from "@prisma-idb/target-idb/pack";
 import { createIdbClient } from "../src/exports/client";
+import { idbOrm } from "../src/exports/orm";
+import type { IdbQueryExecutorWithTransaction } from "../src/exports/orm";
 
 const contract = defineContract({
   family: idbFamilyPack,
@@ -127,5 +129,28 @@ describe("include() reads one consistent state", () => {
     const users = await db.transaction(["users"], (tx) => tx.users.include("posts").all().toArray());
 
     expect(users).toEqual([{ ...alice, posts: [post] }]);
+  });
+});
+
+describe("include() reads of large stores", () => {
+  it("reads more parents than fit in one call's arguments", async () => {
+    // Spreading this many rows into one push() call overflows the call stack.
+    const users = Array.from({ length: 300_000 }, (_, i) => ({ id: `u${i}`, name: "User" }));
+    const executor = {
+      query: () => {
+        throw new Error("an include() read runs in a transaction");
+      },
+      transaction: async () => ({
+        execute: async (plan: { storeName: string }) => (plan.storeName === "users" ? users : []),
+        commit: async () => {},
+        rollback: () => {},
+      }),
+    } as unknown as IdbQueryExecutorWithTransaction;
+    const orm = idbOrm({ contract, executor }) as unknown as Record<"users", LooseAccessor>;
+
+    const rows = await orm.users.include("posts").all().toArray();
+
+    expect(rows).toHaveLength(users.length);
+    expect(rows[0]).toEqual({ id: "u0", name: "User", posts: [] });
   });
 });
