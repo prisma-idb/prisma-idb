@@ -18,12 +18,31 @@ jobs:
       prisma_idb_e2e: ${{ steps.prisma_idb_e2e.outputs.changed }}
       prisma_idb_kanban_e2e: ${{ steps.prisma_idb_kanban_e2e.outputs.changed }}
       generator_client: ${{ steps.generator_client.outputs.changed }}
+      playwright_version: ${{ steps.playwright.outputs.version }}
 
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           fetch-depth: 0
           persist-credentials: false
+
+      # @playwright/test is declared as "latest", so the lockfile decides the version. The E2E job
+      # runs in the matching Playwright image, whose tag must equal that version exactly.
+      - id: playwright
+        name: Read the locked Playwright version
+        run: |
+          set -euo pipefail
+          version=$(awk '
+            /^  apps\/prisma-orm-usage:/ { in_importer = 1; next }
+            in_importer && /^  [^ ]/ { in_importer = 0 }
+            in_importer && /^      .@playwright\/test.:/ { getline; getline; print $2; exit }
+          ' pnpm-lock.yaml)
+          version=${version%%(*}
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Could not read the locked @playwright/test version (got '$version')." >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - id: generator_schema
         name: Check generator schema test paths
@@ -258,6 +277,12 @@ jobs:
     timeout-minutes: 20
     runs-on: ubuntu-latest
 
+    # The Playwright image ships the browsers and their system libraries, so the job installs
+    # nothing through apt or the Playwright CDN. Both used to stall on slow mirrors.
+    container:
+      image: mcr.microsoft.com/playwright:v${{ needs.changes.outputs.playwright_version }}-noble
+      options: --ipc=host --init
+
     # One job per browser and shard. CI runs a single worker, so the suite is
     # serial within a job; sharding is what shortens the wall-clock time.
     strategy:
@@ -269,13 +294,6 @@ jobs:
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
       - uses: ./.github/actions/
-
-      - name: Install Playwright Browsers
-        uses: ./.github/actions/playwright
-        with:
-          working-directory: apps/prisma-orm-usage
-          browsers: ${{ matrix.project }}
-          with-deps: ${{ matrix.project == 'webkit' }}
 
       - name: Run Prisma 8 E2E tests
         run: pnpm test:prisma-idb-e2e -- --project=${{ matrix.project }} --shard=${{ matrix.shard }}
