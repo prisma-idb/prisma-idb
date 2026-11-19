@@ -2,6 +2,7 @@ import Link from "next/link";
 import { GeistSans } from "geist/font/sans";
 import { ArrowRight, ChevronRight, BookOpen, Rocket } from "lucide-react";
 import { SocialProof } from "./social-proof";
+import { GetStartedDialog } from "./get-started-dialog";
 
 export function Hero() {
   return (
@@ -33,30 +34,27 @@ export function Hero() {
           className="text-fd-muted-foreground animate-fade-in-up mx-auto mt-6 max-w-2xl text-base leading-relaxed text-balance sm:text-lg"
           style={{ animationDelay: "0.15s" }}
         >
-          A type-safe IndexedDB client generated from your Prisma schema, with the Prisma Client API you already know.
-          Add optional sync for offline-first apps, with conflict resolution and ownership rules.
+          A type-safe IndexedDB client for your Prisma schema, with versioned migrations for the browser database. Add
+          optional sync for offline-first apps, with conflict resolution and ownership rules.
         </p>
         <p
           className="text-fd-muted-foreground animate-fade-in-up mt-3 text-sm text-balance"
           style={{ animationDelay: "0.2s" }}
         >
-          Works with Prisma ORM 6&nbsp;and&nbsp;7. Prisma 8 support is in preview.
+          Built for Prisma&nbsp;8, now in preview. Prisma ORM 6&nbsp;and&nbsp;7 are still supported.
         </p>
 
         <div
           className="animate-fade-in-up mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row"
           style={{ animationDelay: "0.24s" }}
         >
-          <Link
-            href="/docs/quick-start"
-            className="text-fd-primary-foreground inline-flex items-center gap-2 rounded-md bg-[hsl(32,100%,50%)] px-6 py-2.5 text-sm font-medium tracking-wide shadow-md shadow-[hsl(32,100%,50%)]/30 transition-all hover:bg-[hsl(32,100%,45%)] hover:shadow-lg hover:shadow-[hsl(32,100%,50%)]/30"
-          >
+          <GetStartedDialog className="text-fd-primary-foreground inline-flex items-center gap-2 rounded-md bg-[hsl(32,100%,50%)] px-6 py-2.5 text-sm font-medium tracking-wide shadow-md shadow-[hsl(32,100%,50%)]/30 transition-all hover:bg-[hsl(32,100%,45%)] hover:shadow-lg hover:shadow-[hsl(32,100%,50%)]/30">
             <BookOpen className="h-3.5 w-3.5" />
             Get Started
             <ChevronRight className="h-3.5 w-3.5" />
-          </Link>
+          </GetStartedDialog>
           <Link
-            href="https://kanban.prisma-idb.dev/"
+            href="https://next-kanban.prisma-idb.dev/"
             className="text-fd-foreground border-fd-border bg-fd-card hover:bg-fd-accent/10 inline-flex items-center gap-2 rounded-md border px-6 py-2.5 text-sm font-medium tracking-wide shadow-sm transition-colors"
           >
             <Rocket className="h-3.5 w-3.5" />

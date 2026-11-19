@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import { Hero } from "./hero";
 import { CodeComparison } from "./code-comparison";
-import { DemoSection } from "./demo-section";
 import { SyncSection } from "./sync-section";
 import { ComparisonSection } from "./comparison-section";
 import { PerformanceSection } from "./performance-section";
@@ -18,7 +17,6 @@ export default function HomePage() {
     <div className="min-h-screen">
       <Hero />
       <CodeComparison />
-      <DemoSection />
       <SyncSection />
       <ComparisonSection />
       <PerformanceSection />

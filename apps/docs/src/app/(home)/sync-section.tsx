@@ -3,64 +3,44 @@ import { Send, Lock, RefreshCw } from "lucide-react";
 import { ServerCodeBlock } from "fumadocs-ui/components/codeblock.rsc";
 import { SyncTabs } from "./sync-tabs";
 
-const schemaCode = `generator prismaIDB {
-  provider   = "idb-client-generator"
-  output     = "./prisma-idb"
-  outboxSync = true
-  rootModel  = "User"
+const schemaCode = `model User {
+  id       String  @id
+  name     String
+  password String  @idb.exclude // stays on the server
+  boards   Board[]
+}
+
+model Board {
+  id     String @id
+  name   String
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 }`;
 
-const endpointsCode = `// POST /api/sync/push
-import { applyPush } from "./prisma-idb/server";
-
-const session = await auth.getSession(request);
-if (!session) return Response.json({ error: "Unauthorized" }, { status: 401 });
-
-const results = await applyPush({
-  events: body.events,
-  scopeKey: session.userId,
-  prisma,
+const endpointsCode = `// src/server/sync.ts
+export const syncHandlers = createSqlSync({
+  contract: serverContract,
+  clientContract,
+  rootModel: "User", // every synced record must belong to a user
+  db,
+  scopeKey: requireAuthenticatedUserId,
 });
-return Response.json(results);
 
-// POST /api/sync/pull
-import { pullAndMaterializeLogs } from "./prisma-idb/server";
+// POST /api/sync/push
+export const POST = (req: Request) => syncHandlers.push(req);
 
-const session = await auth.getSession(request);
-if (!session) return Response.json({ error: "Unauthorized" }, { status: 401 });
+// GET /api/sync/pull?since=<changelogId>
+export const GET = (req: Request) => syncHandlers.pull(req);`;
 
-const logsWithRecords = await pullAndMaterializeLogs({
-  prisma,
-  scopeKey: session.userId,
-  lastChangelogId: body.cursor,
-});
-return Response.json({
-  cursor: logsWithRecords.at(-1)?.id ?? body.cursor,
-  logsWithRecords,
-});`;
+const workerCode = `import { createSyncFetchHandlers } from "@prisma-idb/sync-extension-idb/client";
 
-const workerCode = `const worker = client.createSyncWorker({
-  push: {
-    handler: async (events) => {
-      const res = await fetch("/api/sync/push", {
-        method: "POST",
-        body: JSON.stringify({ events }),
-      });
-      return res.json();
-    },
-  },
-  pull: {
-    handler: async (cursor) => {
-      const res = await fetch("/api/sync/pull", {
-        method: "POST",
-        body: JSON.stringify({ cursor }),
-      });
-      return res.json();
-    },
-    getCursor: () => localStorage.getItem("syncCursor") ?? undefined,
-    setCursor: (cursor) => localStorage.setItem("syncCursor", cursor),
-  },
-});
+const db = await getDb();
+const worker = db.createSyncWorker(
+  createSyncFetchHandlers({
+    pushUrl: "/api/sync/push",
+    pullUrl: "/api/sync/pull",
+  })
+);
 
 worker.start();`;
 
@@ -81,8 +61,8 @@ export async function SyncSection() {
             </h2>
 
             <p className="text-fd-muted-foreground mt-6 max-w-md text-lg leading-relaxed">
-              Most IndexedDB wrappers stop at CRUD. Prisma IDB generates a full sync engine from your schema — wire up
-              two endpoints and a sync worker, and it handles the rest.
+              Most IndexedDB wrappers stop at CRUD. Prisma IDB works out who owns each record from your schema&apos;s
+              relations. Wire up two endpoints and a sync worker, and it handles the rest.
             </p>
 
             <div className="mt-8 space-y-6">
@@ -100,8 +80,8 @@ export async function SyncSection() {
                 <div>
                   <p className="text-fd-foreground font-semibold">Built-in Authorization</p>
                   <p className="text-fd-muted-foreground mt-1 text-sm">
-                    Every record knows who owns it — authorization is built into your schema, not bolted on with
-                    middleware.
+                    Every record belongs to a user through your schema&apos;s relations. The server checks that on every
+                    push and pull.
                   </p>
                 </div>
               </div>
@@ -110,7 +90,8 @@ export async function SyncSection() {
                 <div>
                   <p className="text-fd-foreground font-semibold">Conflict Resolution</p>
                   <p className="text-fd-muted-foreground mt-1 text-sm">
-                    When two devices edit the same record, the server decides. Pull operations are fast and predictable.
+                    When two devices edit the same record, the server decides. Each device pulls changes in a fixed
+                    order.
                   </p>
                 </div>
               </div>
