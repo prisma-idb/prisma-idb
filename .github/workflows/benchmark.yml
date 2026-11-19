@@ -123,10 +123,12 @@ jobs:
           mkdir -p "$RESULTS_DIR"
           pnpm benchmark:ci
 
-      - name: Save HEAD chromium directory
+      - name: Save HEAD browser directories
         run: |
           HEAD_CHROMIUM=$(ls ~/.cache/ms-playwright | grep '^chromium_headless_shell-' | head -1)
           echo "HEAD_CHROMIUM=$HEAD_CHROMIUM" >> $GITHUB_ENV
+          HEAD_FFMPEG=$(ls ~/.cache/ms-playwright | grep '^ffmpeg-' | head -1)
+          echo "HEAD_FFMPEG=$HEAD_FFMPEG" >> $GITHUB_ENV
 
       - name: Checkout PR base
         run: git checkout --force ${{ github.event.pull_request.base.sha }}
@@ -176,6 +178,22 @@ jobs:
             mkdir -p "$(dirname "$BROWSER_DIR")"
             ln -sf "$HOME/.cache/ms-playwright/$HEAD_CHROMIUM" "$BROWSER_DIR"
             echo "Symlinked: $HEAD_CHROMIUM -> $BROWSER_DIR"
+          fi
+
+          # The suites record video on failure, and Playwright needs its ffmpeg build
+          # to create a browser context at all. It has its own revision number, so it
+          # needs the same treatment when the base pins an older Playwright.
+          FFMPEG_DIR=$(pnpm exec playwright install --dry-run chromium 2>&1 \
+            | awk '/Install location:.*\/ffmpeg-/{print $NF}' | head -1)
+          echo "Base playwright needs: $FFMPEG_DIR"
+
+          if [ -z "$FFMPEG_DIR" ] || [ -d "$FFMPEG_DIR" ]; then
+            echo "ffmpeg already present — skipping."
+          else
+            echo "Different ffmpeg revision. Symlinking HEAD ffmpeg ($HEAD_FFMPEG)..."
+            mkdir -p "$(dirname "$FFMPEG_DIR")"
+            ln -sf "$HOME/.cache/ms-playwright/$HEAD_FFMPEG" "$FFMPEG_DIR"
+            echo "Symlinked: $HEAD_FFMPEG -> $FFMPEG_DIR"
           fi
 
       - name: Prepare benchmark app (PR base)
