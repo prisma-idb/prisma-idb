@@ -82,7 +82,7 @@ test("a failed todo move keeps the original board selected", async ({ page, cont
   await expect(todo).toBeVisible();
   await page.getByTestId("board-name-input").fill("Destination");
   await page.getByTestId("create-board-submit").click();
-  const selector = todo.getByRole("button", { name: "Move todo to board" });
+  const selector = todo.getByRole("combobox", { name: "Move todo to board" });
   await expect(selector).toBeEnabled();
 
   const otherTab = await context.newPage();
@@ -114,7 +114,7 @@ test("moving a todo requires saving its edits first", async ({ page }) => {
   await page.getByTestId("board-name-input").fill("Destination");
   await page.getByTestId("create-board-submit").click();
   const todo = source.getByTestId("todo-item");
-  const selector = todo.getByRole("button", { name: "Move todo to board" });
+  const selector = todo.getByRole("combobox", { name: "Move todo to board" });
   await expect(selector).toBeEnabled();
 
   await todo.getByTestId("todo-title-field").fill("Edited title");

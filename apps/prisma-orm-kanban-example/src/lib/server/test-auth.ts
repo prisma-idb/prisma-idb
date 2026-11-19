@@ -1,4 +1,4 @@
-import { env } from "$env/dynamic/private";
+import * as env from "$app/env/private";
 import { betterAuth } from "better-auth";
 import { anonymous, testUtils } from "better-auth/plugins";
 import { Pool } from "pg";

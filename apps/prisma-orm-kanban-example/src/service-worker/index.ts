@@ -2,12 +2,13 @@
 /// <reference lib="esnext" />
 /// <reference lib="webworker" />
 
-import { build, files, version } from "$service-worker";
+import { version } from "$app/env";
+import { assets, immutable } from "$app/manifest";
 
 const sw = self as unknown as ServiceWorkerGlobalScope;
 const CACHE_PREFIX = "prisma-idb-kanban";
 const CACHE_NAME = `${CACHE_PREFIX}-${version}`;
-const PRECACHE_URLS = ["/", ...build, ...files];
+const PRECACHE_URLS = ["/", ...immutable.map(({ path }) => path), ...assets.map(({ path }) => path)];
 
 sw.addEventListener("install", (event) => {
   event.waitUntil(
@@ -51,7 +52,9 @@ sw.addEventListener("fetch", (event) => {
 
 /** Serves cached same-origin assets and falls back to the app shell for offline navigation. */
 async function cacheFirst(request: Request) {
-  const cached = await caches.match(request);
+  // Precached responses were stored without an `Origin` header, but module scripts send one. A server
+  // that answers with `Vary: Origin` (Vite's preview server does) would then never match them.
+  const cached = await caches.match(request, { ignoreVary: true });
   if (cached) return cached;
 
   try {
@@ -63,7 +66,7 @@ async function cacheFirst(request: Request) {
     return response;
   } catch (error) {
     if (request.mode === "navigate") {
-      const shell = await caches.match("/");
+      const shell = await caches.match("/", { ignoreVary: true });
       if (shell) return shell;
     }
     throw error;

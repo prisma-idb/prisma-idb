@@ -56,9 +56,9 @@
     "@types/node": "^24.13.3",
     "fake-indexeddb": "^6.2.5",
     "prisma": "8.0.0-rc.23",
-    "tsdown": "^0.22.14",
+    "tsdown": "^0.23.7",
     "typescript": "^6.0.3",
-    "vitest": "^4.1.11"
+    "vitest": "^5.1.1"
   },
   "publishConfig": {
     "access": "public"

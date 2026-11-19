@@ -1,4 +1,4 @@
-import { browser } from "$app/environment";
+import { browser } from "$app/env";
 import { getClient } from "$lib/clients/idb-client";
 import { toast } from "svelte-sonner";
 import { createContext } from "svelte";

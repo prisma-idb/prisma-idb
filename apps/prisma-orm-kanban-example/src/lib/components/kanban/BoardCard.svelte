@@ -64,9 +64,9 @@
         <Trash2Icon />
       </Button>
     </div>
-    <Card.Description data-testid="board-todo-count"
-      >{board.todos.length} todo{board.todos.length === 1 ? "" : "s"}</Card.Description
-    >
+    <Card.Description data-testid="board-todo-count">
+      {board.todos.length} todo{board.todos.length === 1 ? "" : "s"}
+    </Card.Description>
   </Card.Header>
 
   <Card.Content class="flex min-h-0 flex-1 flex-col gap-3 px-4">

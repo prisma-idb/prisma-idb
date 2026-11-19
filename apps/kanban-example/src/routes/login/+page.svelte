@@ -17,7 +17,7 @@
     mutationFn: async () => {
       return authClient.signIn.social({
         provider: "google",
-        callbackURL: resolve(`/dashboard`),
+        callbackURL: resolve("/(app)/dashboard"),
       });
     },
     onError: (error) => {
@@ -33,7 +33,7 @@
       await authClient.getSession().then((session) => {
         if (!session?.data?.user) throw new Error("Session not available");
       });
-      goto(resolve(`/dashboard`));
+      goto(resolve("/(app)/dashboard"));
     },
     onError: (error) => {
       console.error("Error during anonymous sign-in:", error);

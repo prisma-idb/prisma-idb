@@ -3,7 +3,7 @@
   import { onDestroy, onMount } from "svelte";
   import { toast } from "svelte-sonner";
   import { writable, type Writable } from "svelte/store";
-  import { dev } from "$app/environment";
+  import { dev } from "$app/env";
 
   let needRefresh: Writable<boolean> = writable(false);
   let updateServiceWorker: () => void;

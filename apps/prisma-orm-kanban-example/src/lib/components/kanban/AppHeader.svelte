@@ -75,15 +75,15 @@
   <div class="divide-border bg-card flex items-stretch divide-x rounded-lg border text-sm">
     <div class="flex flex-col gap-0.5 px-5 py-3">
       <span class="text-muted-foreground text-xs font-medium tracking-widest uppercase">Boards</span>
-      <span class="text-2xl leading-none font-semibold tabular-nums" data-testid="boards-count"
-        >{kanban.boards.length}</span
-      >
+      <span class="text-2xl leading-none font-semibold tabular-nums" data-testid="boards-count">
+        {kanban.boards.length}
+      </span>
     </div>
     <div class="flex flex-col gap-0.5 px-5 py-3">
       <span class="text-muted-foreground text-xs font-medium tracking-widest uppercase">Done</span>
-      <span class="text-2xl leading-none font-semibold tabular-nums" data-testid="done-count"
-        >{kanban.completedTodos}/{kanban.todos.length}</span
-      >
+      <span class="text-2xl leading-none font-semibold tabular-nums" data-testid="done-count">
+        {kanban.completedTodos}/{kanban.todos.length}
+      </span>
     </div>
   </div>
 </header>

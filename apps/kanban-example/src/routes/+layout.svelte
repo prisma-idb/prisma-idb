@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { browser } from "$app/environment";
+  import { browser } from "$app/env";
   import favicon from "$lib/assets/favicon.png";
   import { Toaster } from "$lib/components/ui/sonner/index.js";
   import { QueryClient, QueryClientProvider } from "@tanstack/svelte-query";

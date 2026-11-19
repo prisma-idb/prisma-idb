@@ -280,7 +280,8 @@ export function createSyncServer(options: CreateSyncServerOptions): SyncServer {
       throw new Error(
         `createSyncServer: cannot validate model "${model}": ${reason}. ` +
           "Provide a codecLookup with supported application types or select a Date/string codec. " +
-          "Temporal and interval objects have no default validator."
+          "Temporal and interval objects have no default validator.",
+        { cause: error }
       );
     }
   }

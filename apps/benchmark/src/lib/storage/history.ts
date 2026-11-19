@@ -32,7 +32,7 @@ function parseStoredHistory(raw: string): BenchmarkRunResult[] {
 export function getBenchmarkHistory(): BenchmarkRunResult[] {
   if (!isBrowser()) return [];
 
-  let raw: string | null = null;
+  let raw: string | null;
   try {
     raw = window.localStorage.getItem(STORAGE_KEY);
   } catch {

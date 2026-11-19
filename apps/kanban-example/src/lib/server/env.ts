@@ -1,4 +1,4 @@
-import { env } from "$env/dynamic/private";
+import * as env from "$app/env/private";
 
 function ensureEnv<T extends Record<string, string | undefined>>(obj: T): { [K in keyof T]: string } {
   for (const [key, value] of Object.entries(obj)) {

@@ -11,18 +11,18 @@
     "test:watch": "vitest"
   },
   "devDependencies": {
+    "@prisma-idb/adapter-idb": "workspace:*",
+    "@prisma-idb/driver-idb": "workspace:*",
     "@prisma-idb/family-idb": "workspace:*",
+    "@prisma-idb/sync-server": "workspace:*",
+    "@prisma-idb/sync-server-sql": "workspace:*",
+    "@prisma-idb/target-idb": "workspace:*",
     "@prisma/cli-engine": "0.7.0",
+    "@prisma/orm-postgres": "8.0.0-rc.18",
     "@prisma/orm-toolchain": "8.0.0-rc.18",
     "@types/node": "^24.13.3",
     "execa": "^10.0.1",
-    "vitest": "^4.1.11",
-    "@prisma-idb/adapter-idb": "workspace:*",
-    "@prisma-idb/driver-idb": "workspace:*",
-    "@prisma-idb/target-idb": "workspace:*",
-    "@prisma-idb/sync-server": "workspace:*",
-    "@prisma-idb/sync-server-sql": "workspace:*",
     "typescript": "^6.0.3",
-    "@prisma/orm-postgres": "8.0.0-rc.18"
+    "vitest": "^5.1.1"
   }
 }

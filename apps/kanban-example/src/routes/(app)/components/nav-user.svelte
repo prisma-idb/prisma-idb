@@ -80,7 +80,7 @@
           >
             <DropdownMenu.Item>
               {#snippet child({ props })}
-                <a href={resolve("/profile")} {...props}>
+                <a href={resolve("/(app)/profile")} {...props}>
                   <UserIcon />
                   Profile
                 </a>

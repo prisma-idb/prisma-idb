@@ -258,7 +258,7 @@ export function createSyncWorker<TContract extends IdbContract>(options: SyncWor
     setStatus("pushing");
     const totals = { synced: 0, failed: 0, unreconciled: 0 };
     let sentAny = false;
-    let pullBlocked = false;
+    let pullBlocked: boolean;
     try {
       while (!stopped) {
         const events = await getNextBatch(syncClient.rawClient, {

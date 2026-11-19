@@ -1,7 +1,8 @@
 import devtoolsJson from "vite-plugin-devtools-json";
-import { SvelteKitPWA } from "@vite-pwa/sveltekit";
+import { withPwa } from "@vite-pwa/sveltekit";
 import tailwindcss from "@tailwindcss/vite";
-import { sveltekit } from "@sveltejs/kit/vite";
+import adapter from "@sveltejs/adapter-vercel";
+import { vitePreprocess } from "@sveltejs/vite-plugin-svelte";
 import { defineConfig } from "vite";
 
 export default defineConfig(({ mode }) => ({
@@ -13,39 +14,48 @@ export default defineConfig(({ mode }) => ({
   },
   plugins: [
     tailwindcss(),
-    sveltekit(),
     devtoolsJson(),
-    SvelteKitPWA({
-      strategies: "injectManifest",
-      srcDir: "src",
-      filename: "service-worker.ts",
-      includeManifestIcons: false,
-      manifest: {
-        name: "PIDB Kanban",
-        short_name: "PIDBKanban",
-        start_url: "/",
-        display: "standalone",
-        background_color: "#ffffff",
-        theme_color: "#FFA500",
-        icons: [
-          {
-            src: "icons/icon-144x144.png",
-            sizes: "144x144",
-          },
-          {
-            src: "icons/icon-192x192.png",
-            sizes: "192x192",
-          },
-          {
-            src: "icons/icon-512x512.png",
-            sizes: "512x512",
-          },
-        ],
+    ...withPwa(
+      {
+        preprocess: vitePreprocess(),
+        adapter: adapter(),
+        // SvelteKit 3 removed the built-in `$lib` alias; keep it so existing imports work.
+        alias: { $lib: "src/lib" },
+        serviceWorker: {
+          register: false,
+        },
       },
-      devOptions: {
-        enabled: true,
-        type: "module",
-      },
-    }),
+      {
+        strategies: "buildSW",
+        buildSW: { swSrc: "src/service-worker/index.ts" },
+        includeManifestIcons: false,
+        manifest: {
+          name: "PIDB Kanban",
+          short_name: "PIDBKanban",
+          start_url: "/",
+          display: "standalone",
+          background_color: "#ffffff",
+          theme_color: "#FFA500",
+          icons: [
+            {
+              src: "icons/icon-144x144.png",
+              sizes: "144x144",
+            },
+            {
+              src: "icons/icon-192x192.png",
+              sizes: "192x192",
+            },
+            {
+              src: "icons/icon-512x512.png",
+              sizes: "512x512",
+            },
+          ],
+        },
+        devOptions: {
+          enabled: true,
+          type: "module",
+        },
+      }
+    ),
   ],
 }));
