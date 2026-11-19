@@ -22,7 +22,7 @@ interface TestCookie {
  * everything else here just needs *a* signed-in user.
  */
 export async function signInAsTestUser(page: Page): Promise<{ id: string }> {
-  const res = await page.request.post("/api/test/session");
+  const res = await page.request.post("/api/test/session", { data: {} });
   if (!res.ok()) throw new Error(`/api/test/session failed: ${res.status()} ${await res.text()}`);
   const { cookies, user } = (await res.json()) as { cookies: TestCookie[]; user: { id: string } };
   await page.context().addCookies(cookies);

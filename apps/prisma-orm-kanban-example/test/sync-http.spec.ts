@@ -11,7 +11,7 @@ function pullUrl(params: Record<string, string> = {}) {
 async function account(requestFactory: APIRequest, baseURL: string) {
   const anonymous = await requestFactory.newContext({ baseURL });
   try {
-    const response = await anonymous.post("/api/test/session");
+    const response = await anonymous.post("/api/test/session", { data: {} });
     expect(response.ok()).toBe(true);
     const { cookies, user } = (await response.json()) as {
       cookies: { name: string; value: string }[];

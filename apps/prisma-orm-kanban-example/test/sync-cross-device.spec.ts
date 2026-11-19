@@ -120,7 +120,7 @@ test("moving a todo to another board syncs to another device", async ({ devices 
   await expect(boardCard(pageB, targetName)).toBeVisible();
 
   await pageA.context().setOffline(true);
-  await todoItem(pageA, "Todo to move").getByRole("button", { name: "Move todo to board" }).click();
+  await todoItem(pageA, "Todo to move").getByRole("combobox", { name: "Move todo to board" }).click();
   await pageA.getByRole("option", { name: targetName }).click();
   await expect(sourceA.getByTestId("todo-item")).toHaveCount(0);
   await expect(targetA.getByTestId("todo-item")).toHaveCount(1);
