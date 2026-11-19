@@ -193,7 +193,7 @@ export class PrismaIDBClient {
         (event: OutboxEventRecord) => event.retryable && isReadyToRetry(event, overrideBackoff)
       );
       if (toSync.length === 0) return [];
-      let results: PushResult[] = [];
+      let results: PushResult[];
       try {
         results = await pushHandler(toSync);
       } catch (err) {

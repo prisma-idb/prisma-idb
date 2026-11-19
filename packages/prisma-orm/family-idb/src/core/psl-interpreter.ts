@@ -211,17 +211,14 @@ function interpretModel(
   const storeName = mapAttr?.value.name ?? lowerFirst(model.name);
 
   // Find the keyPath: @id field-level attribute OR @@id([field, ...]) model-level.
-  // `idFieldNames` is always the ordered list of key member fields (length 1
-  // for the common single-field case); `keyPath` collapses to a bare string
-  // for that common case and stays an array only for a genuine compound key,
-  // matching how every other single-field model in this codebase is authored.
+  // `keyPath` collapses to a bare string for the common single-field case and
+  // stays an array only for a genuine compound key, matching how every other
+  // single-field model in this codebase is authored.
   let keyPath: IdbKeyPath | undefined;
-  let idFieldNames: string[] | undefined;
 
   const idModelAttr = modelAttributes.id;
   if (idModelAttr) {
     const fields = [...idModelAttr.value.fields];
-    idFieldNames = fields;
     keyPath = fields.length === 1 ? fields[0]! : fields;
   }
 
@@ -247,12 +244,10 @@ function interpretModel(
       });
       return undefined;
     }
-    idFieldNames = [idFields[0]!.name];
     keyPath = idFields[0]!.name;
   }
 
   keyPath ??= [];
-  idFieldNames ??= [];
   sourceMap.set(
     ["models", model.name, "key"],
     idModelAttr?.span ??

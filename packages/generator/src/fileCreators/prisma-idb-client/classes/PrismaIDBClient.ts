@@ -279,7 +279,7 @@ function addCreateSyncWorkerMethod(writer: CodeBlockWriter) {
           `  const toSync = batch.filter((event: OutboxEventRecord) => event.retryable && isReadyToRetry(event, overrideBackoff));`
         )
         .writeLine(`  if (toSync.length === 0) return [];`)
-        .writeLine(`  let results: PushResult[] = [];`)
+        .writeLine(`  let results: PushResult[];`)
         .writeLine(`  try {`)
         .writeLine(`    results = await pushHandler(toSync);`)
         .writeLine(`  } catch (err) {`)

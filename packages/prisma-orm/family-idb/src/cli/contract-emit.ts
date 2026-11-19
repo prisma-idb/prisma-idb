@@ -57,7 +57,9 @@ async function publishArtifacts(stage: string, paths: readonly string[]): Promis
       }
     }
     if (failures.length > 0) {
-      throw new AggregateError([error, ...failures], "Contract publication failed and could not be restored");
+      throw new AggregateError([error, ...failures], "Contract publication failed and could not be restored", {
+        cause: error,
+      });
     }
     throw error;
   }

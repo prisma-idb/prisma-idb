@@ -10,7 +10,7 @@ async function loadJson(path: string): Promise<BenchmarkRun> {
     return JSON.parse(await readFile(path, "utf8")) as BenchmarkRun;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`Failed to parse ${path}: ${message}`);
+    throw new Error(`Failed to parse ${path}: ${message}`, { cause: error });
   }
 }
 
