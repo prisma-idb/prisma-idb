@@ -138,7 +138,8 @@ export const contractEmitCommand = defineCommand({
           ? error
           : new CliStructuredError(
               "IDB-CLI.CONTRACT_EMIT_FAILED",
-              error instanceof Error ? error.message : String(error)
+              error instanceof Error ? error.message : String(error),
+              { cause: error }
             )
       );
     }
