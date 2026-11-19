@@ -121,13 +121,13 @@
       <SyncDetailsPopover {pushResult} {pullResult} {outboxStats} {lastError} />
     </Card.Action>
     <Card.Description class="flex flex-col items-start gap-1.5">
-      <div class="flex items-center gap-2">
+      <span class="flex items-center gap-2">
         {#if status in iconMap}
           {@const Icon = iconMap[status]}
           <Icon class="h-3 w-3" />
         {/if}
-        <p class="text-sm capitalize" data-testid="sync-status">{status.toLowerCase()}</p>
-      </div>
+        <span class="text-sm capitalize" data-testid="sync-status">{status.toLowerCase()}</span>
+      </span>
     </Card.Description>
   </Card.Header>
   <Card.Content class="grid gap-3">
