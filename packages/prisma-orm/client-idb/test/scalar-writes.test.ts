@@ -187,7 +187,8 @@ describe("local scalar writes", () => {
       const before = await samples.all();
       for (const patch of invalidPatches) {
         const input = structuredClone(patch);
-        const write = async () => await samples[method](patch);
+        const write = async () =>
+          await (method === "update" ? samples.update(patch) : samples.where({})[method](patch));
         await expect(write()).rejects.toThrow(IdbRecordValidationError);
         expect(patch).toEqual(input);
         expect(await samples.all()).toEqual(before);
@@ -198,8 +199,8 @@ describe("local scalar writes", () => {
   it("accepts partial and empty updates and complete value-object replacements", async () => {
     await samples.create(validRow());
     await samples.where({ id: "s1" }).update({ count: 2 });
-    await samples.updateAll({});
-    expect(await samples.updateCount({ score: 3 })).toBe(1);
+    await samples.where({}).updateAll({});
+    expect(await samples.where({}).updateCount({ score: 3 })).toBe(1);
     await samples.update({ details: { label: "replacement", quantity: 2 } });
     expect(await samples.findUnique("s1")).toEqual({
       ...validRow(),

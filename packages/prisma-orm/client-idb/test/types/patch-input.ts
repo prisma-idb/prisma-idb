@@ -291,3 +291,26 @@ type UpdateInputs<M extends keyof Rows> = {
     void [create, upsertCreate, missingCreateKey, missingUpsertKey, compound, dotted];
   }
 }
+
+// bulk writes require where(), as in Prisma 8
+{
+  const call = (items: Accessor<"Single">) => {
+    const filtered = items.where({ title: "draft" });
+    void filtered.updateAll({ title: "published" });
+    void filtered.orderBy({ title: "asc" }).updateCount({ title: "published" });
+    void filtered.select("id").deleteAll();
+    void items.where({}).deleteCount();
+    // A filtered accessor still fits where an unfiltered one is expected.
+    const unfiltered: Accessor<"Single"> = filtered;
+    // @ts-expect-error — updateAll needs a where() first.
+    void items.updateAll({ title: "published" });
+    // @ts-expect-error — updateCount needs a where() first.
+    void items.updateCount({ title: "published" });
+    // @ts-expect-error — deleteAll needs a where() first.
+    void items.deleteAll();
+    // @ts-expect-error — deleteCount needs a where() first.
+    void items.orderBy({ title: "asc" }).take(1).deleteCount();
+    void unfiltered;
+  };
+  void call;
+}

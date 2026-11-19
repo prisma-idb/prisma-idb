@@ -64,14 +64,16 @@ describe("updates with a partially set compound foreign key", () => {
   });
 
   it("updateAll rolls back earlier matches when a later row has no matching parent", async () => {
-    await expect(client.orm["posts"]!.updateAll({ tenantId: "new" }).toArray()).rejects.toThrow(/FK violation/);
+    await expect(client.orm["posts"]!.where({}).updateAll({ tenantId: "new" }).toArray()).rejects.toThrow(
+      /FK violation/
+    );
     expect(byId(await client.orm["posts"]!.all().toArray())).toEqual([
       { id: "p1", tenantId: "old", authorId: "alice", title: "First" },
       { id: "p2", tenantId: "old", authorId: "bob", title: "Second" },
     ]);
 
     await client.orm["users"]!.create({ tenantId: "new", id: "bob" });
-    expect(byId(await client.orm["posts"]!.updateAll({ tenantId: "new" }).toArray())).toEqual([
+    expect(byId(await client.orm["posts"]!.where({}).updateAll({ tenantId: "new" }).toArray())).toEqual([
       { id: "p1", tenantId: "new", authorId: "alice", title: "First" },
       { id: "p2", tenantId: "new", authorId: "bob", title: "Second" },
     ]);

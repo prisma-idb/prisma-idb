@@ -33,13 +33,25 @@ Use `createCount()` when you only need the number of rows.
 const todo = await db.orm.todo.where({ id: todoId }).update({ done: true });
 ```
 
-`updateAll()` changes every matching row in one transaction and returns them. `updateCount()` returns how many changed.
+`updateAll()` changes every matching row in one transaction and returns them. `updateCount()` returns how many changed. Both follow the [rules for bulk writes](#rules-for-bulk-writes).
 
 ```ts
 const done = await db.orm.todo.where({ userId }).updateAll({ done: true }).toArray();
 ```
 
 An update merges the patch into the stored row. Fields you leave out keep their values.
+
+### Rules for bulk writes
+
+`updateAll()`, `updateCount()`, `deleteAll()` and `deleteCount()` change every row that matches the filter. They follow the same rules as Prisma 8:
+
+- **Call `where()` first.** On an accessor without `where()`, a bulk write is a type error. To change every row in a store on purpose, call `where({})`.
+- **Don't combine them with `skip()` or `take()`.** A bulk write can't apply an offset or a limit, so it throws `IdbBulkWriteError` before it writes anything. To change only some rows, read them first and change them by primary key.
+
+```ts
+const firstTen = await db.orm.todo.where({ done: true }).orderBy({ title: "asc" }).take(10).all().toArray();
+await db.orm.todo.where((t) => t.id.in(firstTen.map((todo) => todo.id))).deleteAll();
+```
 
 ## Upsert
 
@@ -84,7 +96,7 @@ try {
 }
 ```
 
-`deleteAll()` removes every matching row and returns them. `deleteCount()` returns how many were removed.
+`deleteAll()` removes every matching row and returns them. `deleteCount()` returns how many were removed. Both follow the [rules for bulk writes](#rules-for-bulk-writes).
 
 ```ts
 const removed = await db.orm.todo.where({ done: true }).deleteAll().toArray();

@@ -700,7 +700,7 @@ describe("deleteAll — cascade", () => {
     await orm["users"]!.create({ id: "u2", name: "Bob" } as never);
     await orm["posts"]!.create({ id: "p1", title: "A post", authorId: "u1" } as never);
     await orm["posts"]!.create({ id: "p2", title: "B post", authorId: "u2" } as never);
-    const deleted = await orm["users"]!.deleteAll().toArray();
+    const deleted = await orm["users"]!.where({}).deleteAll().toArray();
     expect(deleted).toHaveLength(2);
     expect(await getAllRows(db, "users")).toHaveLength(0);
     expect(await getAllRows(db, "posts")).toHaveLength(0);
@@ -740,7 +740,7 @@ describe("deleteCount — cascade", () => {
     await orm["users"]!.create({ id: "u1", name: "Alice" } as never);
     await orm["users"]!.create({ id: "u2", name: "Bob" } as never);
     await orm["posts"]!.create({ id: "p1", title: "Post", authorId: "u1" } as never);
-    const count = await orm["users"]!.deleteCount();
+    const count = await orm["users"]!.where({}).deleteCount();
     expect(count).toBe(2);
     expect(await getAllRows(db, "posts")).toHaveLength(0);
   });
@@ -997,7 +997,7 @@ describe("deleteAll — recursive cascade with multiple independent trees", () =
     await orm["comments"]!.create({ id: "c1", text: "Comment 1", postId: "p1" } as never);
     await orm["comments"]!.create({ id: "c2", text: "Comment 2", postId: "p2" } as never);
 
-    const deleted = await orm["users"]!.deleteAll().toArray();
+    const deleted = await orm["users"]!.where({}).deleteAll().toArray();
 
     expect(deleted).toHaveLength(2);
     expect(await getAllRows(db, "users")).toHaveLength(0);
@@ -1374,7 +1374,9 @@ describe("onUpdate — updateAll / updateCount bulk", () => {
     await orm["posts"]!.create({ id: "p1", authorSlug: "alice", title: "Post 1" } as never);
     await orm["posts"]!.create({ id: "p2", authorSlug: "bob", title: "Post 2" } as never);
 
-    const updated = await orm["users"]!.updateAll({ slug: "merged" } as never).toArray();
+    const updated = await orm["users"]!.where({})
+      .updateAll({ slug: "merged" } as never)
+      .toArray();
 
     expect(updated).toHaveLength(2);
     const posts = await getAllRows(db, "posts");
@@ -1386,7 +1388,7 @@ describe("onUpdate — updateAll / updateCount bulk", () => {
     await orm["users"]!.create({ id: "u1", slug: "alice", name: "Alice" } as never);
     await orm["posts"]!.create({ id: "p1", authorSlug: "alice", title: "Post 1" } as never);
 
-    const count = await orm["users"]!.updateCount({ slug: "changed" } as never);
+    const count = await orm["users"]!.where({}).updateCount({ slug: "changed" } as never);
 
     expect(count).toBe(1);
     const posts = await getAllRows(db, "posts");

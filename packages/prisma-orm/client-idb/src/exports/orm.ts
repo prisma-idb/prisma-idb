@@ -3,6 +3,7 @@
 // Factory + client type
 export { idbOrm } from "../core/idb-orm";
 export { IdbRecordValidationError } from "../core/record-validation";
+export { IdbBulkWriteError, type IdbBulkWriteMethod } from "../core/bulk-write-guard";
 export type { IdbOrmClient, IdbOrmOptions } from "../core/idb-orm";
 
 // Accessor interface (useful for annotating function parameters / return types)
