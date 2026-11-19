@@ -3,14 +3,39 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { GeistSans } from "geist/font/sans";
-import { ExternalLink, Gauge, FlaskConical, Zap, Loader2, AlertCircle } from "lucide-react";
+import { GeistMono } from "geist/font/mono";
+import { ChevronRight, Loader2, AlertCircle } from "lucide-react";
 
-const FAST_THRESHOLD_MS = 10;
-const MEDIUM_THRESHOLD_MS = 50;
-const CHART_PADDING_FACTOR = 1.2;
-const MIN_CHART_MAX_MS = 100;
-const PUBLIC_BENCHMARK_SNAPSHOT_URL = "https://cdn.jsdelivr.net/gh/prisma-idb/prisma-idb@benchmark-data/latest.json";
-const NUMBER_FORMATTER = new Intl.NumberFormat("en-US");
+const PUBLIC_BENCHMARK_SNAPSHOT_URL =
+  "https://cdn.jsdelivr.net/gh/prisma-idb/prisma-idb@benchmark-data/prisma-orm/latest.json";
+const BENCHMARK_SOURCE_URL = "https://github.com/prisma-idb/prisma-idb/tree/main/apps/prisma-orm-benchmark";
+const LEGACY_BENCHMARK_URL = "https://benchmark.prisma-idb.dev";
+
+/**
+ * The snapshot measures every query shape the planner handles, which is too many for the landing page.
+ * These are shown, keyed by operation id, with labels written for readers who haven't seen the benchmark.
+ */
+const HEADLINE_OPERATIONS = [
+  { id: "find-unique", label: "findUnique by primary key" },
+  { id: "find-compound-exact", label: "Match on a compound index" },
+  { id: "create-with-fk-check", label: "create, with foreign key validation" },
+  { id: "delete-cascade-via-indexed-fk", label: "delete, cascading to children" },
+];
+const LIST_OPERATIONS = [
+  { id: "include-books-by-author", label: "include a 1:N relation" },
+  { id: "find-range-indexed", label: "Range on an indexed field" },
+  { id: "find-order-by-indexed-take", label: "orderBy an indexed field, take 10" },
+  { id: "find-eq-indexed", label: "Equality on an indexed field" },
+  { id: "count-eq-indexed", label: "count, equality on an indexed field" },
+  { id: "update-all-eq-indexed", label: "updateAll, equality on an indexed field" },
+];
+/** The same kind of query without an index, shown for contrast. */
+const FULL_SCAN_OPERATION_ID = "find-eq-unindexed";
+
+/** The list bars use a log scale between these bounds, so sub-millisecond and 100 ms results both stay readable. */
+const BAR_MIN_MS = 0.1;
+const BAR_MAX_MS = 200;
+
 const SNAPSHOT_DATE_FORMATTER = new Intl.DateTimeFormat("en-US", {
   timeZone: "UTC",
   month: "short",
@@ -26,6 +51,7 @@ interface BenchmarkOperation {
 
 interface BenchmarkSnapshot {
   completedAt: string;
+  browser?: string;
   config: { datasetSize: number; warmupRuns: number; measuredRuns: number };
   operations: BenchmarkOperation[];
 }
@@ -33,40 +59,45 @@ interface BenchmarkSnapshot {
 type SnapshotState =
   { status: "loading" } | { status: "ready"; snapshot: BenchmarkSnapshot } | { status: "unavailable" };
 
-type PerformanceBucket = "instant" | "quick" | "moderate";
+interface ShownOperation {
+  id: string;
+  label: string;
+  /** p95 of one query. Operations that time a batch of N queries ("(×N)" in the label) are divided by N. */
+  perQueryMs: number;
+}
 
-const BUCKET_STYLES: Record<PerformanceBucket, { bar: string; badge: string; icon: string; label: string }> = {
-  instant: {
-    bar: "bg-emerald-500 dark:bg-emerald-400",
-    badge: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
-    icon: "text-emerald-500 dark:text-emerald-400",
-    label: "Instant",
-  },
-  quick: {
-    bar: "bg-orange-500 dark:bg-orange-400",
-    badge: "bg-orange-500/10 text-orange-600 dark:text-orange-400",
-    icon: "text-orange-500 dark:text-orange-400",
-    label: "Quick",
-  },
-  moderate: {
-    bar: "bg-amber-500 dark:bg-amber-400",
-    badge: "bg-amber-500/10 text-amber-600 dark:text-amber-400",
-    icon: "text-amber-500 dark:text-amber-400",
-    label: "Moderate",
-  },
-};
+/** Batched operations are labelled "(×N)": each timed sample runs N queries. */
+function batchSize(label: string): number {
+  const match = /\(×(\d+)\)$/.exec(label);
+  return match ? Number(match[1]) : 1;
+}
 
-function getPerformanceBucket(p95Ms: number): PerformanceBucket {
-  if (p95Ms < FAST_THRESHOLD_MS) return "instant";
-  if (p95Ms < MEDIUM_THRESHOLD_MS) return "quick";
-  return "moderate";
+function pick(operations: BenchmarkOperation[], wanted: readonly { id: string; label: string }[]): ShownOperation[] {
+  return wanted.flatMap(({ id, label }) => {
+    const op = operations.find((candidate) => candidate.operationId === id);
+    return op ? [{ id, label, perQueryMs: op.summary.p95Ms / batchSize(op.label) }] : [];
+  });
+}
+
+function splitMs(ms: number): { value: string; unit: string } {
+  if (ms < 1) return { value: String(Math.round(ms * 1000)), unit: "µs" };
+  if (ms < 10) return { value: ms.toFixed(1), unit: "ms" };
+  return { value: String(Math.round(ms)), unit: "ms" };
 }
 
 function formatMs(ms: number): string {
-  if (ms < 1) return `${(ms * 1000).toFixed(0)} µs`;
-  if (ms < 10) return `${ms.toFixed(2)} ms`;
-  if (ms < 100) return `${ms.toFixed(1)} ms`;
-  return `${Math.round(ms)} ms`;
+  const { value, unit } = splitMs(ms);
+  return `${value} ${unit}`;
+}
+
+function barWidth(ms: number): number {
+  const position = (Math.log10(ms) - Math.log10(BAR_MIN_MS)) / (Math.log10(BAR_MAX_MS) - Math.log10(BAR_MIN_MS));
+  return Math.max(2, Math.min(100, position * 100));
+}
+
+function chromeVersion(userAgent: string | undefined): string {
+  const match = userAgent ? /Chrome\/(\d+)/.exec(userAgent) : null;
+  return match ? `Chrome ${match[1]}` : "Chrome";
 }
 
 function isValidSnapshot(data: unknown): data is BenchmarkSnapshot {
@@ -120,15 +151,14 @@ export function PerformanceSection() {
 
   return (
     <section className="border-fd-border/60 border-t px-6 py-16 sm:py-24 lg:px-8">
-      <div className="mx-auto max-w-4xl">
-        <div className="mb-12 text-center">
+      <div className="mx-auto max-w-5xl">
+        <div className="mb-12 text-center sm:mb-14">
           <h2 className={`${GeistSans.className} text-fd-foreground mb-4 text-3xl font-bold sm:text-4xl`}>
             Built for speed. Measured honestly.
           </h2>
           <p className="text-fd-muted-foreground mx-auto max-w-2xl text-base leading-relaxed">
-            Benchmarks run entirely in the browser — no server, no network. The numbers below come straight from the{" "}
-            <code className="text-fd-accent text-[13px]">latest CI snapshot</code> on{" "}
-            <code className="text-fd-accent text-[13px]">main</code>.
+            Time per query at the 95th percentile, in real Chrome against real IndexedDB. Straight from the latest CI
+            run on <code className="text-fd-accent text-[13px]">main</code>.
           </p>
         </div>
 
@@ -147,22 +177,6 @@ export function PerformanceSection() {
         ) : (
           <PerformanceContent snapshot={state.snapshot} />
         )}
-
-        <div className="mt-8 text-center">
-          <Link
-            href="https://benchmark.prisma-idb.dev"
-            target="_blank"
-            rel="noreferrer"
-            className="text-fd-foreground border-fd-border bg-fd-card hover:bg-fd-accent/10 inline-flex items-center gap-2 rounded-md border px-5 py-2.5 text-sm font-medium shadow-sm transition-colors"
-          >
-            <Gauge className="h-3.5 w-3.5" />
-            Run benchmarks in your browser
-            <ExternalLink className="h-3 w-3 opacity-60" />
-          </Link>
-          <p className="text-fd-muted-foreground mt-3 text-xs">
-            Results vary by browser, device, and dataset. Run your own to see what to expect in your environment.
-          </p>
-        </div>
       </div>
     </section>
   );
@@ -180,7 +194,7 @@ function PerformancePlaceholder({
   return (
     <div
       role="status"
-      className="border-fd-border bg-fd-card flex flex-col items-center justify-center gap-2 rounded-xl border px-6 py-12 text-center"
+      className="border-fd-border flex flex-col items-center justify-center gap-2 border-y px-6 py-12 text-center"
     >
       {icon}
       <p className="text-fd-foreground text-sm font-medium">{title}</p>
@@ -191,96 +205,105 @@ function PerformancePlaceholder({
 
 function PerformanceContent({ snapshot }: { snapshot: BenchmarkSnapshot }) {
   const { operations, config } = snapshot;
-
-  const maxP95 = Math.max(...operations.map((op) => op.summary.p95Ms));
-  const chartMaxMs = Math.max(MIN_CHART_MAX_MS, maxP95 * CHART_PADDING_FACTOR);
-
-  const bucketCounts: Record<PerformanceBucket, number> = { instant: 0, quick: 0, moderate: 0 };
-  for (const op of operations) bucketCounts[getPerformanceBucket(op.summary.p95Ms)] += 1;
-
-  const datasetSize = NUMBER_FORMATTER.format(config.datasetSize);
+  const headlines = pick(operations, HEADLINE_OPERATIONS);
+  const listed = pick(operations, LIST_OPERATIONS);
+  const fullScan = pick(operations, [{ id: FULL_SCAN_OPERATION_ID, label: "" }])[0];
+  // If the benchmark renames its operations, show its own labels rather than an empty section.
+  const fallback =
+    headlines.length === 0 && listed.length === 0
+      ? operations.map((op) => ({
+          id: op.operationId,
+          label: op.label,
+          perQueryMs: op.summary.p95Ms / batchSize(op.label),
+        }))
+      : [];
+  const rows = [...listed, ...fallback];
 
   return (
     <>
-      <div className="mb-10 grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <div className="border-fd-border bg-fd-card rounded-xl border p-5">
-          <div className="mb-2 flex items-center gap-2">
-            <Zap className="h-4 w-4 text-emerald-500" />
-            <span className="text-fd-muted-foreground text-xs font-medium tracking-wider uppercase">Operation mix</span>
-          </div>
-          <p className={`${GeistSans.className} text-fd-foreground text-3xl font-bold`}>
-            {operations.length}
-            <span className="text-fd-muted-foreground text-sm font-normal"> measured</span>
-          </p>
-          <p className="text-fd-muted-foreground mt-1 text-xs">
-            {bucketCounts.instant} instant · {bucketCounts.quick} quick · {bucketCounts.moderate} moderate (p95)
-          </p>
-        </div>
-        <div className="border-fd-border bg-fd-card rounded-xl border p-5">
-          <div className="mb-2 flex items-center gap-2">
-            <Gauge className={`h-4 w-4 ${BUCKET_STYLES.quick.icon}`} />
-            <span className="text-fd-muted-foreground text-xs font-medium tracking-wider uppercase">Dataset</span>
-          </div>
-          <p className={`${GeistSans.className} text-fd-foreground text-3xl font-bold`}>
-            {datasetSize}
-            <span className="text-fd-muted-foreground text-sm font-normal"> rows</span>
-          </p>
-          <p className="text-fd-muted-foreground mt-1 text-xs">per benchmark operation, in-browser IndexedDB</p>
-        </div>
-        <div className="border-fd-border bg-fd-card rounded-xl border p-5">
-          <div className="mb-2 flex items-center gap-2">
-            <FlaskConical className="text-fd-muted-foreground h-4 w-4" />
-            <span className="text-fd-muted-foreground text-xs font-medium tracking-wider uppercase">Measured runs</span>
-          </div>
-          <p className={`${GeistSans.className} text-fd-foreground text-3xl font-bold`}>{config.measuredRuns}</p>
-          <p className="text-fd-muted-foreground mt-1 text-xs">
-            runs per op · {config.warmupRuns} warmup · bootstrap median-CI gate
-          </p>
-        </div>
-      </div>
-
-      <div className="border-fd-border bg-fd-card overflow-hidden rounded-xl border shadow-sm">
-        <div className="border-fd-border flex items-center justify-between border-b px-5 py-3.5">
-          <span className="text-fd-foreground text-sm font-medium">p95 latency per operation</span>
-          <span className="text-fd-muted-foreground text-xs">lower is better · scale 0-{formatMs(chartMaxMs)}</span>
-        </div>
-        <div className="divide-fd-border/60 divide-y px-5 py-2">
-          {operations.map((op) => {
-            const { bar, badge, label } = BUCKET_STYLES[getPerformanceBucket(op.summary.p95Ms)];
-            const widthPct = Math.max(2, Math.min(100, (op.summary.p95Ms / chartMaxMs) * 100));
+      {headlines.length > 0 && (
+        <dl className="border-fd-border grid grid-cols-2 border-y lg:grid-cols-4">
+          {headlines.map((op, index) => {
+            const { value, unit } = splitMs(op.perQueryMs);
             return (
               <div
-                key={op.operationId}
-                className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-2 py-3.5 md:grid-cols-[minmax(0,11rem)_minmax(0,1fr)_minmax(0,9rem)] md:gap-4"
+                key={op.id}
+                className={`border-fd-border flex flex-col-reverse justify-end px-4 py-6 sm:px-7 sm:py-8 ${
+                  index % 2 === 1 ? "border-l" : ""
+                } ${index >= 2 ? "border-t lg:border-t-0" : ""} ${index === 2 ? "lg:border-l" : ""}`}
               >
-                <div className="min-w-0 md:w-44 md:shrink-0">
-                  <p className="text-fd-foreground truncate text-sm font-medium">{op.label}</p>
-                  <p className="text-fd-muted-foreground text-xs">
-                    {NUMBER_FORMATTER.format(Math.round(op.summary.opsPerSecond))} ops/s
-                  </p>
-                </div>
-                <div className="relative col-span-2 md:col-span-1">
-                  <div className="bg-fd-muted h-6 w-full overflow-hidden rounded-full">
-                    <div className={`${bar} h-full rounded-full transition-all`} style={{ width: `${widthPct}%` }} />
-                  </div>
-                </div>
-                <div className="flex shrink-0 items-center justify-end gap-2 whitespace-nowrap md:w-36">
-                  <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${badge}`}>{label}</span>
-                  <span className="text-fd-foreground font-mono text-sm font-semibold whitespace-nowrap tabular-nums">
-                    {formatMs(op.summary.p95Ms)}
-                  </span>
-                </div>
+                <dt className="text-fd-muted-foreground mt-2.5 text-sm leading-snug">{op.label}</dt>
+                <dd
+                  className={`${GeistMono.className} text-3xl font-semibold tracking-tight text-[hsl(32,100%,38%)] tabular-nums sm:text-[44px] dark:text-[hsl(32,100%,50%)]`}
+                >
+                  {value}
+                  <span className="text-fd-muted-foreground ml-1 text-base font-medium sm:text-lg">{unit}</span>
+                </dd>
               </div>
             );
           })}
-        </div>
-        <div className="border-fd-border/60 text-fd-muted-foreground border-t px-5 py-3 text-xs">
-          Latest CI snapshot · dataset size {datasetSize} · Chrome ·{" "}
-          {SNAPSHOT_DATE_FORMATTER.format(new Date(snapshot.completedAt))}
-          <span className="block pt-1">
-            Note: bulk create/update/delete operations include IndexedDB transaction commit overhead; this reflects
-            browser storage behavior, not network latency.
+        </dl>
+      )}
+
+      {rows.length > 0 && (
+        <ul className="mt-8 grid grid-cols-1 gap-x-16 md:grid-cols-2">
+          {rows.map((op) => (
+            <li
+              key={op.id}
+              className="border-fd-border/70 grid grid-cols-[minmax(0,1fr)_5rem_4.5rem] items-center gap-x-4 border-b py-3"
+            >
+              <span className="text-fd-foreground text-sm">{op.label}</span>
+              <span className="h-0.75 overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-800" aria-hidden="true">
+                <span className="block h-full bg-[hsl(32,100%,50%)]" style={{ width: `${barWidth(op.perQueryMs)}%` }} />
+              </span>
+              <span
+                className={`${GeistMono.className} text-fd-foreground text-right text-sm font-semibold tabular-nums`}
+              >
+                {formatMs(op.perQueryMs)}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {fullScan && (
+        <div className="mt-7 flex items-center justify-between gap-6 rounded-lg bg-zinc-200/60 px-5 py-4 dark:bg-zinc-900">
+          <p className="text-fd-muted-foreground text-sm">
+            For contrast, the same filter on an <span className="text-fd-foreground">unindexed</span> field scans the
+            whole store.
+          </p>
+          <span className={`${GeistMono.className} text-fd-muted-foreground shrink-0 text-sm font-semibold`}>
+            {formatMs(fullScan.perQueryMs)}
           </span>
+        </div>
+      )}
+
+      <div className="mt-8 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between sm:gap-12">
+        <p className="text-fd-muted-foreground max-w-xl text-xs leading-relaxed">
+          {operations.length} operations measured, {config.measuredRuns} runs each after {config.warmupRuns} warmups,{" "}
+          {config.datasetSize.toLocaleString("en-US")} rows per store · {chromeVersion(snapshot.browser)} ·{" "}
+          {SNAPSHOT_DATE_FORMATTER.format(new Date(snapshot.completedAt))}. Batched operations are divided by their
+          batch size. Writes include IndexedDB&apos;s transaction commit. Results vary by browser and device.
+        </p>
+        <div className="flex shrink-0 flex-col gap-2 text-sm sm:items-end">
+          <Link
+            href={BENCHMARK_SOURCE_URL}
+            target="_blank"
+            rel="noreferrer"
+            className="text-fd-accent inline-flex items-center gap-1 font-medium hover:underline"
+          >
+            How it&apos;s measured
+            <ChevronRight className="h-3.5 w-3.5" />
+          </Link>
+          <Link
+            href={LEGACY_BENCHMARK_URL}
+            target="_blank"
+            rel="noreferrer"
+            className="text-fd-muted-foreground hover:text-fd-foreground inline-flex items-center gap-1"
+          >
+            Prisma 6 and 7: run the generator benchmark
+            <ChevronRight className="h-3.5 w-3.5" />
+          </Link>
         </div>
       </div>
     </>
