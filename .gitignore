@@ -24,3 +24,8 @@ todo.md
 
 # Scratch projects (not committed)
 scratchpad/
+
+# Personal agent instructions and agent logs
+CLAUDE.local.md
+.claude/settings.local.json
+/.cache/agent-logs/
