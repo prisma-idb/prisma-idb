@@ -52,7 +52,9 @@ sw.addEventListener("fetch", (event) => {
 
 /** Serves cached same-origin assets and falls back to the app shell for offline navigation. */
 async function cacheFirst(request: Request) {
-  const cached = await caches.match(request);
+  // Precached responses were stored without an `Origin` header, but module scripts send one. A server
+  // that answers with `Vary: Origin` (Vite's preview server does) would then never match them.
+  const cached = await caches.match(request, { ignoreVary: true });
   if (cached) return cached;
 
   try {
@@ -64,7 +66,7 @@ async function cacheFirst(request: Request) {
     return response;
   } catch (error) {
     if (request.mode === "navigate") {
-      const shell = await caches.match("/");
+      const shell = await caches.match("/", { ignoreVary: true });
       if (shell) return shell;
     }
     throw error;
