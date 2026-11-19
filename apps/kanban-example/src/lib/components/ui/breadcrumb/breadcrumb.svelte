@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { WithElementRef } from "$lib/utils.js";
+  import { cn } from "$lib/utils.js";
   import type { HTMLAttributes } from "svelte/elements";
 
   let {
@@ -10,6 +11,6 @@
   }: WithElementRef<HTMLAttributes<HTMLElement>> = $props();
 </script>
 
-<nav bind:this={ref} data-slot="breadcrumb" class={className} aria-label="breadcrumb" {...restProps}>
+<nav bind:this={ref} data-slot="breadcrumb" aria-label="breadcrumb" class={cn(className)} {...restProps}>
   {@render children?.()}
 </nav>

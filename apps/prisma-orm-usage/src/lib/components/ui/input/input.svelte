@@ -1,13 +1,12 @@
 <script lang="ts">
-  import type { HTMLInputAttributes, HTMLInputTypeAttribute } from "svelte/elements";
   import { cn, type WithElementRef } from "$lib/utils.js";
+  import type { HTMLInputAttributes, HTMLInputTypeAttribute } from "svelte/elements";
 
-  /** Native input types supported by the reusable input component. */
   type InputType = Exclude<HTMLInputTypeAttribute, "file">;
 
-  /** Native input attributes and the component’s bindable value and element reference. */
   type Props = WithElementRef<
-    Omit<HTMLInputAttributes, "type"> & ({ type: "file"; files?: FileList } | { type?: InputType; files?: undefined })
+    Omit<HTMLInputAttributes, "type"> &
+      ({ type: "file"; files?: FileList | null } | { type?: InputType; files?: undefined })
   >;
 
   let {
