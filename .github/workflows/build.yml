@@ -178,8 +178,10 @@ jobs:
         run: echo "DATABASE_URL=postgresql://postgres:postgres@localhost:5433/postgres" >> $GITHUB_ENV
       - uses: ./.github/actions/
       - name: Install Playwright Browsers
-        working-directory: apps/usage
-        run: pnpm exec playwright install --with-deps
+        uses: ./.github/actions/playwright
+        with:
+          working-directory: apps/usage
+          browsers: chromium
       - name: Run generator client Playwright tests
         run: pnpm test:generator-client
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
