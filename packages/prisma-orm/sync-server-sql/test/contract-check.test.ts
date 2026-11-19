@@ -67,7 +67,7 @@ describe("contract check gate", () => {
   it("applies nothing from a refused push, and serves the same push once the storage hash matches", async () => {
     const db = await testDb();
     await gated.applyPush(db, { scopeKey: "u1", events, clientStorageHash: "old-client" });
-    expect(await ungated.pull(db, { scopeKey: "u1" })).toEqual({ ok: true, logs: [] });
+    expect(await ungated.pull(db, { scopeKey: "u1" })).toEqual({ ok: true, logs: [], hasMore: false });
 
     const clientStorageHash = testSyncServer.clientStorageHash;
     expect(await gated.applyPush(db, { scopeKey: "u1", events, clientStorageHash })).toEqual({

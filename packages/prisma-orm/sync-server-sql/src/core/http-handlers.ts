@@ -93,7 +93,7 @@ async function handlePull(
     ...(pullLimit === undefined ? {} : { limit: pullLimit }),
     clientStorageHash: parsed.data.storageHash,
   });
-  if (outcome.ok) return Response.json(outcome.logs);
+  if (outcome.ok) return Response.json({ logs: outcome.logs, hasMore: outcome.hasMore });
   switch (outcome.reason) {
     case "contract-mismatch":
       return Response.json(outcome, { status: 409 });

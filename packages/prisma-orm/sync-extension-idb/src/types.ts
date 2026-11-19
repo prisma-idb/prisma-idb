@@ -57,6 +57,14 @@ export interface VersionMetaRecord {
 /** Server changelog entry returned by the pull endpoint. */
 export type LogWithRecord = LogWithRecordBody;
 
+/** One page of changes returned by the pull endpoint. */
+export interface PullPage {
+  /** Changelog entries, oldest first. */
+  logs: LogWithRecord[];
+  /** True if more changes follow this page. The worker then pulls the next page in the same cycle. */
+  hasMore: boolean;
+}
+
 /**
  * Per-event result from the push endpoint. `retryable` (present only for
  * `success: false`) is the server's own verdict on whether trying again

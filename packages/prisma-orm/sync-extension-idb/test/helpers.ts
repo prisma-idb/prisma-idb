@@ -12,7 +12,7 @@ import idbFamilyPack from "@prisma-idb/family-idb/pack";
 import idbTargetPack from "@prisma-idb/target-idb/pack";
 import type { IdbContract } from "@prisma-idb/client-idb/orm";
 import { createSyncIdbClient } from "../src/exports/client";
-import type { SyncIdbClient } from "../src/exports/client";
+import type { LogWithRecord, PullPage, SyncIdbClient } from "../src/exports/client";
 
 let dbCounter = 0;
 export function testDbName(): string {
@@ -159,4 +159,9 @@ export async function createTestSyncClient(options?: {
 /** A UUID v7-shaped changelog id whose order follows `n` (same shape the server generates). */
 export function changelogId(n: number): string {
   return `0198a4f0-0000-7000-8000-${String(n).padStart(12, "0")}`;
+}
+
+/** A pull page with no more pages after it. */
+export function lastPage(logs: LogWithRecord[] = []): PullPage {
+  return { logs, hasMore: false };
 }

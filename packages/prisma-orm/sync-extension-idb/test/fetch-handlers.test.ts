@@ -34,12 +34,12 @@ describe("fetch sync handlers", () => {
           expect(url.searchParams.get("tenant")).toBe("app");
           expect(url.searchParams.getAll("since")).toEqual(["cursor+/?"]);
         }
-        return Response.json([]);
+        return Response.json(request.method === "POST" ? [] : { logs: [], hasMore: true });
       },
     });
     expect(await client.pushHandler([], controller.signal, context)).toEqual([]);
     controller = new AbortController();
-    expect(await client.pullHandler("cursor+/?", controller.signal, context)).toEqual([]);
+    expect(await client.pullHandler("cursor+/?", controller.signal, context)).toEqual({ logs: [], hasMore: true });
   });
 
   it.each([409, 401, 500])("handles HTTP %s before parsing a non-JSON body", async (status) => {

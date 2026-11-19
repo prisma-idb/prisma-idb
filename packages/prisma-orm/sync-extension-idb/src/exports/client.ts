@@ -27,6 +27,7 @@ export type {
   OutboxEvent,
   OutboxWriteEntry,
   LogWithRecord,
+  PullPage,
   PushResult,
   ApplyPullResult,
   PullChange,

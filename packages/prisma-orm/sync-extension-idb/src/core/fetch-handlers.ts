@@ -1,4 +1,4 @@
-import { logWithRecordSchema, pushResultSchema } from "../schemas";
+import { pullResponseSchema, pushResultSchema } from "../schemas";
 import { ContractMismatchError } from "./contract-mismatch-error";
 import type { SyncWorkerOptions } from "./sync-worker";
 import type { IdbContract } from "@prisma-idb/client-idb/orm";
@@ -66,7 +66,7 @@ export function createSyncFetchHandlers(options: SyncFetchHandlersOptions): Sync
         redirect: "error",
         signal,
       });
-      return logWithRecordSchema.array().parse(await readResponse(response, "Pull"));
+      return pullResponseSchema.parse(await readResponse(response, "Pull"));
     },
   };
 }

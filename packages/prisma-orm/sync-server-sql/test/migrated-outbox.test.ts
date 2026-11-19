@@ -116,7 +116,7 @@ describe("migrated outbox push", () => {
         results.push(...outcome.results);
         return [...outcome.results];
       },
-      pullHandler: async () => [],
+      pullHandler: async () => ({ logs: [], hasMore: false }),
     });
     try {
       await worker.forceSync();

@@ -34,7 +34,12 @@ export type SqlPullLog = Readonly<LogWithRecordBody>;
 
 /** The `reason` union may gain new values in future releases; handle each known reason explicitly. */
 export type PullOutcome =
-  | { readonly ok: true; readonly logs: readonly SqlPullLog[] }
+  | {
+      readonly ok: true;
+      readonly logs: readonly SqlPullLog[];
+      /** True if more changes follow this page. Pull again from the last `changelogId` without waiting. */
+      readonly hasMore: boolean;
+    }
   | { readonly ok: false; readonly reason: "invalid-cursor" }
   | ContractMismatchOutcome;
 
@@ -44,7 +49,8 @@ export type PullOutcome =
  * every row via `buildPullQueries` and a re-fetch of its current state.
  *
  * Rows come back in changelog-id order; the client's next cursor is the last
- * `changelogId`. An empty page means the client is caught up.
+ * `changelogId`. `hasMore` is false once the page reaches the end of the
+ * changelog, so the client is caught up.
  * @throws {RangeError} If `limit` is not a positive, finite integer.
  */
 export async function pull(
@@ -61,7 +67,10 @@ export async function pull(
   const cursor = parseChangelogCursor(input.lastChangelogId);
   if (cursor === undefined) return { ok: false, reason: "invalid-cursor" };
 
-  const rows = await readChangelogPage(db, scopeKey, cursor, limit);
+  // One row past the page tells whether more follow, without a separate count query.
+  const fetched = await readChangelogPage(db, scopeKey, cursor, limit + 1);
+  const hasMore = fetched.length > limit;
+  const rows = hasMore ? fetched.slice(0, limit) : fetched;
 
   const checksById = new Map(
     syncServer
@@ -88,5 +97,5 @@ export async function pull(
     })
   );
 
-  return { ok: true, logs };
+  return { ok: true, logs, hasMore };
 }

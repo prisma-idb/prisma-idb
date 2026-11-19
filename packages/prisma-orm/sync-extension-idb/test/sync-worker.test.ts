@@ -7,8 +7,8 @@ import { pushRequestBodySchema } from "../src/schemas";
 import { createSyncWorker } from "../src/core/sync-worker";
 import type { ContractMismatchEvent, PullCompletedEvent, PushCompletedEvent } from "../src/core/sync-worker";
 import type { SyncIdbClient } from "../src/exports/client";
-import type { LogWithRecord, OutboxEvent } from "../src/types";
-import { asAccessors, changelogId, createTestSyncClient, scanAll } from "./helpers";
+import type { LogWithRecord, OutboxEvent, PullPage } from "../src/types";
+import { asAccessors, changelogId, createTestSyncClient, scanAll, lastPage } from "./helpers";
 import { createSyncIdbClient } from "../src/exports/client";
 import { defineContract } from "@prisma-idb/family-idb/contract-ts";
 import idbFamilyPack from "@prisma-idb/family-idb/pack";
@@ -81,7 +81,7 @@ describe("SyncWorker — state machine", () => {
     const worker = createSyncWorker({
       syncClient: makeStubSyncClient(),
       pushHandler: async () => [],
-      pullHandler: async () => [],
+      pullHandler: async () => lastPage(),
       syncOnReconnect: true,
     });
     const statuses: string[] = [];
@@ -136,7 +136,7 @@ describe("SyncWorker — state machine", () => {
     const worker = createSyncWorker({
       syncClient: makeStubSyncClient(),
       pushHandler: async () => [],
-      pullHandler: async () => [],
+      pullHandler: async () => lastPage(),
     });
     const statuses: string[] = [];
     worker.on("statuschange", (status) => statuses.push(status));
@@ -159,7 +159,7 @@ describe("SyncWorker — state machine", () => {
     const worker = createSyncWorker({
       syncClient: makeStubSyncClient(),
       pushHandler: async () => [],
-      pullHandler: async () => [],
+      pullHandler: async () => lastPage(),
     });
     worker.on("statuschange", (s) => statuses.push(s));
 
@@ -176,7 +176,7 @@ describe("SyncWorker — state machine", () => {
     const worker = createSyncWorker({
       syncClient: makeStubSyncClient(),
       pushHandler: async () => [],
-      pullHandler: async () => [],
+      pullHandler: async () => lastPage(),
     });
     const unsubscribeFirst = worker.on("statuschange", (s) => first.push(s));
     worker.on("statuschange", (s) => second.push(s));
@@ -271,7 +271,7 @@ describe("SyncWorker — state machine", () => {
       pushHandler: async () => [],
       pullHandler: async () => {
         pullCalls++;
-        return [];
+        return lastPage([]);
       },
       intervalMs: 10_000,
     });
@@ -290,7 +290,7 @@ describe("SyncWorker — state machine", () => {
       pushHandler: async () => [],
       pullHandler: async () => {
         pullCalls++;
-        return [];
+        return lastPage([]);
       },
       intervalMs: 1_000,
     });
@@ -365,7 +365,7 @@ describe("SyncWorker — state machine", () => {
       pushHandler: async () => [],
       pullHandler: async () => {
         if (shouldFail) throw new Error("first cycle fails");
-        return [];
+        return lastPage([]);
       },
       backoffBaseMs: 1_000,
       intervalMs: 500,
@@ -417,7 +417,7 @@ describe("SyncWorker — state machine", () => {
       pullHandler: () => {
         pullCalls++;
         return new Promise((resolve) => {
-          resolvePull = () => resolve([]);
+          resolvePull = () => resolve(lastPage());
         });
       },
     });
@@ -472,7 +472,7 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
                 : resolve(events.map(({ id }) => ({ id, success: true })));
             enteredPush();
           }),
-        pullHandler: async () => [userLog(changelogId(1), "late")],
+        pullHandler: async () => lastPage([userLog(changelogId(1), "late")]),
         requestTimeoutMs: 100,
       });
       const events: unknown[] = [];
@@ -523,9 +523,9 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
       pushHandler: async (events) => events.map(({ id }) => ({ id, success: true })),
       pullHandler: async (cursor) => {
         cursors.push(cursor);
-        if (cursor === null) return [userLog(changelogId(1), "before-stop")];
-        if (cursor === changelogId(1)) return [userLog(changelogId(2), "after-restart")];
-        return [];
+        if (cursor === null) return lastPage([userLog(changelogId(1), "before-stop")]);
+        if (cursor === changelogId(1)) return lastPage([userLog(changelogId(2), "after-restart")]);
+        return lastPage([]);
       },
       intervalMs: 1_000,
     });
@@ -601,7 +601,7 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
             error: "rejected",
           }));
         },
-        pullHandler: async () => [],
+        pullHandler: async () => lastPage(),
       });
 
       if (outcome === "transport") await expect(worker.forceSync()).rejects.toThrow("offline");
@@ -651,7 +651,7 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
       pushHandler: async () => {
         throw failure;
       },
-      pullHandler: async () => [],
+      pullHandler: async () => lastPage(),
     });
     const errors: Error[] = [];
     worker.on("error", (error) => errors.push(error));
@@ -704,7 +704,7 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
       await seedAcknowledgedEvents(client, 105);
       await asAccessors(client.orm)["users"]!.create({ id: "u1", name: "Alice" });
       const pushHandler = async (events: OutboxEvent[]) => events.map((event) => ({ id: event.id, success: true }));
-      const pullHandler = async () => [userLog(changelogId(1), "remote")];
+      const pullHandler = async () => lastPage([userLog(changelogId(1), "remote")]);
       const worker = trackedWorker({ syncClient: client, pushHandler, pullHandler });
       const spy = vi.spyOn(client, "withTransaction").mockRejectedValueOnce(new Error("cleanup failure"));
 
@@ -727,7 +727,11 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
     it("prunes existing history during an idle cycle and remains idempotent", async () => {
       const { client } = await createTestSyncClient();
       await seedAcknowledgedEvents(client, 105);
-      const worker = trackedWorker({ syncClient: client, pushHandler: async () => [], pullHandler: async () => [] });
+      const worker = trackedWorker({
+        syncClient: client,
+        pushHandler: async () => [],
+        pullHandler: async () => lastPage(),
+      });
 
       await worker.forceSync();
 
@@ -752,7 +756,7 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
         },
         pullHandler: async () => {
           retainedCounts.push((await scanAll(client, "_idb_sync_outbox")).filter((e) => e["synced"]).length);
-          return [];
+          return lastPage([]);
         },
       });
       const completed: PushCompletedEvent[] = [];
@@ -795,7 +799,7 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
             await fn(scope);
             throw new Error("result transaction failure");
           })) as typeof client.withTransaction);
-        const pullHandler = async () => [userLog(changelogId(1), "remote")];
+        const pullHandler = async () => lastPage([userLog(changelogId(1), "remote")]);
         const worker = trackedWorker({
           syncClient: client,
           pushHandler: async (events) =>
@@ -840,7 +844,7 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
         pushed.push(...events);
         return events.map((e) => ({ id: e.id, success: true }));
       },
-      pullHandler: async () => [],
+      pullHandler: async () => lastPage(),
     });
 
     let pushCompleted: PushCompletedEvent | undefined;
@@ -895,7 +899,7 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
         pushed.push(...events);
         return events.map((e) => ({ id: e.id, success: true }));
       },
-      pullHandler: async () => [],
+      pullHandler: async () => lastPage(),
     });
     await worker.forceSync();
 
@@ -914,7 +918,7 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
     const worker = trackedWorker({
       syncClient: client,
       pushHandler: async (events) => events.map((e) => ({ id: e.id, success: false, error: "server rejected" })),
-      pullHandler: async () => [],
+      pullHandler: async () => lastPage(),
     });
 
     let pushCompleted: PushCompletedEvent | undefined;
@@ -948,7 +952,7 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
           { id: "unknown-event", success },
         ];
       },
-      pullHandler: async () => [],
+      pullHandler: async () => lastPage(),
     });
     let completed: PushCompletedEvent | undefined;
     worker.on("pushcompleted", (event) => (completed = event));
@@ -978,7 +982,7 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
         }
         return events.map((event) => ({ id: event.id, success: true }));
       },
-      pullHandler: async () => [],
+      pullHandler: async () => lastPage(),
     });
 
     await worker.forceSync();
@@ -1018,15 +1022,16 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
     const worker = trackedWorker({
       syncClient: client,
       pushHandler: async () => [],
-      pullHandler: async () => [
-        created,
-        { ...userLog(changelogId(2), "updated"), operation: "update", record: { id: "updated", name: "After" } },
-        { ...userLog(changelogId(3), "deleted"), operation: "delete", record: null },
-        { ...userLog(changelogId(4), "revoked"), operation: "update", record: null },
-        created,
-        { ...userLog(changelogId(5), "invalid"), record: { id: "invalid", name: 42 } },
-        { ...userLog(changelogId(6), "unknown"), model: "Unknown" },
-      ],
+      pullHandler: async () =>
+        lastPage([
+          created,
+          { ...userLog(changelogId(2), "updated"), operation: "update", record: { id: "updated", name: "After" } },
+          { ...userLog(changelogId(3), "deleted"), operation: "delete", record: null },
+          { ...userLog(changelogId(4), "revoked"), operation: "update", record: null },
+          created,
+          { ...userLog(changelogId(5), "invalid"), record: { id: "invalid", name: 42 } },
+          { ...userLog(changelogId(6), "unknown"), model: "Unknown" },
+        ]),
     });
     const completed: PullCompletedEvent[] = [];
     worker.on("pullcompleted", (event) => completed.push(event));
@@ -1069,13 +1074,15 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
       syncClient: client,
       pushHandler: async () => [],
       pullHandler: async () =>
-        (["create", "delete", "delete", "create"] as const).map((operation, index) => ({
-          changelogId: changelogId(index + 1),
-          model: "Asset",
-          operation,
-          keyPath: compound ? ["t1", "AQI="] : "AQI=",
-          record: operation === "delete" ? null : { tenant: "t1", id: "AQI=", name: "Remote" },
-        })),
+        lastPage(
+          (["create", "delete", "delete", "create"] as const).map((operation, index) => ({
+            changelogId: changelogId(index + 1),
+            model: "Asset",
+            operation,
+            keyPath: compound ? ["t1", "AQI="] : "AQI=",
+            record: operation === "delete" ? null : { tenant: "t1", id: "AQI=", name: "Remote" },
+          }))
+        ),
     });
     const completed: PullCompletedEvent[] = [];
     worker.on("pullcompleted", (event) => completed.push(event));
@@ -1109,7 +1116,7 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
         },
         pullHandler: async (_from, _signal, context) => {
           storageHashes.push(context.storageHash);
-          return [];
+          return lastPage([]);
         },
       });
 
@@ -1124,7 +1131,7 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
       const seed = trackedWorker({
         syncClient: client,
         pushHandler: async () => [],
-        pullHandler: async () => [userLog(changelogId(7), "u7")],
+        pullHandler: async () => lastPage([userLog(changelogId(7), "u7")]),
       });
       await seed.forceSync();
       await seed.stop();
@@ -1153,7 +1160,7 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
         pushHandler: async () => [],
         pullHandler: async (cursor) => {
           from.push(cursor);
-          return [];
+          return lastPage([]);
         },
       });
       await recovered.forceSync();
@@ -1177,7 +1184,7 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
             return Response.json(events.map((event) => ({ id: event.id, success: true })));
           },
         }).pushHandler,
-        pullHandler: async () => [],
+        pullHandler: async () => lastPage(),
       });
       const mismatches: ContractMismatchEvent[] = [];
       const errors: Error[] = [];
@@ -1226,10 +1233,10 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
               },
         ];
         /** Serves the next page only after the corrupt tail cursor has been restored. */
-        const pullHandler = async (cursor: string | null): Promise<LogWithRecord[]> => {
-          if (cursor === null) return firstPage;
-          if (cursor === changelogId(10)) return [userLog(changelogId(11), "u11")];
-          return [];
+        const pullHandler = async (cursor: string | null): Promise<PullPage> => {
+          if (cursor === null) return lastPage(firstPage);
+          if (cursor === changelogId(10)) return lastPage([userLog(changelogId(11), "u11")]);
+          return lastPage([]);
         };
         const worker = trackedWorker({
           syncClient: client,
@@ -1276,7 +1283,7 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
         pushHandler: async () => [],
         pullHandler: async (from) => {
           cursors.push(from);
-          return batches.shift() ?? [];
+          return lastPage(batches.shift() ?? []);
         },
       });
 
@@ -1305,7 +1312,7 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
         pushHandler: async () => [],
         pullHandler: async (from) => {
           cursors.push(from);
-          return batches.shift() ?? [];
+          return lastPage(batches.shift() ?? []);
         },
       });
 
@@ -1314,6 +1321,56 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
       await worker.forceSync();
 
       expect(cursors).toEqual([null, changelogId(10), changelogId(10)]);
+    });
+
+    it("pulls every waiting page in one cycle, pushing edits made between pages before the next pull", async () => {
+      const { client } = await createTestSyncClient();
+      const history = [1, 2, 3, 4, 5].map((n) => userLog(changelogId(n), `u${n}`));
+      const calls: string[] = [];
+      const worker = trackedWorker({
+        syncClient: client,
+        pushHandler: async (events) => {
+          calls.push(`push:${events.length}`);
+          return events.map((event) => ({ id: event.id, success: true }));
+        },
+        pullHandler: async (from) => {
+          calls.push(`pull:${from}`);
+          if (from === null) await asAccessors(client.orm)["users"]!.create({ id: "local", name: "Local" });
+          const rest = history.filter((log) => from === null || log.changelogId > from);
+          return { logs: rest.slice(0, 2), hasMore: rest.length > 2 };
+        },
+      });
+
+      await worker.forceSync();
+
+      expect(calls).toEqual(["pull:null", "push:1", `pull:${changelogId(2)}`, `pull:${changelogId(4)}`]);
+      expect((await scanAll(client, "users")).map((user) => user["id"])).toEqual([
+        "local",
+        "u1",
+        "u2",
+        "u3",
+        "u4",
+        "u5",
+      ]);
+      expect(await client.outbox.hasPending()).toBe(false);
+    });
+
+    it("ends the cycle when a page that reports more leaves the cursor in place", async () => {
+      const { client } = await createTestSyncClient();
+      const cursors: (string | null)[] = [];
+      const worker = trackedWorker({
+        syncClient: client,
+        pushHandler: async () => [],
+        // A faulty server that resends the same row and always claims more.
+        pullHandler: async (from) => {
+          cursors.push(from);
+          return { logs: [userLog(changelogId(1), "u1")], hasMore: true };
+        },
+      });
+
+      await worker.forceSync();
+
+      expect(cursors).toEqual([null, changelogId(1)]);
     });
   });
 
@@ -1329,7 +1386,7 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
 
     /** A server that returns the next `pageSize` changes after the cursor, oldest first. */
     const pagedServer = (pageSize: number) => async (cursor: string | null) =>
-      history.filter((entry) => cursor === null || entry.changelogId > cursor).slice(0, pageSize);
+      lastPage(history.filter((entry) => cursor === null || entry.changelogId > cursor).slice(0, pageSize));
 
     it.each([false, true])("recovers from a failed IndexedDB cursor save (reload: %s)", async (reload) => {
       const { client } = await createTestSyncClient();
@@ -1444,7 +1501,7 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
         },
         pullHandler: async () => {
           calls.push("pull");
-          return [];
+          return lastPage([]);
         },
       });
 
@@ -1470,7 +1527,7 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
         },
         pullHandler: async (cursor) => {
           from.push(cursor);
-          return cursor === null ? [userLog(changelogId(1), "remote")] : [];
+          return lastPage(cursor === null ? [userLog(changelogId(1), "remote")] : []);
         },
       });
 
@@ -1516,7 +1573,7 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
           },
           pullHandler: async (cursor) => {
             from.push(cursor);
-            return cursor === null ? [userLog(changelogId(1), "remote")] : [];
+            return lastPage(cursor === null ? [userLog(changelogId(1), "remote")] : []);
           },
         });
         const pushes: PushCompletedEvent[] = [];
@@ -1551,7 +1608,7 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
     it("skips the pull while a retryable event remains, and pulls once it succeeds", async () => {
       const { client } = await createTestSyncClient();
       await asAccessors(client.orm)["users"]!.create({ id: "u1", name: "Alice" });
-      const pullHandler = async (): Promise<LogWithRecord[]> => [userLog(changelogId(1), "remote")];
+      const pullHandler = async (): Promise<PullPage> => lastPage([userLog(changelogId(1), "remote")]);
       let failPush = true;
       const worker = trackedWorker({
         syncClient: client,
@@ -1593,7 +1650,7 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
             serverUp ? { id: e.id, success: true } : { id: e.id, success: false, error: "db down", retryable: true }
           );
         },
-        pullHandler: async () => [],
+        pullHandler: async () => lastPage(),
       });
       const pushes: PushCompletedEvent[] = [];
       worker.on("pushcompleted", (p) => pushes.push(p));
@@ -1630,7 +1687,7 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
             if (mode === "throw") throw new Error("offline");
             return new Promise(() => {});
           },
-          pullHandler: async () => [],
+          pullHandler: async () => lastPage(),
         });
         const pushes: PushCompletedEvent[] = [];
         worker.on("pushcompleted", (p) => pushes.push(p));
@@ -1655,7 +1712,7 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
           batches.push(events.map((e) => e.id));
           return [{ id: events[0]!.id, success: false, error: "db down", retryable: true }];
         },
-        pullHandler: async () => [],
+        pullHandler: async () => lastPage(),
       });
 
       await worker.forceSync();

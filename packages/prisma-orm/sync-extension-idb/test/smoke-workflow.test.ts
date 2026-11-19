@@ -11,7 +11,7 @@ import { describe, expect, it } from "vitest";
 import { createSyncWorker } from "../src/core/sync-worker";
 import type { PullCompletedEvent } from "../src/core/sync-worker";
 import type { LogWithRecord, PushResult } from "../src/types";
-import { asAccessors, createTestSyncClient, scanAll } from "./helpers";
+import { asAccessors, createTestSyncClient, scanAll, lastPage } from "./helpers";
 
 describe("sync-extension-idb end-to-end", () => {
   it("pushes local creates, applies a remote create, and holds a conflicting pull until the local write is pushed", async () => {
@@ -54,7 +54,7 @@ describe("sync-extension-idb end-to-end", () => {
       pullHandler: async (fromChangelogId) => {
         cursorSeen = fromChangelogId;
         if (fromChangelogId === null) await posts.create({ id: "p3", title: "Not yet synced", authorId: "u1" });
-        return serverLogs.filter((entry) => fromChangelogId === null || entry.changelogId > fromChangelogId);
+        return lastPage(serverLogs.filter((entry) => fromChangelogId === null || entry.changelogId > fromChangelogId));
       },
     });
 

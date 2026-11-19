@@ -21,7 +21,7 @@ import { ContractMismatchError } from "./contract-mismatch-error";
 import { createEmitter } from "./emitter";
 import { createPullCursor } from "./pull-cursor";
 import { VERSION_META_STORE } from "./version-meta";
-import type { LogWithRecord, PullChange, PushResult } from "../types";
+import type { PullChange, PullPage, PushResult } from "../types";
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
@@ -50,19 +50,22 @@ export interface SyncWorkerOptions<TContract extends IdbContract> {
     context: SyncRequestContext
   ) => Promise<PushResult[]>;
   /**
-   * Called with the last applied changelog ID (null if none). Returns new logs. The ID is persisted in IndexedDB across reloads.
+   * Called with the last applied changelog ID (null if none). Returns the next
+   * page of logs and whether more follow. While `hasMore` is true, the worker
+   * pulls again in the same cycle, pushing any new local edits between pages.
+   * The ID is persisted in IndexedDB across reloads.
    * Throw `ContractMismatchError` if the server answers 409.
    */
   readonly pullHandler: (
     fromChangelogId: string | null,
     signal: AbortSignal,
     context: SyncRequestContext
-  ) => Promise<LogWithRecord[]>;
+  ) => Promise<PullPage>;
   /** Sync on browser online and visible-page events while started. Default false. */
   readonly syncOnReconnect?: boolean;
   /** Max events per push batch. Default 20. */
   readonly batchSize?: number;
-  /** Milliseconds between sync cycles when idle. Default 5000. */
+  /** Milliseconds between sync cycles when idle. A cycle that finds more pages waiting pulls them all first. Default 5000. */
   readonly intervalMs?: number;
   /**
    * Base backoff in ms, doubled per consecutive failure. Applies to failed
@@ -142,7 +145,7 @@ export interface PushCompletedEvent {
    */
   stalled?: { eventId: string; tries: number; lastError: string | null };
 }
-/** Summarizes records consumed from a pull page and whether application halted. */
+/** Summarizes records consumed from a pull page and whether application halted. Emitted once per page. */
 export interface PullCompletedEvent {
   applied: number;
   /** Committed changelog entries from this pull page, in order. */
@@ -364,15 +367,11 @@ export function createSyncWorker<TContract extends IdbContract>(options: SyncWor
     return { synced, failed, unreconciled, matched: matched.length, retryableFailure };
   }
 
-  /** Applies the next pull page and saves only the cursor position it consumed safely. */
-  async function pullChanges(): Promise<void> {
-    setStatus("pulling");
-    await cursor.load();
-    if (stopped) return;
-    let logs: LogWithRecord[];
+  /** Requests one pull page, reporting a refused contract before rethrowing. */
+  async function requestPullPage(fromChangelogId: string | null): Promise<PullPage> {
     try {
-      logs = await withTimeout(
-        (signal) => pullHandler(cursor.value, signal, requestContext),
+      return await withTimeout(
+        (signal) => pullHandler(fromChangelogId, signal, requestContext),
         requestTimeoutMs,
         "pullHandler"
       );
@@ -380,13 +379,38 @@ export function createSyncWorker<TContract extends IdbContract>(options: SyncWor
       reportContractMismatch(error, "pull");
       throw error;
     }
-    const { applied, changes, skipped, validationFailed, halted, lastChangelogId } = await applyPull(syncClient, logs);
-    cursor.advance(lastChangelogId);
-    emit("pullcompleted", { applied, changes, skipped, validationFailed, halted });
-    await cursor.save();
   }
 
-  /** Push first, then pull only if nothing is left to push. The two never overlap, so a pull never lands on an unsent local edit. */
+  /**
+   * Applies pull pages until the server reports no more, saving after each
+   * page only the cursor position it consumed safely. Between pages it pushes
+   * the local edits made meanwhile, and stops if any are left to push.
+   */
+  async function pullChanges(overrideBackoff: boolean): Promise<void> {
+    while (true) {
+      setStatus("pulling");
+      await cursor.load();
+      if (stopped) return;
+      const fromChangelogId = cursor.value;
+      const { logs, hasMore } = await requestPullPage(fromChangelogId);
+      const { applied, changes, skipped, validationFailed, halted, lastChangelogId } = await applyPull(
+        syncClient,
+        logs
+      );
+      cursor.advance(lastChangelogId);
+      emit("pullcompleted", { applied, changes, skipped, validationFailed, halted });
+      await cursor.save();
+      // A halted page, or one that left the cursor in place, would only return the same rows again.
+      if (stopped || !hasMore || halted || cursor.value === fromChangelogId) return;
+      if (await pushPending(overrideBackoff)) return;
+    }
+  }
+
+  /**
+   * Push first, then pull only if nothing is left to push. The two never
+   * overlap, so a pull never lands on an unsent local edit. A pull of several
+   * pages pushes between them under the same rule.
+   */
   async function runCycle(overrideBackoff: boolean): Promise<void> {
     try {
       await syncClient.withTransaction([OUTBOX_STORE], pruneSyncedEvents);
@@ -395,7 +419,7 @@ export function createSyncWorker<TContract extends IdbContract>(options: SyncWor
     }
     if (stopped) return;
     const pullBlocked = await pushPending(overrideBackoff);
-    if (!stopped && !pullBlocked) await pullChanges();
+    if (!stopped && !pullBlocked) await pullChanges(overrideBackoff);
   }
 
   /** Starts a cycle with its own retry policy, or joins the active cycle without changing that policy. */
