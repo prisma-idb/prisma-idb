@@ -1094,7 +1094,8 @@ describe("IdbStoreAccessor — deleteAll / deleteCount", () => {
       await expect(write(users.take(1))).rejects.toThrow(
         `Cannot ${method} User: the collection has a limit. ${method} changes every row that matches the filter`
       );
-      await expect(write(users.skip(1).take(1))).rejects.toThrow(IdbBulkWriteError);
+      await expect(write(users.skip(1))).rejects.toThrow(IdbBulkWriteError);
+      await expect(write(users.skip(1))).rejects.toThrow("the collection has an offset");
       await expect(write(users.skip(1).take(1))).rejects.toThrow("Remove skip() and take()");
       expect(await client["users"]!.all().toArray()).toEqual([
         ALICE,
