@@ -26,6 +26,7 @@ import {
   rmSync,
   symlinkSync,
 } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { dirname, join, relative, resolve } from "node:path";
 
 const root = resolve(import.meta.dirname, "..");
@@ -55,6 +56,27 @@ for (const rule of rules) {
   }
 }
 
+/**
+ * With `core.symlinks=false` (the default on Windows without Developer Mode), Git checks each link out as a plain
+ * file holding its target path. The links can't be checked or created there, so only the sources are validated.
+ */
+function checkoutSupportsSymlinks(): boolean {
+  try {
+    return (
+      execFileSync("git", ["config", "--get", "core.symlinks"], { cwd: root, encoding: "utf8" }).trim() !== "false"
+    );
+  } catch {
+    // Unset means Git's default, which is true everywhere except where Git detects no symlink support.
+    return true;
+  }
+}
+const syncLinks = checkoutSupportsSymlinks();
+if (!syncLinks) {
+  console.warn(
+    "Skipping agent file links: this checkout has core.symlinks=false. Enable symlinks to use AGENTS.md, Cursor and Copilot rules."
+  );
+}
+
 function symlinkTarget(path: string): string | undefined {
   try {
     return lstatSync(path).isSymbolicLink() ? readlinkSync(path) : undefined;
@@ -63,24 +85,29 @@ function symlinkTarget(path: string): string | undefined {
   }
 }
 
-for (const [link, target] of links) {
+for (const [link, target] of syncLinks ? links : []) {
   const linkPath = join(root, link);
   const expected = relative(dirname(linkPath), join(root, target));
   const actual = symlinkTarget(linkPath);
   if (actual === expected) continue;
 
+  // A real file or folder here may hold someone's work, so never replace it; only wrong links are repaired.
+  if (actual === undefined && existsSync(linkPath)) {
+    problems.push(`${link} is a regular file or folder, not a link to ${expected}. Move its contents, then rerun.`);
+    continue;
+  }
   if (check) {
     problems.push(`${link} should be a symlink to ${expected}${actual ? ` (points to ${actual})` : ""}`);
     continue;
   }
-  if (existsSync(linkPath) || actual !== undefined) rmSync(linkPath, { recursive: true });
+  if (actual !== undefined) rmSync(linkPath);
   mkdirSync(dirname(linkPath), { recursive: true });
   symlinkSync(expected, linkPath);
   console.log(`linked ${link} -> ${expected}`);
 }
 
 // Remove links left behind by deleted or renamed rules.
-for (const { dir } of managedRuleDirs) {
+for (const { dir } of syncLinks ? managedRuleDirs : []) {
   const dirPath = join(root, dir);
   if (!existsSync(dirPath)) continue;
   for (const entry of readdirSync(dirPath)) {
@@ -97,10 +124,10 @@ for (const { dir } of managedRuleDirs) {
 }
 
 function frontmatter(file: string): Map<string, string> | undefined {
-  const match = /^---\n([\s\S]*?)\n---\n/.exec(readFileSync(file, "utf8"));
+  const match = /^---\r?\n([\s\S]*?)\r?\n---\r?\n/.exec(readFileSync(file, "utf8"));
   if (!match) return undefined;
   const fields = new Map<string, string>();
-  for (const line of match[1].split("\n")) {
+  for (const line of match[1].split(/\r?\n/)) {
     const field = /^([\w-]+):\s*(.*)$/.exec(line);
     if (field) fields.set(field[1], field[2].replace(/^"(.*)"$/, "$1"));
   }

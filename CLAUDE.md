@@ -78,7 +78,7 @@ Each kind of agent file has one canonical home. Other tools reach it through com
 | Skills                            | `.claude/skills/<name>/SKILL.md` | `.agents/skills` (read by Codex and Cursor)                               |
 | Claude Code permissions and hooks | `.claude/settings.json`          | none                                                                      |
 
-Edit the canonical file, never the symlink. After adding or renaming a rule, run `pnpm agents:sync`. Personal notes go in `CLAUDE.local.md` (gitignored).
+Edit the canonical file, never the symlink. Checkouts with `core.symlinks=false` get the links as plain text files; `pnpm agents:check` skips them there. After adding or renaming a rule, run `pnpm agents:sync`. Personal notes go in `CLAUDE.local.md` (gitignored).
 
 Rules load automatically when you touch matching files. Agents without path-scoped rules should read the matching rule before editing:
 

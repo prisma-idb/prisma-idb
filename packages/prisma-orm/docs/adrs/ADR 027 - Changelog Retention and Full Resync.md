@@ -20,7 +20,7 @@ The server deletes changelog rows older than a retention period. The default is 
 
 - **`sync-server-sql` exports `evictChangelog(db, { olderThanMs })`.** `olderThanMs` defaults to 30 days. The app calls it on its own schedule, such as a daily cron job. The library runs no background jobs.
 - **Eviction deletes by id range.** Changelog ids are UUID v7, so they start with a timestamp. The function builds the smallest id for the cutoff time and deletes every row below it, in batches, using the primary-key index.
-- **Eviction records a watermark.** A one-row table holds `evictedBefore`, the cutoff id of the latest eviction. The watermark only moves forward.
+- **Eviction records a watermark first.** A one-row table holds `evictedBefore`, the cutoff id of the latest eviction. The watermark only moves forward. Eviction commits the new watermark before it deletes any row below the cutoff, so a missing row always has a published watermark above it.
 - **Eviction never touches the row-version table** from [ADR 026](ADR%20026%20-%20Stale%20Writes%20Are%20Rejected%20by%20Base%20Version.md).
 
 ### Detecting a stale cursor
@@ -32,14 +32,16 @@ The server deletes changelog rows older than a retention period. The default is 
 
 The HTTP handler maps that to status 410.
 
-The check is safe because eviction only ever removes a prefix of ids. If the cursor is at or above the watermark, every later row still exists. If the cursor is below it, the client may have missed rows, so it must resync. Some clients resync when they didn't strictly need to, such as a client idle for longer than the retention period whose scope had no changes. That costs one snapshot download, which is acceptable.
+`pull` checks the watermark again after it reads the changelog page, and answers `resync-required` if the cursor is now below it. Without the second check, an eviction that commits between the first check and the read could delete rows the page should have contained. The pull would then return the rows after the gap, advance the cursor past it, and never report the loss. Because eviction publishes the watermark before deleting, any deletion visible to the read is also visible to the second check. Reading the watermark and the page in one `REPEATABLE READ` transaction gives the same guarantee; the re-check works under Postgres's default `READ COMMITTED`.
+
+The check is safe because eviction only ever removes a prefix of ids, and publishes the watermark before removing them. If the cursor is at or above the watermark, every later row still exists. If the cursor is below it, the client may have missed rows, so it must resync. Some clients resync when they didn't strictly need to, such as a client idle for longer than the retention period whose scope had no changes. That costs one snapshot download, which is acceptable.
 
 A `null` cursor always resyncs, even before any eviction has run. A snapshot is cheaper than replaying the history.
 
 ### The full-sync endpoint
 
 - **Route and adapter method.** `createSqlSync` returns a third handler, `fullSync(request)`. The adapter gains `fullSync(db, { scopeKey, clientStorageHash, pageToken?, limit? })`. It runs the same contract check as `pull` and `applyPush`.
-- **Response.** One page is `{ snapshotCursor, records, nextPageToken }`. Each record is `{ model, keyPath, record }`, projected to the client contract and wire-encoded the same way as a pulled record. `nextPageToken` is `null` on the last page.
+- **Response.** One page is `{ snapshotCursor, records, nextPageToken }`. Each record is `{ model, keyPath, record, version }`, projected to the client contract and wire-encoded the same way as a pulled record. `version` is the row's current version from the version table in ADR 026. `nextPageToken` is `null` on the last page.
 - **The snapshot cursor is read before any data.** On the first page, the server reads the scope's highest changelog id. If the scope has none, it uses `evictedBefore`, or the lowest possible id if nothing was ever evicted. The value goes into the page token, so every page reports the same cursor.
 - **Pages don't share a transaction.** Rows change between pages. That is safe:
   - A change after the snapshot cursor reaches the client through a normal pull later.
@@ -56,7 +58,7 @@ A `null` cursor always resyncs, even before any eviction has run. A snapshot is 
 - **The worker switches to full sync when pull throws `ResyncRequiredError`.** It pulls snapshot pages in the same loop as normal pages: it pushes new local edits between pages and stops early if any are left to push.
 - **Applying a page** uses raw writes, like `applyPull`, so no outbox events are created. For each record:
   - A row with a pending local change is skipped. The local edit wins until it is pushed.
-  - Otherwise the row is written. Its version metadata gets `lastAppliedChangeId = snapshotCursor` and the current resync generation number.
+  - Otherwise the row is written. Its version metadata gets `lastAppliedChangeId = version` from the record, and the current resync generation number. Each row needs its own version, not the shared `snapshotCursor`: under ADR 026 the next local edit sends `lastAppliedChangeId` as its `baseVersion`, and a value that differs from the row's version on the server would reject that edit as stale.
 - **The sweep runs after the last page.** It deletes every local row of a synced model whose metadata lacks the current generation, unless that row has a pending local change. This removes rows deleted on the server while their delete entries were evicted. Local-only stores are never touched.
 - **A resync survives reloads.** The worker stores `{ generation, snapshotCursor, pageToken }` in sync metadata after each page. After a reload it continues from the stored token. When the sweep finishes, it sets the pull cursor to `snapshotCursor` and clears the stored state.
 - **Events.** Each snapshot page emits `pullcompleted` with `resync: true`. The last page's event also lists the swept rows as deletes in `changes`, so apps can invalidate their queries. No new event types are added. The status stays `"pulling"`.

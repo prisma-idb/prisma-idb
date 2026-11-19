@@ -31,8 +31,8 @@ const prismaIdbCode = `const posts = await db.orm.post
   .all();
 
 // Typed from your schema. Relations included.
-// Filtering, sorting and nesting run
-// against IndexedDB in one transaction.`;
+// Filtering, sorting and nesting,
+// with no manual index lookups.`;
 
 const methods = ["where", "include", "orderBy", "all", "first", "create", "update", "upsert", "delete"];
 

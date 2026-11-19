@@ -31,4 +31,4 @@ Look for the behavior in three places: the public types (what input is accepted)
 
 ## 4. Cite
 
-In ADRs and PR descriptions, link the upstream file at a commit SHA or release tag, never a branch. In code comments, state the behavior directly; a link is fine when it saves a long explanation.
+In ADRs, link the upstream file at a commit SHA; the `adrs` rule requires it. In PR descriptions, a commit SHA or a release tag is fine. Never link a branch. In code comments, state the behavior directly; a link is fine when it saves a long explanation.

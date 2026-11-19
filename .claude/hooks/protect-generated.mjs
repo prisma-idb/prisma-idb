@@ -1,13 +1,16 @@
 // PreToolUse hook: blocks hand edits to generated files and the lockfile.
 // Exit code 2 rejects the tool call and shows stderr to Claude.
-import { relative } from "node:path";
+import { relative, resolve } from "node:path";
 import { text } from "node:stream/consumers";
 
 const input = JSON.parse(await text(process.stdin));
 const filePath = input.tool_input?.file_path;
 if (!filePath) process.exit(0);
 
-const path = relative(input.cwd ?? process.cwd(), filePath)
+// Resolve against the session's cwd, then express the path from the project root. Relative to a subdirectory cwd,
+// a protected ancestor such as src/lib/prisma-idb would drop out of the path and the edit would slip through.
+const cwd = input.cwd ?? process.cwd();
+const path = relative(process.env.CLAUDE_PROJECT_DIR ?? cwd, resolve(cwd, filePath))
   .split("\\")
   .join("/");
 

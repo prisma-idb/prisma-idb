@@ -35,7 +35,7 @@ A direct `vitest run` doesn't rebuild dependencies. If a dependency changed, its
 
 - Fresh checkout: `pnpm install --frozen-lockfile`, then `pnpm generate`.
 - Playwright suites need browsers once: `pnpm --dir apps/prisma-orm-usage exec playwright install chromium`.
-- `pnpm check` emits the Kanban PostgreSQL contract and needs `DATABASE_URL`. Copy `apps/prisma-orm-kanban-example/.env.example` to `.env`; no running database is needed for static checks.
+- `pnpm check` emits the Kanban PostgreSQL contract and needs `DATABASE_URL`. Copy `apps/prisma-orm-kanban-example/.env.example` to `apps/prisma-orm-kanban-example/.env`; no running database is needed for static checks.
 - SQL sync tests and the Kanban suites need a running PostgreSQL. Follow the app's README and the matching job in `.github/workflows/build.yml`.
 - The legacy Kanban app also needs `PUBLIC_POSTHOG_HOST` and `PUBLIC_POSTHOG_PROJECT_TOKEN` (placeholder values work).
 
