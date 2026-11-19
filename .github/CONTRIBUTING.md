@@ -11,6 +11,8 @@ Thank you for considering a contribution! This repo is a pnpm monorepo managed w
 
 Requires Node.js ≥ 20 and pnpm.
 
+The agent instruction files (`AGENTS.md`, `.cursor/rules`, `.github/instructions` and `.agents/skills`) are symlinks. On Windows, enable Developer Mode and run `git config --global core.symlinks true` before cloning, or those files check out as plain text. `pnpm check` skips the link check on checkouts without symlinks.
+
 ```bash
 git clone https://github.com/prisma-idb/prisma-idb
 cd prisma-idb
@@ -40,7 +42,7 @@ pnpm --dir apps/prisma-orm-usage exec playwright install --with-deps
 pnpm test:prisma-idb-e2e
 ```
 
-Before you add a test, read the [testing guidelines](../docs/testing-guidelines.md). Zero new tests is a valid outcome.
+Before you add a test, read the [testing guidelines](../.claude/skills/testing/SKILL.md). Zero new tests is a valid outcome.
 
 Type-check (catches things vitest/esbuild won't):
 

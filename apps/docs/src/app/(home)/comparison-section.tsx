@@ -1,114 +1,231 @@
-import { GeistSans } from "geist/font/sans";
-import { Check, Minus } from "lucide-react";
+import PrismaIdbLogo from "@/lib/assets/favicon.png";
+import { Section, SectionHeader } from "./section";
 
-type Support = "yes" | "no" | "partial";
+type Support = "yes" | "partly" | "no";
 
-interface Feature {
-  name: string;
-  prismaIdb: Support;
-  dexie: Support;
-  rxdb: Support;
-  electricSql: Support;
+/** A support level, plus an optional short note on what "partly" (or "yes") means for that tool. */
+type Cell = readonly [Support, string?];
+
+interface Row {
+  feature: string;
+  cells: readonly [Cell, Cell, Cell, Cell];
 }
 
-const features: Feature[] = [
-  { name: "Prisma-compatible API", prismaIdb: "yes", dexie: "no", rxdb: "no", electricSql: "no" },
-  { name: "Type-safe from schema", prismaIdb: "yes", dexie: "partial", rxdb: "partial", electricSql: "yes" },
-  { name: "Relations & nested queries", prismaIdb: "yes", dexie: "no", rxdb: "no", electricSql: "partial" },
-  { name: "Bidirectional sync", prismaIdb: "yes", dexie: "no", rxdb: "yes", electricSql: "partial" },
-  { name: "Conflict resolution", prismaIdb: "yes", dexie: "no", rxdb: "yes", electricSql: "no" },
-  { name: "Offline-first", prismaIdb: "yes", dexie: "yes", rxdb: "yes", electricSql: "partial" },
-  { name: "No vendor lock-in", prismaIdb: "yes", dexie: "yes", rxdb: "partial", electricSql: "partial" },
-  { name: "Zero runtime config", prismaIdb: "yes", dexie: "no", rxdb: "no", electricSql: "no" },
-];
-
 const tools = [
-  { key: "prismaIdb" as const, label: "Prisma IDB", highlight: true },
-  { key: "dexie" as const, label: "Dexie.js" },
-  { key: "rxdb" as const, label: "RxDB" },
-  { key: "electricSql" as const, label: "ElectricSQL" },
+  { name: "Prisma IDB", logo: PrismaIdbLogo.src, invertInDark: false, ours: true },
+  { name: "Dexie.js", logo: "/logos/dexie.svg", invertInDark: true, ours: false },
+  { name: "RxDB", logo: "/logos/rxdb.svg", invertInDark: false, ours: false },
+  { name: "ElectricSQL", logo: "/logos/electric.svg", invertInDark: true, ours: false },
 ];
 
-function SupportIcon({ support }: { support: Support }) {
-  if (support === "yes") {
+// Checked against each project's documentation in November 2026. Keep the notes short; they are the evidence.
+const groups: { name: string; rows: Row[] }[] = [
+  {
+    name: "Developer experience",
+    rows: [
+      { feature: "Prisma schema and query API", cells: [["yes"], ["no"], ["no"], ["no"]] },
+      {
+        feature: "Types from your schema",
+        cells: [
+          ["yes"],
+          ["partly", "declared in code"],
+          ["partly", "optional, from JSON Schema"],
+          ["partly", "declared in code"],
+        ],
+      },
+      {
+        feature: "Relations and nested writes",
+        cells: [["yes"], ["no"], ["partly", "refs via populate()"], ["partly", "SQL joins in PGlite"]],
+      },
+      {
+        feature: "Versioned migrations",
+        cells: [["yes"], ["yes", "version upgrades"], ["yes", "migration strategies"], ["partly", "server side"]],
+      },
+    ],
+  },
+  {
+    name: "Sync and offline",
+    rows: [
+      {
+        feature: "Two-way sync",
+        cells: [
+          ["yes"],
+          ["partly", "Dexie Cloud add-on"],
+          ["yes", "replication plugins"],
+          ["partly", "reads; writes via your API"],
+        ],
+      },
+      {
+        feature: "Conflict handling",
+        cells: [
+          ["yes", "server decides"],
+          ["partly", "last write wins, in Dexie Cloud"],
+          ["yes", "custom handlers"],
+          ["no", "left to your backend"],
+        ],
+      },
+      {
+        feature: "Works offline",
+        cells: [["yes"], ["yes"], ["yes"], ["partly", "reads; offline writes are yours"]],
+      },
+      { feature: "Ownership checks from your schema", cells: [["yes"], ["no"], ["no"], ["no"]] },
+    ],
+  },
+  {
+    name: "Where others are ahead",
+    rows: [
+      {
+        feature: "Live, reactive queries",
+        cells: [
+          ["partly", "change events"],
+          ["yes", "liveQuery"],
+          ["yes", "observables"],
+          ["partly", "via PGlite"],
+        ],
+      },
+      {
+        feature: "Production track record",
+        cells: [["partly", "Prisma 8 client is pre-1.0"], ["yes"], ["yes"], ["yes"]],
+      },
+    ],
+  },
+];
+
+/** Tints Prisma IDB's column. Set per cell, because a tinted <col> leaves gaps at the group headings. */
+const OUR_COLUMN = "bg-[hsl(32,100%,50%)]/[0.05]";
+/** Pins the feature column while the table scrolls sideways; below lg the table is wider than the screen. */
+const STICKY_CELL = "bg-fd-background sticky left-0 z-10 lg:static";
+
+const SUPPORT_LABEL: Record<Support, string> = { yes: "Yes", partly: "Partly", no: "No" };
+
+/** Each level has its own shape (filled, half, empty), so the table reads without relying on color. */
+function SupportMark({ support, ours }: { support: Support; ours: boolean }) {
+  if (support === "no") {
     return (
-      <span role="img" aria-label="Supported">
-        <Check className="mx-auto h-4 w-4 text-emerald-500" />
-      </span>
-    );
-  }
-  if (support === "partial") {
-    return (
-      <span role="img" aria-label="Partial support">
-        <Minus className="mx-auto h-4 w-4 text-amber-500" />
-      </span>
+      <span
+        aria-hidden="true"
+        className="mt-0.75 block size-2.75 shrink-0 rounded-full border border-zinc-400 dark:border-zinc-600"
+      />
     );
   }
   return (
-    <span role="img" aria-label="Not supported">
-      <Minus className="mx-auto h-4 w-4 text-zinc-400 dark:text-zinc-600" />
-    </span>
+    <span
+      aria-hidden="true"
+      className={`mt-0.75 block size-2.75 shrink-0 rounded-full border border-current ${
+        ours ? "text-[hsl(32,100%,45%)]" : "text-fd-foreground/75"
+      }`}
+      style={{
+        background: support === "yes" ? "currentColor" : "linear-gradient(90deg, currentColor 50%, transparent 50%)",
+      }}
+    />
+  );
+}
+
+function Legend() {
+  return (
+    <div className="text-fd-muted-foreground flex flex-wrap justify-center gap-x-5 gap-y-2 text-xs">
+      {(["yes", "partly", "no"] as const).map((support) => (
+        <span key={support} className="inline-flex items-center gap-1.5">
+          <SupportMark support={support} ours={false} />
+          {SUPPORT_LABEL[support]}
+        </span>
+      ))}
+    </div>
   );
 }
 
 export function ComparisonSection() {
   return (
-    <section className="border-fd-border/60 border-t px-6 py-16 sm:py-24 lg:px-8">
-      <div className="mx-auto max-w-4xl">
-        <h2 className={`${GeistSans.className} text-fd-foreground mb-4 text-center text-3xl font-bold sm:text-4xl`}>
-          How does it compare?
-        </h2>
-        <p className="text-fd-muted-foreground mx-auto mb-12 max-w-xl text-center text-base">
-          There are great tools for client-side storage. Prisma IDB is built for teams already using Prisma who want the
-          same API in the browser — with sync included.
-        </p>
+    <Section>
+      <SectionHeader eyebrow="Compare" title="How does it compare?">
+        Each tool makes different trade-offs. Here is where Prisma IDB is strong, and where others are ahead.
+      </SectionHeader>
 
-        <div className="overflow-hidden rounded-xl border border-zinc-200 bg-zinc-50 shadow-md dark:border-zinc-800 dark:bg-zinc-900/60 dark:shadow-none">
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-135 text-sm">
-              <thead>
-                <tr className="border-b border-zinc-200 bg-zinc-100/80 dark:border-zinc-800 dark:bg-zinc-900/80">
-                  <th className="text-fd-muted-foreground w-2/5 py-3.5 pr-4 pl-5 text-left font-medium">Feature</th>
-                  {tools.map((tool) => (
-                    <th
-                      key={tool.key}
-                      className={`w-[15%] py-3.5 text-center font-medium ${
-                        tool.highlight ? "text-[hsl(32,100%,50%)]" : "text-fd-muted-foreground"
-                      }`}
+      <div className="relative -mx-6 overflow-x-auto px-6 lg:mx-0 lg:px-0">
+        <table className="w-full min-w-180 border-collapse text-sm">
+          <caption className="sr-only">Prisma IDB compared with Dexie.js, RxDB and ElectricSQL</caption>
+          {/* The feature column stays put while the tools scroll sideways on narrow screens. */}
+          <colgroup>
+            <col className="w-[28%]" />
+            <col className="w-[18%]" />
+            <col className="w-[18%]" />
+            <col className="w-[18%]" />
+            <col className="w-[18%]" />
+          </colgroup>
+          <thead>
+            <tr>
+              <th scope="col" className={`${STICKY_CELL} py-4 pr-4 text-left`}>
+                <span className="sr-only">Feature</span>
+              </th>
+              {tools.map((tool) => (
+                <th
+                  key={tool.name}
+                  scope="col"
+                  className={`px-3 py-4 text-left font-semibold ${
+                    tool.ours
+                      ? `${OUR_COLUMN} rounded-t-lg text-[hsl(32,100%,38%)] dark:text-[hsl(32,100%,55%)]`
+                      : "text-fd-foreground"
+                  }`}
+                >
+                  <span className="inline-flex items-center gap-2">
+                    {/* eslint-disable-next-line @next/next/no-img-element -- static SVG logos from /public; next/image adds nothing for these */}
+                    <img
+                      src={tool.logo}
+                      alt=""
+                      width={18}
+                      height={18}
+                      className={`size-4.5 object-contain ${tool.invertInDark ? "dark:invert" : ""}`}
+                    />
+                    {tool.name}
+                  </span>
+                </th>
+              ))}
+            </tr>
+          </thead>
+          {groups.map((group) => (
+            <tbody key={group.name}>
+              <tr>
+                <th
+                  scope="colgroup"
+                  className={`${STICKY_CELL} text-fd-muted-foreground pt-7 pb-2 text-left text-xs font-semibold tracking-wider whitespace-nowrap uppercase`}
+                >
+                  {group.name}
+                </th>
+                <td className={OUR_COLUMN} />
+                <td colSpan={3} />
+              </tr>
+              {group.rows.map((row) => (
+                <tr key={row.feature} className="border-fd-border/70 border-t">
+                  <th
+                    scope="row"
+                    className={`${STICKY_CELL} text-fd-foreground py-3 pr-4 text-left align-top font-medium`}
+                  >
+                    {row.feature}
+                  </th>
+                  {row.cells.map(([support, note], index) => (
+                    <td
+                      key={tools[index].name}
+                      className={`px-3 py-3 align-top ${tools[index].ours ? OUR_COLUMN : ""}`}
                     >
-                      {tool.label}
-                    </th>
+                      <span className="flex gap-2">
+                        <SupportMark support={support} ours={tools[index].ours} />
+                        <span className="text-fd-muted-foreground text-xs leading-snug">
+                          <span className="sr-only">{SUPPORT_LABEL[support]}. </span>
+                          {note}
+                        </span>
+                      </span>
+                    </td>
                   ))}
                 </tr>
-              </thead>
-              <tbody>
-                {features.map((feature, i) => (
-                  <tr
-                    key={feature.name}
-                    className={`border-zinc-200 dark:border-zinc-800 ${i < features.length - 1 ? "border-b" : ""}`}
-                  >
-                    <td className="text-fd-foreground py-3.5 pr-4 pl-5 font-medium">{feature.name}</td>
-                    {tools.map((tool) => (
-                      <td
-                        key={tool.key}
-                        className={`py-3.5 text-center ${tool.highlight ? "bg-[hsl(32,100%,50%)]/3" : ""}`}
-                      >
-                        <SupportIcon support={feature[tool.key]} />
-                      </td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        <p className="text-fd-muted-foreground mt-5 text-center text-xs">
-          <Check className="mr-1 inline h-3 w-3 text-emerald-500" /> Supported{" "}
-          <Minus className="mr-1 ml-3 inline h-3 w-3 text-amber-500" /> Partial{" "}
-          <Minus className="mr-1 ml-3 inline h-3 w-3 text-zinc-400 dark:text-zinc-600" /> Not included
-        </p>
+              ))}
+            </tbody>
+          ))}
+        </table>
       </div>
-    </section>
+
+      <div className="mt-8">
+        <Legend />
+      </div>
+    </Section>
   );
 }

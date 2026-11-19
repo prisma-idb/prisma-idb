@@ -6,7 +6,7 @@
   "scripts": {
     "build": "turbo run build",
     "dev": "turbo run dev --no-cache",
-    "check": "pnpm check:prisma-idb-descriptors && turbo run check",
+    "check": "pnpm check:prisma-idb-descriptors && pnpm agents:check && turbo run check",
     "lint": "turbo run lint",
     "format": "turbo run format --no-cache",
     "test": "turbo run test --concurrency 1",
@@ -25,6 +25,8 @@
     "prepare": "husky",
     "changeset": "changeset",
     "check:prisma-idb-descriptors": "tsx scripts/check-prisma-idb-descriptor-consistency.ts",
+    "agents:sync": "tsx scripts/sync-agent-files.ts",
+    "agents:check": "tsx scripts/sync-agent-files.ts --check",
     "test:prisma-idb": "turbo run test --filter=@prisma-idb/adapter-idb --filter=@prisma-idb/client-idb --filter=@prisma-idb/driver-idb --filter=@prisma-idb/family-idb --filter=@prisma-idb/runtime-idb --filter=@prisma-idb/target-idb --filter=@prisma-idb/sync-server --filter=@prisma-idb/sync-server-sql --filter=@prisma-idb/cli-tests --filter=@prisma-idb/sync-extension-idb",
     "test:prisma-idb-e2e": "turbo run test --filter=@prisma-idb/prisma-orm-usage",
     "test:prisma-idb-kanban-e2e": "turbo run test --filter=@prisma-idb/prisma-orm-kanban-example",
