@@ -197,8 +197,10 @@ jobs:
         run: echo "DATABASE_URL=postgresql://postgres:postgres@localhost:5434/postgres" >> $GITHUB_ENV
       - uses: ./.github/actions/
       - name: Install Playwright Browsers
-        working-directory: apps/kanban-example
-        run: pnpm exec playwright install --with-deps
+        uses: ./.github/actions/playwright
+        with:
+          working-directory: apps/kanban-example
+          browsers: chromium
       - name: Generate BETTER_AUTH_SECRET
         run: echo "BETTER_AUTH_SECRET=$(openssl rand -base64 32 | tr '/+=' '_-')" >> $GITHUB_ENV
       - name: Run Sync Playwright tests

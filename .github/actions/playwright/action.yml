@@ -39,21 +39,33 @@ runs:
         path: ~/.cache/ms-playwright
         key: playwright-${{ steps.distro.outputs.id }}-${{ steps.version.outputs.version }}-${{ inputs.browsers }}
 
+    # Ubuntu's regional mirrors sometimes stall for minutes between packages. Without these
+    # settings apt waits on a dead connection indefinitely instead of retrying it.
+    - name: Make apt downloads resilient
+      if: inputs.with-deps == 'true'
+      shell: bash
+      run: |
+        sudo tee /etc/apt/apt.conf.d/80-ci-resilience > /dev/null <<'EOF'
+        Acquire::Retries "5";
+        Acquire::http::Timeout "30";
+        Acquire::https::Timeout "30";
+        DPkg::Lock::Timeout "300";
+        EOF
+
+    # System packages are not part of the browser cache, so install them on every run. This is
+    # deliberately a single attempt with no `timeout` wrapper: killing `pnpm exec` leaves the
+    # root `apt-get` child running and holding the dpkg lock, so a retry always fails on the lock.
+    - name: Install Playwright system dependencies
+      if: inputs.with-deps == 'true'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: pnpm exec playwright install-deps ${{ inputs.browsers }}
+
     - name: Install Playwright browsers
       if: steps.cache.outputs.cache-hit != 'true'
       shell: bash
       working-directory: ${{ inputs.working-directory }}
-      env:
-        DEPS_FLAG: ${{ inputs.with-deps == 'true' && '--with-deps' || '' }}
-      # The apt/CDN download occasionally hangs on a runner; cap each attempt and retry once.
+      # The CDN download occasionally hangs on a runner; cap each attempt and retry once.
       run: |
-        timeout 600 pnpm exec playwright install $DEPS_FLAG ${{ inputs.browsers }} \
-          || timeout 600 pnpm exec playwright install $DEPS_FLAG ${{ inputs.browsers }}
-
-    - name: Install Playwright system dependencies
-      if: steps.cache.outputs.cache-hit == 'true' && inputs.with-deps == 'true'
-      shell: bash
-      working-directory: ${{ inputs.working-directory }}
-      run: |
-        timeout 600 pnpm exec playwright install-deps ${{ inputs.browsers }} \
-          || timeout 600 pnpm exec playwright install-deps ${{ inputs.browsers }}
+        timeout 600 pnpm exec playwright install ${{ inputs.browsers }} \
+          || timeout 600 pnpm exec playwright install ${{ inputs.browsers }}
