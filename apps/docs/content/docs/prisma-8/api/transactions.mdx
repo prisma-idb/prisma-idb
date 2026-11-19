@@ -14,6 +14,10 @@ Every write method runs in a single IndexedDB transaction that covers all the st
 
 If any part fails, IndexedDB rolls back the whole write.
 
+## Each read with include is one transaction
+
+A read with `include()` reads the rows and every included relation in one read-only transaction. A write from another tab, the sync worker or other app code can't commit in between, so the result always reflects one state of the database. A required to-one relation is never `null` because its row was deleted mid-read, and a parent's children are never from after a delete that happened while it was being read.
+
 Separate calls are separate transactions. To group several ORM calls, use `db.transaction()`.
 
 ## Group several ORM calls in one transaction

@@ -61,7 +61,8 @@ import { assertValidRecord } from "./record-validation";
 import { deleteRecordNotFound } from "./record-not-found";
 import { assertUniqueLookup, snapshotLookup } from "./unique-lookup";
 import { applyUpdateDefaults, completeCreateRecord, createMutationDefaultsCache } from "./mutation-defaults";
-import { loadRelation } from "./relation-loader";
+import { loadRelation, storeNamesForRead } from "./relation-loader";
+import { OpenTransaction } from "./open-transaction";
 import {
   applyReferentialActionsForRowOnUpdate,
   collectOnUpdateEnforcementStoreNames,
@@ -77,11 +78,12 @@ import {
   hasEnforceableChildRelations,
   hasNestedMutationCallbacks,
   hasScalarFkFields,
+  makePlanMeta,
   requireTransactionExecutor,
   readMutationRows,
   validateScalarFks,
 } from "./mutation-executor";
-import { withMutationScope } from "./mutation-scope";
+import { withMutationScope, type IdbQueryExecutorWithTransaction } from "./mutation-scope";
 import { resolveDecimalKey } from "./decimal-identity";
 import { buildCatalog } from "./planner/catalog";
 import { planQuery } from "./planner/plan";
@@ -499,19 +501,27 @@ export class IdbStoreAccessorImpl<
     // must be accessed on `this`, so we bind the methods to keep them callable
     // without aliasing `this` (no-this-alias).
     const buildScanPlan = this.#buildScanPlan.bind(this);
-    const executorQuery = this.#executor.query.bind(this.#executor);
+    const openRead = this.#openRead.bind(this);
     const applyIncludes = this.#applyIncludes.bind(this);
     const projectRows = this.#projectRows.bind(this);
     return new AsyncIterableResult(
       (async function* (): AsyncGenerator<SelectedRow<TContract, ModelName, TIncludes, TSelected>, void, unknown> {
-        const scan = buildScanPlan(groupingKey);
-        const rows: Record<string, unknown>[] = [];
-        for await (const row of executorQuery(scan.plan)) {
-          rows.push(row);
-        }
+        const read = await openRead();
+        let withIncludes: Record<string, unknown>[];
+        try {
+          const scan = buildScanPlan(groupingKey);
+          const rows: Record<string, unknown>[] = [];
+          for await (const row of read.executor.query(scan.plan)) {
+            rows.push(row);
+          }
 
-        // Batch-load any included relations (uses full rows — FK fields intact).
-        const withIncludes = await applyIncludes(scan.finish(rows), groupingKey);
+          // Batch-load any included relations (uses full rows — FK fields intact).
+          withIncludes = await applyIncludes(scan.finish(rows), groupingKey, read.executor);
+        } catch (error) {
+          read.fail();
+          throw error;
+        }
+        await read.finish();
 
         // Apply any `.select()` projection, then yield.
         for (const row of projectRows(withIncludes)) {
@@ -1033,13 +1043,39 @@ export class IdbStoreAccessorImpl<
   }
 
   /** Batch-load each requested relation using the unprojected parent rows. */
-  async #applyIncludes(rows: Record<string, unknown>[], groupingKey: string): Promise<Record<string, unknown>[]> {
+  /**
+   * Choose the executor for one read. A read with includes runs in one read-only transaction over the model's store
+   * and every included store, so a write can't commit between reading the parent rows and reading their relations.
+   * Inside `db.transaction()`, the executor hands back the open transaction, so the read joins it. A read without
+   * includes, or an executor that can't open transactions, uses the executor directly.
+   */
+  async #openRead(): Promise<{ executor: IdbQueryExecutor; finish(): Promise<void>; fail(): void }> {
+    const executor = this.#executor;
+    const relNames = Object.keys(this.#state.includes);
+    if (
+      relNames.length === 0 ||
+      typeof (executor as Partial<IdbQueryExecutorWithTransaction>).transaction !== "function"
+    ) {
+      return { executor, finish: async () => {}, fail: () => {} };
+    }
+    const storeNames = storeNamesForRead(this.#contract, this.#modelName, relNames);
+    const scope = await requireTransactionExecutor(executor).transaction(storeNames, "readonly");
+    const reader =
+      scope instanceof OpenTransaction ? scope : new OpenTransaction(scope, storeNames, makePlanMeta(this.#contract));
+    return { executor: reader, finish: () => scope.commit(), fail: () => scope.rollback() };
+  }
+
+  async #applyIncludes(
+    rows: Record<string, unknown>[],
+    groupingKey: string,
+    executor: IdbQueryExecutor
+  ): Promise<Record<string, unknown>[]> {
     const relNames = Object.keys(this.#state.includes);
     if (relNames.length === 0) return rows;
     let result = rows;
     for (const relName of relNames) {
       const entry = this.#state.includes[relName]!;
-      result = await loadRelation(relName, entry, result, this.#contract, this.#modelName, this.#executor, groupingKey);
+      result = await loadRelation(relName, entry, result, this.#contract, this.#modelName, executor, groupingKey);
     }
     return result;
   }

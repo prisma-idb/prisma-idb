@@ -124,7 +124,7 @@ Return `count()` from the function to get the number of related rows instead:
 const users = await db.orm.user.include("todos", (todos) => todos.count()).all(); // user.todos: number
 ```
 
-Each included relation is loaded with one batched read, however many parent rows there are.
+Each included relation is loaded with one batched read, however many parent rows there are. The rows and their relations are read in one transaction, so they always reflect the same state; see [Transactions](/docs/prisma-8/api/transactions).
 
 ## Count
 

@@ -649,7 +649,8 @@ export async function executeMutationPlan(
 ): Promise<Record<string, unknown>[]> {
   const plans = plan.kind === "batch" ? plan.ops : [plan];
   const rows: Record<string, unknown>[] = [];
-  for (const op of plans) rows.push(...(await scope.execute(op)));
+  // Append one row at a time: spreading a large scan into push() overflows the call stack.
+  for (const op of plans) for (const row of await scope.execute(op)) rows.push(row);
   return rows;
 }
 
