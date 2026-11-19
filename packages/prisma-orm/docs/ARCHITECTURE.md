@@ -76,6 +76,8 @@ Most writes take a different route: they need to read and write several stores i
 | `update`, `updateAll`, `upsert`, `deleteAll`          | Transaction scope, always |
 | Nested writes (relation callbacks)                    | Transaction scope, always |
 
+Reads with `include()` take the transaction route too. The store accessor opens one read-only transaction over the model's store and every included store, and runs the main scan and each relation load on it, so a write can't commit between them. Inside `db.transaction()`, the read joins the open transaction instead. Middleware doesn't see these reads either. Reads without `include()` go through `query()`.
+
 Sync hooks into both routes. It extends single plans into a batch that also writes the outbox, and it wraps the transaction scope so each write in it records an outbox event. A hand-built plan for `update`, `updateAll` or `deleteAll` on a synced model has no known key, so it can't sync. Sync rejects it before any local write.
 
 ## Query planning

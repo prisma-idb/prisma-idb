@@ -12,6 +12,22 @@ import { planQuery } from "./planner/plan";
 import { lowerRows } from "./planner/lower";
 
 /**
+ * The stores a read of `modelName` touches: its own store, plus the related store of each relation in `relNames`.
+ * A read with includes opens one transaction over these, so every relation sees the same state as the parent rows.
+ */
+export function storeNamesForRead(contract: IdbContract, modelName: string, relNames: readonly string[]): string[] {
+  const stores = new Set([getStoreName(contract, modelName)]);
+  const model = domainModelsAtDefaultNamespace(contract.domain)[modelName];
+  for (const relName of relNames) {
+    const relation = model?.relations[relName];
+    // Embed relations live inline in the parent row, so they add no store.
+    if (relation === undefined || !("on" in relation)) continue;
+    stores.add(getStoreName(contract, (relation as ContractReferenceRelation).to.model));
+  }
+  return [...stores];
+}
+
+/**
  * Batch-load a single named relation for all rows in `rows` and attach the
  * result to each row under the `relName` key.
  *
