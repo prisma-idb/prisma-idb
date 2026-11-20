@@ -57,6 +57,11 @@ Primary keys are immutable. Delete the row and create it again only after handli
 - [Client](https://prisma-idb.dev/docs/prisma-8/client)
 - [API reference](https://prisma-idb.dev/docs/prisma-8/api)
 
+## Featured in
+
+- [Prisma ORM Manifesto 2026](https://www.prisma.io/blog/prisma-orm-manifesto-2026): Prisma names the IndexedDB extension as one of two standout community extensions.
+- [Local-First News, November 19, 2026](https://www.localfirstnews.com/2026-11-19/): listed under Tools & Resources.
+
 ## License
 
 MIT
