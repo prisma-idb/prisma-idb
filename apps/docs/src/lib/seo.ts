@@ -18,10 +18,11 @@ type DocsPage = InferPageType<typeof source>;
 /**
  * Returns the heading for a docs page's `<title>`.
  *
- * The Prisma 8 section reuses titles from the original docs (for example "Quick Start"),
- * so its pages carry a suffix. Without it, two pages would share one title.
+ * A page's `seoTitle` wins. Otherwise the Prisma 8 section, which reuses titles from the
+ * original docs (for example "Quick Start"), adds a suffix so that two pages don't share one title.
  */
 function pageTitle(page: DocsPage): string {
+  if (page.data.seoTitle) return page.data.seoTitle;
   const isPrisma8 = page.slugs[0] === "prisma-8";
   return isPrisma8 && !page.data.title.includes("Prisma 8") ? `${page.data.title} (Prisma 8)` : page.data.title;
 }
@@ -36,7 +37,7 @@ function pageTitle(page: DocsPage): string {
  */
 export function docsPageMetadata(page: DocsPage): Metadata {
   const title = pageTitle(page);
-  const description = page.data.description;
+  const description = page.data.seoDescription ?? page.data.description;
   const image = { url: getPageImage(page).url, width: 1200, height: 630, alt: title };
 
   return {

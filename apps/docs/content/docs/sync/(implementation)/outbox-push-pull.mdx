@@ -2,6 +2,8 @@
 title: "Outbox, Push & Pull"
 description: "Understanding the sync mechanism and client-side outbox management"
 icon: Boxes
+seoTitle: "Outbox, push and pull for IndexedDB sync"
+seoDescription: "How Prisma IDB queues local IndexedDB writes in an outbox, pushes them to the server and pulls server changes back."
 ---
 
 The sync system uses an **Outbox Pattern** on the client to queue mutations reliably and **Changelog Materialization** on the server to track changes.

@@ -2,6 +2,8 @@
 title: "Prisma Client vs IDB Client"
 description: "Behavioral differences between Prisma Client and Prisma IDB Client"
 icon: GitCompare
+seoTitle: "Prisma Client vs Prisma IDB: behavior differences"
+seoDescription: "Where the Prisma IDB IndexedDB client behaves differently from Prisma Client on the server, and why."
 ---
 
 Prisma IDB aims to replicate the Prisma Client API as faithfully as possible — same query syntax, same return shapes, same type signatures. However, because it runs entirely in the browser on IndexedDB, there are inherent differences in how it works under the hood, and a few cases where it intentionally diverges for better developer experience.

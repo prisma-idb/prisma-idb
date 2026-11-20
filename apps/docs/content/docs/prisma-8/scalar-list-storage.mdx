@@ -1,6 +1,8 @@
 ---
 title: Why missing lists stay missing
 description: How explicit migration keeps list reads, filters, and sync consistent.
+seoTitle: "How scalar lists are stored in IndexedDB"
+seoDescription: "Why Prisma 8 IDB keeps missing scalar lists missing in IndexedDB, and how explicit migrations keep reads, filters and sync consistent."
 ---
 
 An empty array is a stored value. A missing field means that no value was stored. Treating both as `[]` would make old records match `eq([])` without updating the data those records send to a sync server.

@@ -2,6 +2,8 @@
 title: Client Contracts
 description: How one schema produces a browser contract and a server contract, and what exclusion does to relations
 icon: EyeOff
+seoTitle: "Client and server contracts for Prisma 8 sync"
+seoDescription: "How one Prisma schema produces a browser contract and a server contract for sync, and what excluding a model does to relations."
 ---
 
 A synced app has two databases with overlapping but different contents. The server holds everything; the browser holds only what the user may see. Rather than keeping two schemas in step by hand, you write one `schema.prisma` and mark what stays on the server. This page explains how that one schema becomes two contracts, and the rules that keep them consistent. For setup, follow the [Sync tutorial](/docs/prisma-8/sync).
