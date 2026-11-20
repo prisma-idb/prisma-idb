@@ -4,6 +4,7 @@ import { CodeComparison } from "./code-comparison";
 import { SyncSection } from "./sync-section";
 import { ComparisonSection } from "./comparison-section";
 import { PerformanceSection } from "./performance-section";
+import { FeaturedSection } from "./featured-section";
 import { GetStartedSection } from "./get-started-section";
 import { Footer } from "./footer";
 
@@ -20,6 +21,7 @@ export default function HomePage() {
       <SyncSection />
       <PerformanceSection />
       <ComparisonSection />
+      <FeaturedSection />
       <GetStartedSection />
       <Footer />
     </div>
