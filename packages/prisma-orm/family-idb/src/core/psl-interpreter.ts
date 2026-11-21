@@ -1,6 +1,8 @@
 import type { ContractSourceDiagnostic, ContractSourceDiagnostics } from "@prisma/orm-framework/config/config-types";
 import type { Contract } from "@prisma/orm-framework/contract/types";
+import { readWrittenValueIntoCodec } from "@prisma/orm-framework/components/authoring";
 import { nodePslSpan } from "@prisma/orm-framework/psl-parser";
+import { idbCodecLookup } from "@prisma-idb/target-idb/runtime";
 import type { ModelSymbol, SymbolTable } from "@prisma/orm-framework/psl-parser";
 import { StringLiteralExprAst } from "@prisma/orm-framework/psl-parser/syntax";
 import type { KeyValuePairAst, PslSources } from "@prisma/orm-framework/psl-parser/syntax";
@@ -22,7 +24,7 @@ import type {
   IdbModelNode,
   IdbRelationNode,
 } from "./contract-definition";
-import { createIdbAttributeBinder } from "./psl-binder";
+import { createIdbAttributeBinder, idbDataTypeSupport } from "./psl-binder";
 import type { IdbAttributeBinder, IdbDefaultValue } from "./psl-binder";
 import { PslDefinitionSourceMap } from "./psl-definition-source-map";
 import { SCALAR_TO_CODEC_ID } from "./psl-scalars";
@@ -491,10 +493,33 @@ function interpretModel(
           fieldName: field.name,
           onCreate: { id: LITERAL_GENERATOR_ID, params: { value: [] } },
         });
-      } else if (form.kind === "date") {
+      } else if (form.kind === "tagged") {
+        // The field's codec reads the tagged literal: its data type says which
+        // tags it takes, refuses text that names no value, and stores the value
+        // in the JSON form the codec reads back on each create.
+        const read =
+          codecId === undefined || field.list
+            ? undefined
+            : readWrittenValueIntoCodec({
+                support: idbDataTypeSupport,
+                codecLookup: idbCodecLookup,
+                ref: { codecId },
+                written: form.written,
+                subject: `Field "${model.name}.${field.name}" default`,
+              });
+        if (!read?.ok) {
+          diagnostics.push({
+            code: read?.failure.code ?? "IDB_INVALID_DEFAULT_VALUE",
+            message:
+              read?.failure.message ?? `Field "${model.name}.${field.name}" cannot have the tagged default "${raw}".`,
+            sourceId,
+            span: defaultAttr.span,
+          });
+          continue;
+        }
         fieldExecutionDefaults.push({
           fieldName: field.name,
-          onCreate: { id: LITERAL_GENERATOR_ID, params: { value: form.value, codecId: "idb/date@1" } },
+          onCreate: { id: LITERAL_GENERATOR_ID, params: { value: read.value, codecId } },
         });
       } else if (enumType !== undefined) {
         const value = enumMember?.value ?? raw;

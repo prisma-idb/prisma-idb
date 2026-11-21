@@ -23,7 +23,7 @@ import type {
 } from "@prisma/orm-framework/contract/types";
 import { generateId } from "@prisma/orm-framework/ids/runtime";
 import type { IdbMutationDefaultGeneratorId } from "@prisma-idb/target-idb/pack";
-import { absentAsNull, idbCodecLookup } from "@prisma-idb/target-idb/runtime";
+import { absentAsNull, codecValueFromJson, idbCodecLookup } from "@prisma-idb/target-idb/runtime";
 import { getStoreName, type IdbContract } from "./types";
 
 /** Per-top-level-mutation-call cache, keyed by generator id. Create one with {@link createMutationDefaultsCache}. */
@@ -50,7 +50,7 @@ function computeGeneratedValue(spec: ExecutionMutationDefaultValue): unknown {
       if (!codec) throw new Error(`Unknown literal-default codec "${String(codecId)}"`);
       // Contract JSON keeps tagged literals in the codec's wire form. Decode
       // each resolution so mutable values are never shared across records.
-      return codec.decodeJson(value as JsonValue);
+      return codecValueFromJson(codec, value as JsonValue);
     }
     case "uuidv4":
     case "uuidv7":
