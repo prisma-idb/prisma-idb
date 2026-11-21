@@ -31,7 +31,8 @@
     "format": "prettier --write .",
     "contract:emit:postgres": "prisma-idb contract emit --config prisma.config.ts",
     "db:create": "node scripts/ensure-test-db.mjs",
-    "db:init": "prisma db init --config prisma.config.ts"
+    "db:init": "prisma db init --config prisma.config.ts",
+    "db:reset": "node scripts/reset-test-db.mjs"
   },
   "dependencies": {
     "@prisma-idb/sync-extension-idb": "workspace:*",

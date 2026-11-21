@@ -35,6 +35,12 @@ Run unit tests:
 pnpm test:prisma-idb
 ```
 
+The `sync-server-sql` tests use their own Postgres database, set in `packages/prisma-orm/sync-server-sql/.env`. `pnpm test` creates and initializes it. If `db init` refuses the existing tables, for example after a Prisma upgrade changes column types, reset the database once:
+
+```bash
+pnpm --filter @prisma-idb/sync-server-sql db:reset
+```
+
 Run the browser E2E suite (requires Playwright browsers installed once):
 
 ```bash

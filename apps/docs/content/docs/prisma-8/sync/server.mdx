@@ -306,10 +306,12 @@ Postgres keeps every row and rounds each value to the nearest millisecond. Value
 
 Prisma counts a lower precision as a change that can lose data, so it asks you to consent to each column with `--delete <Model.field>`. `--delete` here consents to the precision change; it doesn't delete the column or its rows. Pass exactly the columns Prisma lists: a `--delete` for a column it didn't ask about fails with `CLI.CONSENT_UNUSED`.
 
+Run each command with your Postgres config. The commands below use `prisma.config.postgres.ts`, the name from the [sync tutorial](/docs/prisma-8/sync); replace it if your server config has another name. Without `--config`, Prisma reads `prisma.config.ts`, which describes the IndexedDB contract.
+
 1. List the columns that need consent. The dry run lists them under "An apply asks about":
 
    ```sh
-   prisma db update --dry-run
+   prisma db update --dry-run --config prisma.config.postgres.ts
    ```
 
    ```text
@@ -322,8 +324,8 @@ Prisma counts a lower precision as a change that can lose data, so it asks you t
    - If you keep migration files, plan a migration, then apply it with `prisma db migrate`:
 
      ```sh
-     prisma migration plan --name datetime-ms-precision --delete Changelog.createdAt --delete Todo.dueAt
-     prisma db migrate
+     prisma migration plan --config prisma.config.postgres.ts --name datetime-ms-precision --delete Changelog.createdAt --delete Todo.dueAt
+     prisma db migrate --config prisma.config.postgres.ts
      ```
 
      If the plan fails with `MIGRATION.PLAN_ORIGIN_UNKNOWN`, add `--from <your latest migration directory>`, such as `--from 20260930T1751_changelog_uuidv7`.
@@ -331,7 +333,7 @@ Prisma counts a lower precision as a change that can lose data, so it asks you t
    - Otherwise, update the database directly:
 
      ```sh
-     prisma db update --delete Changelog.createdAt --delete Todo.dueAt
+     prisma db update --config prisma.config.postgres.ts --delete Changelog.createdAt --delete Todo.dueAt
      ```
 
 Lowering a column's precision makes Postgres rewrite the whole table while it holds an exclusive lock. Pushes and pulls wait until the rewrite finishes, which can take a while for a large `Changelog`. Run the migration when traffic is low.
