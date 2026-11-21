@@ -32,7 +32,7 @@ async function load(schemaFileName: string, schema: string, options?: Parameters
 
 describe("prismaIdbContract", () => {
   it.each([
-    ["2024-02-29", "2024-02-29T00:00:00.000Z"],
+    ["2024-02-29T00:00:00Z", "2024-02-29T00:00:00.000Z"],
     ["2024-02-29T09:30:00+02:00", "2024-02-29T07:30:00.000Z"],
   ])("preserves the tagged date default %s through contract JSON serialization", async (text, stored) => {
     const result = await load(
@@ -53,7 +53,7 @@ describe("prismaIdbContract", () => {
     ]);
   });
 
-  it.each(["2023-02-29", "2024-04-31", "2024-01-01T12:00:00"])(
+  it.each(["2023-02-29T00:00:00Z", "2024-04-31T00:00:00Z", "2024-01-01T12:00:00", "2024-01-01"])(
     "rejects the date %s, which names no instant, at the schema field",
     async (text) => {
       const result = await load(
@@ -85,7 +85,7 @@ describe("prismaIdbContract", () => {
   it("rejects a tagged date default on a String field", async () => {
     const result = await load(
       "schema.prisma",
-      "model Event {\n id String @id\n value String @default(date`2024-01-01`)\n}"
+      "model Event {\n id String @id\n value String @default(date`2024-01-01T00:00:00Z`)\n}"
     );
     expect(result.ok).toBe(false);
     if (result.ok) return;
