@@ -27,7 +27,7 @@ export function Hero() {
           className={`${GeistSans.className} text-fd-foreground animate-fade-in-up text-3xl leading-[1.15] font-medium tracking-tight sm:text-5xl`}
           style={{ animationDelay: "0.06s" }}
         >
-          You already write Prisma on the server. <span className="text-fd-accent">Now write it in the browser.</span>
+          You already write Prisma on the server. <span className="text-brand-text">Now write it in the browser.</span>
         </h1>
 
         <p
@@ -48,7 +48,7 @@ export function Hero() {
           className="animate-fade-in-up mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row"
           style={{ animationDelay: "0.24s" }}
         >
-          <GetStartedDialog className="text-fd-primary-foreground inline-flex items-center gap-2 rounded-md bg-[hsl(32,100%,50%)] px-6 py-2.5 text-sm font-medium tracking-wide shadow-md shadow-[hsl(32,100%,50%)]/30 transition-all hover:bg-[hsl(32,100%,45%)] hover:shadow-lg hover:shadow-[hsl(32,100%,50%)]/30">
+          <GetStartedDialog className="text-brand-foreground inline-flex items-center gap-2 rounded-md bg-[hsl(32,100%,50%)] px-6 py-2.5 text-sm font-medium tracking-wide shadow-md shadow-[hsl(32,100%,50%)]/30 transition-all hover:bg-[hsl(32,100%,45%)] hover:shadow-lg hover:shadow-[hsl(32,100%,50%)]/30">
             <BookOpen className="h-3.5 w-3.5" />
             Get Started
             <ChevronRight className="h-3.5 w-3.5" />

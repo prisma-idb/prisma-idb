@@ -6,7 +6,7 @@
   --color-fd-background: hsl(0, 0%, 96%);
   --color-fd-foreground: hsl(0, 0%, 3.9%);
   --color-fd-muted: hsl(0, 0%, 96.1%);
-  --color-fd-muted-foreground: hsl(0, 0%, 45.1%);
+  --color-fd-muted-foreground: hsl(0, 0%, 36%);
   --color-fd-popover: hsl(0, 0%, 98%);
   --color-fd-popover-foreground: hsl(0, 0%, 15.1%);
   --color-fd-card: hsl(0, 0%, 94.7%);
@@ -19,6 +19,10 @@
   --color-fd-accent: hsl(32, 100%, 50%);
   --color-fd-accent-foreground: hsl(0, 0%, 3.9%);
   --color-fd-ring: hsl(32, 100%, 50%);
+  /* Brand orange for text. The 50% lightness fill fails 4.5:1 as text on light backgrounds, so text uses a darker step. */
+  --color-brand-text: hsl(28, 100%, 33%);
+  /* Text on top of the orange fill (buttons). */
+  --color-brand-foreground: hsl(0, 0%, 6%);
 }
 
 .dark {
@@ -38,6 +42,7 @@
   --color-fd-accent: hsla(32, 100%, 50%, 0.8);
   --color-fd-accent-foreground: hsl(0, 0%, 94%);
   --color-fd-ring: hsl(32, 100%, 50%);
+  --color-brand-text: hsl(32, 100%, 55%);
 }
 
 @keyframes fade-in-up {
@@ -71,10 +76,13 @@
 }
 
 /* Override GitHub Light shiki theme colors that fail WCAG AA on light backgrounds.
-   #D73A49 (keywords) and #6A737D (comments) both fall below 4.5:1 on white.
+   #D73A49 (keywords), #E36209 (parameters) and #6A737D (comments) all fall below 4.5:1 on the light code background.
    We use attribute selector + !important which beats inline style custom properties. */
 span[style*="--shiki-light:#D73A49"] {
   --shiki-light: #b62035 !important;
+}
+span[style*="--shiki-light:#E36209"] {
+  --shiki-light: #a84300 !important;
 }
 span[style*="--shiki-light:#6A737D"] {
   --shiki-light: #505a64 !important;

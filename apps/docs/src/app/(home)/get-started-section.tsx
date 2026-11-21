@@ -13,7 +13,7 @@ export function GetStartedSection() {
       </SectionHeader>
 
       <div className="flex flex-col items-center justify-center gap-3 sm:flex-row">
-        <GetStartedDialog className="text-fd-primary-foreground inline-flex items-center gap-2 rounded-md bg-[hsl(32,100%,50%)] px-6 py-2.5 text-sm font-medium tracking-wide shadow-md shadow-[hsl(32,100%,50%)]/30 transition-all hover:bg-[hsl(32,100%,45%)] hover:shadow-lg hover:shadow-[hsl(32,100%,50%)]/30">
+        <GetStartedDialog className="text-brand-foreground inline-flex items-center gap-2 rounded-md bg-[hsl(32,100%,50%)] px-6 py-2.5 text-sm font-medium tracking-wide shadow-md shadow-[hsl(32,100%,50%)]/30 transition-all hover:bg-[hsl(32,100%,45%)] hover:shadow-lg hover:shadow-[hsl(32,100%,50%)]/30">
           <BookOpen className="h-3.5 w-3.5" />
           Get Started
           <ChevronRight className="h-3.5 w-3.5" />

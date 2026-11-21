@@ -10,7 +10,7 @@ Get Prisma IDB up and running in your project in just a few steps.
 
 <Callout type="info">Using Prisma ORM 8? Follow the [Prisma 8 Quick Start](/docs/prisma-8/getting-started).</Callout>
 
-### Installation
+## Installation
 
 First, install the required dependencies:
 
@@ -31,7 +31,7 @@ For sync schema validation:
 pnpm add zod
 ```
 
-### Step 1: Configure Generator
+## Step 1: Configure Generator
 
 Add the generator to your `prisma/schema.prisma`:
 
@@ -47,7 +47,7 @@ generator prismaIDB {
 }
 ```
 
-### Step 2: Define Your Schema
+## Step 2: Define Your Schema
 
 ```prisma
 model User {
@@ -68,7 +68,7 @@ model Todo {
 }
 ```
 
-### Step 3: Generate & Use
+## Step 3: Generate & Use
 
 Generate the client:
 
@@ -110,7 +110,7 @@ await client.todo.delete({
 });
 ```
 
-### More Resources
+## More Resources
 
 <Cards>
   <Card title="Sync Engine" href="/docs/sync" />
