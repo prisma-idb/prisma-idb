@@ -75,7 +75,7 @@ export function GetStartedDialog({ className, children }: GetStartedDialogProps)
                     <p className="flex items-center gap-2 font-medium">
                       {option.title}
                       {option.badge && (
-                        <span className="text-brand-text rounded-full bg-[hsl(32,100%,50%)]/15 px-2 py-0.5 text-[11px] font-medium">
+                        <span className="text-brand-text rounded-full bg-[hsl(32,100%,50%)]/15 px-2 py-0.5 text-[11px] font-medium not-dark:group-hover:text-[hsl(28,100%,31%)]">
                           {option.badge}
                         </span>
                       )}
