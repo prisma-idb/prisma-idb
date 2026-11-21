@@ -2,16 +2,15 @@ import type { DataTypeAuthoringEntry } from "@prisma/orm-framework/components/au
 import { isoDateStringText } from "@prisma/orm-framework/components/codec";
 import { idbBool, idbDate, idbString } from "./data-types";
 
-const CALENDAR_DATE = /^\d{4}-\d{2}-\d{2}$/;
-
 /**
  * Reads the text of a `date` literal as the instant `idb/date` stores, in the
- * form `Date.prototype.toISOString()` writes. A calendar date alone names
- * midnight UTC; any other text must be ISO 8601 with a UTC offset. Text that
- * names no instant a `Date` holds, such as `2024-02-30`, is refused.
+ * form `Date.prototype.toISOString()` writes. The text must be ISO 8601 with a
+ * time and a UTC offset, as for `mongo/date`. Text that names no instant a
+ * `Date` holds, such as `2024-02-30T00:00:00Z`, or a calendar date with no
+ * time, is refused.
  */
 function parseDate(text: string): string {
-  return isoDateStringText(CALENDAR_DATE.test(text) ? `${text}T00:00:00Z` : text, idbDate.id);
+  return isoDateStringText(text, idbDate.id);
 }
 
 /**
@@ -34,6 +33,6 @@ export const idbDataTypeEntries = {
     written: { kind: "tag", tag: "date", parse: parseDate },
     print: (value) => String(value),
     documentation:
-      "An instant, as in date`2024-01-01T09:30:00Z`, or a calendar date at midnight UTC, as in date`2024-01-01`. Stored as Date.toISOString() writes it.",
+      "An instant, as in date`2024-01-01T00:00:00Z`. Reads ISO 8601 with a UTC offset and stores the instant in UTC with three fraction digits, as Date.toISOString() writes it.",
   },
 } satisfies Readonly<Record<string, DataTypeAuthoringEntry>>;

@@ -103,7 +103,7 @@ afterEach(async () => {
 describe("PSL tagged date defaults", () => {
   it("creates and reads native dates after contract JSON serialization, preserving explicit values", async () => {
     const { document, sources } = parse(
-      "model Event {\n id Int @id @default(autoincrement())\n startsAt DateTime? @default(date`2024-02-29`)\n}",
+      "model Event {\n id Int @id @default(autoincrement())\n startsAt DateTime? @default(date`2024-02-29T00:00:00Z`)\n}",
       "schema.prisma"
     );
     const { symbolTable } = buildSymbolTable({ documents: [document], sources, defaultNamespaceId: "__unbound__" });

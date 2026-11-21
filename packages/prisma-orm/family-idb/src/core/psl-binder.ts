@@ -127,7 +127,7 @@ function callForm(arg: ExpressionAst): IdbDefaultValue["form"] {
 
 /**
  * The IDB target's data types with their PSL authoring entries: what reads a
- * tagged literal, such as date`2024-01-01`, into the value a codec stores.
+ * tagged literal, such as date`2024-01-01T00:00:00Z`, into the value a codec stores.
  */
 export const idbDataTypeSupport: DataTypeSupport = (() => {
   const descriptors = new Map(
@@ -144,13 +144,13 @@ export const idbDataTypeSupport: DataTypeSupport = (() => {
 })();
 
 /**
- * A tagged literal, such as date`2024-01-01`. The binder keeps the tag and its
+ * A tagged literal, such as date`2024-01-01T00:00:00Z`. The binder keeps the tag and its
  * text; the interpreter reads them into the field's codec, which knows which
  * tags the field takes and refuses the rest.
  */
 function taggedDefault(): ArgType<{ readonly kind: "tagged"; readonly written: WrittenScalar }, AttributeCtx> {
   const tagged = taggedLiteral(knownTags(idbDataTypeSupport), {
-    documentation: "A tagged literal, such as date`2024-01-01`.",
+    documentation: "A tagged literal, such as date`2024-01-01T00:00:00Z`.",
   });
   // Drop the original output-type witness because parse below returns the written form.
   const { _out: _parsedType, ...metadata } = tagged;
