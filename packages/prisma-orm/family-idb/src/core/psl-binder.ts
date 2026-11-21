@@ -1,7 +1,7 @@
-import { EMPTY_GENERATOR_FUNCTIONS } from "@prisma/orm-framework/components/components";
 import { assembleAuthoringContributions } from "@prisma/orm-framework/components/control";
-import { describeRefusal, knownTags, readWrittenValue } from "@prisma/orm-framework/components/authoring";
-import { createDataTypeLookup } from "@prisma/orm-framework/components/codec";
+import { type DataTypeSupport, knownTags, type WrittenScalar } from "@prisma/orm-framework/components/authoring";
+import { EMPTY_GENERATOR_FUNCTIONS } from "@prisma/orm-framework/components/components";
+import { createDataTypeLookup, dataTypeId } from "@prisma/orm-framework/components/codec";
 import idbTarget from "@prisma-idb/target-idb/pack";
 import type { ContractSourceDiagnostic } from "@prisma/orm-framework/config/config-types";
 import {
@@ -83,7 +83,7 @@ export interface IdbDefaultValue {
     | { readonly kind: "string"; readonly value: string }
     | { readonly kind: "boolean"; readonly value: boolean }
     | { readonly kind: "number"; readonly value: number }
-    | { readonly kind: "date"; readonly value: string }
+    | { readonly kind: "tagged"; readonly written: WrittenScalar }
     | { readonly kind: "identifier"; readonly name: string }
     | { readonly kind: "list" }
     | { readonly kind: "call"; readonly name: string; readonly args: readonly string[] };
@@ -125,11 +125,34 @@ function callForm(arg: ExpressionAst): IdbDefaultValue["form"] {
   };
 }
 
-/** Reads registered tags through the target's public authoring entries, including unknown-tag diagnostics. */
-function taggedDateDefault(): ArgType<{ readonly kind: "date"; readonly value: string }, AttributeCtx> {
-  const support = { entries: idbTarget.authoring.dataTypes, lookup: createDataTypeLookup(idbTarget.dataTypes) };
-  const tagged = taggedLiteral(knownTags(support), { documentation: "A registered date literal." });
-  // Drop the original output-type witness because parse below returns the IDB date form.
+/**
+ * The IDB target's data types with their PSL authoring entries: what reads a
+ * tagged literal, such as date`2024-01-01`, into the value a codec stores.
+ */
+export const idbDataTypeSupport: DataTypeSupport = (() => {
+  const descriptors = new Map(
+    idbTarget.types.codecTypes.codecDescriptors.map((descriptor) => [descriptor.codecId, descriptor] as const)
+  );
+  return {
+    entries: idbTarget.authoring.dataTypes,
+    lookup: createDataTypeLookup(idbTarget.dataTypes),
+    dataTypeOfCodec: (codecId) => {
+      const dataType = descriptors.get(codecId)?.dataType;
+      return dataType === undefined ? undefined : dataTypeId(dataType);
+    },
+  };
+})();
+
+/**
+ * A tagged literal, such as date`2024-01-01`. The binder keeps the tag and its
+ * text; the interpreter reads them into the field's codec, which knows which
+ * tags the field takes and refuses the rest.
+ */
+function taggedDefault(): ArgType<{ readonly kind: "tagged"; readonly written: WrittenScalar }, AttributeCtx> {
+  const tagged = taggedLiteral(knownTags(idbDataTypeSupport), {
+    documentation: "A tagged literal, such as date`2024-01-01`.",
+  });
+  // Drop the original output-type witness because parse below returns the written form.
   const { _out: _parsedType, ...metadata } = tagged;
   return {
     ...metadata,
@@ -140,15 +163,7 @@ function taggedDateDefault(): ArgType<{ readonly kind: "date"; readonly value: s
       if (!parsed.ok) return parsed;
       const { tag, canonicalization } = parsed.value;
       if (!canonicalization.ok) return notOk([leafDiagnostic(ctx, arg, "Invalid tagged literal text.")]);
-      const result = readWrittenValue(support, { kind: "tag", tag, text: canonicalization.text });
-      if (!result.ok) {
-        const refusal = describeRefusal(result.failure, support, { forms: [], rewrite: undefined });
-        return notOk([leafDiagnostic(ctx, arg, refusal.message, refusal.code)]);
-      }
-      if (result.value.type !== "idb/date" || typeof result.value.value !== "string") {
-        return notOk([leafDiagnostic(ctx, arg, "Expected an IDB date literal.")]);
-      }
-      return ok({ kind: "date", value: result.value.value });
+      return ok({ kind: "tagged", written: { kind: "tag", tag, text: canonicalization.text } });
     },
   };
 }
@@ -160,7 +175,7 @@ function defaultValueArg(): ArgType<IdbDefaultValue, AttributeCtx> {
       mapArg(bool(), (value) => ({ kind: "boolean" as const, value })),
       mapArg(str(), (value) => ({ kind: "string" as const, value })),
       mapArg(numLiteral(), ({ text }) => ({ kind: "number" as const, value: Number(text) })),
-      taggedDateDefault(),
+      taggedDefault(),
       mapArg(identifier(), (name) => ({ kind: "identifier" as const, name })),
       // Bind list defaults so the interpreter can accept [] and diagnose other literals.
       mapArg(list(oneOf(identifier(), str(), numLiteral(), bool())), () => ({ kind: "list" as const })),

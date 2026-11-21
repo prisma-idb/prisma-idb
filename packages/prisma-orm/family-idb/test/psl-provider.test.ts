@@ -31,10 +31,13 @@ async function load(schemaFileName: string, schema: string, options?: Parameters
 }
 
 describe("prismaIdbContract", () => {
-  it("preserves a tagged date default through contract JSON serialization", async () => {
+  it.each([
+    ["2024-02-29", "2024-02-29T00:00:00.000Z"],
+    ["2024-02-29T09:30:00+02:00", "2024-02-29T07:30:00.000Z"],
+  ])("preserves the tagged date default %s through contract JSON serialization", async (text, stored) => {
     const result = await load(
       "schema.prisma",
-      "model Event {\n id String @id\n startsAt DateTime @default(date`2024-02-29`)\n}"
+      `model Event {\n id String @id\n startsAt DateTime @default(date\`${text}\`)\n}`
     );
     expect(result.ok).toBe(true);
     if (!result.ok) return;
@@ -44,14 +47,14 @@ describe("prismaIdbContract", () => {
         onCreate: {
           kind: "generator",
           id: "literal",
-          params: { value: "2024-02-29T00:00:00.000Z", codecId: "idb/date@1" },
+          params: { value: stored, codecId: "idb/date@1" },
         },
       },
     ]);
   });
 
-  it.each(["2023-02-29", "2024-04-31", "2024-01-01T12:00:00Z"])(
-    "rejects the invalid calendar date %s at the schema field",
+  it.each(["2023-02-29", "2024-04-31", "2024-01-01T12:00:00"])(
+    "rejects the date %s, which names no instant, at the schema field",
     async (text) => {
       const result = await load(
         "schema.prisma",
@@ -86,7 +89,12 @@ describe("prismaIdbContract", () => {
     );
     expect(result.ok).toBe(false);
     if (result.ok) return;
-    expect(result.failure.diagnostics).toContainEqual(expect.objectContaining({ code: "IDB_INVALID_DEFAULT_VALUE" }));
+    expect(result.failure.diagnostics).toContainEqual(
+      expect.objectContaining({
+        code: "PSL_VALUE_TYPE_INCOMPATIBLE",
+        message: expect.stringContaining('Field "Event.value" default: Expected a quoted string'),
+      })
+    );
   });
 
   it("parses a schema file into a contract", async () => {
