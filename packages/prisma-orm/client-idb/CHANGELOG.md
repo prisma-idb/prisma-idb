@@ -1,5 +1,25 @@
 # @prisma-idb/client-idb
 
+## 0.17.0
+
+### Minor Changes
+
+- [#396](https://github.com/prisma-idb/prisma-idb/pull/396) [`2b675eb`](https://github.com/prisma-idb/prisma-idb/commit/2b675eb99f97b3e213e0157cd7d93eeb268491a7) Thanks [@WhyAsh5114](https://github.com/WhyAsh5114)! - Make `updateAll()`, `updateCount()`, `deleteAll()` and `deleteCount()` follow Prisma 8's rules for bulk writes:
+
+  - A bulk write on an accessor without `where()` is now a type error. At runtime it still changes every row, as in Prisma 8. To change every row on purpose, call `where({})`.
+  - A bulk write on an accessor with `skip()` or `take()` now throws `IdbBulkWriteError` before it writes anything. Before, it ignored both and changed every matching row, so `take(1).deleteCount()` deleted every row that matched.
+
+  `IdbStoreAccessor` has a fifth type parameter, `TFiltered`, which `where()` sets to `true`. A filtered accessor is still assignable to an unfiltered one.
+
+### Patch Changes
+
+- [#395](https://github.com/prisma-idb/prisma-idb/pull/395) [`d89e62a`](https://github.com/prisma-idb/prisma-idb/commit/d89e62a662b8965f315326ba5ecee9af1d086cdb) Thanks [@WhyAsh5114](https://github.com/WhyAsh5114)! - Read the rows and every included relation of an `include()` query in one read-only IndexedDB transaction. Before, each relation was read in its own transaction, so a write that committed in between, for example from the sync worker or another tab, could produce a result that never existed: a parent whose children were already deleted, or a required to-one relation read as `null`. Inside `db.transaction()`, the read joins the open transaction as before. Runtime middleware no longer sees reads that use `include()`, the same as writes that run in a transaction scope.
+- Updated dependencies []:
+  - @prisma-idb/adapter-idb@0.17.0
+  - @prisma-idb/driver-idb@0.17.0
+  - @prisma-idb/runtime-idb@0.17.0
+  - @prisma-idb/target-idb@0.17.0
+
 ## 0.16.1
 
 ### Patch Changes

@@ -1,7 +1,7 @@
 {
   "name": "@prisma-idb/idb-client-generator",
   "description": "Prisma generator for a type-safe IndexedDB client with optional sync",
-  "version": "0.38.1",
+  "version": "0.38.2",
   "main": "dist/generator.js",
   "license": "MIT",
   "bin": {

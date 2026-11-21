@@ -1,5 +1,22 @@
 # @prisma-idb/sync-extension-idb
 
+## 0.13.0
+
+### Minor Changes
+
+- [#391](https://github.com/prisma-idb/prisma-idb/pull/391) [`7e2c888`](https://github.com/prisma-idb/prisma-idb/commit/7e2c8889fe430d3baf5691e5927e9c63b2607991) Thanks [@WhyAsh5114](https://github.com/WhyAsh5114)! - Pull every waiting page in one sync cycle. The pull endpoint now responds with `{ logs, hasMore }` instead of a bare array, and `pull` returns `hasMore` alongside `logs`. While `hasMore` is true, the sync worker pulls the next page right away, pushing any new local edits between pages, instead of waiting `intervalMs` per page. A custom `pullHandler` must now return `{ logs, hasMore }`. Export `PullPage` and `pullResponseSchema`. Update the client and server together: an older client cannot parse the new response.
+
+### Patch Changes
+
+- [#393](https://github.com/prisma-idb/prisma-idb/pull/393) [`d1757bf`](https://github.com/prisma-idb/prisma-idb/commit/d1757bfe4e06fac85980a0afdc750116701ebdd8) Thanks [@WhyAsh5114](https://github.com/WhyAsh5114)! - Attach the original error as `cause` when `createSyncServer` rejects a record validator and when contract publication fails and cannot be restored. Remove unused assignments, including one line in the generated client's push handler. Behavior is otherwise unchanged.
+- Updated dependencies [[`2b675eb`](https://github.com/prisma-idb/prisma-idb/commit/2b675eb99f97b3e213e0157cd7d93eeb268491a7), [`d1757bf`](https://github.com/prisma-idb/prisma-idb/commit/d1757bfe4e06fac85980a0afdc750116701ebdd8), [`d89e62a`](https://github.com/prisma-idb/prisma-idb/commit/d89e62a662b8965f315326ba5ecee9af1d086cdb)]:
+  - @prisma-idb/client-idb@0.17.0
+  - @prisma-idb/family-idb@0.17.0
+  - @prisma-idb/adapter-idb@0.17.0
+  - @prisma-idb/driver-idb@0.17.0
+  - @prisma-idb/runtime-idb@0.17.0
+  - @prisma-idb/target-idb@0.17.0
+
 ## 0.12.1
 
 ### Patch Changes
