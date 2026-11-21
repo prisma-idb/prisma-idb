@@ -141,7 +141,7 @@ describe.each([false, true])("Decimal key identity (compound primary key: %s)", 
       await expect(items.where({ id: "2.0" }).update({ amount: "10.00" })).rejects.toMatchObject({
         code: "PUT_FAILED",
       });
-      await expect(items.updateAll({ amount: "30" }).toArray()).rejects.toMatchObject({ code: "PUT_FAILED" });
+      await expect(items.where({}).updateAll({ amount: "30" }).toArray()).rejects.toMatchObject({ code: "PUT_FAILED" });
       await expect(
         items.upsert({
           where: lookup("2.00"),

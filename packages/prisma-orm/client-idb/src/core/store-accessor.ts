@@ -63,6 +63,7 @@ import { assertUniqueLookup, snapshotLookup } from "./unique-lookup";
 import { applyUpdateDefaults, completeCreateRecord, createMutationDefaultsCache } from "./mutation-defaults";
 import { loadRelation, storeNamesForRead } from "./relation-loader";
 import { OpenTransaction } from "./open-transaction";
+import { assertBulkWriteIgnoresNothing } from "./bulk-write-guard";
 import {
   applyReferentialActionsForRowOnUpdate,
   collectOnUpdateEnforcementStoreNames,
@@ -125,6 +126,9 @@ type IncludeRefineFn<TContract, ModelName extends string, K extends string, R> =
   collection: IdbIncludeRefinementAccessor<TContract, RelatedModelOf<TContract, ModelName, K>>
 ) => R;
 
+/** Type-only key for the `TFiltered` marker on {@link IdbStoreAccessor}. */
+declare const filtered: unique symbol;
+
 // ── Interface ─────────────────────────────────────────────────────────────────
 
 /**
@@ -141,13 +145,23 @@ type IncludeRefineFn<TContract, ModelName extends string, K extends string, R> =
  * @template TSelected   - Field names kept by `.select()`. `never` (the
  *   default) means "all fields"; otherwise the row narrows to these fields
  *   (plus any included relations).
+ * @template TFiltered   - `true` once `.where()` has been called. The bulk
+ *   writes `updateAll()`, `updateCount()`, `deleteAll()` and `deleteCount()`
+ *   require it, so changing every row of a store takes an explicit filter.
  */
 export interface IdbStoreAccessor<
   TContract,
   ModelName extends string,
   TIncludes extends IncludeSpec<TContract, ModelName> = NoIncludes,
   TSelected extends string = never,
+  TFiltered extends boolean = false,
 > {
+  /**
+   * Type-only marker with no runtime value. A filtered accessor's marker is `true`, which is assignable to an
+   * unfiltered accessor's `boolean`, so a filtered accessor can be passed wherever an unfiltered one is expected.
+   */
+  readonly [filtered]?: TFiltered extends true ? true : boolean;
+
   /**
    * Add a filter (ANDed with any previous `.where()` calls).
    *
@@ -163,16 +177,18 @@ export interface IdbStoreAccessor<
    */
   where(
     filter: WhereFilter<TContract, ModelName> | WhereCallback<TContract, ModelName>
-  ): IdbStoreAccessor<TContract, ModelName, TIncludes, TSelected>;
+  ): IdbStoreAccessor<TContract, ModelName, TIncludes, TSelected, true>;
 
   /** Set the sort order. Replaces any previous `.orderBy()` call. */
-  orderBy(spec: OrderBySpec<TContract, ModelName>): IdbStoreAccessor<TContract, ModelName, TIncludes, TSelected>;
+  orderBy(
+    spec: OrderBySpec<TContract, ModelName>
+  ): IdbStoreAccessor<TContract, ModelName, TIncludes, TSelected, TFiltered>;
 
-  /** Limit the number of rows returned. */
-  take(n: number): IdbStoreAccessor<TContract, ModelName, TIncludes, TSelected>;
+  /** Limit the number of rows returned. Bulk writes reject a collection with a limit. */
+  take(n: number): IdbStoreAccessor<TContract, ModelName, TIncludes, TSelected, TFiltered>;
 
-  /** Skip the first `n` rows (OFFSET). */
-  skip(n: number): IdbStoreAccessor<TContract, ModelName, TIncludes, TSelected>;
+  /** Skip the first `n` rows (OFFSET). Bulk writes reject a collection with an offset. */
+  skip(n: number): IdbStoreAccessor<TContract, ModelName, TIncludes, TSelected, TFiltered>;
 
   /**
    * Include a reference relation in the returned rows.
@@ -203,11 +219,11 @@ export interface IdbStoreAccessor<
       K,
       IdbIncludeRefinementAccessor<TContract, RelatedModelOf<TContract, ModelName, K>>
     >
-  ): IdbStoreAccessor<TContract, ModelName, TIncludes & Record<K, true>, TSelected>;
+  ): IdbStoreAccessor<TContract, ModelName, TIncludes & Record<K, true>, TSelected, TFiltered>;
   include<K extends ReferenceRelKeys<TContract, ModelName>>(
     relation: K,
     refineFn: IncludeRefineFn<TContract, ModelName, K, IdbIncludeScalar>
-  ): IdbStoreAccessor<TContract, ModelName, TIncludes & Record<K, "scalar">, TSelected>;
+  ): IdbStoreAccessor<TContract, ModelName, TIncludes & Record<K, "scalar">, TSelected, TFiltered>;
 
   /**
    * Project the row down to a subset of scalar fields. Any previously
@@ -222,7 +238,7 @@ export interface IdbStoreAccessor<
    */
   select<Fields extends FieldTuple<TContract, ModelName>>(
     ...fields: Fields
-  ): IdbStoreAccessor<TContract, ModelName, TIncludes, Fields[number]>;
+  ): IdbStoreAccessor<TContract, ModelName, TIncludes, Fields[number], TFiltered>;
 
   /** Return all matching rows as an async iterable (also awaitable as `Row[]`). */
   all(): AsyncIterableResult<SelectedRow<TContract, ModelName, TIncludes, TSelected>>;
@@ -298,16 +314,26 @@ export interface IdbStoreAccessor<
   /**
    * Update all rows matching the accumulated `.where()` filter and return
    * them as an `AsyncIterableResult` (also awaitable as `Row[]`).
+   *
+   * Requires a prior `.where()`. Throws `IdbBulkWriteError` on a collection
+   * with `skip()` or `take()`, which a bulk write can't apply.
    */
   updateAll(
+    this: IdbStoreAccessor<TContract, ModelName, TIncludes, TSelected, true>,
     patch: PatchInput<TContract, ModelName> | IdbUpdateCallback<TContract, ModelName>
   ): AsyncIterableResult<DefaultModelRow<TContract, ModelName>>;
 
   /**
    * Update all rows matching the accumulated `.where()` filter.
    * Returns the count of updated rows.
+   *
+   * Requires a prior `.where()`. Throws `IdbBulkWriteError` on a collection
+   * with `skip()` or `take()`, which a bulk write can't apply.
    */
-  updateCount(patch: PatchInput<TContract, ModelName> | IdbUpdateCallback<TContract, ModelName>): Promise<number>;
+  updateCount(
+    this: IdbStoreAccessor<TContract, ModelName, TIncludes, TSelected, true>,
+    patch: PatchInput<TContract, ModelName> | IdbUpdateCallback<TContract, ModelName>
+  ): Promise<number>;
 
   /**
    * Insert or update a single record.
@@ -341,14 +367,22 @@ export interface IdbStoreAccessor<
   /**
    * Delete all rows matching the accumulated `.where()` filter.
    * Returns the deleted rows as an `AsyncIterableResult`.
+   *
+   * Requires a prior `.where()`. Throws `IdbBulkWriteError` on a collection
+   * with `skip()` or `take()`, which a bulk write can't apply.
    */
-  deleteAll(): AsyncIterableResult<DefaultModelRow<TContract, ModelName>>;
+  deleteAll(
+    this: IdbStoreAccessor<TContract, ModelName, TIncludes, TSelected, true>
+  ): AsyncIterableResult<DefaultModelRow<TContract, ModelName>>;
 
   /**
    * Delete all rows matching the accumulated `.where()` filter.
    * Returns the count of deleted rows.
+   *
+   * Requires a prior `.where()`. Throws `IdbBulkWriteError` on a collection
+   * with `skip()` or `take()`, which a bulk write can't apply.
    */
-  deleteCount(): Promise<number>;
+  deleteCount(this: IdbStoreAccessor<TContract, ModelName, TIncludes, TSelected, true>): Promise<number>;
 
   /**
    * Count all rows matching the accumulated `.where()` filter.
@@ -382,7 +416,8 @@ export class IdbStoreAccessorImpl<
   ModelName extends string,
   TIncludes extends IncludeSpec<TContract, ModelName> = NoIncludes,
   TSelected extends string = never,
-> implements IdbStoreAccessor<TContract, ModelName, TIncludes, TSelected> {
+  TFiltered extends boolean = false,
+> implements IdbStoreAccessor<TContract, ModelName, TIncludes, TSelected, TFiltered> {
   readonly #contract: TContract;
   readonly #modelName: ModelName;
   readonly #executor: IdbQueryExecutor;
@@ -415,7 +450,7 @@ export class IdbStoreAccessorImpl<
   /** Add a callback or shorthand predicate to a new accessor without mutating this one. */
   where(
     filter: WhereFilter<TContract, ModelName> | WhereCallback<TContract, ModelName>
-  ): IdbStoreAccessor<TContract, ModelName, TIncludes, TSelected> {
+  ): IdbStoreAccessor<TContract, ModelName, TIncludes, TSelected, true> {
     const expr =
       typeof filter === "function"
         ? filter(createModelAccessor<TContract, ModelName>())
@@ -423,19 +458,21 @@ export class IdbStoreAccessorImpl<
     // An empty shorthand object (or one with only undefined values) lifts
     // to `undefined` — keep the existing filter list untouched so chained
     // `.where({})` calls don't produce noisy AND nodes.
-    if (expr === undefined) return this.#clone({});
-    return this.#clone({ filters: [...this.#state.filters, expr] });
+    if (expr === undefined) return this.#clone<true>({});
+    return this.#clone<true>({ filters: [...this.#state.filters, expr] });
   }
 
-  orderBy(spec: OrderBySpec<TContract, ModelName>): IdbStoreAccessor<TContract, ModelName, TIncludes, TSelected> {
+  orderBy(
+    spec: OrderBySpec<TContract, ModelName>
+  ): IdbStoreAccessor<TContract, ModelName, TIncludes, TSelected, TFiltered> {
     return this.#clone({ orderBy: spec as Record<string, "asc" | "desc"> });
   }
 
-  take(n: number): IdbStoreAccessor<TContract, ModelName, TIncludes, TSelected> {
+  take(n: number): IdbStoreAccessor<TContract, ModelName, TIncludes, TSelected, TFiltered> {
     return this.#clone({ take: n });
   }
 
-  skip(n: number): IdbStoreAccessor<TContract, ModelName, TIncludes, TSelected> {
+  skip(n: number): IdbStoreAccessor<TContract, ModelName, TIncludes, TSelected, TFiltered> {
     return this.#clone({ skip: n });
   }
 
@@ -447,11 +484,11 @@ export class IdbStoreAccessorImpl<
       K,
       IdbIncludeRefinementAccessor<TContract, RelatedModelOf<TContract, ModelName, K>>
     >
-  ): IdbStoreAccessor<TContract, ModelName, TIncludes & Record<K, true>, TSelected>;
+  ): IdbStoreAccessor<TContract, ModelName, TIncludes & Record<K, true>, TSelected, TFiltered>;
   include<K extends ReferenceRelKeys<TContract, ModelName>>(
     relation: K,
     refineFn: IncludeRefineFn<TContract, ModelName, K, IdbIncludeScalar>
-  ): IdbStoreAccessor<TContract, ModelName, TIncludes & Record<K, "scalar">, TSelected>;
+  ): IdbStoreAccessor<TContract, ModelName, TIncludes & Record<K, "scalar">, TSelected, TFiltered>;
   /** Add a collection or count refinement while preserving this accessor state. */
   include<K extends ReferenceRelKeys<TContract, ModelName>>(
     relation: K,
@@ -461,7 +498,7 @@ export class IdbStoreAccessorImpl<
       K,
       IdbIncludeRefinementAccessor<TContract, RelatedModelOf<TContract, ModelName, K>> | IdbIncludeScalar
     >
-  ): IdbStoreAccessor<TContract, ModelName, IncludeSpec<TContract, ModelName>, TSelected> {
+  ): IdbStoreAccessor<TContract, ModelName, IncludeSpec<TContract, ModelName>, TSelected, TFiltered> {
     const entry = this.#resolveIncludeEntry(relation, refineFn);
     const newState = mergeAccessorState(this.#state, {
       includes: { ...this.#state.includes, [relation]: entry },
@@ -475,20 +512,21 @@ export class IdbStoreAccessorImpl<
       newState,
       this.#newGroupingKey,
       this.#includeRefinementMode
-    ) as unknown as IdbStoreAccessor<TContract, ModelName, IncludeSpec<TContract, ModelName>, TSelected>;
+    ) as unknown as IdbStoreAccessor<TContract, ModelName, IncludeSpec<TContract, ModelName>, TSelected, TFiltered>;
   }
 
   /** Narrow scalar output fields while retaining included relations. */
   select<Fields extends FieldTuple<TContract, ModelName>>(
     ...fields: Fields
-  ): IdbStoreAccessor<TContract, ModelName, TIncludes, Fields[number]> {
+  ): IdbStoreAccessor<TContract, ModelName, TIncludes, Fields[number], TFiltered> {
     // Runtime is identical; only TSelected narrows. Cast bridges the type-level
     // projection (the clone preserves TIncludes / contract / executor).
     return this.#clone({ selectedFields: fields as readonly string[] }) as unknown as IdbStoreAccessor<
       TContract,
       ModelName,
       TIncludes,
-      Fields[number]
+      Fields[number],
+      TFiltered
     >;
   }
 
@@ -719,6 +757,7 @@ export class IdbStoreAccessorImpl<
   updateAll(
     patch: PatchInput<TContract, ModelName> | IdbUpdateCallback<TContract, ModelName>
   ): AsyncIterableResult<DefaultModelRow<TContract, ModelName>> {
+    assertBulkWriteIgnoresNothing(this.#state, this.#modelName, "updateAll");
     const contract = this.#contract;
     const modelName = this.#modelName;
     const filters = this.#state.filters;
@@ -743,6 +782,7 @@ export class IdbStoreAccessorImpl<
   async updateCount(
     patch: PatchInput<TContract, ModelName> | IdbUpdateCallback<TContract, ModelName>
   ): Promise<number> {
+    assertBulkWriteIgnoresNothing(this.#state, this.#modelName, "updateCount");
     return (await this.updateAll(patch).toArray()).length;
   }
 
@@ -900,6 +940,7 @@ export class IdbStoreAccessorImpl<
    * `updateAll()`'s doc comment for the same reasoning.
    */
   deleteAll(): AsyncIterableResult<DefaultModelRow<TContract, ModelName>> {
+    assertBulkWriteIgnoresNothing(this.#state, this.#modelName, "deleteAll");
     const combined = this.#combinedFilterExpr();
     const contract = this.#contract;
     const modelName = this.#modelName;
@@ -918,6 +959,7 @@ export class IdbStoreAccessorImpl<
   }
 
   async deleteCount(): Promise<number> {
+    assertBulkWriteIgnoresNothing(this.#state, this.#modelName, "deleteCount");
     return (await this.deleteAll().toArray()).length;
   }
 
@@ -1109,7 +1151,9 @@ export class IdbStoreAccessorImpl<
   }
 
   /** Preserve shared runtime wiring while replacing only the accessor state. */
-  #clone(overrides: Partial<IdbAccessorState>): IdbStoreAccessorImpl<TContract, ModelName, TIncludes, TSelected> {
+  #clone<TNextFiltered extends boolean = TFiltered>(
+    overrides: Partial<IdbAccessorState>
+  ): IdbStoreAccessorImpl<TContract, ModelName, TIncludes, TSelected, TNextFiltered> {
     return new IdbStoreAccessorImpl(
       this.#contract,
       this.#modelName,

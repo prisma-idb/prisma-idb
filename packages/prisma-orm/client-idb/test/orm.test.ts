@@ -16,9 +16,14 @@ import idbTargetPack from "@prisma-idb/target-idb/pack";
 import { createIDBRuntimeDriver } from "@prisma-idb/driver-idb/runtime";
 import type { IdbRuntimeDriverInstance } from "@prisma-idb/driver-idb/runtime";
 import type { IdbQueryPlan } from "@prisma-idb/adapter-idb/runtime";
-import { idbOrm } from "../src/exports/orm";
+import { idbOrm, IdbBulkWriteError } from "../src/exports/orm";
 import { PrismaClientKnownRequestError } from "@prisma/client-runtime-utils";
-import type { IdbQueryExecutor, IdbQueryExecutorWithTransaction, IdbStoreAccessor } from "../src/exports/orm";
+import type {
+  IdbQueryExecutor,
+  IdbQueryExecutorWithTransaction,
+  IdbStoreAccessor,
+  NoIncludes,
+} from "../src/exports/orm";
 
 // ── Test-only cast helper ─────────────────────────────────────────────────────
 
@@ -916,7 +921,7 @@ describe("IdbStoreAccessor — updateAll / updateCount", () => {
 
   it("updateAll updates multiple matching rows", async () => {
     const client = makeClient();
-    const rows = await client["users"]!.updateAll({ name: "UPDATED" }).toArray();
+    const rows = await client["users"]!.where({}).updateAll({ name: "UPDATED" }).toArray();
     expect(rows).toHaveLength(3);
     expect((rows as Record<string, unknown>[]).every((r) => r["name"] === "UPDATED")).toBe(true);
   });
@@ -929,7 +934,7 @@ describe("IdbStoreAccessor — updateAll / updateCount", () => {
 
   it("updateCount returns number of updated rows", async () => {
     const client = makeClient();
-    const n = await client["users"]!.updateCount({ name: "X" });
+    const n = await client["users"]!.where({}).updateCount({ name: "X" });
     expect(n).toBe(3);
   });
 
@@ -1064,13 +1069,41 @@ describe("IdbStoreAccessor — deleteAll / deleteCount", () => {
     ]);
   });
 
-  it("deleteAll deletes all rows when no filter", async () => {
+  it("deleteAll without a filter is a type error but deletes every row, as in Prisma 8", async () => {
     const client = makeClient();
+    // @ts-expect-error -- bulk writes require where(); at runtime an unfiltered one changes every row.
     const rows = await client["users"]!.deleteAll().toArray();
     expect(rows).toHaveLength(3);
     const remaining = await client["users"]!.all().toArray();
     expect(remaining).toHaveLength(0);
   });
+
+  it.each(["updateAll", "updateCount", "deleteAll", "deleteCount"] as const)(
+    "%s rejects skip() and take() instead of changing more rows than the chain asks for",
+    async (method) => {
+      const client = makeClient();
+      const write = async (query: IdbStoreAccessor<never, never, NoIncludes, never, true>) =>
+        method === "updateAll"
+          ? query.updateAll({ name: "X" } as never).toArray()
+          : method === "updateCount"
+            ? query.updateCount({ name: "X" } as never)
+            : method === "deleteAll"
+              ? query.deleteAll().toArray()
+              : query.deleteCount();
+      const users = client["users"]!.where({});
+      await expect(write(users.take(1))).rejects.toThrow(
+        `Cannot ${method} User: the collection has a limit. ${method} changes every row that matches the filter`
+      );
+      await expect(write(users.skip(1))).rejects.toThrow(IdbBulkWriteError);
+      await expect(write(users.skip(1))).rejects.toThrow("the collection has an offset");
+      await expect(write(users.skip(1).take(1))).rejects.toThrow("Remove skip() and take()");
+      expect(await client["users"]!.all().toArray()).toEqual([
+        ALICE,
+        BOB,
+        { id: "u3", name: "Carol", email: "carol@x.com" },
+      ]);
+    }
+  );
 
   it("deleteCount returns number of deleted rows", async () => {
     const client = makeClient();

@@ -599,13 +599,16 @@ async function compareWrite(
   const base = applyQuery(accessor(driver, testContract), where === undefined ? {} : { where });
   const actual =
     operation === "updateAll"
-      ? await base.updateAll(patch as never).toArray()
+      ? await base
+          .where({})
+          .updateAll(patch as never)
+          .toArray()
       : operation === "updateCount"
-        ? await base.updateCount(patch as never)
+        ? await base.where({}).updateCount(patch as never)
         : operation === "deleteAll"
-          ? await base.deleteAll().toArray()
+          ? await base.where({}).deleteAll().toArray()
           : operation === "deleteCount"
-            ? await base.deleteCount()
+            ? await base.where({}).deleteCount()
             : await base.update(patch as never);
   const actualStore = await oracle(db, {});
   await seed(db, rows);
@@ -671,7 +674,8 @@ it.each(["updateAll", "updateCount"] as const)(
         const query = applyQuery(accessor(driver, compoundContract), where === undefined ? {} : { where });
         // Exercise untyped callers too: primary keys are excluded from the typed patch API.
         const patch = { id: "new", label: "changed" } as never;
-        const result = operation === "updateAll" ? query.updateAll(patch).toArray() : query.updateCount(patch);
+        const bulk = query.where({});
+        const result = operation === "updateAll" ? bulk.updateAll(patch).toArray() : bulk.updateCount(patch);
         await expect(result).rejects.toMatchObject({ code: "PRIMARY_KEY_CHANGE_UNSUPPORTED" });
         expect(await oracle(db, {})).toEqual(rows);
       }

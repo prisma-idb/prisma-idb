@@ -87,9 +87,12 @@ describe.each(cases)("$scalar lists", ({ scalar, first, equal, second }) => {
         { id: "b", values: [second] },
       ])
       .toArray();
-    const rows = await samples.updateAll((u) => [u["values"]!.push(first)]).toArray();
+    const rows = await samples
+      .where({})
+      .updateAll((u) => [u["values"]!.push(first)])
+      .toArray();
     expect(rows.map((row) => row["values"])).toEqual([[first], [second, first]]);
-    expect(await samples.updateCount((u) => [u["values"]!.addToSet(equal)])).toBe(2);
+    expect(await samples.where({}).updateCount((u) => [u["values"]!.addToSet(equal)])).toBe(2);
     expect(
       (
         await samples.upsert({
@@ -180,6 +183,11 @@ it("clones declared defaults and rolls back a bulk operation if a later stored l
   await client.withTransaction(["samples"], (scope) =>
     scope.execute({ kind: "put", storeName: "samples", record: { id: "b" } } as never)
   );
-  await expect(samples.updateAll((u) => [u["values"]!.push("x")]).toArray()).rejects.toThrow(/migrate the store first/);
+  await expect(
+    samples
+      .where({})
+      .updateAll((u) => [u["values"]!.push("x")])
+      .toArray()
+  ).rejects.toThrow(/migrate the store first/);
   expect((await samples.findUnique("a"))?.["values"]).toEqual([]);
 });

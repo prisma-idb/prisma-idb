@@ -88,8 +88,8 @@ db.orm.samples.update((u) => [
   u.json.push({ a: 1 }),
   u.roles.push("ADMIN"),
 ]);
-db.orm.samples.updateAll((u) => [u.dates.pull(new Date()), u.bytes.addToSet(new Uint8Array())]);
-db.orm.samples.updateCount((u) => [u.strings.set(["a"]), u.roles.pop(-1)]);
+db.orm.samples.where({ id: "a" }).updateAll((u) => [u.dates.pull(new Date()), u.bytes.addToSet(new Uint8Array())]);
+db.orm.samples.where({ id: "a" }).updateCount((u) => [u.strings.set(["a"]), u.roles.pop(-1)]);
 db.orm.samples.upsert({ where: { id: "a" }, create: row, update: (u) => [u.strings.push("b")] });
 db.orm.samples.where((m) => m.strings.eq(["a"])).orderBy({ strings: "asc" });
 db.orm.samples.where((m) => m.dates.in([[new Date()]]));

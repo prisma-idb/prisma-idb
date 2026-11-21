@@ -57,14 +57,16 @@ describe("primary-key updates", () => {
   }
 
   it("allows a patch that repeats the existing primary key", async () => {
-    expect(await client.orm["items"]!.updateAll(repeatedKeyPatch).toArray()).toEqual([{ ...original, label: "y" }]);
+    expect(await client.orm["items"]!.where({}).updateAll(repeatedKeyPatch).toArray()).toEqual([
+      { ...original, label: "y" },
+    ]);
   });
   it("does not reject a primary-key patch when no rows match", async () => {
     expect(await client.orm["items"]!.where({ id: "missing" }).update(changedKeyPatch)).toBeNull();
     expect(await client.orm["items"]!.where({ id: "missing" }).updateAll(changedKeyPatch).toArray()).toEqual([]);
   });
   it("updateCount rejects a key change without writing", async () => {
-    await expect(client.orm["items"]!.updateCount(changedKeyPatch)).rejects.toMatchObject({
+    await expect(client.orm["items"]!.where({}).updateCount(changedKeyPatch)).rejects.toMatchObject({
       code: "PRIMARY_KEY_CHANGE_UNSUPPORTED",
     });
     expect(await client.orm["items"]!.all().toArray()).toEqual([original]);
@@ -82,7 +84,7 @@ describe("primary-key updates", () => {
   it("updateAll rolls back an earlier match that repeated its own key", async () => {
     const second = { id: "i2", serial: 2, label: "x" };
     await client.orm["items"]!.create(second);
-    await expect(client.orm["items"]!.updateAll(repeatedKeyPatch).toArray()).rejects.toMatchObject({
+    await expect(client.orm["items"]!.where({}).updateAll(repeatedKeyPatch).toArray()).rejects.toMatchObject({
       code: "PRIMARY_KEY_CHANGE_UNSUPPORTED",
     });
     expect(await client.orm["items"]!.all().toArray()).toEqual([original, second]);
