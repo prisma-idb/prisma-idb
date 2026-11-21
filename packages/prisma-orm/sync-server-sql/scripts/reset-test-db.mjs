@@ -12,7 +12,7 @@ if (!databaseUrl) {
 }
 
 const targetUrl = new URL(databaseUrl);
-const dbName = targetUrl.pathname.slice(1);
+const dbName = decodeURI(targetUrl.pathname.slice(1));
 if (!dbName) {
   throw new Error("DATABASE_URL has no database name.");
 }
