@@ -35,7 +35,7 @@ export function SyncTabs({ schemaBlock, endpointsBlock, workerBlock }: SyncTabsP
             onClick={() => setActive(tab.id)}
             className={`shrink-0 rounded-md px-3.5 py-1.5 text-[13px] font-medium transition-all ${
               active === tab.id
-                ? "bg-white text-[hsl(32,100%,50%)] shadow-sm ring-1 ring-zinc-200 dark:bg-zinc-950 dark:ring-white/8"
+                ? "text-brand-text bg-white shadow-sm ring-1 ring-zinc-200 dark:bg-zinc-950 dark:ring-white/8"
                 : "text-fd-muted-foreground hover:text-fd-foreground"
             }`}
           >
@@ -46,7 +46,7 @@ export function SyncTabs({ schemaBlock, endpointsBlock, workerBlock }: SyncTabsP
       <div className="[&_figure]:m-0! [&_figure]:rounded-t-none! [&_figure]:border-t-0!">{tabContent[active]}</div>
       <p className="text-fd-muted-foreground mt-4 text-center text-sm">
         Three steps to full sync.{" "}
-        <Link href="/docs/prisma-8/sync" className="text-fd-accent hover:underline">
+        <Link href="/docs/prisma-8/sync" className="text-brand-text underline underline-offset-2">
           Full setup guide &rarr;
         </Link>
       </p>

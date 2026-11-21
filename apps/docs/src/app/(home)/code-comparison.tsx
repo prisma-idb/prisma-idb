@@ -64,7 +64,7 @@ export async function CodeComparison() {
             <div className="h-2 w-2 rounded-full bg-zinc-500" />
             <span className="text-fd-muted-foreground text-sm font-medium">idb (IndexedDB wrapper)</span>
           </div>
-          <div className="opacity-60">
+          <div>
             <ServerCodeBlock code={idbCode} lang="ts" />
           </div>
         </div>
@@ -73,7 +73,7 @@ export async function CodeComparison() {
         <div>
           <div className="mb-3 flex items-center gap-2.5">
             <div className="h-2 w-2 rounded-full bg-[hsl(32,100%,50%)]" />
-            <span className="text-sm font-semibold text-[hsl(32,100%,50%)]">Prisma IDB</span>
+            <span className="text-brand-text text-sm font-semibold">Prisma IDB</span>
           </div>
           <div className="overflow-hidden rounded-xl shadow-xl ring-1 shadow-[hsl(32,100%,50%)]/15 ring-[hsl(32,100%,50%)]/25 dark:shadow-[hsl(32,100%,50%)]/6 dark:ring-[hsl(32,100%,50%)]/20">
             <ServerCodeBlock code={prismaIdbCode} lang="ts" />

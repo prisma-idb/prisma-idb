@@ -52,13 +52,13 @@ export function FeaturedSection() {
                   {mention.date}
                 </span>
                 <span className="flex flex-col gap-2">
-                  <span className="text-fd-foreground text-lg font-semibold transition-colors group-hover:text-[hsl(32,100%,38%)] sm:text-xl dark:group-hover:text-[hsl(32,100%,55%)]">
+                  <span className="text-fd-foreground group-hover:text-brand-text text-lg font-semibold transition-colors sm:text-xl">
                     {mention.name}
                   </span>
                   <span className="text-fd-muted-foreground text-[15px] leading-relaxed">{mention.summary}</span>
                 </span>
                 <ArrowUpRight
-                  className="text-fd-muted-foreground mt-1 h-5 w-5 transition-all group-hover:translate-x-0.5 group-hover:-translate-y-0.5 group-hover:text-[hsl(32,100%,38%)] dark:group-hover:text-[hsl(32,100%,55%)]"
+                  className="text-fd-muted-foreground group-hover:text-brand-text mt-1 h-5 w-5 transition-all group-hover:translate-x-0.5 group-hover:-translate-y-0.5"
                   aria-hidden="true"
                 />
               </a>

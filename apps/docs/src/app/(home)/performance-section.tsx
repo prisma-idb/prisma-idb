@@ -153,7 +153,7 @@ export function PerformanceSection() {
     <Section>
       <SectionHeader eyebrow="Performance" title="Built for speed. Measured honestly.">
         Time per query at the 95th percentile, in real Chrome against real IndexedDB. Straight from the latest CI run on{" "}
-        <code className="text-fd-accent text-[0.9em]">main</code>.
+        <code className="text-brand-text text-[0.9em]">main</code>.
       </SectionHeader>
 
       {state.status === "loading" ? (
@@ -227,7 +227,7 @@ function PerformanceContent({ snapshot }: { snapshot: BenchmarkSnapshot }) {
               >
                 <dt className="text-fd-muted-foreground mt-2.5 text-sm leading-snug">{op.label}</dt>
                 <dd
-                  className={`${GeistMono.className} text-3xl font-semibold tracking-tight text-[hsl(32,100%,38%)] tabular-nums sm:text-[44px] dark:text-[hsl(32,100%,50%)]`}
+                  className={`${GeistMono.className} text-brand-text text-3xl font-semibold tracking-tight tabular-nums sm:text-[44px]`}
                 >
                   {value}
                   <span className="text-fd-muted-foreground ml-1 text-base font-medium sm:text-lg">{unit}</span>
@@ -283,7 +283,7 @@ function PerformanceContent({ snapshot }: { snapshot: BenchmarkSnapshot }) {
             href={BENCHMARK_SOURCE_URL}
             target="_blank"
             rel="noreferrer"
-            className="text-fd-accent inline-flex items-center gap-1 font-medium hover:underline"
+            className="text-brand-text inline-flex items-center gap-1 font-medium hover:underline"
           >
             How it&apos;s measured
             <ChevronRight className="h-3.5 w-3.5" />

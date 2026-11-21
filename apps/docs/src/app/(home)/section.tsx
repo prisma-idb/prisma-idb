@@ -23,9 +23,7 @@ export function SectionHeader({ eyebrow, title, children, align = "center" }: Se
   const centered = align === "center";
   return (
     <div className={centered ? "mx-auto mb-12 max-w-2xl text-center sm:mb-14" : "mb-8 max-w-xl"}>
-      <p
-        className={`${GeistMono.className} mb-4 text-xs font-medium tracking-[0.12em] text-[hsl(32,100%,38%)] uppercase dark:text-[hsl(32,100%,55%)]`}
-      >
+      <p className={`${GeistMono.className} text-brand-text mb-4 text-xs font-medium tracking-[0.12em] uppercase`}>
         {eyebrow}
       </p>
       <h2

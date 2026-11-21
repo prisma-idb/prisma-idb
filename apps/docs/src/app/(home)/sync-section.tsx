@@ -58,7 +58,7 @@ export async function SyncSection() {
             align="left"
             title={
               <>
-                Sync that&apos;s <span className="text-fd-accent">built in</span>, not bolted on.
+                Sync that&apos;s <span className="text-brand-text">built in</span>, not bolted on.
               </>
             }
           >
@@ -68,7 +68,7 @@ export async function SyncSection() {
 
           <div className="space-y-6">
             <div className="flex gap-4">
-              <Send className="text-fd-accent mt-0.5 h-5 w-5 shrink-0" />
+              <Send className="text-brand-text mt-0.5 h-5 w-5 shrink-0" />
               <div>
                 <p className="text-fd-foreground font-semibold">Works Offline, Syncs Later</p>
                 <p className="text-fd-muted-foreground mt-1 text-sm">
@@ -77,7 +77,7 @@ export async function SyncSection() {
               </div>
             </div>
             <div className="flex gap-4">
-              <Lock className="text-fd-accent mt-0.5 h-5 w-5 shrink-0" />
+              <Lock className="text-brand-text mt-0.5 h-5 w-5 shrink-0" />
               <div>
                 <p className="text-fd-foreground font-semibold">Built-in Authorization</p>
                 <p className="text-fd-muted-foreground mt-1 text-sm">
@@ -87,7 +87,7 @@ export async function SyncSection() {
               </div>
             </div>
             <div className="flex gap-4">
-              <RefreshCw className="text-fd-accent mt-0.5 h-5 w-5 shrink-0" />
+              <RefreshCw className="text-brand-text mt-0.5 h-5 w-5 shrink-0" />
               <div>
                 <p className="text-fd-foreground font-semibold">Conflict Resolution</p>
                 <p className="text-fd-muted-foreground mt-1 text-sm">

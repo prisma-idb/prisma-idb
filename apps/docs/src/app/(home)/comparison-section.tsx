@@ -112,7 +112,7 @@ function SupportMark({ support, ours }: { support: Support; ours: boolean }) {
     <span
       aria-hidden="true"
       className={`mt-0.75 block size-2.75 shrink-0 rounded-full border border-current ${
-        ours ? "text-[hsl(32,100%,45%)]" : "text-fd-foreground/75"
+        ours ? "text-brand-text" : "text-fd-foreground/75"
       }`}
       style={{
         background: support === "yes" ? "currentColor" : "linear-gradient(90deg, currentColor 50%, transparent 50%)",
@@ -162,9 +162,7 @@ export function ComparisonSection() {
                   key={tool.name}
                   scope="col"
                   className={`px-3 py-4 text-left font-semibold ${
-                    tool.ours
-                      ? `${OUR_COLUMN} rounded-t-lg text-[hsl(32,100%,38%)] dark:text-[hsl(32,100%,55%)]`
-                      : "text-fd-foreground"
+                    tool.ours ? `${OUR_COLUMN} text-brand-text rounded-t-lg` : "text-fd-foreground"
                   }`}
                 >
                   <span className="inline-flex items-center gap-2">
