@@ -6,6 +6,8 @@
 
 **[Documentation](https://prisma-idb.dev/) · [Live Demo](https://kanban.prisma-idb.dev/) · [Repository](https://github.com/prisma-idb/prisma-idb)**
 
+Featured in the [Prisma ORM Manifesto 2026](https://www.prisma.io/blog/prisma-orm-manifesto-2026) and [Local-First News](https://www.localfirstnews.com/2026-11-19/).
+
 ---
 
 ## What this package does

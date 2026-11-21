@@ -8,6 +8,8 @@ Type-safe IndexedDB with the Prisma API you already know — offline-first, no s
 
 **[Documentation](https://prisma-idb.dev/) · [Live Demo](https://kanban.prisma-idb.dev/)**
 
+Featured in the [Prisma ORM Manifesto 2026](https://www.prisma.io/blog/prisma-orm-manifesto-2026) and [Local-First News](https://www.localfirstnews.com/2026-11-19/).
+
 ## Two flavors
 
 |                  | Generator (stable)                                                                                   | Prisma 8 IDB extension                                                                          |
@@ -17,121 +19,49 @@ Type-safe IndexedDB with the Prisma API you already know — offline-first, no s
 | **Status**       | Stable, published                                                                                    | Preview, built on [Prisma 8](https://www.prisma.io/blog/prisma-next-call-for-extension-authors) |
 | **Source**       | `packages/generator`                                                                                 | `packages/prisma-orm/*`                                                                         |
 
-## The difference (vs raw IndexedDB)
+## What it looks like
 
-Even with the [`idb`](https://github.com/jakearchibald/idb) library, querying across relations means manual index lookups, joins in application code, and zero type safety:
-
-```typescript
-const db = await openDB("MyDB", 1);
-
-const posts = await db.getAllFromIndex("posts", "byAuthor", userId);
-
-const result = [];
-for (const post of posts) {
-  if (!post.published) continue;
-  const comments = await db.getAllFromIndex("comments", "byPost", post.id);
-  result.push({ ...post, comments });
-}
-result.sort((a, b) => b.createdAt - a.createdAt);
-// manual joins, no types, no filtering
-```
-
-Prisma IDB:
+Querying related records in IndexedDB normally means manual index lookups and joins in application code, with no types. With Prisma IDB, you write the query you already know:
 
 ```typescript
 const posts = await idb.post.findMany({
   where: { authorId: userId, published: true },
-  include: {
-    comments: { orderBy: { createdAt: "desc" } },
-  },
+  include: { comments: { orderBy: { createdAt: "desc" } } },
   orderBy: { createdAt: "desc" },
 });
 ```
 
-Same API as Prisma Client. Fully typed. Works offline.
+The client is typed from your Prisma schema and runs entirely in the browser.
 
-## Generator quick start
+## Get started
 
-### Install
+The docs walk through setup, the query API, migrations and sync:
+
+- **Prisma 8 IDB:** [Quick start](https://prisma-idb.dev/docs/prisma-8/getting-started) · [Migrations](https://prisma-idb.dev/docs/prisma-8/migrations) · [Sync](https://prisma-idb.dev/docs/prisma-8/sync)
+- **Generator:** [Quick start](https://prisma-idb.dev/docs/quick-start) · [CRUD reference](https://prisma-idb.dev/docs/crud) · [Sync](https://prisma-idb.dev/docs/sync)
+
+Install the generator:
 
 ```bash
 pnpm add idb
-pnpm add @prisma-idb/idb-client-generator --save-dev
+pnpm add -D @prisma-idb/idb-client-generator
 ```
 
-### Configure
-
-Add the generator to your `schema.prisma`:
-
-```prisma
-generator prismaIDB {
-  provider = "idb-client-generator"
-  output   = "./prisma-idb"
-}
-
-model Todo {
-  id    String  @id @default(cuid())
-  title String
-  done  Boolean @default(false)
-}
-```
-
-### Generate & use
-
-```bash
-pnpm exec prisma generate
-```
-
-```typescript
-import { PrismaIDBClient } from "./prisma-idb";
-
-const idb = await PrismaIDBClient.createClient();
-
-await idb.todo.create({ data: { title: "Ship it", done: false } });
-
-const todos = await idb.todo.findMany({ where: { done: false } });
-
-await idb.todo.update({ where: { id: todoId }, data: { done: true } });
-
-await idb.todo.delete({ where: { id: todoId } });
-```
-
-### Optional sync engine
-
-```prisma
-generator prismaIDB {
-  provider   = "idb-client-generator"
-  output     = "./prisma-idb"
-  outboxSync = true    // ← one flag
-  rootModel  = "User"
-}
-```
-
-- **Outbox pattern** — mutations queue locally, push reliably with retry and batching
-- **Ownership DAG** — authorization is structural, every record traces back to its owner
-- **Conflict resolution** — server-authoritative changelog materialization on pull
-
-## Prisma 8 IDB quick start
-
-> Implements the [Prisma 8](https://www.prisma.io/blog/prisma-next-call-for-extension-authors) driver + adapter + target architecture for IndexedDB. Runtime queries use a bundled contract space; the CLI emits the contract and migration artifacts at build time.
+Or install the Prisma 8 client. The [quick start](https://prisma-idb.dev/docs/prisma-8/getting-started) lists the build-time packages it needs:
 
 ```bash
 pnpm add @prisma-idb/client-idb @prisma/orm-toolchain
-pnpm add -D prisma@latest @prisma/cli-engine @prisma/orm-framework \
-  @prisma-idb/family-idb @prisma-idb/target-idb \
-  @prisma-idb/adapter-idb @prisma-idb/driver-idb
 ```
 
-The usual flow is `pnpm exec prisma-idb contract emit`, `pnpm exec prisma-idb migration plan`, `pnpm exec prisma-idb migration contract-space`, then `createAutoMigratingIdbClient({ contractSpace, dbName })` in browser code. See the [Prisma 8 IDB documentation](https://prisma-idb.dev/docs/prisma-8) for full setup.
+## Repository
 
-## Resources
-
-- [Documentation](https://prisma-idb.dev/)
-- [Live Kanban Demo](https://kanban.prisma-idb.dev/)
-- [Generator on npm](https://www.npmjs.com/package/@prisma-idb/idb-client-generator)
-- [Extension family on npm](https://www.npmjs.com/package/@prisma-idb/family-idb)
-- [Generator example app](./apps/usage)
-- [Extension framework example app](./apps/prisma-orm-kanban-example)
+| Path                                | What it is                                |
+| ----------------------------------- | ----------------------------------------- |
+| `packages/generator`                | The Prisma generator                      |
+| `packages/prisma-orm/*`             | The Prisma 8 packages, including sync     |
+| `apps/docs`                         | [prisma-idb.dev](https://prisma-idb.dev/) |
+| `apps/usage`, `apps/kanban-example` | Example apps for the generator            |
+| `apps/prisma-orm-kanban-example`    | Example app for Prisma 8 IDB              |
 
 ## Contributing
 
