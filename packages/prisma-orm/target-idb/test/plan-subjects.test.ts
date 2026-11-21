@@ -67,7 +67,7 @@ describe("plan data loss", () => {
     const result = plan(contract(), contract({ nickname: { ...string, nullable: true } }));
     if (result.kind !== "success") throw new Error("expected a plan");
     expect(result.dataLoss).toEqual([]);
-    expect(result.accessWidening).toEqual([]);
+    expect(result.accessChanges).toEqual([]);
     expect(result.appliedStatements).toEqual([]);
   });
 

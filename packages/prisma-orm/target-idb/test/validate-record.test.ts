@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type {
   ApplicationDomainNamespace,
   ContractField,
+  ContractValueObject,
   ContractWithDomain,
 } from "@prisma/orm-framework/contract/types";
 import { assertRecordValidator, validateRecord, validateKeyFields, validateKeyPath } from "../src/core/validate-record";
@@ -13,9 +14,19 @@ function field(codecId: string, extra: Partial<ContractField> = {}): ContractFie
 function contract(
   fields: Record<string, ContractField>,
   keyPath: string | string[] = "id",
-  namespace: Partial<ApplicationDomainNamespace> = {}
+  {
+    valueObjects = {},
+    ...namespace
+  }: Partial<ApplicationDomainNamespace> & {
+    valueObjects?: Record<string, { fields: Record<string, ContractField> }>;
+  } = {}
 ): ContractWithDomain {
   return {
+    storage: {
+      namespaces: {
+        default: { id: "default", entries: { valueObject: valueObjects as Record<string, ContractValueObject> } },
+      },
+    },
     domain: {
       namespaces: {
         default: {
@@ -141,7 +152,16 @@ describe("validateRecord", () => {
   it("validates value objects and dictionaries", () => {
     const schema = contract(
       {
-        details: { nullable: false, type: { kind: "valueObject", name: "Details" } },
+        details: {
+          nullable: false,
+          type: {
+            kind: "valueObject",
+            plane: "storage",
+            namespaceId: "default",
+            entityKind: "valueObject",
+            entityName: "Details",
+          },
+        },
         labels: field("idb/string@1", { dict: true }),
       },
       "id",
@@ -170,9 +190,24 @@ describe("validateRecord", () => {
     }
     expect(validateRecord(schema, "Item", { id: "a" }, { partial: true })).toEqual({ ok: false, issues: [message] });
     expect(() => assertRecordValidator(schema, "Item")).toThrow(message);
-    const nested = contract({ details: { nullable: false, type: { kind: "valueObject", name: "Details" } } }, "id", {
-      valueObjects: { Details: { fields: { choice: union } } },
-    });
+    const nested = contract(
+      {
+        details: {
+          nullable: false,
+          type: {
+            kind: "valueObject",
+            plane: "storage",
+            namespaceId: "default",
+            entityKind: "valueObject",
+            entityName: "Details",
+          },
+        },
+      },
+      "id",
+      {
+        valueObjects: { Details: { fields: { choice: union } } },
+      }
+    );
     expect(validateRecord(nested, "Item", { id: "a", details: { choice: true } })).toEqual({
       ok: false,
       issues: ['Value object "Details" field "choice" uses a union type, which prisma-idb does not support'],
@@ -216,9 +251,24 @@ describe("key validation", () => {
 
 describe("assertRecordValidator", () => {
   it("throws for unsupported codecs, including nested value objects", () => {
-    const schema = contract({ details: { nullable: false, type: { kind: "valueObject", name: "Details" } } }, "id", {
-      valueObjects: { Details: { fields: { value: field("custom/object@1") } } },
-    });
+    const schema = contract(
+      {
+        details: {
+          nullable: false,
+          type: {
+            kind: "valueObject",
+            plane: "storage",
+            namespaceId: "default",
+            entityKind: "valueObject",
+            entityName: "Details",
+          },
+        },
+      },
+      "id",
+      {
+        valueObjects: { Details: { fields: { value: field("custom/object@1") } } },
+      }
+    );
     expect(() => assertRecordValidator(schema, "Item")).toThrow('No validator for codec "custom/object@1"');
     expect(() => assertRecordValidator(schema, "Ghost")).toThrow('Unknown model "Ghost"');
   });

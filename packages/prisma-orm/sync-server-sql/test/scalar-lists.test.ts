@@ -2,7 +2,7 @@ import { expect, it } from "vitest";
 import { defineContract } from "@prisma-idb/family-idb/contract-ts";
 import idbFamily from "@prisma-idb/family-idb/pack";
 import idbTarget from "@prisma-idb/target-idb/pack";
-import { decodeJsonRecord, validateRecord, idbCodecLookup } from "@prisma-idb/target-idb/runtime";
+import { codecValueToJson, decodeJsonRecord, validateRecord, idbCodecLookup } from "@prisma-idb/target-idb/runtime";
 import { createSqlSyncAdapter } from "../src/core/create-adapter";
 import { ormRootFor } from "../src/core/orm-root";
 import { testContract, testDb, testSyncServer, seed } from "./helpers";
@@ -62,12 +62,12 @@ it("round-trips scalar-list codecs through Postgres push, pull and IDB decoding"
       const codec = field.type.kind === "scalar" ? idbCodecLookup.get(field.type.codecId) : undefined;
       return [
         name,
-        field.many && Array.isArray(value) && codec ? value.map((element) => codec.encodeJson(element)) : value,
+        field.many && Array.isArray(value) && codec ? value.map((element) => codecValueToJson(codec, element)) : value,
       ];
     })
   );
   expect(encoded).toEqual(wire);
-  const decoded = decodeJsonRecord(clientContract.domain, "ListItem", JSON.parse(JSON.stringify(encoded)));
+  const decoded = decodeJsonRecord(clientContract, "ListItem", JSON.parse(JSON.stringify(encoded)));
   expect(decoded).toEqual(native);
   expect(validateRecord(clientContract, "ListItem", decoded)).toEqual({ ok: true });
 });

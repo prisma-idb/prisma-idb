@@ -511,7 +511,7 @@ export class IdbMigrationPlanner implements MigrationPlanner<"idb", "idb"> {
       plan,
       appliedStatements: [],
       dataLoss: dataLossOf(ops, fromSchema),
-      accessWidening: [],
+      accessChanges: [],
       temporaryValues: [],
     };
   }

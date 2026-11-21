@@ -54,7 +54,7 @@ export function nativeVersionMetaKey(contract: IdbContract, model: string, key: 
   const parts = typeof path === "string" ? [key] : key;
   if (!Array.isArray(parts) || parts.length !== fields.length) return undefined;
   const record = Object.fromEntries(fields.map((field, i) => [field, parts[i]]));
-  return extractKeyFromRow(decodeJsonRecord(contract.domain, model, record), path);
+  return extractKeyFromRow(decodeJsonRecord(contract, model, record), path);
 }
 
 /** Compare an event's persisted id without reviving JSON-flattened non-Decimal key parts. */

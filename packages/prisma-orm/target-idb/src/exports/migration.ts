@@ -25,7 +25,7 @@
  *
  * The planner generates operations at build time. Apply them in the browser
  * with `createAutoMigratingIdbClient` from client-idb. The framework's CLI
- * migration runner returns `IDB-RUNNER-CLI-UNSUPPORTED`.
+ * migration runner returns `MIGRATION.IDB_CLI_UNSUPPORTED`.
  */
 
 // ── DDL factory functions ─────────────────────────────────────────────────────
@@ -45,6 +45,7 @@ export {
   placeholder,
   assertNoMigrationPlaceholders,
   deletedDataWarning,
+  IDB_MARKER_STORE,
 } from "../core/migration-factories";
 
 export type {

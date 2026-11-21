@@ -2,6 +2,7 @@ import { domainModelsAtDefaultNamespace } from "@prisma/orm-framework/contract/t
 import type { GetKeyField, SyncServerContract } from "@prisma-idb/sync-server";
 import { plainRowReader } from "./authorization";
 import type { RowReader } from "./authorization";
+import { dataTypeParams } from "@prisma/orm-framework/components/codec";
 
 /** The written row needs an exclusive lock; ownership parents can share locks. */
 type LockStrength = "update" | "share";
@@ -32,7 +33,7 @@ interface SqlStorage {
  */
 async function castTypeOf(column: { dataType: string; typeParams?: Record<string, unknown> }) {
   const { createPostgresBuiltinDataTypeLookup } = await import("@prisma/orm-postgres/target/data-types");
-  const { dataTypeParams, isSqlDataType, sqlBaseName } = await import("@prisma/orm-postgres/family-contract/data-type");
+  const { isSqlDataType, sqlBaseName } = await import("@prisma/orm-postgres/family-contract/data-type");
   const type = createPostgresBuiltinDataTypeLookup().get(column.dataType);
   return type !== undefined && isSqlDataType(type)
     ? sqlBaseName(type, dataTypeParams(type, column.typeParams))

@@ -1,12 +1,17 @@
 import type {
-  ApplicationDomainNamespace,
+  ContractEnum,
   ContractField,
   ContractFieldType,
+  ContractValueObject,
+  ContractValueObjectField,
 } from "@prisma/orm-framework/contract/types";
 import type { IdbRecordField, IdbRecordFieldType, IdbRecordShape } from "@prisma-idb/target-idb/pack";
 
-/** Domain definitions needed to resolve enum and value-object record fields. */
-type ShapeDefinitions = Pick<ApplicationDomainNamespace, "enum" | "valueObjects">;
+/** The enums and value objects, by name, that enum and value-object record fields refer to. */
+interface ShapeDefinitions {
+  readonly enum?: Readonly<Record<string, ContractEnum>>;
+  readonly valueObjects?: Readonly<Record<string, ContractValueObject>>;
+}
 
 function compareNames(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
@@ -23,19 +28,23 @@ function buildType(
   if (type.kind === "union") {
     throw new Error(`${fieldLabel} uses a union type, which prisma-idb does not support`);
   }
-  const valueObject = definitions.valueObjects?.[type.name];
-  if (!valueObject) throw new Error(`Unknown value object "${type.name}" in IDB record shape`);
-  if (ancestors.includes(type.name)) throw new Error(`Recursive value object "${type.name}" in IDB record shape`);
+  const name = type.entityName;
+  const valueObject =
+    definitions.valueObjects && Object.hasOwn(definitions.valueObjects, name)
+      ? definitions.valueObjects[name]
+      : undefined;
+  if (!valueObject) throw new Error(`Unknown value object "${name}" in IDB record shape`);
+  if (ancestors.includes(name)) throw new Error(`Recursive value object "${name}" in IDB record shape`);
   return {
     kind: "valueObject",
-    name: type.name,
-    fields: buildFields(valueObject.fields, definitions, [...ancestors, type.name], `Value object "${type.name}"`),
+    name,
+    fields: buildFields(valueObject.fields, definitions, [...ancestors, name], `Value object "${name}"`),
   };
 }
 
 /** Builds canonical stored fields with owner-specific validation errors. */
 function buildFields(
-  fields: Record<string, ContractField>,
+  fields: Record<string, ContractField | ContractValueObjectField>,
   definitions: ShapeDefinitions,
   ancestors: readonly string[],
   owner: string

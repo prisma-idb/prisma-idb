@@ -1,6 +1,11 @@
 import type { Codec, CodecCallContext } from "@prisma/orm-framework/components/codec";
 import { describe, expect, it } from "vitest";
-import { codecDescriptors, idbCodecLookup } from "../src/core/codecs";
+import {
+  codecDescriptors,
+  codecValueFromJson as fromJson,
+  codecValueToJson as toJson,
+  idbCodecLookup,
+} from "../src/core/codecs";
 import { idbTargetDescriptorMeta } from "../src/core/descriptor-meta";
 
 // Instantiate a codec from its descriptor's factory.
@@ -20,13 +25,13 @@ describe("idb/string@1", () => {
   const codec = getCodec("idb/string@1");
 
   it("round-trips a string", async () => {
-    expect(await codec.encode("hello", ctx)).toBe("hello");
-    expect(await codec.decode("hello", ctx)).toBe("hello");
+    expect(await codec.toWire("hello", ctx)).toBe("hello");
+    expect(await codec.fromWire("hello", ctx)).toBe("hello");
   });
 
-  it("encodeJson / decodeJson are identity", () => {
-    expect(codec.encodeJson("world")).toBe("world");
-    expect(codec.decodeJson("world")).toBe("world");
+  it("the JSON form is the string itself", () => {
+    expect(toJson(codec, "world")).toBe("world");
+    expect(fromJson(codec, "world")).toBe("world");
   });
 });
 
@@ -36,22 +41,22 @@ describe("idb/int32@1", () => {
   const codec = getCodec("idb/int32@1");
 
   it("round-trips a valid int32", async () => {
-    expect(await codec.encode(42, ctx)).toBe(42);
-    expect(await codec.decode(42, ctx)).toBe(42);
+    expect(await codec.toWire(42, ctx)).toBe(42);
+    expect(await codec.fromWire(42, ctx)).toBe(42);
   });
 
   it("throws for non-integer input", async () => {
-    await expect(codec.encode(3.14, ctx)).rejects.toThrow("not an integer");
+    await expect(codec.toWire(3.14, ctx)).rejects.toThrow("not an integer");
   });
 
   it("throws for values outside int32 range", async () => {
-    await expect(codec.encode(2 ** 31, ctx)).rejects.toThrow("out of range");
-    await expect(codec.encode(-(2 ** 31) - 1, ctx)).rejects.toThrow("out of range");
+    await expect(codec.toWire(2 ** 31, ctx)).rejects.toThrow("out of range");
+    await expect(codec.toWire(-(2 ** 31) - 1, ctx)).rejects.toThrow("out of range");
   });
 
   it("accepts boundary values", async () => {
-    expect(await codec.encode(2 ** 31 - 1, ctx)).toBe(2 ** 31 - 1);
-    expect(await codec.encode(-(2 ** 31), ctx)).toBe(-(2 ** 31));
+    expect(await codec.toWire(2 ** 31 - 1, ctx)).toBe(2 ** 31 - 1);
+    expect(await codec.toWire(-(2 ** 31), ctx)).toBe(-(2 ** 31));
   });
 });
 
@@ -61,8 +66,18 @@ describe("idb/double@1", () => {
   const codec = getCodec("idb/double@1");
 
   it("round-trips a float", async () => {
-    expect(await codec.encode(3.14, ctx)).toBe(3.14);
-    expect(await codec.decode(3.14, ctx)).toBe(3.14);
+    expect(await codec.toWire(3.14, ctx)).toBe(3.14);
+    expect(await codec.fromWire(3.14, ctx)).toBe(3.14);
+  });
+});
+
+describe("idb/double@1 JSON form", () => {
+  const codec = getCodec("idb/double@1");
+
+  it("stores NaN and the infinities as text", () => {
+    expect(toJson(codec, Number.NaN)).toBe("NaN");
+    expect(toJson(codec, Number.POSITIVE_INFINITY)).toBe("Infinity");
+    expect(fromJson(codec, "-Infinity")).toBe(Number.NEGATIVE_INFINITY);
   });
 });
 
@@ -72,8 +87,8 @@ describe("idb/bool@1", () => {
   const codec = getCodec("idb/bool@1");
 
   it("round-trips true and false", async () => {
-    expect(await codec.encode(true, ctx)).toBe(true);
-    expect(await codec.encode(false, ctx)).toBe(false);
+    expect(await codec.toWire(true, ctx)).toBe(true);
+    expect(await codec.toWire(false, ctx)).toBe(false);
   });
 });
 
@@ -83,25 +98,43 @@ describe("idb/date@1", () => {
   const codec = getCodec("idb/date@1");
   const date = new Date("2024-06-15T12:00:00.000Z");
 
-  it("encode/decode are identity (Date → Date)", async () => {
-    expect(await codec.encode(date, ctx)).toBe(date);
-    expect(await codec.decode(date, ctx)).toBe(date);
+  it("toWire/fromWire are identity (Date → Date)", async () => {
+    expect(await codec.toWire(date, ctx)).toBe(date);
+    expect(await codec.fromWire(date, ctx)).toBe(date);
   });
 
-  it("encodeJson produces an ISO string", () => {
-    expect(codec.encodeJson(date)).toBe("2024-06-15T12:00:00.000Z");
+  it("the JSON form produces an ISO string", () => {
+    expect(toJson(codec, date)).toBe("2024-06-15T12:00:00.000Z");
   });
 
-  it("decodeJson reconstructs the Date from ISO string", () => {
-    const decoded = codec.decodeJson("2024-06-15T12:00:00.000Z") as Date;
+  it("reading the JSON form reconstructs the Date from ISO string", () => {
+    const decoded = fromJson(codec, "2024-06-15T12:00:00.000Z") as Date;
     expect(decoded).toBeInstanceOf(Date);
     expect(decoded.toISOString()).toBe("2024-06-15T12:00:00.000Z");
   });
 
   it("JSON round-trip preserves millisecond precision", () => {
     const precise = new Date("2024-01-01T00:00:00.123Z");
-    const decoded = codec.decodeJson(codec.encodeJson(precise) as string) as Date;
+    const decoded = fromJson(codec, toJson(codec, precise) as string) as Date;
     expect(decoded.getTime()).toBe(precise.getTime());
+  });
+});
+
+describe("idb/date@1 data type", () => {
+  const codec = getCodec("idb/date@1");
+
+  it("stores any instant Date parses in toISOString form", () => {
+    expect(codec.dataType.toContract(codec.dataType.valueFrom("2024-01-01T02:00:00+02:00", {}))).toBe(
+      "2024-01-01T00:00:00.000Z"
+    );
+  });
+
+  it("refuses text that names no instant", () => {
+    expect(() => fromJson(codec, "not a date")).toThrow(/idb\/date JSON value must be/);
+  });
+
+  it("refuses a stored value that is not in toISOString form", () => {
+    expect(() => codec.dataType.fromContract("2024-01-01T00:00:00Z", {})).toThrow(/2024-01-01T00:00:00.000Z/);
   });
 });
 
@@ -110,21 +143,21 @@ describe("idb/date@1", () => {
 describe("idb/bigint@1", () => {
   const codec = getCodec("idb/bigint@1");
 
-  it("encode/decode are identity", async () => {
-    expect(await codec.encode(9007199254740993n, ctx)).toBe(9007199254740993n);
+  it("toWire/fromWire are identity", async () => {
+    expect(await codec.toWire(9007199254740993n, ctx)).toBe(9007199254740993n);
   });
 
-  it("encodeJson converts to string", () => {
-    expect(codec.encodeJson(9007199254740993n)).toBe("9007199254740993");
+  it("the JSON form converts to string", () => {
+    expect(toJson(codec, 9007199254740993n)).toBe("9007199254740993");
   });
 
-  it("decodeJson reconstructs bigint", () => {
-    expect(codec.decodeJson("9007199254740993")).toBe(9007199254740993n);
+  it("reading the JSON form reconstructs bigint", () => {
+    expect(fromJson(codec, "9007199254740993")).toBe(9007199254740993n);
   });
 
   it("JSON round-trip preserves precision beyond Number.MAX_SAFE_INTEGER", () => {
     const big = 99999999999999999999n;
-    expect(codec.decodeJson(codec.encodeJson(big) as string)).toBe(big);
+    expect(fromJson(codec, toJson(codec, big) as string)).toBe(big);
   });
 });
 
@@ -135,19 +168,19 @@ describe("idb/decimal@1", () => {
 
   it("stores and retrieves as string (no precision loss)", async () => {
     const d = "123456789.987654321";
-    expect(await codec.encode(d, ctx)).toBe(d);
-    expect(await codec.decode(d, ctx)).toBe(d);
+    expect(await codec.toWire(d, ctx)).toBe(d);
+    expect(await codec.fromWire(d, ctx)).toBe(d);
   });
 
   it("JSON round-trip is identity", () => {
     const d = "0.1";
-    expect(codec.decodeJson(codec.encodeJson(d) as string)).toBe(d);
+    expect(fromJson(codec, toJson(codec, d) as string)).toBe(d);
   });
 
   it("does not coerce to Number (would lose precision)", () => {
     // 0.1 + 0.2 in floating point != "0.3"
     const d = "0.30000000000000004";
-    expect(codec.encodeJson(d)).toBe("0.30000000000000004");
+    expect(toJson(codec, d)).toBe("0.30000000000000004");
   });
 });
 
@@ -156,23 +189,23 @@ describe("idb/decimal@1", () => {
 describe("idb/json@1", () => {
   const codec = getCodec("idb/json@1");
 
-  it("encode/decode pass through any value", async () => {
+  it("toWire/fromWire pass through any value", async () => {
     const obj = { a: 1, b: [true, null] };
-    expect(await codec.encode(obj, ctx)).toBe(obj);
-    expect(await codec.decode(obj, ctx)).toBe(obj);
+    expect(await codec.toWire(obj, ctx)).toBe(obj);
+    expect(await codec.fromWire(obj, ctx)).toBe(obj);
   });
 
-  it("encodeJson does NOT double-stringify", () => {
+  it("the JSON form does NOT double-stringify", () => {
     const obj = { x: 1 };
-    const encoded = codec.encodeJson(obj);
+    const encoded = toJson(codec, obj);
     // Must be the object itself, not a JSON string of it
     expect(typeof encoded).not.toBe("string");
     expect(encoded).toEqual({ x: 1 });
   });
 
-  it("decodeJson is identity", () => {
+  it("reading the JSON form is identity", () => {
     const val = [1, 2, 3];
-    expect(codec.decodeJson(val)).toBe(val);
+    expect(fromJson(codec, val)).toBe(val);
   });
 });
 
@@ -181,36 +214,36 @@ describe("idb/json@1", () => {
 describe("idb/bytes@1", () => {
   const codec = getCodec("idb/bytes@1");
 
-  it("encode/decode are identity", async () => {
+  it("toWire/fromWire are identity", async () => {
     const bytes = new Uint8Array([1, 2, 3]);
-    expect(await codec.encode(bytes, ctx)).toBe(bytes);
-    expect(await codec.decode(bytes, ctx)).toBe(bytes);
+    expect(await codec.toWire(bytes, ctx)).toBe(bytes);
+    expect(await codec.fromWire(bytes, ctx)).toBe(bytes);
   });
 
-  it("encodeJson produces a base64 string", () => {
+  it("the JSON form produces a base64 string", () => {
     const bytes = new Uint8Array([72, 101, 108, 108, 111]); // "Hello"
-    expect(typeof codec.encodeJson(bytes)).toBe("string");
+    expect(typeof toJson(codec, bytes)).toBe("string");
   });
 
-  it("decodeJson reconstructs the Uint8Array", () => {
+  it("reading the JSON form reconstructs the Uint8Array", () => {
     const original = new Uint8Array([72, 101, 108, 108, 111]);
-    const encoded = codec.encodeJson(original) as string;
-    const decoded = codec.decodeJson(encoded) as Uint8Array;
+    const encoded = toJson(codec, original) as string;
+    const decoded = fromJson(codec, encoded) as Uint8Array;
     expect(decoded).toBeInstanceOf(Uint8Array);
     expect(decoded).toEqual(original);
   });
 
   it("JSON round-trip handles empty array", () => {
     const empty = new Uint8Array([]);
-    const decoded = codec.decodeJson(codec.encodeJson(empty) as string) as Uint8Array;
+    const decoded = fromJson(codec, toJson(codec, empty) as string) as Uint8Array;
     expect(decoded).toEqual(empty);
   });
 
   it("JSON round-trip handles non-multiple-of-3 lengths (padding)", () => {
     const one = new Uint8Array([255]);
     const two = new Uint8Array([255, 128]);
-    expect(codec.decodeJson(codec.encodeJson(one) as string)).toEqual(one);
-    expect(codec.decodeJson(codec.encodeJson(two) as string)).toEqual(two);
+    expect(fromJson(codec, toJson(codec, one) as string)).toEqual(one);
+    expect(fromJson(codec, toJson(codec, two) as string)).toEqual(two);
   });
 
   // RFC 4648 section 10 test vectors: every padding length, in both directions.
@@ -224,14 +257,14 @@ describe("idb/bytes@1", () => {
     ["foobar", "Zm9vYmFy"],
   ])("encodes %j as %j in standard padded base64", (text, base64) => {
     const bytes = new TextEncoder().encode(text);
-    expect(codec.encodeJson(bytes)).toBe(base64);
-    expect(codec.decodeJson(base64)).toEqual(bytes);
+    expect(toJson(codec, bytes)).toBe(base64);
+    expect(fromJson(codec, base64)).toEqual(bytes);
   });
 
   it("round-trips every byte value through the same base64 as Node's Buffer", () => {
     const all = Uint8Array.from({ length: 256 }, (_, i) => i);
-    expect(codec.encodeJson(all)).toBe(Buffer.from(all).toString("base64"));
-    expect(codec.decodeJson(codec.encodeJson(all) as string)).toEqual(all);
+    expect(toJson(codec, all)).toBe(Buffer.from(all).toString("base64"));
+    expect(fromJson(codec, toJson(codec, all) as string)).toEqual(all);
   });
 });
 

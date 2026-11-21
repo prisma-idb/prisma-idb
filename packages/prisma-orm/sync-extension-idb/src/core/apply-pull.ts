@@ -138,7 +138,7 @@ export function decodePullLog<TContract extends IdbContract>(
     if (!Array.isArray(wireValues) || wireValues.length !== fields.length) return null;
 
     const keyRecord = decodeJsonRecord(
-      contract.domain,
+      contract,
       log.model,
       Object.fromEntries(fields.map((name, i) => [name, wireValues[i]]))
     );
@@ -146,7 +146,7 @@ export function decodePullLog<TContract extends IdbContract>(
     if (!validateKeyPath(contract, log.model, key).ok) return null;
     if (isDelete) return { key, record: null };
 
-    const record = decodeJsonRecord(contract.domain, log.model, log.record!);
+    const record = decodeJsonRecord(contract, log.model, log.record!);
     if (!validateRecord(contract, log.model, record).ok) return null;
     if (!decimalKeysEqual(contract, log.model, key, extractKeyFromRow(record, keyPath))) return null;
     return { key, record };

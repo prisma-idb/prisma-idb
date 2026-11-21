@@ -1,4 +1,15 @@
-import { JsonValue } from "@prisma/orm-framework/contract/types";
+import type { JsonValue } from "@prisma/orm-framework/contract/types";
+import {
+  floatToJson,
+  INT32_RANGE,
+  requireValueOf,
+  type AnyCodecDescriptor,
+  type Codec,
+  type CodecInstanceContext,
+  type CodecLookupWithDescriptors,
+  type CodecTrait,
+  type DataType,
+} from "@prisma/orm-framework/components/codec";
 import {
   idbBigint,
   idbBool,
@@ -10,11 +21,6 @@ import {
   idbJson,
   idbString,
 } from "./data-types";
-import type {
-  AnyCodecDescriptor,
-  CodecInstanceContext,
-  CodecLookupWithDescriptors,
-} from "@prisma/orm-framework/components/codec";
 import type { ValidationCodecLookup } from "./validate-record";
 
 /**
@@ -25,143 +31,139 @@ import type { ValidationCodecLookup } from "./validate-record";
  * emitter to generate `contract.d.ts` type maps, and by the adapter at
  * runtime to resolve encode/decode per field.
  */
+/**
+ * Builds an IDB codec. IndexedDB stores structured-clone values, so the wire
+ * value is the application value itself; `check` refuses an application value
+ * the column cannot hold before it is written. `toJson` and `fromJson` convert
+ * between the application value and the JSON form the data type stores.
+ */
+function idbCodec<T>(config: {
+  readonly id: string;
+  readonly dataType: DataType;
+  readonly toJson: (value: T) => JsonValue;
+  readonly fromJson: (json: JsonValue) => T;
+  readonly check?: (value: T) => void;
+}): Codec<string, readonly CodecTrait[], T, T> {
+  const { id, dataType, toJson, fromJson, check } = config;
+  return {
+    id,
+    dataType,
+    toDataTypeValue: (value) => dataType.valueFrom(toJson(value), {}),
+    fromDataTypeValue: (value) => fromJson(requireValueOf(dataType.id, value, `Codec ${id}`).value),
+    toWire: async (value) => {
+      check?.(value);
+      return value;
+    },
+    fromWire: async (wire) => wire,
+  };
+}
+
+function descriptor<T>(config: {
+  readonly codecId: string;
+  readonly dataType: DataType;
+  readonly traits: readonly CodecTrait[];
+  readonly toJson: (value: T) => JsonValue;
+  readonly fromJson: (json: JsonValue) => T;
+  readonly check?: (value: T) => void;
+  readonly renderValueLiteral?: AnyCodecDescriptor["renderValueLiteral"];
+}): AnyCodecDescriptor {
+  const { codecId, dataType, traits, renderValueLiteral, ...codecConfig } = config;
+  const codec = idbCodec({ id: codecId, dataType, ...codecConfig });
+  return {
+    codecId,
+    dataType: dataType.id,
+    traits,
+    ...(renderValueLiteral === undefined ? {} : { renderValueLiteral }),
+    paramsSchema: undefined,
+    isParameterized: false,
+    factory: () => () => codec,
+  };
+}
+
+const asJson = (value: JsonValue): JsonValue => value;
+
+/**
+ * IDB codec descriptors — the registry of type→IDB mapping metadata.
+ *
+ * Each descriptor declares its `codecId`, `dataType`, `traits`, and a
+ * `factory` that returns a `Codec` instance. This is consumed by the
+ * emitter to generate `contract.d.ts` type maps, and by the adapter at
+ * runtime to read and write values per field.
+ */
 export const codecDescriptors: readonly AnyCodecDescriptor[] = [
-  {
+  descriptor<string>({
     codecId: "idb/string@1",
-    dataType: idbString.id,
+    dataType: idbString,
     traits: ["equality", "textual"],
     renderValueLiteral: (value) => (typeof value === "string" ? JSON.stringify(value) : undefined),
-    paramsSchema: undefined as never,
-    isParameterized: false,
-    factory: () => () => ({
-      id: "idb/string@1",
-      encode: async (value: string) => value,
-      decode: async (value: string) => value,
-      encodeJson: (value: string) => value,
-      decodeJson: (value: string) => value,
-    }),
-  },
-  {
+    toJson: asJson,
+    fromJson: (json) => json as string,
+  }),
+  descriptor<number>({
     codecId: "idb/double@1",
-    dataType: idbDouble.id,
+    dataType: idbDouble,
     traits: ["equality", "numeric", "order"],
-    paramsSchema: undefined as never,
-    isParameterized: false,
-    factory: () => () => ({
-      id: "idb/double@1",
-      encode: async (value: number) => value,
-      decode: async (value: number) => value,
-      encodeJson: (value: number) => value,
-      decodeJson: (value: number) => value,
-    }),
-  },
-  {
+    toJson: floatToJson,
+    fromJson: (json) => Number(json),
+  }),
+  descriptor<number>({
     codecId: "idb/int32@1",
-    dataType: idbInt32.id,
+    dataType: idbInt32,
     traits: ["equality", "numeric", "order"],
-    paramsSchema: undefined as never,
-    isParameterized: false,
-    factory: () => () => ({
-      id: "idb/int32@1",
-      encode: async (value: number) => {
-        if (!Number.isInteger(value)) {
-          throw new Error(`Value ${value} is not an integer and cannot be encoded as int32.`);
-        }
-        if (value < -Math.pow(2, 31) || value > Math.pow(2, 31) - 1) {
-          throw new Error(`Value ${value} is out of range for int32 and cannot be encoded.`);
-        }
-        return value;
-      },
-      decode: async (value: number) => value,
-      encodeJson: (value: number) => value,
-      decodeJson: (value: number) => value,
-    }),
-  },
-  {
+    toJson: asJson,
+    fromJson: (json) => json as number,
+    check: (value) => {
+      if (!Number.isInteger(value)) {
+        throw new Error(`Value ${value} is not an integer and cannot be encoded as int32.`);
+      }
+      if (value < INT32_RANGE.min || value > INT32_RANGE.max) {
+        throw new Error(`Value ${value} is out of range for int32 and cannot be encoded.`);
+      }
+    },
+  }),
+  descriptor<boolean>({
     codecId: "idb/bool@1",
-    dataType: idbBool.id,
+    dataType: idbBool,
     traits: ["equality", "boolean"],
-    paramsSchema: undefined as never,
-    isParameterized: false,
-    factory: () => () => ({
-      id: "idb/bool@1",
-      encode: async (value: boolean) => value,
-      decode: async (value: boolean) => value,
-      encodeJson: (value: boolean) => value,
-      decodeJson: (value: boolean) => value,
-    }),
-  },
-  {
+    toJson: asJson,
+    fromJson: (json) => json as boolean,
+  }),
+  descriptor<Date>({
     codecId: "idb/date@1",
-    dataType: idbDate.id,
+    dataType: idbDate,
     traits: ["equality", "order"],
-    paramsSchema: undefined as never,
-    isParameterized: false,
-    factory: () => () => ({
-      id: "idb/date@1",
-      encode: async (value: Date) => value,
-      decode: async (value: Date) => value,
-      encodeJson: (value: Date) => value.toISOString(),
-      decodeJson: (value: string) => new Date(value),
-    }),
-  },
-  {
+    toJson: (value) => value.toISOString(),
+    fromJson: (json) => new Date(json as string),
+  }),
+  descriptor<bigint>({
     codecId: "idb/bigint@1",
-    dataType: idbBigint.id,
+    dataType: idbBigint,
     traits: ["equality", "numeric", "order"],
-    paramsSchema: undefined as never,
-    isParameterized: false,
-    factory: () => () => ({
-      id: "idb/bigint@1",
-      encode: async (value: bigint) => value,
-      decode: async (value: bigint) => value,
-      encodeJson: (value: bigint) => value.toString(),
-      decodeJson: (value: string) => BigInt(value),
-    }),
-  },
-  {
+    toJson: (value) => value.toString(),
+    fromJson: (json) => BigInt(json as string),
+  }),
+  descriptor<string>({
     codecId: "idb/decimal@1",
-    dataType: idbDecimal.id,
+    dataType: idbDecimal,
     traits: ["equality", "numeric"],
-    paramsSchema: undefined as never,
-    isParameterized: false,
-    factory: () => () => ({
-      id: "idb/decimal@1",
-      encode: async (value: string) => value,
-      decode: async (value: string) => value,
-      encodeJson: (value: string) => value,
-      decodeJson: (value: string) => value,
-    }),
-  },
-  {
+    toJson: asJson,
+    fromJson: (json) => json as string,
+  }),
+  descriptor<JsonValue>({
     codecId: "idb/json@1",
-    dataType: idbJson.id,
+    dataType: idbJson,
     traits: ["equality"],
-    paramsSchema: undefined as never,
-    isParameterized: false,
-    factory: () => () => ({
-      id: "idb/json@1",
-      encode: async (value: unknown) => value,
-      decode: async (value: unknown) => value,
-      encodeJson: (value: JsonValue) => value as JsonValue,
-      decodeJson: (value: JsonValue) => value,
-    }),
-  },
-  {
+    toJson: asJson,
+    fromJson: asJson,
+  }),
+  descriptor<Uint8Array>({
     codecId: "idb/bytes@1",
-    dataType: idbBytes.id,
+    dataType: idbBytes,
     traits: ["equality"],
-    paramsSchema: undefined as never,
-    isParameterized: false,
-    factory: () => () => ({
-      id: "idb/bytes@1",
-      encode: async (value: Uint8Array) => value,
-      decode: async (value: Uint8Array) => value,
-      encodeJson: bytesToBase64,
-      decodeJson: base64ToBytes,
-    }),
-  },
-] as const;
+    toJson: bytesToBase64,
+    fromJson: (json) => base64ToBytes(json as string),
+  }),
+];
 
 // ── Base64 (idb/bytes@1 JSON form) ────────────────────────────────────────────
 
@@ -253,3 +255,19 @@ export const idbCodecLookup: CodecLookupWithDescriptors & ValidationCodecLookup 
     renderValueLiteralFor: (id, value, side) => valueLiteralRenderers.get(id)?.(value, side),
   };
 })();
+
+/**
+ * The JSON form of `value`, as the codec's data type stores it in
+ * `contract.json` and on the sync wire.
+ */
+export function codecValueToJson(codec: Pick<Codec, "dataType" | "toDataTypeValue">, value: unknown): JsonValue {
+  return codec.dataType.toContract(codec.toDataTypeValue(value));
+}
+
+/**
+ * The application value for `json`, a value in any spelling the codec's data
+ * type reads. Throws when the data type refuses `json`.
+ */
+export function codecValueFromJson(codec: Pick<Codec, "dataType" | "fromDataTypeValue">, json: JsonValue): unknown {
+  return codec.fromDataTypeValue(codec.dataType.valueFrom(json, {}));
+}

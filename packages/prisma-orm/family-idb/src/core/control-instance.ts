@@ -11,7 +11,7 @@ import type {
   VerifyDatabaseSchemaResult,
 } from "@prisma/orm-framework/components/control";
 import { VERIFY_CODE_TARGET_MISMATCH } from "@prisma/orm-framework/components/control";
-import { isIdbDdlOp } from "@prisma-idb/target-idb/migration";
+import { IDB_MARKER_STORE, isIdbDdlOp } from "@prisma-idb/target-idb/migration";
 import type { IdbSchemaIR } from "./schema-ir";
 import { verifyIdbSchema } from "./schema-verify";
 import { validateContract } from "./validate";
@@ -78,6 +78,9 @@ export type IdbControlFamilyInstance = ControlFamilyInstance<"idb", IdbSchemaIR>
 export function createIdbFamilyInstance(_stack: ControlStack<"idb", string>): IdbControlFamilyInstance {
   return {
     familyId: "idb",
+
+    /** The object store each IndexedDB database keeps its contract markers in. */
+    markerLocation: IDB_MARKER_STORE,
 
     // ── storageNameOf (active, pure) ────────────────────────────────────────
 

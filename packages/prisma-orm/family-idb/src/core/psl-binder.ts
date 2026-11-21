@@ -1,3 +1,4 @@
+import { EMPTY_GENERATOR_FUNCTIONS } from "@prisma/orm-framework/components/components";
 import { assembleAuthoringContributions } from "@prisma/orm-framework/components/control";
 import type { ContractSourceDiagnostic } from "@prisma/orm-framework/config/config-types";
 import {
@@ -367,6 +368,7 @@ export function createIdbAttributeBinder(input: IdbAttributeBinderInput): IdbAtt
     context: {
       authoringContributions: assembleAuthoringContributions([{ authoring: { attributeSpecs: idbAttributeSpecs } }]),
       dataTypes: EMPTY_DATA_TYPES,
+      generatorFunctions: EMPTY_GENERATOR_FUNCTIONS,
       controlMutationDefaults: { defaultFunctionRegistry: new Map() },
     },
   });

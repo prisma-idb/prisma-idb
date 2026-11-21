@@ -1,5 +1,5 @@
-import type { Contract } from "@prisma/orm-framework/contract/types";
-import { domainModelsAtDefaultNamespace } from "@prisma/orm-framework/contract/types";
+import type { Contract, ContractFieldType } from "@prisma/orm-framework/contract/types";
+import { domainModelsAtDefaultNamespace, valueObjectsWithCoordinates } from "@prisma/orm-framework/contract/types";
 import { ContractValidationError } from "@prisma/orm-framework/contract/contract-validation-error";
 import { validateContractDomain } from "@prisma/orm-framework/contract/validate-domain";
 import type { IdbModelStorage, IdbStorage } from "@prisma-idb/target-idb/pack";
@@ -61,20 +61,23 @@ function validateIdbStorage(contract: Contract): void {
 
 /** Rejects field types that the IDB authoring surfaces and codecs do not support. */
 function validateSupportedFieldTypes(contract: Contract): void {
-  for (const namespace of Object.values(contract.domain.namespaces)) {
-    for (const [owner, entities] of [
-      ["Model", namespace.models],
-      ["Value object", namespace.valueObjects ?? {}],
-    ] as const) {
-      for (const [name, entity] of Object.entries(entities)) {
-        for (const [fieldName, field] of Object.entries(entity.fields)) {
-          if (field.type.kind === "union") {
-            throw new ContractValidationError(
-              `${owner} "${name}" field "${fieldName}" uses a union type, which prisma-idb does not support`,
-              "domain"
-            );
-          }
-        }
+  const entities: ReadonlyArray<
+    readonly [owner: string, name: string, fields: Readonly<Record<string, { readonly type: ContractFieldType }>>]
+  > = [
+    ...Object.values(contract.domain.namespaces).flatMap((namespace) =>
+      Object.entries(namespace.models).map(([name, model]) => ["Model", name, model.fields] as const)
+    ),
+    ...valueObjectsWithCoordinates({ namespaces: contract.storage?.namespaces ?? {} }).map(
+      ({ coordinate, valueObject }) => ["Value object", coordinate.entityName, valueObject.fields] as const
+    ),
+  ];
+  for (const [owner, name, fields] of entities) {
+    for (const [fieldName, field] of Object.entries(fields)) {
+      if (field.type.kind === "union") {
+        throw new ContractValidationError(
+          `${owner} "${name}" field "${fieldName}" uses a union type, which prisma-idb does not support`,
+          "domain"
+        );
       }
     }
   }

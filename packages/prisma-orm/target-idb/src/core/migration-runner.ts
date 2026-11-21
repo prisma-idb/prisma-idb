@@ -6,6 +6,7 @@ import type {
 } from "@prisma/orm-framework/components/control";
 import { APP_SPACE_ID } from "@prisma/orm-framework/components/control";
 import { notOk } from "@prisma/orm-framework/utils/result";
+import { structuredError } from "@prisma/orm-framework/utils/structured-error";
 
 // ── Runner ────────────────────────────────────────────────────────────────────
 
@@ -33,20 +34,20 @@ export class IdbMigrationRunner implements MigrationRunner<"idb", "idb"> {
     readonly perSpaceOptions: ReadonlyArray<MigrationRunnerPerSpaceOptions<"idb", "idb">>;
   }): Promise<MigrationRunnerResult> {
     const failingSpace = options.perSpaceOptions[0]?.space ?? APP_SPACE_ID;
-    return notOk({
-      code: "IDB-RUNNER-CLI-UNSUPPORTED",
-      summary: "IndexedDB migrations cannot be applied from the CLI.",
-      why:
-        "IndexedDB only exists in the browser; the CLI runs in Node.js. " +
-        "There is no live database to apply ops against from this process. " +
-        "Migrations apply automatically the next time a user opens the app " +
-        "with createAutoMigratingIdbClient.",
-      meta: {
-        fix:
-          "Run `prisma-idb migration preflight` to validate the migration chain " +
-          "applies cleanly against a fake-indexeddb shadow before shipping.",
-      },
-      failingSpace,
-    });
+    return notOk(
+      Object.assign(
+        structuredError("MIGRATION.IDB_CLI_UNSUPPORTED", "IndexedDB migrations cannot be applied from the CLI.", {
+          why:
+            "IndexedDB only exists in the browser; the CLI runs in Node.js. " +
+            "There is no live database to apply ops against from this process. " +
+            "Migrations apply automatically the next time a user opens the app " +
+            "with createAutoMigratingIdbClient.",
+          fix:
+            "Run `prisma-idb migration preflight` to validate the migration chain " +
+            "applies cleanly against a fake-indexeddb shadow before shipping.",
+        }),
+        { code: "MIGRATION.IDB_CLI_UNSUPPORTED" as const, meta: { failingSpace, databaseUnchanged: true } }
+      )
+    );
   }
 }
