@@ -1,5 +1,18 @@
 # @prisma-idb/sync-server-sql
 
+## 0.11.0
+
+### Minor Changes
+
+- [#391](https://github.com/prisma-idb/prisma-idb/pull/391) [`7e2c888`](https://github.com/prisma-idb/prisma-idb/commit/7e2c8889fe430d3baf5691e5927e9c63b2607991) Thanks [@WhyAsh5114](https://github.com/WhyAsh5114)! - Pull every waiting page in one sync cycle. The pull endpoint now responds with `{ logs, hasMore }` instead of a bare array, and `pull` returns `hasMore` alongside `logs`. While `hasMore` is true, the sync worker pulls the next page right away, pushing any new local edits between pages, instead of waiting `intervalMs` per page. A custom `pullHandler` must now return `{ logs, hasMore }`. Export `PullPage` and `pullResponseSchema`. Update the client and server together: an older client cannot parse the new response.
+
+### Patch Changes
+
+- Updated dependencies [[`d1757bf`](https://github.com/prisma-idb/prisma-idb/commit/d1757bfe4e06fac85980a0afdc750116701ebdd8), [`7e2c888`](https://github.com/prisma-idb/prisma-idb/commit/7e2c8889fe430d3baf5691e5927e9c63b2607991)]:
+  - @prisma-idb/sync-server@0.9.2
+  - @prisma-idb/sync-extension-idb@0.13.0
+  - @prisma-idb/target-idb@0.17.0
+
 ## 0.10.2
 
 ### Patch Changes
