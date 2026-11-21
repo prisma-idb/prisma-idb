@@ -292,6 +292,50 @@ export default definePrismaConfig({
 
 For your own schema pipeline, `prepareSqlSchemaWithSync` takes schema text and returns it with the `idb` attributes removed and the `Changelog` added. `injectChangelogModelSql` only adds the `Changelog`.
 
+## Upgrade a database created before 0.10
+
+From `@prisma-idb/sync-server` 0.10, a `DateTime` field is a `timestamptz(3)` column: an instant with millisecond precision, read as a JavaScript `Date`. A database created with an earlier version stores `DateTime` fields as `timestamptz`, which has microsecond precision. Migrate it once to match the contract.
+
+The migration changes each `DateTime` column in place, for example:
+
+```sql
+ALTER TABLE "public"."Todo" ALTER COLUMN "dueAt" TYPE timestamptz(3) USING "dueAt"::timestamptz(3);
+```
+
+Postgres keeps every row and rounds each value to the nearest millisecond. Values written by IndexedDB clients already have millisecond precision, so they don't change. Only `Changelog.createdAt`, which the database fills with `now()`, loses its microseconds, and sync doesn't read that column.
+
+Prisma counts a lower precision as a change that can lose data, so it asks you to consent to each column with `--delete <Model.field>`. `--delete` here consents to the precision change; it doesn't delete the column or its rows. Pass exactly the columns Prisma lists: a `--delete` for a column it didn't ask about fails with `CLI.CONSENT_UNUSED`.
+
+1. List the columns that need consent. The dry run lists them under "An apply asks about":
+
+   ```sh
+   prisma db update --dry-run
+   ```
+
+   ```text
+   An apply asks about
+   ├─ Alter type of "Changelog"."createdAt" to timestamptz(3): --delete Changelog.createdAt
+   └─ Alter type of "Todo"."dueAt" to timestamptz(3): --delete Todo.dueAt
+   ```
+
+2. Apply the change with one `--delete` for each listed column.
+   - If you keep migration files, plan a migration, then apply it with `prisma db migrate`:
+
+     ```sh
+     prisma migration plan --name datetime-ms-precision --delete Changelog.createdAt --delete Todo.dueAt
+     prisma db migrate
+     ```
+
+     If the plan fails with `MIGRATION.PLAN_ORIGIN_UNKNOWN`, add `--from <your latest migration directory>`, such as `--from 20260930T1751_changelog_uuidv7`.
+
+   - Otherwise, update the database directly:
+
+     ```sh
+     prisma db update --delete Changelog.createdAt --delete Todo.dueAt
+     ```
+
+Lowering a column's precision makes Postgres rewrite the whole table while it holds an exclusive lock. Pushes and pulls wait until the rewrite finishes, which can take a while for a large `Changelog`. Run the migration when traffic is low.
+
 ## Common mistakes
 
 - **A checked relation references a unique field, a compound key, or has a foreign key default.** Change the relation to reference the parent's single-field primary key. Remove database and ORM-generated defaults from the referencing foreign key, and supply its value explicitly when creating a record. Regenerate the server and client contracts, and migrate the SQL schema to match. See [Checked foreign keys](#checked-foreign-keys) for the configuration errors.
