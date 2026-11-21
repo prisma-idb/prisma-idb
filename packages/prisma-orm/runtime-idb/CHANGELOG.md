@@ -1,5 +1,13 @@
 # @prisma-idb/runtime-idb
 
+## 0.18.0
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @prisma-idb/adapter-idb@0.18.0
+  - @prisma-idb/driver-idb@0.18.0
+
 ## 0.17.0
 
 ### Patch Changes
