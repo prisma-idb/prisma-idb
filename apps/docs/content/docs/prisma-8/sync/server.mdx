@@ -241,7 +241,7 @@ enum ChangeOperation {
 }
 
 model Changelog {
-  id            String          @id @default(uuid(7))
+  id            String          @id @onCreate(uuid(7))
   model         String
   keyPath       String
   operation     ChangeOperation

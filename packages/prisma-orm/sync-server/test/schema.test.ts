@@ -75,6 +75,7 @@ describe("sqlContractWithSync", () => {
         dataTypes: stack.dataTypes,
         defaultNamespaceId: stack.target.defaultNamespaceId,
         controlMutationDefaults: stack.controlMutationDefaults,
+        generatorFunctions: stack.generatorFunctions,
         resolvedInputs: [schemaPath],
         capabilities: stack.capabilities,
       };

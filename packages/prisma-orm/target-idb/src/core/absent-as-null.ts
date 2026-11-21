@@ -1,8 +1,10 @@
-import type { ContractField, ContractFieldType, ContractWithDomain } from "@prisma/orm-framework/contract/types";
-import {
-  domainModelsAtDefaultNamespace,
-  domainValueObjectsAtDefaultNamespace,
+import type {
+  ContractField,
+  ContractFieldType,
+  ContractValueObjectField,
+  ContractWithDomain,
 } from "@prisma/orm-framework/contract/types";
+import { domainModelsAtDefaultNamespace, valueObjectAt } from "@prisma/orm-framework/contract/types";
 
 /** Fills the nullable fields a stored record lacks with `null`. Returns the record itself when none is missing. */
 export type AbsentAsNull = (record: Record<string, unknown>) => Record<string, unknown>;
@@ -31,16 +33,20 @@ function buildTypeNormalizer(
 ): NormalizeValue {
   if (fieldType.kind === "scalar") return unchanged;
   if (fieldType.kind === "valueObject") {
-    const fields = domainValueObjectsAtDefaultNamespace(contract.domain)?.[fieldType.name]?.fields;
-    if (!fields) throw new Error(`Unknown value object "${fieldType.name}"`);
-    const normalize = buildShapeNormalizer(contract, fields, `Value object "${fieldType.name}"`);
+    const fields = valueObjectAt(contract.storage, fieldType)?.fields;
+    if (!fields) throw new Error(`Unknown value object "${fieldType.entityName}"`);
+    const normalize = buildShapeNormalizer(contract, fields, `Value object "${fieldType.entityName}"`);
     return (value) => (isRecord(value) ? normalize(value) : value);
   }
   throw new Error(`${fieldLabel} uses a union type, which prisma-idb does not support`);
 }
 
 /** Builds the container normalizer and fills missing nullable fields. */
-function buildFieldNormalizer(contract: ContractWithDomain, field: ContractField, fieldLabel: string): NormalizeValue {
+function buildFieldNormalizer(
+  contract: ContractWithDomain,
+  field: ContractField | ContractValueObjectField,
+  fieldLabel: string
+): NormalizeValue {
   let normalize = buildTypeNormalizer(contract, field.type, fieldLabel);
   if (field.many && normalize !== unchanged) {
     const element = normalize;
@@ -73,7 +79,7 @@ function buildFieldNormalizer(contract: ContractWithDomain, field: ContractField
 /** Builds a copy-on-change normalizer for a model or value object's fields. */
 function buildShapeNormalizer(
   contract: ContractWithDomain,
-  fields: Record<string, ContractField>,
+  fields: Record<string, ContractField | ContractValueObjectField>,
   owner: string
 ): AbsentAsNull {
   const normalizers = Object.entries(fields)

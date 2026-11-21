@@ -18,10 +18,11 @@ import { cli, setupTmpProject } from "./_helpers";
 describe("prisma-idb (CLI surface)", () => {
   it("no subcommand prints help and exits 0", async () => {
     const cwd = await setupTmpProject("cli-noargs");
-    const { stderr, exitCode } = await cli([], { cwd });
+    const { stdout, stderr, exitCode } = await cli([], { cwd });
     expect(exitCode).toBe(0);
-    expect(stderr).toContain("prisma-idb");
-    expect(stderr).toContain("migration");
+    // The CLI engine decides which stream bare-invocation help goes to.
+    expect(`${stdout}${stderr}`).toContain("prisma-idb");
+    expect(`${stdout}${stderr}`).toContain("migration");
   });
 
   it("`--help` prints usage and lists the migration command group", async () => {

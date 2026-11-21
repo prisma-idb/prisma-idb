@@ -1,6 +1,6 @@
 import "dotenv/config";
 import pg from "pg";
-import postgres from "@prisma/orm-postgres/runtime";
+import postgres, { type PostgresClient } from "@prisma/orm-postgres/runtime";
 import { createSyncServer } from "@prisma-idb/sync-server";
 import type { SyncServerContract } from "@prisma-idb/sync-server";
 import type { Contract } from "./fixtures/schema.generated.d";
@@ -97,7 +97,7 @@ function requiredDatabaseUrl(): string {
   return url;
 }
 
-const client = postgres<Contract>({ contractJson });
+const client: PostgresClient<Contract> = postgres<Contract>({ contract: contractJson });
 // A second, independent connection to the same database, used only for
 // `resetTestDb`'s TRUNCATE — deliberately not routed through the ORM
 // client, whose `.delete()`/`.deleteAll()` refuse to run unfiltered.
@@ -106,7 +106,7 @@ const resetPool = new pg.Pool({ connectionString: requiredDatabaseUrl() });
 let connected: Promise<unknown> | null = null;
 
 /** The real Prisma 8 Postgres client — connects once, reused across the suite. */
-export async function testDb() {
+export async function testDb(): Promise<typeof client> {
   if (!connected) {
     connected = client.connect({ url: requiredDatabaseUrl() }).catch((err: unknown) => {
       connected = null;

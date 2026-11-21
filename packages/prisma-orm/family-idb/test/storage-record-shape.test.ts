@@ -1,5 +1,9 @@
 import { computeStorageHash } from "@prisma/orm-framework/contract/hashing";
-import type { ContractField, ContractValueObject } from "@prisma/orm-framework/contract/types";
+import type {
+  ContractField,
+  ContractValueObject,
+  ContractValueObjectField,
+} from "@prisma/orm-framework/contract/types";
 import { buildSymbolTable } from "@prisma/orm-framework/psl-parser";
 import { parse } from "@prisma/orm-framework/psl-parser/syntax";
 import { IdbMigrationPlanner } from "@prisma-idb/target-idb/migration";
@@ -97,15 +101,38 @@ describe("IDB storage record shape", () => {
   });
 
   it("embeds nested value-object fields and hashes changes to them", () => {
-    const scalar: ContractField = { type: { kind: "scalar", codecId: "idb/string@1" }, nullable: false };
+    const scalar = { type: { kind: "scalar", codecId: "idb/string@1" }, nullable: false } as const;
     const fields: Record<string, ContractField> = {
       id: scalar,
-      profile: { type: { kind: "valueObject", name: "Profile" }, nullable: true, many: { elementNullable: false } },
+      profile: {
+        type: {
+          kind: "valueObject",
+          plane: "storage",
+          namespaceId: "default",
+          entityKind: "valueObject",
+          entityName: "Profile",
+        },
+        nullable: true,
+        many: { elementNullable: false },
+      },
     };
     const shape = (codecId: string) =>
       buildRecordShape("User", fields, {
         valueObjects: {
-          Profile: { fields: { address: { type: { kind: "valueObject", name: "Address" }, nullable: false } } },
+          Profile: {
+            fields: {
+              address: {
+                type: {
+                  kind: "valueObject",
+                  plane: "storage",
+                  namespaceId: "default",
+                  entityKind: "valueObject",
+                  entityName: "Address",
+                },
+                nullable: false,
+              },
+            },
+          },
           Address: { fields: { city: { ...scalar, type: { kind: "scalar", codecId } } } },
         },
       });
@@ -135,8 +162,17 @@ describe("IDB storage record shape", () => {
   });
 
   it("rejects unresolved or recursive value objects rather than silently omitting shape", () => {
-    const fields: Record<string, ContractField> = {
-      profile: { type: { kind: "valueObject", name: "Profile" }, nullable: true },
+    const fields: Record<string, ContractField & ContractValueObjectField> = {
+      profile: {
+        type: {
+          kind: "valueObject",
+          plane: "storage",
+          namespaceId: "default",
+          entityKind: "valueObject",
+          entityName: "Profile",
+        },
+        nullable: true,
+      },
     };
     expect(() => buildRecordShape("User", fields, {})).toThrow(/Unknown value object/);
     const valueObjects: Record<string, ContractValueObject> = { Profile: { fields } };

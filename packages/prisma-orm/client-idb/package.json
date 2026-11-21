@@ -36,12 +36,12 @@
     "@prisma-idb/runtime-idb": "workspace:*",
     "@prisma-idb/target-idb": "workspace:*",
     "@prisma/client-runtime-utils": "7.10.0",
-    "@prisma/orm-framework": "8.0.0-rc.18"
+    "@prisma/orm-framework": "8.0.0-rc.24"
   },
   "devDependencies": {
     "@prisma-idb/family-idb": "workspace:*",
-    "@prisma/cli-engine": "0.7.0",
-    "@prisma/orm-toolchain": "8.0.0-rc.18",
+    "@prisma/cli-engine": "0.10.0",
+    "@prisma/orm-toolchain": "8.0.0-rc.24",
     "fake-indexeddb": "^6.2.5",
     "fast-check": "^4.10.2",
     "tsdown": "^0.23.7",

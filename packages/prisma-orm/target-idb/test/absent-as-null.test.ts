@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { ContractField, ContractWithDomain } from "@prisma/orm-framework/contract/types";
+import type { ContractField, ContractValueObject, ContractWithDomain } from "@prisma/orm-framework/contract/types";
 import { absentAsNull, validateRecord } from "../src/exports/runtime";
 
 function field(nullable: boolean): ContractField {
@@ -7,6 +7,7 @@ function field(nullable: boolean): ContractField {
 }
 
 const contract: ContractWithDomain = {
+  storage: { namespaces: {} },
   domain: {
     namespaces: {
       default: {
@@ -61,6 +62,7 @@ describe("absentAsNull", () => {
 
   it("fills a nullable field named like an Object.prototype member", () => {
     const protoContract: ContractWithDomain = {
+      storage: { namespaces: {} },
       domain: {
         namespaces: {
           default: {
@@ -88,27 +90,72 @@ describe("absentAsNull", () => {
 });
 
 const embeddedContract: ContractWithDomain = {
+  storage: {
+    namespaces: {
+      default: {
+        id: "default",
+        entries: {
+          valueObject: {
+            Profile: { fields: { label: field(false), nickname: field(true) } },
+            Other: { fields: { title: field(false), note: field(true) } },
+            Wrapper: {
+              fields: {
+                profile: {
+                  type: {
+                    kind: "valueObject",
+                    plane: "storage",
+                    namespaceId: "default",
+                    entityKind: "valueObject",
+                    entityName: "Profile",
+                  },
+                  nullable: false,
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  },
   domain: {
     namespaces: {
       default: {
-        valueObjects: {
-          Profile: { fields: { label: field(false), nickname: field(true) } },
-          Other: { fields: { title: field(false), note: field(true) } },
-          Wrapper: {
-            fields: { profile: { type: { kind: "valueObject", name: "Profile" }, nullable: false } },
-          },
-        },
         models: {
           Item: {
             fields: {
               id: field(false),
-              profile: { type: { kind: "valueObject", name: "Profile" }, nullable: true },
+              profile: {
+                type: {
+                  kind: "valueObject",
+                  plane: "storage",
+                  namespaceId: "default",
+                  entityKind: "valueObject",
+                  entityName: "Profile",
+                },
+                nullable: true,
+              },
               profiles: {
-                type: { kind: "valueObject", name: "Profile" },
+                type: {
+                  kind: "valueObject",
+                  plane: "storage",
+                  namespaceId: "default",
+                  entityKind: "valueObject",
+                  entityName: "Profile",
+                },
                 nullable: true,
                 many: { elementNullable: false },
               },
-              dictionary: { type: { kind: "valueObject", name: "Wrapper" }, nullable: false, dict: true },
+              dictionary: {
+                type: {
+                  kind: "valueObject",
+                  plane: "storage",
+                  namespaceId: "default",
+                  entityKind: "valueObject",
+                  entityName: "Wrapper",
+                },
+                nullable: false,
+                dict: true,
+              },
               json: { type: { kind: "scalar", codecId: "idb/json@1" }, nullable: false },
             },
             relations: {},
@@ -158,7 +205,9 @@ describe("embedded absentAsNull", () => {
 
   it("rejects union fields before normalizing records", () => {
     const schema = structuredClone(embeddedContract);
-    schema.domain.namespaces["default"]!.valueObjects!["Profile"]!.fields["choice"] = {
+    (schema.storage.namespaces["default"]!.entries!["valueObject"]!["Profile"] as ContractValueObject).fields[
+      "choice"
+    ] = {
       nullable: true,
       type: { kind: "union", members: [{ kind: "scalar", codecId: "idb/string@1" }] },
     };

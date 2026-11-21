@@ -18,12 +18,20 @@ describe("validateContract", () => {
         },
       }
     );
-    const namespace = {
-      ...contract.domain.namespaces[UNBOUND_DOMAIN_NAMESPACE_ID]!,
-      valueObjects: { Item: { fields: {} as Record<string, ContractField> } },
+    const valueObjects = { Item: { fields: {} as Record<string, ContractField> } };
+    const schema = {
+      ...contract,
+      storage: {
+        ...contract.storage,
+        namespaces: {
+          [UNBOUND_DOMAIN_NAMESPACE_ID]: { id: UNBOUND_DOMAIN_NAMESPACE_ID, entries: { valueObject: valueObjects } },
+        },
+      },
     };
-    const schema = { ...contract, domain: { namespaces: { [UNBOUND_DOMAIN_NAMESPACE_ID]: namespace } } };
-    const fields = owner === "Model" ? namespace.models["Item"]!.fields : namespace.valueObjects.Item.fields;
+    const fields =
+      owner === "Model"
+        ? contract.domain.namespaces[UNBOUND_DOMAIN_NAMESPACE_ID]!.models["Item"]!.fields
+        : valueObjects.Item.fields;
     fields["choice"] = {
       nullable: false,
       type: { kind: "union", members: [{ kind: "scalar", codecId: "idb/string@1" }] },

@@ -5,7 +5,7 @@
  * pull both depend on it.
  */
 
-import { idbCodecLookup } from "@prisma-idb/target-idb/runtime";
+import { codecValueFromJson, codecValueToJson, idbCodecLookup } from "@prisma-idb/target-idb/runtime";
 import { domainModelsAtDefaultNamespace } from "@prisma/orm-framework/contract/types";
 import type { SyncServerContract } from "@prisma-idb/sync-server";
 
@@ -26,7 +26,7 @@ export function encodeWireKey(contract: SyncServerContract, model: string, keyFi
   const field = domainModelsAtDefaultNamespace(contract.domain)[model]?.fields[keyField];
   const codecId = field?.type.kind === "scalar" ? nativeJsonCodecs[field.type.codecId] : undefined;
   const codec = codecId ? idbCodecLookup.get(codecId) : undefined;
-  return codec && key != null ? codec.encodeJson(key) : key;
+  return codec && key != null ? codecValueToJson(codec, key) : key;
 }
 
 /** A sync payload value or key that cannot be decoded or shaped; `code` is the stable wire error code, `message` keeps the diagnostic for direct callers. */
@@ -57,7 +57,7 @@ export function reviveWireValues(
       const revive = (input: unknown): unknown => {
         if (typeof input !== "string") return input;
         try {
-          return codec.decodeJson(input);
+          return codecValueFromJson(codec, input);
         } catch {
           throw new WireValidationError(
             name === keyField ? "KEYPATH_VALIDATION_FAILURE" : "RECORD_VALIDATION_FAILURE",

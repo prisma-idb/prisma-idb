@@ -142,7 +142,7 @@ it.each([0, -12.5, 123.45])("backfills Decimal default %j as a valid stored stri
 it("reads nullable embedded additions as null after an operation-free migration", async () => {
   globalThis.indexedDB = new IDBFactory();
   const dbName = "migration-embedded-nullable";
-  // The authoring DSLs currently expose only scalars; construct supported domain value objects directly.
+  // The authoring DSLs currently expose only scalars; construct supported storage value objects directly.
   const embeddedContract = (nickname: boolean) => {
     const base = contract('model User {\n id String @id\n profile Json\n profiles Json\n @@map("users")\n}');
     const string = { type: { kind: "scalar", codecId: "idb/string@1" }, nullable: false } satisfies ContractField;
@@ -154,17 +154,29 @@ it("reads nullable embedded additions as null after an operation-free migration"
       namespaces: {
         [namespaceId]: {
           ...namespace,
-          valueObjects: {
-            Profile: { fields: profileFields },
-          },
           models: {
             User: {
               ...model,
               fields: {
                 ...model.fields,
-                profile: { type: { kind: "valueObject" as const, name: "Profile" }, nullable: false },
+                profile: {
+                  type: {
+                    kind: "valueObject" as const,
+                    plane: "storage" as const,
+                    namespaceId,
+                    entityKind: "valueObject" as const,
+                    entityName: "Profile",
+                  },
+                  nullable: false,
+                },
                 profiles: {
-                  type: { kind: "valueObject" as const, name: "Profile" },
+                  type: {
+                    kind: "valueObject" as const,
+                    plane: "storage" as const,
+                    namespaceId,
+                    entityKind: "valueObject" as const,
+                    entityName: "Profile",
+                  },
                   nullable: false,
                   many: { elementNullable: false } as const,
                 },
@@ -175,7 +187,10 @@ it("reads nullable embedded additions as null after an operation-free migration"
       },
     };
     const storage = {
-      namespaces: base.storage.namespaces,
+      namespaces: {
+        ...base.storage.namespaces,
+        [namespaceId]: { id: namespaceId, entries: { valueObject: { Profile: { fields: profileFields } } } },
+      },
       stores: {
         users: {
           ...base.storage.stores["users"]!,

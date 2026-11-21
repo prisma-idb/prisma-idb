@@ -2,7 +2,7 @@ export { compareListElement, compareListValues } from "../core/list-values";
 import type { RuntimeTargetDescriptor, RuntimeTargetInstance } from "@prisma/orm-framework/components/execution";
 import { idbTargetDescriptorMeta } from "../core/descriptor-meta";
 export { compareDecimalValues, isDecimalString } from "../core/decimal-compare";
-export { idbCodecLookup } from "../core/codecs";
+export { codecValueFromJson, codecValueToJson, idbCodecLookup } from "../core/codecs";
 export { absentAsNull } from "../core/absent-as-null";
 export type { AbsentAsNull } from "../core/absent-as-null";
 export { decodeJsonRecord } from "../core/decode-json-record";

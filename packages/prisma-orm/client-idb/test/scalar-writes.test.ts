@@ -30,10 +30,27 @@ function contractFromPsl(schema: string): IdbContract {
 }
 
 const parsedContract = contractFromPsl(SCHEMA);
-// PSL currently omits scalar lists and value objects. Add their domain shapes
-// to exercise the same contract features that the sync validator supports.
+// PSL currently omits scalar lists and value objects. Add their shapes to
+// exercise the same contract features that the sync validator supports.
 const contract: IdbContract = {
   ...parsedContract,
+  storage: {
+    ...parsedContract.storage,
+    namespaces: Object.fromEntries(
+      Object.keys(parsedContract.domain.namespaces).map((name) => {
+        const sample = parsedContract.domain.namespaces[name]!.models["Sample"]!;
+        return [
+          name,
+          {
+            id: name,
+            entries: {
+              valueObject: { Details: { fields: { label: sample.fields["id"]!, quantity: sample.fields["count"]! } } },
+            },
+          },
+        ];
+      })
+    ),
+  },
   domain: {
     ...parsedContract.domain,
     namespaces: Object.fromEntries(
@@ -43,7 +60,6 @@ const contract: IdbContract = {
           name,
           {
             ...namespace,
-            valueObjects: { Details: { fields: { label: sample.fields["id"]!, quantity: sample.fields["count"]! } } },
             models: {
               ...namespace.models,
               Sample: {
@@ -51,7 +67,16 @@ const contract: IdbContract = {
                 fields: {
                   ...sample.fields,
                   tags: { ...sample.fields["id"]!, many: { elementNullable: false } },
-                  details: { type: { kind: "valueObject", name: "Details" }, nullable: false },
+                  details: {
+                    type: {
+                      kind: "valueObject",
+                      plane: "storage",
+                      namespaceId: name,
+                      entityKind: "valueObject",
+                      entityName: "Details",
+                    },
+                    nullable: false,
+                  },
                 },
               },
             },

@@ -1,8 +1,10 @@
-import type { ContractField, ContractFieldType, ContractWithDomain } from "@prisma/orm-framework/contract/types";
-import {
-  domainModelsAtDefaultNamespace,
-  domainValueObjectsAtDefaultNamespace,
+import type {
+  ContractField,
+  ContractFieldType,
+  ContractValueObjectField,
+  ContractWithDomain,
 } from "@prisma/orm-framework/contract/types";
+import { domainModelsAtDefaultNamespace, valueObjectAt } from "@prisma/orm-framework/contract/types";
 import { type, type Type } from "arktype";
 import { idbCodecLookup } from "./codecs";
 import { isDecimalString } from "./decimal-compare";
@@ -63,27 +65,47 @@ function buildType(
     return validator;
   }
   if (fieldType.kind === "valueObject") {
-    const fields = domainValueObjectsAtDefaultNamespace(contract.domain)?.[fieldType.name]?.fields;
-    if (!fields) throw new Error(`Unknown value object "${fieldType.name}"`);
-    return buildShape(contract, fields, lookup, `Value object "${fieldType.name}"`);
+    const fields = valueObjectAt(contract.storage, fieldType)?.fields;
+    if (!fields) throw new Error(`Unknown value object "${fieldType.entityName}"`);
+    return buildShape(contract, fields, lookup, `Value object "${fieldType.entityName}"`);
   }
   throw new Error(`${fieldLabel} uses a union type, which prisma-idb does not support`);
+}
+
+/**
+ * The values an enum allows. A model field names the domain enum; a value
+ * object field, which lives in storage, names the storage value set.
+ */
+function valueSetValues(
+  contract: ContractWithDomain,
+  ref: NonNullable<(ContractField | ContractValueObjectField)["valueSet"]>
+): readonly unknown[] | undefined {
+  if (ref.plane === "domain" && ref.entityKind === "enum") {
+    return contract.domain.namespaces[ref.namespaceId]?.enum?.[ref.entityName]?.members.map((m) => m.value);
+  }
+  if (ref.plane === "storage" && ref.entityKind === "valueSet") {
+    const namespace = Object.hasOwn(contract.storage.namespaces, ref.namespaceId)
+      ? contract.storage.namespaces[ref.namespaceId]
+      : undefined;
+    const valueSet: unknown = namespace?.entries?.["valueSet"]?.[ref.entityName];
+    const values: unknown = valueSet && typeof valueSet === "object" ? Reflect.get(valueSet, "values") : undefined;
+    return Array.isArray(values) ? values : undefined;
+  }
+  throw new Error(`Unsupported value set "${ref.entityName}"`);
 }
 
 /** Builds a field validator, including its container, enum and nullability constraints. */
 function buildField(
   contract: ContractWithDomain,
-  field: ContractField,
+  field: ContractField | ContractValueObjectField,
   lookup: ValidationCodecLookup,
   fieldLabel: string
 ): Type {
   let validator = buildType(contract, field.type, lookup, fieldLabel);
   const ref = field.valueSet;
   if (ref) {
-    if (ref.plane !== "domain" || ref.entityKind !== "enum" || ref.spaceId !== undefined) {
-      throw new Error(`Unsupported value set "${ref.entityName}"`);
-    }
-    const values = contract.domain.namespaces[ref.namespaceId]?.enum?.[ref.entityName]?.members.map((m) => m.value);
+    if (ref.spaceId !== undefined) throw new Error(`Unsupported value set "${ref.entityName}"`);
+    const values = valueSetValues(contract, ref);
     if (!values?.length) throw new Error(`Unknown or empty enum "${ref.entityName}"`);
     validator = validator.narrow((value) => values.some((allowed) => Object.is(allowed, value)));
   }
@@ -106,7 +128,7 @@ function buildField(
 /** Builds a strict shape for a model or value object. */
 function buildShape(
   contract: ContractWithDomain,
-  fields: Record<string, ContractField>,
+  fields: Record<string, ContractField | ContractValueObjectField>,
   lookup: ValidationCodecLookup,
   owner: string,
   options: RecordValidationOptions = {}

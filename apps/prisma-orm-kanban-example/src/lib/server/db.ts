@@ -1,11 +1,12 @@
 import * as env from "$app/env/private";
 import postgres from "@prisma/orm-postgres/runtime";
+import { contractFromJson } from "@prisma/orm-postgres/static";
 import type { Contract } from "../prisma/schema.postgres.generated.d";
 import contractJson from "../prisma/schema.postgres.generated.json" with { type: "json" };
 
 // `src/lib/server/` — SvelteKit refuses to bundle this into client code, so
 // the connection string and driver never reach the browser.
-const client = postgres<Contract>({ contractJson });
+const client = postgres<Contract>({ contract: contractFromJson<Contract>(contractJson) });
 
 let connected: Promise<unknown> | null = null;
 

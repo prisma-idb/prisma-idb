@@ -7,8 +7,8 @@ import { planOriginOf } from "@prisma/orm-framework/components/control";
  * - IdbMigrationPlanner.plan(): success path, empty-diff, null fromContract
  * - IdbMigrationPlanner.emptyMigration(): returns stub plan
  * - IdbMigrationPlanner.plan(): invalid contract returns failure
- * - IdbMigrationRunner.execute(): always returns IDB-RUNNER-CLI-UNSUPPORTED refusal
- * - IdbMigrationRunner.executeAcrossSpaces(): always returns IDB-RUNNER-CLI-UNSUPPORTED refusal
+ * - IdbMigrationRunner.execute(): always returns MIGRATION.IDB_CLI_UNSUPPORTED refusal
+ * - IdbMigrationRunner.executeAcrossSpaces(): always returns MIGRATION.IDB_CLI_UNSUPPORTED refusal
  * - openAndUpgrade: applies DDL to a real IDB via fake-indexeddb
  * - renderTypeScript: generates valid TS source for generated ops
  *
@@ -483,14 +483,14 @@ describe("contractToIdbSchema", () => {
 describe("IdbMigrationRunner", () => {
   const runner = new IdbMigrationRunner();
 
-  it("execute() always returns IDB-RUNNER-CLI-UNSUPPORTED refusal", async () => {
+  it("execute() always returns MIGRATION.IDB_CLI_UNSUPPORTED refusal", async () => {
     const result = await runner.execute({
       driver: { familyId: "idb", targetId: "idb", close: async () => undefined },
       perSpaceOptions: [],
     });
     expect(result.ok).toBe(false);
     if (result.ok) return;
-    expect(result.failure.code).toBe("IDB-RUNNER-CLI-UNSUPPORTED");
+    expect(result.failure.code).toBe("MIGRATION.IDB_CLI_UNSUPPORTED");
   });
 });
 
