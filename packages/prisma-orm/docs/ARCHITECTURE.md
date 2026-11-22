@@ -285,11 +285,11 @@ Depends on `target-idb`. `fake-indexeddb` is a dependency only for `migration pr
 
 ### `sync-extension-idb`
 
-| Entrypoint  | Contains                                                                                                                        |
-| ----------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| `./control` | `idbSyncExtension`: the extension's contract space (`_idb_sync_outbox` and `_idb_sync_version_meta`), passed to `extensions`.   |
-| `./client`  | `createSyncIdbClient`, `createAutoMigratingSyncIdbClient`, `createManagedAutoSyncIdbClient`, the `SyncWorker`, and `applyPull`. |
-| `./schemas` | Zod schemas for the push and pull wire formats. Safe to import on a server: no IndexedDB code.                                  |
+| Entrypoint  | Contains                                                                                                                                                |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `./control` | `idbSyncExtension`: the extension's contract space (`_idb_sync_outbox`, `_idb_sync_outbox_order` and `_idb_sync_version_meta`), passed to `extensions`. |
+| `./client`  | `createSyncIdbClient`, `createAutoMigratingSyncIdbClient`, `createManagedAutoSyncIdbClient`, the `SyncWorker`, and `applyPull`.                         |
+| `./schemas` | Zod schemas for the push and pull wire formats. Safe to import on a server: no IndexedDB code.                                                          |
 
 The browser implementation has three main seams. `sync-executor.ts` appends outbox and version metadata writes to tracked mutations. `sync-worker.ts` coordinates push, pull and retry cycles. `apply-pull.ts` validates incoming records and applies them without tracking. `emitter.ts` provides the shared event subscription interface; `raw-store.ts` provides request and transaction helpers.
 

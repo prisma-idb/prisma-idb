@@ -20,7 +20,7 @@ export function testDbName(): string {
 }
 
 type StoreIndex = { name: string; keyPath: string; unique?: boolean };
-type StoreSpec = { name: string; keyPath: string | string[]; indexes?: StoreIndex[] };
+type StoreSpec = { name: string; keyPath: string | string[]; autoIncrement?: boolean; indexes?: StoreIndex[] };
 
 export const USERS_STORE: StoreSpec = { name: "users", keyPath: "id" };
 export const POSTS_STORE: StoreSpec = {
@@ -32,6 +32,13 @@ export const OUTBOX_STORE: StoreSpec = {
   name: "_idb_sync_outbox",
   keyPath: "id",
 };
+/** The outbox's push order; tests that list {@link OUTBOX_STORE} need it too. */
+export const OUTBOX_ORDER_STORE: StoreSpec = {
+  name: "_idb_sync_outbox_order",
+  keyPath: "seq",
+  autoIncrement: true,
+  indexes: [{ name: "byEventId", keyPath: "eventId", unique: true }],
+};
 export const SYNC_META_STORE: StoreSpec = { name: "_idb_sync_meta", keyPath: "id" };
 export const VERSION_META_STORE: StoreSpec = { name: "_idb_sync_version_meta", keyPath: "id" };
 
@@ -41,7 +48,10 @@ export function openTestDb(name: string, stores: StoreSpec[]): Promise<IDBDataba
     req.onupgradeneeded = () => {
       const db = req.result;
       for (const spec of stores) {
-        const os = db.createObjectStore(spec.name, { keyPath: spec.keyPath });
+        const os = db.createObjectStore(spec.name, {
+          keyPath: spec.keyPath,
+          autoIncrement: spec.autoIncrement ?? false,
+        });
         for (const idx of spec.indexes ?? []) {
           os.createIndex(idx.name, idx.keyPath, { unique: idx.unique ?? false });
         }
@@ -143,6 +153,7 @@ export async function createTestSyncClient(options?: {
     USERS_STORE,
     POSTS_STORE,
     OUTBOX_STORE,
+    OUTBOX_ORDER_STORE,
     VERSION_META_STORE,
     SYNC_META_STORE,
   ]);

@@ -7,107 +7,71 @@ import type { IdbContractWithTypeMaps, IdbTypeMaps } from "@prisma-idb/target-id
 import type {
   Contract as ContractType,
   ExecutionHashBase,
+  FieldTypesFromDomain,
   NamespaceId,
   ProfileHashBase,
   StorageHashBase,
 } from "@prisma/orm-framework/contract/types";
 
-export type StorageHash = StorageHashBase<"609932199fd5710d371fa966650a1806c1f587c912ff9d8c40f7b2efd84eed70">;
+export type StorageHash = StorageHashBase<"7d2923d8d5964d8ff9e6a0ceeb87819828634eaaecc037b3617c0d71e99587aa">;
 export type ExecutionHash = ExecutionHashBase<string>;
 export type ProfileHash = ProfileHashBase<"40329830af4e39e0774683fbebcdc24dcf983a5da02c5fe6079a2a57579f861c">;
 
 export type CodecTypes = IdbCodecTypes;
 export type LaneCodecTypes = CodecTypes;
+type ParameterizedOutputTypeFunctions = never;
 
-export type FieldOutputTypes = {
-  readonly __unbound__: {
-    readonly OutboxEvent: {
-      readonly createdAt: CodecTypes["idb/date@1"]["output"];
-      readonly entityType: CodecTypes["idb/string@1"]["output"];
-      readonly id: CodecTypes["idb/string@1"]["output"];
-      readonly lastAttemptedAt: CodecTypes["idb/date@1"]["output"] | null;
-      readonly lastError: CodecTypes["idb/string@1"]["output"] | null;
-      readonly migrationError: CodecTypes["idb/string@1"]["output"] | null;
-      readonly operation: CodecTypes["idb/string@1"]["output"];
-      readonly payload: CodecTypes["idb/json@1"]["output"];
-      readonly retryable: CodecTypes["idb/bool@1"]["output"];
-      readonly synced: CodecTypes["idb/bool@1"]["output"];
-      readonly syncedAt: CodecTypes["idb/date@1"]["output"] | null;
-      readonly tries: CodecTypes["idb/int32@1"]["output"];
-      readonly versionMetaId: CodecTypes["idb/string@1"]["output"] | null;
-    };
-    readonly SyncMeta: {
-      readonly id: CodecTypes["idb/string@1"]["output"];
-      readonly value: CodecTypes["idb/string@1"]["output"];
-    };
-    readonly VersionMeta: {
-      readonly id: CodecTypes["idb/string@1"]["output"];
-      readonly key: CodecTypes["idb/json@1"]["output"];
-      readonly lastAppliedChangeId: CodecTypes["idb/string@1"]["output"] | null;
-      readonly localChangePending: CodecTypes["idb/bool@1"]["output"];
-      readonly model: CodecTypes["idb/string@1"]["output"];
-    };
-  };
-};
-export type FieldInputTypes = {
-  readonly __unbound__: {
-    readonly OutboxEvent: {
-      readonly createdAt: CodecTypes["idb/date@1"]["input"];
-      readonly entityType: CodecTypes["idb/string@1"]["input"];
-      readonly id: CodecTypes["idb/string@1"]["input"];
-      readonly lastAttemptedAt: CodecTypes["idb/date@1"]["input"] | null;
-      readonly lastError: CodecTypes["idb/string@1"]["input"] | null;
-      readonly migrationError: CodecTypes["idb/string@1"]["input"] | null;
-      readonly operation: CodecTypes["idb/string@1"]["input"];
-      readonly payload: CodecTypes["idb/json@1"]["input"];
-      readonly retryable: CodecTypes["idb/bool@1"]["input"];
-      readonly synced: CodecTypes["idb/bool@1"]["input"];
-      readonly syncedAt: CodecTypes["idb/date@1"]["input"] | null;
-      readonly tries: CodecTypes["idb/int32@1"]["input"];
-      readonly versionMetaId: CodecTypes["idb/string@1"]["input"] | null;
-    };
-    readonly SyncMeta: {
-      readonly id: CodecTypes["idb/string@1"]["input"];
-      readonly value: CodecTypes["idb/string@1"]["input"];
-    };
-    readonly VersionMeta: {
-      readonly id: CodecTypes["idb/string@1"]["input"];
-      readonly key: CodecTypes["idb/json@1"]["input"];
-      readonly lastAppliedChangeId: CodecTypes["idb/string@1"]["input"] | null;
-      readonly localChangePending: CodecTypes["idb/bool@1"]["input"];
-      readonly model: CodecTypes["idb/string@1"]["input"];
-    };
-  };
-};
+type FieldTypeOverrides = {};
+export type FieldOutputTypes = FieldTypesFromDomain<
+  ContractBase["domain"]["namespaces"],
+  CodecTypes,
+  ParameterizedOutputTypeFunctions,
+  FieldTypeOverrides,
+  "output",
+  ContractBase["storage"]["namespaces"]
+>;
+export type FieldInputTypes = FieldTypesFromDomain<
+  ContractBase["domain"]["namespaces"],
+  CodecTypes,
+  ParameterizedOutputTypeFunctions,
+  FieldTypeOverrides,
+  "input",
+  ContractBase["storage"]["namespaces"]
+>;
 
 export namespace Models {
   export type unbound_OutboxEvent = {
-    createdAt: CodecTypes["idb/date@1"]["output"];
-    entityType: CodecTypes["idb/string@1"]["output"];
-    id: CodecTypes["idb/string@1"]["output"];
-    lastAttemptedAt: CodecTypes["idb/date@1"]["output"] | null;
-    lastError: CodecTypes["idb/string@1"]["output"] | null;
-    migrationError: CodecTypes["idb/string@1"]["output"] | null;
-    operation: CodecTypes["idb/string@1"]["output"];
-    payload: CodecTypes["idb/json@1"]["output"];
-    retryable: CodecTypes["idb/bool@1"]["output"];
-    synced: CodecTypes["idb/bool@1"]["output"];
-    syncedAt: CodecTypes["idb/date@1"]["output"] | null;
-    tries: CodecTypes["idb/int32@1"]["output"];
-    versionMetaId: CodecTypes["idb/string@1"]["output"] | null;
+    createdAt: FieldOutputTypes["__unbound__"]["OutboxEvent"]["createdAt"];
+    entityType: FieldOutputTypes["__unbound__"]["OutboxEvent"]["entityType"];
+    id: FieldOutputTypes["__unbound__"]["OutboxEvent"]["id"];
+    lastAttemptedAt: FieldOutputTypes["__unbound__"]["OutboxEvent"]["lastAttemptedAt"];
+    lastError: FieldOutputTypes["__unbound__"]["OutboxEvent"]["lastError"];
+    migrationError: FieldOutputTypes["__unbound__"]["OutboxEvent"]["migrationError"];
+    operation: FieldOutputTypes["__unbound__"]["OutboxEvent"]["operation"];
+    payload: FieldOutputTypes["__unbound__"]["OutboxEvent"]["payload"];
+    retryable: FieldOutputTypes["__unbound__"]["OutboxEvent"]["retryable"];
+    synced: FieldOutputTypes["__unbound__"]["OutboxEvent"]["synced"];
+    syncedAt: FieldOutputTypes["__unbound__"]["OutboxEvent"]["syncedAt"];
+    tries: FieldOutputTypes["__unbound__"]["OutboxEvent"]["tries"];
+    versionMetaId: FieldOutputTypes["__unbound__"]["OutboxEvent"]["versionMetaId"];
+    readonly [RelationKeys]?: never;
+  };
+  export type unbound_OutboxOrder = {
+    eventId: FieldOutputTypes["__unbound__"]["OutboxOrder"]["eventId"];
+    seq: FieldOutputTypes["__unbound__"]["OutboxOrder"]["seq"];
     readonly [RelationKeys]?: never;
   };
   export type unbound_SyncMeta = {
-    id: CodecTypes["idb/string@1"]["output"];
-    value: CodecTypes["idb/string@1"]["output"];
+    id: FieldOutputTypes["__unbound__"]["SyncMeta"]["id"];
+    value: FieldOutputTypes["__unbound__"]["SyncMeta"]["value"];
     readonly [RelationKeys]?: never;
   };
   export type unbound_VersionMeta = {
-    id: CodecTypes["idb/string@1"]["output"];
-    key: CodecTypes["idb/json@1"]["output"];
-    lastAppliedChangeId: CodecTypes["idb/string@1"]["output"] | null;
-    localChangePending: CodecTypes["idb/bool@1"]["output"];
-    model: CodecTypes["idb/string@1"]["output"];
+    id: FieldOutputTypes["__unbound__"]["VersionMeta"]["id"];
+    key: FieldOutputTypes["__unbound__"]["VersionMeta"]["key"];
+    lastAppliedChangeId: FieldOutputTypes["__unbound__"]["VersionMeta"]["lastAppliedChangeId"];
+    localChangePending: FieldOutputTypes["__unbound__"]["VersionMeta"]["localChangePending"];
+    model: FieldOutputTypes["__unbound__"]["VersionMeta"]["model"];
     readonly [RelationKeys]?: never;
   };
 }
@@ -115,6 +79,7 @@ export namespace Models {
 export declare const models: {
   __unbound__: {
     OutboxEvent: Models.unbound_OutboxEvent;
+    OutboxOrder: Models.unbound_OutboxOrder;
     SyncMeta: Models.unbound_SyncMeta;
     VersionMeta: Models.unbound_VersionMeta;
   };
@@ -205,6 +170,26 @@ type ContractBase = Omit<
           readonly byCreatedAt: { readonly keyPath: "createdAt"; readonly unique: false };
         };
       };
+      readonly _idb_sync_outbox_order: {
+        readonly keyPath: "seq";
+        readonly record: {
+          readonly fields: {
+            readonly eventId: {
+              readonly nullable: false;
+              readonly type: { readonly codecId: "idb/string@1"; readonly kind: "scalar" };
+            };
+            readonly seq: {
+              readonly nullable: false;
+              readonly type: { readonly codecId: "idb/int32@1"; readonly kind: "scalar" };
+            };
+          };
+          readonly model: "OutboxOrder";
+        };
+        readonly autoIncrement: true;
+        readonly indexes: {
+          readonly byEventId: { readonly keyPath: "eventId"; readonly unique: true };
+        };
+      };
       readonly _idb_sync_version_meta: {
         readonly keyPath: "id";
         readonly record: {
@@ -252,6 +237,10 @@ type ContractBase = Omit<
     readonly _idb_sync_outbox: {
       readonly namespace: "__unbound__" & NamespaceId;
       readonly model: "OutboxEvent";
+    };
+    readonly _idb_sync_outbox_order: {
+      readonly namespace: "__unbound__" & NamespaceId;
+      readonly model: "OutboxOrder";
     };
     readonly _idb_sync_version_meta: {
       readonly namespace: "__unbound__" & NamespaceId;
@@ -320,6 +309,23 @@ type ContractBase = Omit<
             readonly relations: Record<string, never>;
             readonly storage: { readonly storeName: "_idb_sync_outbox"; readonly keyPath: "id" };
           };
+          readonly OutboxOrder: {
+            readonly fields: {
+              readonly eventId: {
+                readonly nullable: false;
+                readonly type: { readonly kind: "scalar"; readonly codecId: "idb/string@1" };
+              };
+              readonly seq: {
+                readonly nullable: false;
+                readonly type: { readonly kind: "scalar"; readonly codecId: "idb/int32@1" };
+              };
+            };
+            readonly relations: Record<string, never>;
+            readonly storage: {
+              readonly storeName: "_idb_sync_outbox_order";
+              readonly keyPath: "seq";
+            };
+          };
           readonly SyncMeta: {
             readonly fields: {
               readonly id: {
@@ -376,7 +382,6 @@ type ContractBase = Omit<
   };
   readonly extensions: {};
   readonly meta: {};
-
   readonly profileHash: ProfileHash;
 };
 

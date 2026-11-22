@@ -13,6 +13,7 @@ import {
   markFailed,
   pruneSyncedEvents,
   OUTBOX_STORE,
+  OUTBOX_ORDER_STORE,
 } from "./outbox-store";
 import { applyPull } from "./apply-pull";
 import { applyReconciliation, planReconciliation } from "./reconcile-rejected";
@@ -363,20 +364,23 @@ export function createSyncWorker<TContract extends IdbContract>(options: SyncWor
     const modelStores = [...new Set([...reconciliations.values()].map(({ storeName }) => storeName))];
     let synced = 0;
     let failed = 0;
-    await syncClient.withTransaction([OUTBOX_STORE, VERSION_META_STORE, ...modelStores], async (scope) => {
-      for (const result of matched) {
-        if (result.success) {
-          await markSynced(scope, result.id);
-          synced++;
-        } else {
-          await markFailed(scope, result.id, result.error ?? "unknown error", result.retryable);
-          const reconciliation = reconciliations.get(result.id);
-          if (reconciliation) await applyReconciliation(scope, reconciliation);
-          failed++;
+    await syncClient.withTransaction(
+      [OUTBOX_STORE, OUTBOX_ORDER_STORE, VERSION_META_STORE, ...modelStores],
+      async (scope) => {
+        for (const result of matched) {
+          if (result.success) {
+            await markSynced(scope, result.id);
+            synced++;
+          } else {
+            await markFailed(scope, result.id, result.error ?? "unknown error", result.retryable);
+            const reconciliation = reconciliations.get(result.id);
+            if (reconciliation) await applyReconciliation(scope, reconciliation);
+            failed++;
+          }
         }
+        await pruneSyncedEvents(scope);
       }
-      await pruneSyncedEvents(scope);
-    });
+    );
     const retryableFailure = matched.some((result) => !result.success && result.retryable !== false);
     return { synced, failed, unreconciled, matched: matched.length, retryableFailure };
   }
@@ -427,7 +431,7 @@ export function createSyncWorker<TContract extends IdbContract>(options: SyncWor
    */
   async function runCycle(overrideBackoff: boolean): Promise<void> {
     try {
-      await syncClient.withTransaction([OUTBOX_STORE], pruneSyncedEvents);
+      await syncClient.withTransaction([OUTBOX_STORE, OUTBOX_ORDER_STORE], pruneSyncedEvents);
     } catch {
       // History cleanup is best-effort; a failure must not block pending pushes.
     }

@@ -64,11 +64,12 @@ describe("createAutoMigratingSyncIdbClient", () => {
       expect([...db.objectStoreNames]).toEqual([
         "_idb_sync_meta",
         "_idb_sync_outbox",
+        "_idb_sync_outbox_order",
         "_idb_sync_version_meta",
         "_prisma_next_marker",
         "users",
       ]);
-      const stores = ["_idb_sync_meta", "_idb_sync_outbox", "_idb_sync_version_meta"];
+      const stores = ["_idb_sync_meta", "_idb_sync_outbox", "_idb_sync_outbox_order", "_idb_sync_version_meta"];
       const tx = db.transaction(stores);
       expect(
         stores.map((name) => {
@@ -90,6 +91,12 @@ describe("createAutoMigratingSyncIdbClient", () => {
           keyPath: "id",
           autoIncrement: false,
           indexes: [{ name: "byCreatedAt", keyPath: "createdAt", unique: false, multiEntry: false }],
+        },
+        {
+          name: "_idb_sync_outbox_order",
+          keyPath: "seq",
+          autoIncrement: true,
+          indexes: [{ name: "byEventId", keyPath: "eventId", unique: true, multiEntry: false }],
         },
         { name: "_idb_sync_version_meta", keyPath: "id", autoIncrement: false, indexes: [] },
       ]);

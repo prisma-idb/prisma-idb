@@ -13,7 +13,15 @@ import { createSyncIdbClient } from "../src/exports/client";
 import { defineContract } from "@prisma-idb/family-idb/contract-ts";
 import idbFamilyPack from "@prisma-idb/family-idb/pack";
 import idbTargetPack from "@prisma-idb/target-idb/pack";
-import { OUTBOX_STORE, USERS_STORE, VERSION_META_STORE, SYNC_META_STORE, openTestDb, testDbName } from "./helpers";
+import {
+  OUTBOX_STORE,
+  OUTBOX_ORDER_STORE,
+  USERS_STORE,
+  VERSION_META_STORE,
+  SYNC_META_STORE,
+  openTestDb,
+  testDbName,
+} from "./helpers";
 
 // ── Stub client — for state-machine tests where push/pull correctness is
 // irrelevant and only the worker's own timing/status logic is under test.
@@ -905,7 +913,9 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
       models: { User: { store: "users", key: "id", fields: { id: "String", name: "String", nickname: "String?" } } },
     }) as unknown as IdbContract;
     const name = testDbName();
-    (await openTestDb(name, [USERS_STORE, OUTBOX_STORE, VERSION_META_STORE, SYNC_META_STORE])).close();
+    (
+      await openTestDb(name, [USERS_STORE, OUTBOX_STORE, OUTBOX_ORDER_STORE, VERSION_META_STORE, SYNC_META_STORE])
+    ).close();
     const client = createSyncIdbClient({ contract, dbName: name, trackedModels: "*" });
     const queued: OutboxEvent = {
       id: "queued-before-nickname",
@@ -1097,7 +1107,13 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
     const keyPath = compound ? ["tenant", "id"] : "id";
     const dbName = testDbName();
     (
-      await openTestDb(dbName, [{ name: "assets", keyPath }, OUTBOX_STORE, VERSION_META_STORE, SYNC_META_STORE])
+      await openTestDb(dbName, [
+        { name: "assets", keyPath },
+        OUTBOX_STORE,
+        OUTBOX_ORDER_STORE,
+        VERSION_META_STORE,
+        SYNC_META_STORE,
+      ])
     ).close();
     const contract = defineContract({
       family: idbFamilyPack,
