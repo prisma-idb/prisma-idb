@@ -64,19 +64,19 @@ model User {
 }
 
 model Todo {
-  id        String   @id @default(uuid())
+  id        String   @id @onCreate(uuid())
   userId    String
   user      User     @relation(fields: [userId], references: [id])
   title     String   @default("Untitled")
   createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  updatedAt DateTime @onCreate(now()) @onUpdate(now())
 }
 ```
 
 ```ts
 import family from "@prisma-idb/family-idb/pack";
 import target from "@prisma-idb/target-idb/pack";
-import { defineContract, now, updatedAt, uuidv4 } from "@prisma-idb/family-idb/contract-ts";
+import { defineContract, gen, now } from "@prisma-idb/family-idb/contract-ts";
 
 export default defineContract({
   family,
@@ -94,7 +94,12 @@ export default defineContract({
       store: "todo",
       key: "id",
       fields: { id: "String", userId: "String", title: "String", createdAt: "DateTime", updatedAt: "DateTime" },
-      defaults: { id: uuidv4(), title: "Untitled", createdAt: now(), updatedAt: updatedAt() },
+      defaults: {
+        id: { onCreate: gen.uuid() },
+        title: "Untitled",
+        createdAt: now(),
+        updatedAt: { onCreate: gen.now(), onUpdate: gen.now() },
+      },
       relations: {
         user: { to: "User", cardinality: "N:1", on: { local: ["userId"], target: ["id"] } },
       },
@@ -105,22 +110,22 @@ export default defineContract({
 
 ## Execution defaults
 
-TypeScript helpers come from `@prisma-idb/family-idb/contract-ts` and appear in the model's `defaults` map.
+TypeScript helpers come from `@prisma-idb/family-idb/contract-ts` and appear in the model's `defaults` map. A generated value is written as `{ onCreate, onUpdate }`, each phase a call of a `gen` helper. `gen` has one helper per generator function, typed by its arguments, and each call resolves through the same functions as PSL, with the same refusals.
 
-| PSL                                                   | TypeScript `defaults` entry                                       | Behavior                                                                                                     |
-| ----------------------------------------------------- | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| `@default("Untitled")`                                | `title: "Untitled"`                                               | Fills an omitted field on create. Numeric and Boolean literals are also supported for matching scalar types. |
-| `@default(USER)` on a `Role` field                    | `role: "USER"`                                                    | Fills an omitted enum field with a declared stored value.                                                    |
-| `@default(now())`                                     | `createdAt: now()`                                                | Supplies the current time on create. Requires `DateTime`.                                                    |
-| `@default(uuid())` or `@default(uuid(4))`             | `id: uuidv4()`                                                    | Supplies a UUID v4 on create. Requires `String`.                                                             |
-| `@default(uuid(7))`                                   | `id: uuidv7()`                                                    | Supplies a UUID v7 on create. Requires `String`.                                                             |
-| `@default(cuid())`                                    | `id: cuid2()`                                                     | Supplies a CUID2 on create. Requires `String`.                                                               |
-| `@updatedAt` or the `temporal.updatedAt()` field type | `updatedAt: updatedAt()` with `fields: { updatedAt: "DateTime" }` | Supplies the current time on create and on updates that write a value. Cannot be a primary-key field.        |
-| `@default(autoincrement())`                           | `id: autoincrement()`                                             | Enables IndexedDB's key generator. Requires a single-field `Int` primary key.                                |
+| PSL                                                                   | TypeScript `defaults` entry                                    | Behavior                                                                                                     |
+| --------------------------------------------------------------------- | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `@default("Untitled")`                                                | `title: "Untitled"`                                            | Fills an omitted field on create. Numeric and Boolean literals are also supported for matching scalar types. |
+| `@default(USER)` on a `Role` field                                    | `role: "USER"`                                                 | Fills an omitted enum field with a declared stored value.                                                    |
+| `@default(now())`                                                     | `createdAt: now()`                                             | Supplies the current time on create. Requires `DateTime`.                                                    |
+| `@default(autoincrement())`                                           | `id: autoincrement()`                                          | Enables IndexedDB's key generator. Requires a single-field `Int` primary key.                                |
+| `@onCreate(uuid())`, `@onCreate(uuid(7))`                             | `id: { onCreate: gen.uuid() }`, `{ onCreate: gen.uuid(7) }`    | Supplies a UUID v4 or v7 on create. Requires `String`.                                                       |
+| `@onCreate(cuid(2))`                                                  | `id: { onCreate: gen.cuid(2) }`                                | Supplies a CUID2 on create. Requires `String`.                                                               |
+| `@onCreate(ulid())`, `@onCreate(ksuid())`, `@onCreate(nanoid(size?))` | `{ onCreate: gen.ulid() }`, `gen.ksuid()`, `gen.nanoid(size?)` | Supplies a ULID, a KSUID or a Nano ID on create. Requires `String`.                                          |
+| `@onCreate(now()) @onUpdate(now())`                                   | `updatedAt: { onCreate: gen.now(), onUpdate: gen.now() }`      | Supplies the current time on create and on updates that write a value. Cannot be a primary-key field.        |
 
-Generated defaults require non-nullable fields. A field cannot combine `@updatedAt` with `@default(...)`. Enum-list defaults are unsupported.
+When a PSL field has both `@default(...)` and `@onCreate(...)`, the generator supplies the create value. List fields can't have a generator, and enum-list defaults are unsupported.
 
-Create defaults apply when the field is omitted. An explicitly supplied value takes precedence. `updatedAt()` also supplies an omitted timestamp during updates. A defaulted foreign key still undergoes referential-integrity checks.
+Create defaults apply when the field is omitted. An explicitly supplied value takes precedence. An `onUpdate` generator also supplies an omitted value during updates. A defaulted foreign key still undergoes referential-integrity checks.
 
 A literal in `defaults` also supplies the value for the `setDefault` referential action. The older `fieldDefaults` map supplies only that referential-action value; it does not fill omitted fields on create. A field cannot appear in both maps.
 
@@ -182,26 +187,25 @@ export function buildContract(input: DefineContractInput) {
 
 ### Fields, enums, and defaults
 
-| Code                                      | Meaning                                                                             |
-| ----------------------------------------- | ----------------------------------------------------------------------------------- |
-| `IDB_UNSUPPORTED_FIELD_TYPE`              | A field has an unsupported type.                                                    |
-| `IDB_OPTIONAL_LIST`                       | A list field is optional.                                                           |
-| `IDB_ENUM_SCALAR_NAME_CONFLICT`           | An enum uses a built-in scalar's name.                                              |
-| `IDB_ENUM_EMPTY`                          | An enum has no members.                                                             |
-| `IDB_ENUM_DUPLICATE_VALUE`                | Enum members share a stored value.                                                  |
-| `IDB_ENUM_VALUE_NOT_STRING`               | A PSL enum member maps to a non-string value.                                       |
-| `IDB_INVALID_ENUM_DEFAULT`                | An enum default is not a declared value.                                            |
-| `IDB_LIST_DEFAULT_UNSUPPORTED`            | A list declares a default other than `[]`.                                          |
-| `IDB_INVALID_DEFAULT_VALUE`               | A default does not match its field, or a TypeScript default declaration is invalid. |
-| `IDB_UNKNOWN_DEFAULT_FUNCTION`            | A PSL default calls an unsupported function.                                        |
-| `IDB_INVALID_DEFAULT_FUNCTION_ARGUMENT`   | A PSL default function has invalid arguments.                                       |
-| `IDB_EXECUTION_DEFAULT_ON_OPTIONAL_FIELD` | An optional field has a generated default.                                          |
-| `IDB_UPDATED_AT_NOT_DATETIME`             | An update timestamp is not a `DateTime` field.                                      |
-| `IDB_UPDATED_AT_AND_DEFAULT_CONFLICT`     | A PSL field combines an update timestamp with `@default(...)`.                      |
-| `IDB_TEMPORAL_UPDATED_AT_ON_KEY_FIELD`    | A primary-key field has an update timestamp.                                        |
-| `IDB_TEMPORAL_UPDATED_AT_TAKES_NO_ARGS`   | `temporal.updatedAt()` has arguments.                                               |
-| `IDB_UNSUPPORTED_TYPE_CONSTRUCTOR`        | A field uses an unsupported type constructor.                                       |
-| `IDB_UNSUPPORTED_NAMESPACE_BLOCK`         | A schema declares a namespace block; IDB supports a single unbound namespace.       |
+| Code                                    | Meaning                                                                             |
+| --------------------------------------- | ----------------------------------------------------------------------------------- |
+| `IDB_UNSUPPORTED_FIELD_TYPE`            | A field has an unsupported type.                                                    |
+| `IDB_OPTIONAL_LIST`                     | A list field is optional.                                                           |
+| `IDB_ENUM_SCALAR_NAME_CONFLICT`         | An enum uses a built-in scalar's name.                                              |
+| `IDB_ENUM_EMPTY`                        | An enum has no members.                                                             |
+| `IDB_ENUM_DUPLICATE_VALUE`              | Enum members share a stored value.                                                  |
+| `IDB_ENUM_VALUE_NOT_STRING`             | A PSL enum member maps to a non-string value.                                       |
+| `IDB_INVALID_ENUM_DEFAULT`              | An enum default is not a declared value.                                            |
+| `IDB_LIST_DEFAULT_UNSUPPORTED`          | A list declares a default other than `[]`.                                          |
+| `IDB_INVALID_DEFAULT_VALUE`             | A default does not match its field, or a TypeScript default declaration is invalid. |
+| `IDB_UNKNOWN_DEFAULT_FUNCTION`          | A PSL default calls an unsupported function.                                        |
+| `PSL_GENERATOR_IN_DEFAULT`              | A PSL default calls a generator function, such as `uuid()`. Use `@onCreate(...)`.   |
+| `PSL_UNSUPPORTED_FIELD_ATTRIBUTE`       | A PSL field uses `@updatedAt`. Use `@onCreate(now()) @onUpdate(now())`.             |
+| `PSL_UNRESOLVED_REFERENCE`              | A PSL field is typed `temporal.updatedAt()`. The message names the rewrite.         |
+| `IDB_INVALID_DEFAULT_FUNCTION_ARGUMENT` | A PSL default function has invalid arguments.                                       |
+| `IDB_ON_UPDATE_ON_KEY_FIELD`            | A primary-key field generates a value on update. Primary keys never change.         |
+| `IDB_UNSUPPORTED_TYPE_CONSTRUCTOR`      | A field uses an unsupported type constructor.                                       |
+| `IDB_UNSUPPORTED_NAMESPACE_BLOCK`       | A schema declares a namespace block; IDB supports a single unbound namespace.       |
 
 ### Relations and client projection
 

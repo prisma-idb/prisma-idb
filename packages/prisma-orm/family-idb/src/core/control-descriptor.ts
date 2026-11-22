@@ -1,6 +1,7 @@
 import type { ControlFamilyDescriptor, ControlStack } from "@prisma/orm-framework/components/control";
 import { idbEmission } from "./emission";
 import { type IdbControlFamilyInstance, createIdbFamilyInstance } from "./control-instance";
+import { idbGeneratorDescriptors, idbGeneratorFunctions } from "./generator-functions";
 import { idbAttributeSpecs } from "./psl-binder";
 import { idbScalarTypes } from "./psl-scalars";
 
@@ -27,6 +28,13 @@ export class IdbFamilyDescriptor implements ControlFamilyDescriptor<"idb", IdbCo
   readonly emission = idbEmission;
   /** Makes scalar types and attribute signatures discoverable by editor tooling. */
   readonly authoring = { type: idbScalarTypes, attributeSpecs: idbAttributeSpecs };
+  /** The functions `@onCreate(fn())` and `@onUpdate(fn())` call, so editor tooling can offer them. */
+  readonly generatorFunctions = idbGeneratorFunctions;
+  /** The generators those functions produce, each registered once. */
+  readonly controlMutationDefaults = {
+    defaultFunctionRegistry: new Map(),
+    generatorDescriptors: idbGeneratorDescriptors,
+  };
 
   /**
    * Creates an {@link IdbControlFamilyInstance} for the given control stack.

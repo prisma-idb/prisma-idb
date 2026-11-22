@@ -876,7 +876,7 @@ export class IdbStoreAccessorImpl<
   /** Complete a batch with shared query defaults and insert it atomically. */
   createAll(data: CreateInput<TContract, ModelName>[]): AsyncIterableResult<DefaultModelRow<TContract, ModelName>> {
     // One shared cache for the whole batch — every row in a single createAll()
-    // call gets the same generated `temporal.updatedAt()` timestamp, matching
+    // call gets the same generated `now()` timestamp, matching
     // SQL's 'query'-stability semantics for the same generator. Defaults are
     // applied before deciding whether foreign keys need checking, because a
     // default can fill in a foreign key.

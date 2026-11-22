@@ -4,7 +4,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { IndexDef, ModelDef, RelationDef } from "../src/core/contract-builder";
 import { defineContract } from "../src/core/contract-builder";
 import { IdbContractError } from "../src/core/contract-error";
-import { autoincrement, cuid2, now, updatedAt, uuidv4, uuidv7 } from "../src/core/field-defaults";
+import { autoincrement, now } from "../src/core/field-defaults";
+import { gen } from "../src/core/generator-functions";
+import { expectTypechecks } from "./_typecheck";
 import idbFamilyPack from "../src/exports/pack";
 import idbTargetPack from "@prisma-idb/target-idb/pack";
 
@@ -1259,8 +1261,8 @@ describe("defineContract — execution defaults", () => {
 
   const ref = { namespace: "__unbound__", entry: "rows" } as const;
 
-  it("lowers each helper to its generator and emits an executionHash", () => {
-    const contract = rowContract({ s: uuidv7(), t: now() });
+  it("lowers now() and gen calls to their generators and emits an executionHash", () => {
+    const contract = rowContract({ s: { onCreate: gen.uuid(7) }, t: now() });
     expect(contract.execution?.mutations.defaults).toEqual([
       { ref: { ...ref, field: "s" }, onCreate: { kind: "generator", id: "uuidv7" } },
       { ref: { ...ref, field: "t" }, onCreate: { kind: "generator", id: "timestampNow" } },
@@ -1268,35 +1270,75 @@ describe("defineContract — execution defaults", () => {
     expect(contract.execution?.executionHash).toEqual(expect.any(String));
   });
 
-  it("lowers uuidv4() and cuid2() to their generator ids", () => {
-    const contract = defineContract({
-      family: idbFamilyPack,
-      target: idbTargetPack,
-      models: {
-        Row: {
-          store: "rows",
-          key: "id",
-          fields: { id: "String", s: "String" },
-          defaults: { id: uuidv4(), s: cuid2() },
-        },
-      },
-    });
-    expect(contract.execution?.mutations.defaults.map((entry) => entry.onCreate?.id)).toEqual(["uuidv4", "cuid2"]);
+  it.each([
+    ["gen.uuid()", gen.uuid(), { kind: "generator", id: "uuidv4" }],
+    ["gen.uuid(4)", gen.uuid(4), { kind: "generator", id: "uuidv4" }],
+    ["gen.cuid(2)", gen.cuid(2), { kind: "generator", id: "cuid2" }],
+    ["gen.ulid()", gen.ulid(), { kind: "generator", id: "ulid" }],
+    ["gen.nanoid(10)", gen.nanoid(10), { kind: "generator", id: "nanoid", params: { size: 10 } }],
+    ["gen.ksuid()", gen.ksuid(), { kind: "generator", id: "ksuid" }],
+  ] as const)("resolves { onCreate: %s } as PSL resolves the same call", (_name, call, onCreate) => {
+    expect(rowContract({ s: { onCreate: call } }).execution?.mutations.defaults).toEqual([
+      { ref: { ...ref, field: "s" }, onCreate },
+    ]);
   });
 
-  it("fills updatedAt() on create and on update", () => {
-    const [entry] = rowContract({ t: updatedAt() }).execution?.mutations.defaults ?? [];
+  it("fills { onCreate: gen.now(), onUpdate: gen.now() } on create and on update", () => {
+    const [entry] =
+      rowContract({ t: { onCreate: gen.now(), onUpdate: gen.now() } }).execution?.mutations.defaults ?? [];
     expect(entry?.onCreate?.id).toBe("timestampNow");
     expect(entry?.onUpdate?.id).toBe("timestampNow");
   });
 
+  it("types each gen helper by its function's arguments", () => {
+    expectTypechecks({
+      "gen-consumer.ts": `
+        import { gen } from "../../src/exports/contract-ts";
+        gen.now();
+        gen.uuid();
+        gen.uuid(7);
+        gen.cuid(2);
+        gen.ulid();
+        gen.nanoid();
+        gen.nanoid(10);
+        gen.ksuid();
+        // @ts-expect-error cuid() takes its version.
+        gen.cuid();
+        // @ts-expect-error uuid() takes version 4 or 7.
+        gen.uuid(5);
+        // @ts-expect-error ulid() takes no arguments.
+        gen.ulid(1);
+        import type { GeneratedDefault } from "../../src/exports/contract-ts";
+        const both: GeneratedDefault = { onCreate: gen.now(), onUpdate: gen.now() };
+        const updateOnly: GeneratedDefault = { onUpdate: gen.now() };
+        // @ts-expect-error A generated default names at least one phase.
+        const neither: GeneratedDefault = {};
+      `,
+    });
+  });
+
   it.each([
-    { helper: "now", makeDefault: now, spec: "String" },
-    { helper: "now", makeDefault: now, spec: "Int" },
-    ...[uuidv4, uuidv7, cuid2].flatMap((makeDefault) =>
-      (["Int", "DateTime", "Role", "Role[]"] as const).map((spec) => ({ helper: makeDefault.name, makeDefault, spec }))
-    ),
-  ] as const)("rejects $helper() on a $spec field", ({ makeDefault, spec }) => {
+    [{ s: { onCreate: gen.now() } }, 'Field "Row.s": now() does not apply to codec "idb/string@1".'],
+    [{ t: { onCreate: gen.uuid() } }, 'Field "Row.t": uuid() does not apply to codec "idb/date@1".'],
+    [{ s: { onCreate: gen.uuid(5 as 4) } }, 'Field "Row.s": uuid: version must be 4 or 7, got 5'],
+    [
+      { s: { onCreate: { name: "snowflake", args: {} } } },
+      'no pack in the contract declares the generator function "snowflake"',
+    ],
+  ] as const)("refuses %j with upstream's message", (defaults, message) => {
+    expect(() => rowContract(defaults)).toThrow(IdbContractError);
+    expect(() => rowContract(defaults)).toThrow(message);
+  });
+
+  it.each([
+    { helper: "now()", value: now(), spec: "String" },
+    { helper: "now()", value: now(), spec: "Int" },
+    ...(["Int", "DateTime", "Role", "Role[]"] as const).map((spec) => ({
+      helper: "gen.uuid()",
+      value: { onCreate: gen.uuid() },
+      spec,
+    })),
+  ] as const)("rejects $helper on a $spec field", ({ value, spec }) => {
     expect(() =>
       defineContract({
         family: idbFamilyPack,
@@ -1307,7 +1349,7 @@ describe("defineContract — execution defaults", () => {
             store: "rows",
             key: "id",
             fields: { id: "Int", value: spec },
-            defaults: { value: makeDefault() },
+            defaults: { value },
           },
         },
       })
@@ -1335,9 +1377,8 @@ describe("defineContract — execution defaults", () => {
     expect(rowContract(undefined, { fieldDefaults: { s: "x" } }).execution).toBeUndefined();
   });
 
-  it("reports autoincrement() off the key, on a non-Int key and updatedAt() off DateTime with shared codes", () => {
+  it("reports autoincrement() off the key and on a non-Int key with shared codes", () => {
     expect(() => rowContract({ s: autoincrement() })).toThrow(/IDB_AUTOINCREMENT_NOT_ON_KEY_FIELD/);
-    expect(() => rowContract({ s: updatedAt() })).toThrow(/IDB_UPDATED_AT_NOT_DATETIME/);
     expect(() =>
       defineContract({
         family: idbFamilyPack,
@@ -1364,7 +1405,11 @@ describe("defineContract — execution defaults", () => {
       { kind: "execution", execution: {} },
       { kind: "execution", execution: { onCreate: null } },
       { kind: "execution", execution: { onCreate: { id: "unknown" } } },
-      { kind: "execution", execution: { onCreate: { id: "uuidv4" }, onUpdate: { id: "uuidv4" } } },
+      { kind: "execution", execution: { onCreate: { id: "uuidv4" } } },
+      { kind: "execution", execution: { onCreate: { id: "timestampNow" }, onUpdate: { id: "timestampNow" } } },
+      { onCreate: "uuid" },
+      { onCreate: { name: "uuid" } },
+      { onCreate: gen.uuid(), extra: gen.uuid() },
       1n,
       Symbol("invalid"),
       () => now(),

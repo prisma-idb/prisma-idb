@@ -34,9 +34,10 @@ describe("idbAttributeSpecs", () => {
       "default",
       "id",
       "idb.exclude",
+      "onCreate",
+      "onUpdate",
       "relation",
       "unique",
-      "updatedAt",
     ]);
   });
 });
@@ -163,7 +164,7 @@ describe("createIdbAttributeBinder", () => {
 
   it.each([
     ["@default without a value", "@default()"],
-    ["@updatedAt with an argument", "@updatedAt(1)"],
+    ["@onCreate with a value that is not a call", "@onCreate(1)"],
     ["@relation with a bare fields argument", "@relation(fields: id, references: [id])"],
   ])("reports %s and marks the field failed", (_name, attribute) => {
     const { binder, diagnostics, field } = bind(`model Post {\n  id String @id\n  v String ${attribute}\n}`);
@@ -228,7 +229,7 @@ function interpret(schema: string, projection?: ContractProjection) {
 }
 
 describe("excluded scalar attribute binding", () => {
-  it.each(["secret Json @default([now()]) @idb.exclude", "secret ServerOnly @default() @updatedAt(1) @idb.exclude"])(
+  it.each(["secret Json @default([now()]) @idb.exclude", "secret ServerOnly @default() @onCreate(1) @idb.exclude"])(
     "skips server-only attributes in the client projection: %s",
     (field) => {
       const schema = `model Post {\n  id String @id\n  ${field}\n}`;
@@ -284,7 +285,7 @@ describe("interpretPslDocumentToIdbContract with portable attribute arguments", 
     ["@@id with map and sort", 'model Post {\n  a String\n  b String\n  @@id([a, b], map: "pk", sort: Desc)\n}'],
     ["@id with clustered and length", "model Post {\n  id String @id(length: 10, clustered: false)\n}"],
     ["@unique with sort", "model Post {\n  id String @id\n  slug String @unique(sort: Desc)\n}"],
-    ["@default with map", 'model Post {\n  id String @id @default(uuid(), map: "post_id_default")\n}'],
+    ["@default with map", 'model Post {\n  id String @id @default("draft", map: "post_id_default")\n}'],
     [
       "@@index with type and length",
       "model Post {\n  id String @id\n  t String\n  @@index([t], type: Hash, length: 4)\n}",

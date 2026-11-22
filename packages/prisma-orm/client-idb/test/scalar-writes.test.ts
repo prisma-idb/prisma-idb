@@ -246,13 +246,13 @@ describe("local scalar writes", () => {
     expect(await samples.findUnique("s1")).toEqual(validRow());
   });
 
-  it.each(["uuid()", "cuid()"])("validates after %s and timestamp defaults are materialized", async (generator) => {
+  it.each(["uuid()", "cuid(2)"])("validates after %s and timestamp defaults are materialized", async (generator) => {
     await client.close();
     client = await openClient(
       contractFromPsl(`model Generated {
-      id String @id @default(${generator})
+      id String @id @onCreate(${generator})
       name String @default("new")
-      updatedAt DateTime @updatedAt
+      updatedAt DateTime @onCreate(now()) @onUpdate(now())
     }`)
     );
     const generated = client.orm["generated"]!;

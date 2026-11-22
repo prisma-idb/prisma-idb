@@ -10,7 +10,7 @@ const SCHEMA = `
     ADMIN
   }
   model Team {
-    id String @id @default(uuid(7))
+    id String @id @onCreate(uuid(7))
     users User[]
     @@map("teams")
     @@index([id], name: "lookup")
@@ -22,7 +22,7 @@ const SCHEMA = `
     team Team @relation(fields: [teamId], references: [id], onDelete: Cascade, onUpdate: Restrict)
     role Role @default(MEMBER)
     tags Role[]
-    touched temporal.updatedAt()
+    touched DateTime @onCreate(now()) @onUpdate(now())
     @@unique([teamId, id], name: "membership")
   }
 `;

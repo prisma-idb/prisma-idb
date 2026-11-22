@@ -6,7 +6,7 @@
  * Semantics mirror the SQL reference implementation:
  * - a caller-provided value always wins over a default;
  * - an empty update patch skips every `onUpdate` default (no write ⇒ no
- *   `@updatedAt` advance);
+ *   `@onUpdate(now())` advance);
  * - `timestampNow`'s value is cached per call so a whole top-level mutation
  *   call (e.g. a `createAll()` batch) shares one generated value across
  *   every row it backs, matching its `'query'`-stability in SQL. Every other
@@ -55,6 +55,9 @@ function computeGeneratedValue(spec: ExecutionMutationDefaultValue): unknown {
     case "uuidv4":
     case "uuidv7":
     case "cuid2":
+    case "ulid":
+    case "nanoid":
+    case "ksuid":
       return generateId(spec.params !== undefined ? { id, params: spec.params } : { id });
     default: {
       const _exhaustive: never = id;
@@ -116,6 +119,26 @@ export function completeCreateRecord(
     cache
   );
   return absentAsNull(contract, modelName)(withDefaults);
+}
+
+/**
+ * Whether `patch`'s `onUpdate` defaults generate a new value for each row, as
+ * `uuid()` does. A write that applies `patch` to several rows must then resolve
+ * the defaults once per row; `now()` is shared across a call, so it never does.
+ */
+export function updateDefaultsVaryByRow(
+  defaults: readonly ExecutionMutationDefault[] | undefined,
+  storeName: string,
+  patch: Record<string, unknown>
+): boolean {
+  if (Object.values(patch).every((v) => v === undefined)) return false;
+  return (defaults ?? []).some(
+    (d) =>
+      d.ref.entry === storeName &&
+      d.onUpdate !== undefined &&
+      patch[d.ref.field] === undefined &&
+      !CACHEABLE_GENERATOR_IDS.has(d.onUpdate.id as IdbMutationDefaultGeneratorId)
+  );
 }
 
 /**

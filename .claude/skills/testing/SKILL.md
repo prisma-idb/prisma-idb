@@ -76,6 +76,7 @@ Keep the end-to-end layer small. It is slow and flaky relative to the layers bel
 - **Keep each test independent and readable.** Each test sets up its own state and shows its inputs and expected output inline. Don't depend on test order or shared mutable fixtures.
 - **Control time, randomness and concurrency.** A test that passes "usually" is a bug. Fix the cause. Don't add retries or sleeps.
 - **Test failure paths when failure matters.** Aborted transactions, rejected pushes, contract mismatches and invalid input are part of the contract.
+- **Give write-path tests fields that other rows depend on.** A value a write sets, a default included, can be a foreign key or a field another relation references. Cover those fields, so missing foreign-key checks and referential actions fail the test.
 - **Reproduce a bug before you fix it.** Write the failing test first, confirm it fails for the right reason, then fix. Keep it only if it passes the core questions.
 
 ## What to avoid

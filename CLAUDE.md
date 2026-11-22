@@ -61,6 +61,17 @@ A package's tests run against the built `dist` of the packages it depends on. Af
 - Every behavior change needs a test, or a stated reason why it doesn't. Use the `testing` skill to decide.
 - `packages/prisma-orm/plans/` holds working notes for agents, not developer docs. Durable decisions go in ADRs.
 
+## Before you call a change done
+
+Review comments on past PRs mostly found the same few gaps. Check for them yourself first:
+
+1. **Every path, not just the main one.** For each new check, option or behavior, list every place it must apply (all write operations and their nested, bulk and per-row branches; both PSL and TypeScript authoring; every generator, phase and field kind; every wrapper of a changed API) and confirm each one.
+2. **Every claim matches the code.** Docs, changesets, comments, error messages and diagnostics. Search for wording your change made stale.
+3. **Every test can fail.** Break the code under test and watch the test fail.
+4. **Scale and failure.** No per-row store scans, no spreading unbounded arrays, no error that hides the original one.
+
+After a multi-file implementation, and before opening a PR, run the `change-reviewer` subagent (or the `review-change` skill in other tools), fix what it confirms, then run the checks from `verify-change`. In Claude Code, a hook blocks `gh pr create` on a branch with two or more changed source files, or one in a write, migration or sync package, until `node .claude/hooks/require-review.mjs --mark` records the review. Run that only after the review actually ran.
+
 ## Changesets and releases
 
 - Add a `.changeset/*.md` (`pnpm changeset`) for each published package a change affects. For docs-only or other non-release changes, add an empty one (`pnpm changeset --empty`).
@@ -76,6 +87,7 @@ Each kind of agent file has one canonical home. Other tools reach it through com
 | Project instructions              | `CLAUDE.md`                      | `AGENTS.md`, `.github/copilot-instructions.md`                            |
 | Path-scoped rules                 | `.claude/rules/<name>.md`        | `.cursor/rules/<name>.mdc`, `.github/instructions/<name>.instructions.md` |
 | Skills                            | `.claude/skills/<name>/SKILL.md` | `.agents/skills` (read by Codex and Cursor)                               |
+| Claude Code subagents             | `.claude/agents/<name>.md`       | none                                                                      |
 | Claude Code permissions and hooks | `.claude/settings.json`          | none                                                                      |
 
 Edit the canonical file, never the symlink. Checkouts with `core.symlinks=false` get the links as plain text files; `pnpm agents:check` skips them there. After adding or renaming a rule, run `pnpm agents:sync`. Personal notes go in `CLAUDE.local.md` (gitignored).
@@ -87,8 +99,9 @@ Rules load automatically when you touch matching files. Agents without path-scop
 | [legacy-generator](.claude/rules/legacy-generator.md) | `packages/generator`, `tests/schema-gen`                     |
 | [prisma-orm](.claude/rules/prisma-orm.md)             | `packages/prisma-orm`                                        |
 | [idb-runtime](.claude/rules/idb-runtime.md)           | Runtime source of the Prisma 8 packages that touch IndexedDB |
+| [authoring](.claude/rules/authoring.md)               | `family-idb` and `target-idb` source                         |
 | [tests](.claude/rules/tests.md)                       | Test files                                                   |
 | [adrs](.claude/rules/adrs.md)                         | `packages/prisma-orm/docs/adrs`                              |
 | [docs](.claude/rules/docs.md)                         | Markdown and the docs site                                   |
 
-Skills, loaded on demand: `testing`, `verify-change`, `open-pr`, `write-adr`, `port-prisma-behavior`.
+Skills, loaded on demand: `testing`, `verify-change`, `review-change`, `open-pr`, `write-adr`, `port-prisma-behavior`. Subagent: `change-reviewer`, which runs `review-change` in a fresh context.

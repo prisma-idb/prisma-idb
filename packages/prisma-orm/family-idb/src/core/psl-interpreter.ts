@@ -20,24 +20,35 @@ import type {
   IdbEnumNode,
   IdbExecutionDefaultNode,
   IdbFieldNode,
+  IdbGeneratorNode,
   IdbIndexNode,
   IdbModelNode,
   IdbRelationNode,
 } from "./contract-definition";
 import { createIdbAttributeBinder, idbDataTypeSupport } from "./psl-binder";
+import { idbGeneratorFunctionRegistry, idbGeneratorNode } from "./generator-functions";
 import type { IdbAttributeBinder, IdbDefaultValue } from "./psl-binder";
 import { PslDefinitionSourceMap } from "./psl-definition-source-map";
 import { SCALAR_TO_CODEC_ID } from "./psl-scalars";
 import { validateIdbContractDefinition } from "./validate-definition";
 
-/** The one `temporal.*` type-constructor path IDB currently understands. */
-const TEMPORAL_UPDATED_AT_PATH = ["temporal", "updatedAt"] as const;
+/** The removed Prisma field preset that set a field on create and on update. */
+const TEMPORAL_UPDATED_AT_PRESET = "temporal.updatedAt";
 
-/** Generator id shared by `temporal.updatedAt()`/bare `@updatedAt`/`@default(now())`. */
+/** Generator id of `@default(now())`. */
 const TIMESTAMP_NOW_GENERATOR_ID: IdbMutationDefaultGeneratorId = "timestampNow";
 
 /** Generator id for plain literals and codec-backed tagged literals. */
 const LITERAL_GENERATOR_ID: IdbMutationDefaultGeneratorId = "literal";
+
+/**
+ * The call to write in `@onCreate(...)` for a generator function written in
+ * `@default(...)`. Prisma 6 wrote `cuid()` for a CUID2, and Prisma 8 requires its
+ * version, so `cuid()` is rewritten as `cuid(2)`; any other call stands as written.
+ */
+function onCreateRewrite(call: string): string {
+  return call.replace(/\s/g, "") === "cuid()" ? "cuid(2)" : call;
+}
 
 /** A resolved field default before it is attached to its definition field. */
 type FieldExecutionDefault = IdbExecutionDefaultNode & { readonly fieldName: string };
@@ -54,22 +65,16 @@ type DefaultFunctionResolution =
   | { readonly ok: true; readonly generatorId: IdbMutationDefaultGeneratorId }
   | { readonly ok: false; readonly reason: "unknown-function" | "invalid-argument" };
 
-/** Resolves a parsed `@default(...)` function call (excluding `autoincrement()`, handled separately as a storage-plane concern) to a generator id. */
+/**
+ * Resolves a parsed `@default(...)` function call to a generator id. `now()` is
+ * the only one: `autoincrement()` is handled as a storage concern, and generator
+ * functions such as uuid() are written in `@onCreate(...)`.
+ */
 function resolveDefaultFunctionGeneratorId(name: string, arg: string | undefined): DefaultFunctionResolution {
-  switch (name) {
-    case "now":
-      return arg === undefined
-        ? { ok: true, generatorId: TIMESTAMP_NOW_GENERATOR_ID }
-        : { ok: false, reason: "invalid-argument" };
-    case "uuid":
-      if (arg === undefined || arg === "4") return { ok: true, generatorId: "uuidv4" };
-      if (arg === "7") return { ok: true, generatorId: "uuidv7" };
-      return { ok: false, reason: "invalid-argument" };
-    case "cuid":
-      return arg === undefined ? { ok: true, generatorId: "cuid2" } : { ok: false, reason: "invalid-argument" };
-    default:
-      return { ok: false, reason: "unknown-function" };
-  }
+  if (name !== "now") return { ok: false, reason: "unknown-function" };
+  return arg === undefined
+    ? { ok: true, generatorId: TIMESTAMP_NOW_GENERATOR_ID }
+    : { ok: false, reason: "invalid-argument" };
 }
 
 // PSL PascalCase referential actions → IDB lowercase
@@ -297,6 +302,21 @@ function interpretModel(
     const fieldAttributes = attributes.field(model, field);
     if (fieldAttributes.failed) continue;
 
+    // `@updatedAt` is a Prisma 6 attribute that Prisma 8 removed. It is refused on
+    // every field, relation fields included, with upstream's hint unless the field
+    // already writes `@onUpdate(...)`.
+    if (fieldAttributes.updatedAt !== undefined) {
+      const message = `Field "${model.name}.${field.name}" uses unsupported attribute "@updatedAt"`;
+      diagnostics.push({
+        code: "PSL_UNSUPPORTED_FIELD_ATTRIBUTE",
+        message:
+          fieldAttributes.onUpdate === undefined ? `${message}. Use @onCreate(now()) @onUpdate(now()).` : message,
+        sourceId,
+        span: fieldAttributes.updatedAt,
+      });
+      continue;
+    }
+
     // Relation list field (backrelation) — skip for now, resolved in second pass
     if (field.list && modelNames.has(field.typeName)) {
       if (excludedModelNames.has(field.typeName)) {
@@ -393,46 +413,26 @@ function interpretModel(
 
     const enumType = enums[field.typeName];
 
-    // `temporal.updatedAt()` — a namespaced type-constructor call in the type
-    // position (no plain type name), shared framework-level PSL grammar
-    // (same construct the SQL family requires in place of the removed bare
-    // `@updatedAt` attribute). Must be checked before the plain-scalar
-    // lookup below: `field.typeName` for a type-constructor field is just
-    // the call's last path segment ("updatedAt"), not a real scalar type.
+    // A field typed by a call, such as `temporal.updatedAt()`. IDB has no type
+    // constructors. `temporal.updatedAt()` was a Prisma field preset, which Prisma 8
+    // removed; it is refused with upstream's rewrite.
     if (field.typeConstructor) {
-      const path = field.typeConstructor.path;
-      const isTemporalUpdatedAt =
-        path.length === TEMPORAL_UPDATED_AT_PATH.length && path.every((p, i) => p === TEMPORAL_UPDATED_AT_PATH[i]);
-
-      if (!isTemporalUpdatedAt) {
-        diagnostics.push({
-          code: "IDB_UNSUPPORTED_TYPE_CONSTRUCTOR",
-          message: `Field "${model.name}.${field.name}" uses unsupported type constructor "${path.join(".")}()". IDB currently only supports temporal.updatedAt().`,
-          sourceId,
-          span: field.typeConstructor.span,
-        });
-        continue;
-      }
-      if (field.typeConstructor.args.length > 0) {
-        diagnostics.push({
-          code: "IDB_TEMPORAL_UPDATED_AT_TAKES_NO_ARGS",
-          message: `Field "${model.name}.${field.name}" — temporal.updatedAt() takes no arguments.`,
-          sourceId,
-          span: field.typeConstructor.span,
-        });
-        continue;
-      }
-      fields[field.name] = {
-        name: field.name,
-        nullable: field.optional,
-        codecId: SCALAR_TO_CODEC_ID["DateTime"]!,
-        list: false,
-      };
-      fieldExecutionDefaults.push({
-        fieldName: field.name,
-        onCreate: { id: TIMESTAMP_NOW_GENERATOR_ID },
-        onUpdate: { id: TIMESTAMP_NOW_GENERATOR_ID },
-      });
+      const path = field.typeConstructor.path.join(".");
+      diagnostics.push(
+        path === TEMPORAL_UPDATED_AT_PRESET
+          ? {
+              code: "PSL_UNRESOLVED_REFERENCE",
+              message: `${path}() was a field preset, and Prisma 8 removed field presets. Write DateTime${field.optional ? "?" : ""} @onCreate(now()) @onUpdate(now()).`,
+              sourceId,
+              span: field.typeConstructor.span,
+            }
+          : {
+              code: "IDB_UNSUPPORTED_TYPE_CONSTRUCTOR",
+              message: `Field "${model.name}.${field.name}" uses unsupported type constructor "${path}()". IDB has no type constructors.`,
+              sourceId,
+              span: field.typeConstructor.span,
+            }
+      );
       continue;
     }
 
@@ -446,33 +446,60 @@ function interpretModel(
       ...(enumType !== undefined ? { enumName: field.typeName } : {}),
     };
 
-    // `@updatedAt` (classic Prisma spelling) — same runtime semantics as
-    // `temporal.updatedAt()` above, just a different PSL surface for the
-    // same "fires on both create and update" mutation default.
-    const updatedAtAttr = fieldAttributes.updatedAt;
     const defaultAttr = fieldAttributes.default;
     if (defaultAttr) {
       sourceMap.set(["models", model.name, "fields", field.name, "literalDefault"], defaultAttr.span);
       sourceMap.set(["models", model.name, "fields", field.name, "executionDefault"], defaultAttr.span);
     }
 
-    if (updatedAtAttr && defaultAttr) {
+    // `@onCreate(fn())` and `@onUpdate(fn())`: a generator function the client
+    // runs when a record is created, or on every update. Each resolves through
+    // the generator functions bound to the field's codec.
+    const generated: { onCreate?: IdbGeneratorNode; onUpdate?: IdbGeneratorNode } = {};
+    let generatorFailed = false;
+    for (const phase of ["onCreate", "onUpdate"] as const) {
+      const attribute = fieldAttributes[phase];
+      if (attribute === undefined) continue;
+      const call = attribute.value;
+      if (field.list) {
+        diagnostics.push({
+          code: "PSL_LIST_EXECUTION_DEFAULT_UNSUPPORTED",
+          message: `Field "${model.name}.${field.name}" is a list and cannot use @${phase}(${call.text}). Lists have no per-element generated values; remove @${phase}(...).`,
+          sourceId,
+          span: attribute.span,
+        });
+        generatorFailed = true;
+        continue;
+      }
+      const resolution =
+        codecId === undefined || enumType !== undefined
+          ? undefined
+          : idbGeneratorFunctionRegistry.resolve(
+              { name: call.fn, args: call.args },
+              { codecId, typeParams: undefined, length: undefined }
+            );
+      if (resolution?.ok) {
+        generated[phase] = idbGeneratorNode(resolution.generator);
+        continue;
+      }
       diagnostics.push({
-        code: "IDB_UPDATED_AT_AND_DEFAULT_CONFLICT",
-        message: `Field "${model.name}.${field.name}" cannot combine @updatedAt with @default(...).`,
+        code: "PSL_GENERATOR_NOT_APPLICABLE",
+        message:
+          resolution?.reason === "refused"
+            ? `Field "${model.name}.${field.name}": ${resolution.message}`
+            : `Field "${model.name}.${field.name}": ${call.fn}() does not apply to codec "${codecId}".`,
         sourceId,
-        span: defaultAttr.span,
+        span: attribute.span,
       });
-      continue;
+      generatorFailed = true;
+    }
+    if (generatorFailed) continue;
+    const generatorAttr = fieldAttributes.onCreate ?? fieldAttributes.onUpdate;
+    if (generatorAttr !== undefined && defaultAttr === undefined) {
+      sourceMap.set(["models", model.name, "fields", field.name, "executionDefault"], generatorAttr.span);
     }
 
-    if (updatedAtAttr) {
-      fieldExecutionDefaults.push({
-        fieldName: field.name,
-        onCreate: { id: TIMESTAMP_NOW_GENERATOR_ID },
-        onUpdate: { id: TIMESTAMP_NOW_GENERATOR_ID },
-      });
-    } else if (defaultAttr) {
+    if (defaultAttr) {
       const { raw, form } = defaultAttr.value;
 
       const enumMember = enumType === undefined ? undefined : enumType.members.find((member) => raw === member.name);
@@ -557,6 +584,18 @@ function interpretModel(
             continue;
           }
 
+          // `@default` takes a value, not a generator: a generator function such
+          // as uuid() is written in `@onCreate(...)`, as in upstream's SQL PSL.
+          if (form.name !== "now" && idbGeneratorFunctionRegistry.has(form.name)) {
+            diagnostics.push({
+              code: "PSL_GENERATOR_IN_DEFAULT",
+              message: `Field "${model.name}.${field.name}": ${raw} is a value the client generates, and @default sets a database default only. Write @onCreate(${onCreateRewrite(raw)}) instead.`,
+              sourceId,
+              span: defaultAttr.span,
+            });
+            continue;
+          }
+
           const callArg = form.args.length > 0 ? form.args.join(", ") : undefined;
           const resolution = resolveDefaultFunctionGeneratorId(form.name, callArg);
           if (!resolution.ok) {
@@ -567,8 +606,20 @@ function interpretModel(
                   : "IDB_INVALID_DEFAULT_FUNCTION_ARGUMENT",
               message:
                 resolution.reason === "unknown-function"
-                  ? `Field "${model.name}.${field.name}" uses unsupported default function "${form.name}(...)". Supported: now(), uuid(), uuid(7), cuid(), autoincrement().`
+                  ? `Field "${model.name}.${field.name}" uses unsupported default function "${form.name}(...)". Supported: now(), autoincrement().`
                   : `Field "${model.name}.${field.name}" — @default(${form.name}(${callArg ?? ""})) has an unsupported argument.`,
+              sourceId,
+              span: defaultAttr.span,
+            });
+            continue;
+          }
+
+          // Checked here, before an `@onCreate(...)` can replace the create value
+          // and hide a `now()` the field cannot hold.
+          if (codecId !== SCALAR_TO_CODEC_ID["DateTime"] || enumType !== undefined || field.list) {
+            diagnostics.push({
+              code: "IDB_INVALID_DEFAULT_VALUE",
+              message: `Field "${model.name}.${field.name}" uses now(), which requires a DateTime field.`,
               sourceId,
               span: defaultAttr.span,
             });
@@ -581,6 +632,20 @@ function interpretModel(
           });
         }
       }
+    }
+
+    if (generated.onCreate !== undefined || generated.onUpdate !== undefined) {
+      // A `@default(...)` may already give this field a create value. `@onCreate`
+      // replaces it, as a client generator always supplies the value before a SQL
+      // database default could; `@onUpdate` joins it.
+      const existing = fieldExecutionDefaults.findIndex(({ fieldName }) => fieldName === field.name);
+      const merged: FieldExecutionDefault = {
+        ...(existing === -1 ? { fieldName: field.name } : fieldExecutionDefaults[existing]!),
+        ...(generated.onCreate !== undefined ? { onCreate: generated.onCreate } : {}),
+        ...(generated.onUpdate !== undefined ? { onUpdate: generated.onUpdate } : {}),
+      };
+      if (existing === -1) fieldExecutionDefaults.push(merged);
+      else fieldExecutionDefaults[existing] = merged;
     }
 
     // @unique field attribute → unique index

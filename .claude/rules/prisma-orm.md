@@ -20,6 +20,12 @@ applyTo: "packages/prisma-orm/**,apps/prisma-orm-*/**,tests/prisma-idb-cli/**"
 - The CLI plans IndexedDB migrations. The browser applies them, as written.
 - Each package exposes what it owns through `package.json` `exports`. Import across packages through those entry points, never through `src/` paths.
 
+## Options and wrappers
+
+- When you add an option to a lower-level API, check every wrapper that constructs it. Forward the option, or document that the wrapper doesn't support it. For example, `createSqlSync` wraps `createSqlSyncAdapter`.
+- Requests that carry credentials or auth headers set an explicit `redirect` policy.
+- Scripts and `check` tasks work on a fresh checkout, from any working directory, and without a running database for static checks. Generate what they import first. Never delete a real file or folder the script didn't create.
+
 ## Upstream parity
 
 Behavior should match upstream Prisma 8 unless an ADR records the difference. Pin upstream links to a commit SHA, not a branch. Use the `port-prisma-behavior` skill for the procedure.
