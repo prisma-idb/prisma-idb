@@ -677,4 +677,24 @@ export const authoringScenarios: AuthoringScenario[] = [
     `,
     ts: { models: { User: { store: "user", key: [], fields: { name: "String" } } } },
   },
+  {
+    name: "decimal defaults keep their digits",
+    psl: `
+      model Price {
+        id     String  @id
+        exact  Decimal @default(1234567890123456789.123)
+        simple Decimal @default(1.5)
+      }
+    `,
+    ts: {
+      models: {
+        Price: {
+          store: "price",
+          key: "id",
+          fields: { id: "String", exact: "Decimal", simple: "Decimal" },
+          defaults: { exact: "1234567890123456789.123", simple: 1.5 },
+        },
+      },
+    },
+  },
 ];

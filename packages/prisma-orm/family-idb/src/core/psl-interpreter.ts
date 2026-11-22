@@ -50,6 +50,8 @@ function onCreateRewrite(call: string): string {
   return call.replace(/\s/g, "") === "cuid()" ? "cuid(2)" : call;
 }
 
+const DECIMAL_CODEC_ID = "idb/decimal@1";
+
 /** A resolved field default before it is attached to its definition field. */
 type FieldExecutionDefault = IdbExecutionDefaultNode & { readonly fieldName: string };
 
@@ -556,7 +558,9 @@ function interpretModel(
         });
         fieldDefaults[field.name] = value;
       } else {
-        const literal = defaultLiteralValue(form);
+        // A Decimal keeps the digits as written; a JS number would round them.
+        const literal =
+          form.kind === "number" && codecId === DECIMAL_CODEC_ID ? { value: form.text } : defaultLiteralValue(form);
         if (literal) {
           fieldExecutionDefaults.push({
             fieldName: field.name,
