@@ -1825,9 +1825,26 @@ describe("field attributes IDB doesn't read", () => {
     expect(codes(`model Item {\n  id String @id\n  ${declaration}\n}`)).toEqual([diagnostic]);
   });
 
+  it.each([
+    [
+      "an unknown model attribute",
+      "@@whatever",
+      ["PSL_UNSUPPORTED_MODEL_ATTRIBUTE", 'Model "Item" uses unsupported attribute "@@whatever".'],
+    ],
+    [
+      "a second @@map",
+      '@@map("a")\n  @@map("b")',
+      ["PSL_DUPLICATE_ATTRIBUTE", '`@@map` declared more than once on model "Item".'],
+    ],
+  ])("refuses %s instead of dropping it", (_, declaration, diagnostic) => {
+    expect(codes(`model Item {\n  id String @id\n  ${declaration}\n}`)).toEqual([diagnostic]);
+  });
+
   it("accepts @map and @db.* from a schema shared with a SQL server", () => {
-    expect(codes(`model Item {\n  id String @id @db.Uuid\n  name String @map("item_name") @db.VarChar(20)\n}`)).toEqual(
-      []
-    );
+    expect(
+      codes(
+        `model Item {\n  id String @id @db.Uuid\n  name String @map("item_name") @db.VarChar(20)\n  @@schema("public")\n}`
+      )
+    ).toEqual([]);
   });
 });
