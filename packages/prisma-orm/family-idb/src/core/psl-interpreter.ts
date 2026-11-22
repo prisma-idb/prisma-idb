@@ -177,7 +177,6 @@ function interpretEnums(
 
 // ── Per-model interpretation result ───────────────────────────────────────────
 
-/** A lowered model with mutable relations for the backrelation pass. */
 /** A relation field that holds a foreign key to another model. */
 interface ForeignKeyRelation {
   readonly fieldName: string;
@@ -186,6 +185,7 @@ interface ForeignKeyRelation {
   readonly targetFields: string[];
 }
 
+/** A lowered model with mutable relations for the backrelation pass. */
 interface InterpretedModel {
   readonly definition: IdbModelNode & { readonly relations: IdbRelationNode[] };
   /** FK-side declarations keyed by target model for backrelation resolution. */

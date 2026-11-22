@@ -41,7 +41,6 @@ const scalarTypes: Record<string, Type> = {
 // Contracts and lookup objects are immutable for the lifetime of a runtime.
 const validators = new WeakMap<ContractWithDomain, WeakMap<ValidationCodecLookup, Map<string, Type>>>();
 
-/** Builds a native validator and rejects unsupported types with their field's owner. */
 /**
  * A value JSON can represent: `null`, a string, a boolean, a finite number, or an
  * array or plain object of such values. IndexedDB could store a `Map`, a `Date`
@@ -60,6 +59,7 @@ function isJsonValue(value: unknown, ancestors: Set<object>): boolean {
   return valid;
 }
 
+/** Builds a native validator and rejects unsupported types with their field's owner. */
 function buildType(
   contract: ContractWithDomain,
   fieldType: ContractFieldType,
