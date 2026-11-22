@@ -47,7 +47,7 @@ import {
 import { absentAsNull } from "@prisma-idb/target-idb/runtime";
 import { buildCatalog } from "./planner/catalog";
 import { fieldValueChanged, preserveDecimalKeySpelling } from "./decimal-identity";
-import { lowerExists, lowerRows, lowerWrite, type WriteRequest } from "./planner/lower";
+import { lowerExists, lowerRows, lowerWrite, type RowsRequest, type WriteRequest } from "./planner/lower";
 import { planQuery } from "./planner/plan";
 import { withMutationScope, type IdbQueryExecutorWithTransaction } from "./mutation-scope";
 import { createRelationMutator, isRelationMutationCallback, isRelationMutationDescriptor } from "./relation-mutator";
@@ -626,10 +626,16 @@ export async function readMutationRows(
   contract: IdbContract,
   modelName: string,
   where: IdbFilterExpr | undefined,
-  take?: number
+  take?: number,
+  window: RowWindow = {}
 ): Promise<Record<string, unknown>[]> {
   const catalog = buildCatalog(contract, getStoreName(contract, modelName), modelName);
-  const request = { ...(where === undefined ? {} : { where }), ...(take === undefined ? {} : { take }) };
+  const request: RowsRequest = {
+    ...(where === undefined ? {} : { where }),
+    ...(window.orderBy === undefined ? {} : { orderBy: window.orderBy }),
+    ...(window.skip === undefined ? {} : { skip: window.skip }),
+    ...(take === undefined ? {} : { take }),
+  };
   const lowered = lowerRows(catalog, planQuery(catalog, request), makePlanMeta(contract), request);
   return lowered.finish(await executeMutationPlan(scope, lowered.idbPlan));
 }
@@ -1297,6 +1303,12 @@ function collectUpdateStoreNames(
   };
 }
 
+/** The order and offset that pick the row a single-row update changes, as `first()` would. */
+export interface RowWindow {
+  readonly orderBy?: Readonly<Record<string, "asc" | "desc">>;
+  readonly skip?: number;
+}
+
 /** The executor, contract, filters, and scalar patch for a validated update. */
 interface ScalarUpdateOptions {
   readonly operations?: readonly IdbFieldOperation[];
@@ -1307,11 +1319,15 @@ interface ScalarUpdateOptions {
   readonly data: Record<string, unknown>;
 }
 
-/** Updates the first matching row with FK validation and referential actions. */
+/**
+ * Updates the row `first()` would return for the same chain, with FK validation and referential actions. The
+ * order and offset pick the row; a limit of 0 matches no row, so nothing is written.
+ */
 export async function executeScalarUpdateWithFkValidation(
-  options: ScalarUpdateOptions
+  options: ScalarUpdateOptions & { readonly window?: RowWindow & { readonly take?: number } }
 ): Promise<Record<string, unknown> | null> {
-  const rows = await executeScalarUpdates(options, 1);
+  if (options.window?.take === 0) return null;
+  const rows = await executeScalarUpdates(options, 1, options.window);
   return rows[0] ?? null;
 }
 
@@ -1332,7 +1348,11 @@ export async function executeBulkUpdateWithFkValidation(
 }
 
 /** Shares validation and atomic writes; only single-row updates limit the scan. */
-async function executeScalarUpdates(options: ScalarUpdateOptions, take?: 1): Promise<Record<string, unknown>[]> {
+async function executeScalarUpdates(
+  options: ScalarUpdateOptions,
+  take?: 1,
+  window: RowWindow = {}
+): Promise<Record<string, unknown>[]> {
   const { executor, contract, modelName, filters, data } = options;
   const storeName = getStoreName(contract, modelName);
   const defaults = contract.execution?.mutations.defaults;
@@ -1354,7 +1374,9 @@ async function executeScalarUpdates(options: ScalarUpdateOptions, take?: 1): Pro
     if (!needsRowForFks && !defaultsPerRow) await validateScalarFks(scope, contract, modelName, patch);
     const meta = makePlanMeta(contract);
     const where = filters.length === 0 ? undefined : andExpr(filters);
-    if (!enforcesOnUpdate && !needsRowForFks && !options.operations?.length && !defaultsPerRow) {
+    // A cursor write visits rows in key order, so an order or offset needs the rows read first.
+    const windowed = window.orderBy !== undefined || window.skip !== undefined;
+    if (!windowed && !enforcesOnUpdate && !needsRowForFks && !options.operations?.length && !defaultsPerRow) {
       return writeMutationRows(scope, contract, modelName, {
         write: "put-merged",
         patch,
@@ -1365,7 +1387,7 @@ async function executeScalarUpdates(options: ScalarUpdateOptions, take?: 1): Pro
 
     // Enforcement needs the preimage for changed referenced fields and for
     // compound foreign keys whose other fields are absent from the patch.
-    const oldRows = await readMutationRows(scope, contract, modelName, where, take);
+    const oldRows = await readMutationRows(scope, contract, modelName, where, take, window);
     const keyPath = getKeyPath(contract, modelName);
     const results: Record<string, unknown>[] = [];
     for (const oldRow of oldRows) {
