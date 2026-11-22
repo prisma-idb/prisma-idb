@@ -82,6 +82,13 @@ export function createSqlSyncAdapter(options: CreateSqlSyncAdapterOptions): SqlS
     contractCheck = "required",
     writePolicies = {},
   } = options;
+  // Model access assumes PostgreSQL's `public` schema and its codecs. Other SQL targets
+  // are refused here rather than failing later, on the first push or pull.
+  if (contract.target !== "postgres") {
+    throw new Error(
+      `createSqlSyncAdapter: only PostgreSQL contracts are supported, but this contract targets "${String(contract.target)}".`
+    );
+  }
   const models = new Set(Object.keys(domainModelsAtDefaultNamespace(contract.domain)));
   for (const model of Object.keys(writePolicies)) {
     if (!models.has(model)) {
