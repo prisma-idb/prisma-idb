@@ -92,9 +92,16 @@ export interface IdbDefaultValue {
     | { readonly kind: "number"; readonly value: number; readonly text: string }
     | { readonly kind: "tagged"; readonly written: WrittenScalar }
     | { readonly kind: "identifier"; readonly name: string }
-    | { readonly kind: "list" }
+    | { readonly kind: "list"; readonly elements: readonly IdbListDefaultElement[] }
     | { readonly kind: "call"; readonly name: string; readonly args: readonly string[] };
 }
+
+/** One element of a `@default([...])` list: a plain literal or an enum member. */
+export type IdbListDefaultElement =
+  | { readonly kind: "string"; readonly value: string }
+  | { readonly kind: "boolean"; readonly value: boolean }
+  | { readonly kind: "number"; readonly value: number; readonly text: string }
+  | { readonly kind: "identifier"; readonly name: string };
 
 /** The source text of one syntax node without its surrounding whitespace. */
 function sourceText(node: SyntaxNode): string {
@@ -184,8 +191,18 @@ function defaultValueArg(): ArgType<IdbDefaultValue, AttributeCtx> {
       mapArg(numLiteral(), ({ text }) => ({ kind: "number" as const, value: Number(text), text })),
       taggedDefault(),
       mapArg(identifier(), (name) => ({ kind: "identifier" as const, name })),
-      // Bind list defaults so the interpreter can accept [] and diagnose other literals.
-      mapArg(list(oneOf(identifier(), str(), numLiteral(), bool())), () => ({ kind: "list" as const })),
+      // Keep each element's form, so the interpreter can read it as the field's element type.
+      mapArg(
+        list(
+          oneOf(
+            mapArg(bool(), (value): IdbListDefaultElement => ({ kind: "boolean", value })),
+            mapArg(str(), (value): IdbListDefaultElement => ({ kind: "string", value })),
+            mapArg(numLiteral(), ({ text }): IdbListDefaultElement => ({ kind: "number", value: Number(text), text })),
+            mapArg(identifier(), (name): IdbListDefaultElement => ({ kind: "identifier", name }))
+          )
+        ),
+        (elements) => ({ kind: "list" as const, elements })
+      ),
       mapArg(anyFunctionCall(), (_call, arg) => callForm(arg))
     ),
     (form, arg) => ({ raw: sourceText(arg.syntax), form })

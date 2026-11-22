@@ -337,13 +337,24 @@ function storedCreateDefault(
   storeName: string,
   name: string,
   field: IdbRecordField
-): string | number | boolean | [] | undefined {
+): string | number | boolean | (string | number | boolean)[] | undefined {
   const spec = contract.execution?.mutations?.defaults?.find(
     (entry) => entry.ref.entry === storeName && entry.ref.field === name
   )?.onCreate;
   const value = spec?.params?.["value"];
   if (spec?.id !== "literal" || field.dict || field.type.kind !== "scalar") return undefined;
-  if (field.many) return Array.isArray(value) && value.length === 0 ? [] : undefined;
+  if (field.many) {
+    // Each element is stored the way a scalar default of the element type is.
+    if (!Array.isArray(value)) return undefined;
+    const stored: (string | number | boolean)[] = [];
+    for (const element of value) {
+      if (typeof element !== "string" && typeof element !== "number" && typeof element !== "boolean") return undefined;
+      const one = storedLiteralDefault(field, element);
+      if (one === undefined) return undefined;
+      stored.push(one);
+    }
+    return stored;
+  }
   if (typeof value !== "string" && typeof value !== "number" && typeof value !== "boolean") return undefined;
   if (typeof value === "number" && !Number.isFinite(value)) return undefined;
   return storedLiteralDefault(field, value);

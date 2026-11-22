@@ -75,10 +75,52 @@ describe("scalar lists", () => {
     expect(ts.storage.stores["sample"]!.record!.fields["values"]!.many).toEqual({ elementNullable: false });
   });
 
-  it.each(scalars)("rejects optional %s lists and nonempty defaults", (scalar) => {
+  it.each(scalars)("rejects optional %s lists", (scalar) => {
     expect(psl(`${scalar}[]?`).ok).toBe(false);
-    expect(psl(`${scalar}[]`, '@default(["x"])').ok).toBe(false);
-    expect(() => contract(`${scalar}[]`, { values: ["x"] })).toThrow(/Only an empty list default/);
+  });
+
+  // PSL source, and the value both front ends store for it.
+  const nonEmptyDefaults = [
+    ["String", '["a", "b"]', ["a", "b"]],
+    ["Int", "[1, -2]", [1, -2]],
+    ["Float", "[1.5]", [1.5]],
+    ["Decimal", "[1.10, 2]", ["1.10", "2"]],
+    ["Boolean", "[true, false]", [true, false]],
+    ["Role", "[USER, ADMIN]", ["USER", "ADMIN"]],
+  ] as const;
+
+  it.each(nonEmptyDefaults)(
+    "emits equivalent PSL and TS metadata for a nonempty %s[] default",
+    (scalar, source, value) => {
+      const ts = contract(`${scalar}[]`, { values: value });
+      const result = psl(`${scalar}[]`, `@default(${source})`);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value).toEqual(ts);
+      expect(ts.execution?.mutations?.defaults).toEqual([
+        expect.objectContaining({ onCreate: { kind: "generator", id: "literal", params: { value } } }),
+      ]);
+    }
+  );
+
+  // Element types a scalar literal default can't hold either, and elements of the wrong type.
+  const invalidDefaults = [
+    ["BigInt", "[1]", [1], "IDB_INVALID_DEFAULT_VALUE"],
+    ["DateTime", '["2024-01-01"]', ["2024-01-01"], "IDB_INVALID_DEFAULT_VALUE"],
+    ["Bytes", '["x"]', ["x"], "IDB_INVALID_DEFAULT_VALUE"],
+    ["Json", '["x"]', ["x"], "IDB_INVALID_DEFAULT_VALUE"],
+    ["String", '["a", 1]', ["a", 1], "IDB_INVALID_DEFAULT_VALUE"],
+    ["Int", "[2147483648]", [2147483648], "IDB_INVALID_DEFAULT_VALUE"],
+    ["Boolean", '["true"]', ["true"], "IDB_INVALID_DEFAULT_VALUE"],
+    ["Role", "[USER, GUEST]", ["USER", "GUEST"], "IDB_INVALID_ENUM_DEFAULT"],
+  ] as const;
+
+  it.each(invalidDefaults)("rejects the %s[] default %s in both front ends", (scalar, source, value, code) => {
+    const result = psl(`${scalar}[]`, `@default(${source})`);
+    expect(result.ok).toBe(false);
+    if (!result.ok)
+      expect(result.failure.diagnostics).toEqual(expect.arrayContaining([expect.objectContaining({ code })]));
+    expect(() => contract(`${scalar}[]`, { values: value })).toThrow(new RegExp(code));
   });
 
   it.each(scalars)("rejects %s lists in single and compound primary keys", (scalar) => {
@@ -152,6 +194,15 @@ describe("scalar lists", () => {
     expect(emitted).toMatchObject({
       execution: { mutations: { defaults: [{ onCreate: { params: { value: [] } } }] } },
     });
+  });
+
+  it("backfills an added list with its nonempty default", () => {
+    expect(operations(contract(), contract("Decimal[]", { values: [1.5, "2.50"] }))).toMatchObject([
+      { kind: "transformRecords", fields: { values: { kind: "defaultIfMissing", value: ["1.5", "2.50"] } } },
+    ]);
+    expect(operations(contract(), contract("Role[]", { values: ["ADMIN"] }))).toMatchObject([
+      { kind: "transformRecords", fields: { values: { kind: "defaultIfMissing", value: ["ADMIN"] } } },
+    ]);
   });
 
   it("requires an explicit transform unless the added list declares []", () => {

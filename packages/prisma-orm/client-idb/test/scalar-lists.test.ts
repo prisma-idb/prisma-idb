@@ -191,3 +191,33 @@ it("clones declared defaults and rolls back a bulk operation if a later stored l
   ).rejects.toThrow(/migrate the store first/);
   expect((await samples.findUnique("a"))?.["values"]).toEqual([]);
 });
+
+it("fills a nonempty list default on every create path, with its own array per row", async () => {
+  const contract = defineContract({
+    family: idbFamily,
+    target: idbTarget,
+    enums: { Role: ["ADMIN", "USER"] },
+    models: {
+      Sample: {
+        store: "samples",
+        key: "id",
+        fields: { id: "String", tags: "String[]", roles: "Role[]" },
+        defaults: { tags: ["new", "unverified"], roles: ["USER"] },
+      },
+    },
+  });
+  const client = await createAutoMigratingIdbClient({
+    contractSpace: buildContractSpaceFixture([contract]),
+    dbName: `scalar-lists-${crypto.randomUUID()}`,
+  });
+  opened.push(client);
+  const samples = client.orm["samples"]!;
+  const first = await samples.create({ id: "a" });
+  expect(first).toEqual({ id: "a", tags: ["new", "unverified"], roles: ["USER"] });
+  (first["tags"] as string[]).push("local-only");
+  expect(await samples.createAll([{ id: "b" }, { id: "c", tags: [] }]).toArray()).toEqual([
+    { id: "b", tags: ["new", "unverified"], roles: ["USER"] },
+    { id: "c", tags: [], roles: ["USER"] },
+  ]);
+  expect(await samples.findUnique("a")).toEqual({ id: "a", tags: ["new", "unverified"], roles: ["USER"] });
+});

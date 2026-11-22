@@ -147,6 +147,32 @@ export const authoringScenarios: AuthoringScenario[] = [
     ts: { models: { User: { store: "user", key: "id", fields: { id: "String", tags: "String[]" } } } },
   },
   {
+    name: "nonempty list defaults",
+    psl: `
+      enum Role {
+        USER
+        ADMIN
+      }
+      model User {
+        id     String    @id
+        tags   String[]  @default(["new", "unverified"])
+        scores Decimal[] @default([1.10])
+        roles  Role[]    @default([USER])
+      }
+    `,
+    ts: {
+      enums: { Role: ["USER", "ADMIN"] },
+      models: {
+        User: {
+          store: "user",
+          key: "id",
+          fields: { id: "String", tags: "String[]", scores: "Decimal[]", roles: "Role[]" },
+          defaults: { tags: ["new", "unverified"], scores: ["1.10"], roles: ["USER"] },
+        },
+      },
+    },
+  },
+  {
     name: "enum named like an Object.prototype key",
     divergence: "The TS API keeps rejecting an enum named like an inherited object key.",
     psl: `
