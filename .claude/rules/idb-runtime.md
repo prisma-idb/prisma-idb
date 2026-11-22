@@ -1,5 +1,5 @@
 ---
-description: "IndexedDB runtime code: transaction lifetime, no stray await, browser-safe APIs."
+description: "IndexedDB runtime code: transaction lifetime, no stray await, what every write path must check, browser-safe APIs."
 paths: "packages/prisma-orm/{driver-idb,runtime-idb,client-idb,adapter-idb,sync-extension-idb}/src/**"
 globs: "packages/prisma-orm/driver-idb/src/**, packages/prisma-orm/runtime-idb/src/**, packages/prisma-orm/client-idb/src/**, packages/prisma-orm/adapter-idb/src/**, packages/prisma-orm/sync-extension-idb/src/**"
 alwaysApply: false
@@ -19,6 +19,18 @@ An IndexedDB transaction commits as soon as no request is pending and control re
 - Nested ORM writes compute the stores they need up front. Code that runs inside a transaction must use only the stores it declared.
 
 See ADR 005 (event-driven execution), ADR 006 (collect then yield) and ADR 007 (two transaction APIs) for the reasoning.
+
+## Every write path
+
+A path that writes rows, nested and bulk writes included, must do all of these for the value it actually writes:
+
+- Validate the record and its enum values (`assertValidRecord`, `assertEnumValues`).
+- Check foreign keys on every write (`validateScalarFks`), once per row when values differ per row (ADR 009).
+- Run `onUpdate` and `onDelete` referential actions (`applyReferentialActionsForRow`, `applyReferentialActionsForRowOnUpdate`), and declare the stores they touch before the transaction opens (ADR 009, ADR 005).
+- Never change a primary key (ADR 020).
+- Resolve defaults once per row when a generator gives each row its own value, such as `uuid()`. `now()` is shared across one call.
+
+A generated value can be a foreign key or a field other rows reference. Tests for a write path cover those fields, not only plain columns.
 
 ## Browser-safe code only
 
