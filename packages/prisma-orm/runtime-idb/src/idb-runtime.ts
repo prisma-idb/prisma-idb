@@ -18,6 +18,7 @@ import type {
 } from "@prisma-idb/adapter-idb/runtime";
 import type { IdbPlanBody, IdbRuntimeDriverInstance, IdbTransactionScope } from "@prisma-idb/driver-idb/runtime";
 import type { IdbMiddleware } from "./idb-middleware";
+import { observeTransaction } from "./transaction-observer";
 
 /**
  * Options for creating an IDB runtime instance.
@@ -72,9 +73,10 @@ export interface IdbRuntime {
    * Open a multi-store IDB transaction and return an `IdbTransactionScope`.
    *
    * The scope's `execute(plan)` runs `IdbAtomicPlan`s directly inside the
-   * transaction. Middleware is bypassed, so transaction reads reach the driver
-   * without a cached result. `commit()` resolves on `tx.oncomplete`;
-   * `rollback()` calls `tx.abort()`.
+   * transaction. Middleware observes each statement without being awaited and
+   * cannot intercept it, so transaction reads reach the driver without a cached
+   * result. `commit()` resolves on `tx.oncomplete`, after the transaction's
+   * `activityFinalized` hooks; `rollback()` calls `tx.abort()`.
    *
    * Used by `withMutationScope()` in `client-idb`.
    */
@@ -120,10 +122,9 @@ function buildMiddlewareContext(contract: Record<string, unknown>): ActivityCont
       warn: () => undefined,
       error: () => undefined,
     },
-    // Always "runtime": IdbTransactionScope.execute() bypasses the middleware
-    // chain entirely, so middleware is only ever invoked from the top-level
-    // query()/execute() paths, which is exactly the "runtime" scope. There is
-    // no IDB connection pool, so "connection" is not applicable either.
+    // Top-level query()/execute() run in "runtime" scope. Statements inside a
+    // transaction get "transaction" from the transaction observer. There is no
+    // IDB connection pool, so "connection" is not applicable.
     scope: "runtime",
     contentHash: async (exec: ExecutionPlan) => hashContent(canonicalStringify(hashablePlan(exec))),
   };
@@ -214,6 +215,8 @@ class IdbRuntimeImpl extends RuntimeCore<IdbQueryPlan, IdbPlanBody, IdbMiddlewar
   readonly #adapter: IdbRuntimeAdapterInstance;
   readonly #driver: IdbRuntimeDriverInstance;
   readonly #contract: Record<string, unknown>;
+  readonly #middleware: readonly IdbMiddleware[];
+  readonly #ctxFields: ActivityContextFields;
 
   constructor(options: IdbRuntimeOptions) {
     const ctx = options.ctx ?? buildMiddlewareContext(options.contract);
@@ -222,6 +225,8 @@ class IdbRuntimeImpl extends RuntimeCore<IdbQueryPlan, IdbPlanBody, IdbMiddlewar
       checkMiddlewareCompatibility(mw, "idb", "idb");
     }
     super({ middleware, ctx });
+    this.#middleware = middleware;
+    this.#ctxFields = ctx;
     this.#adapter = options.adapter;
     this.#driver = options.driver;
     this.#contract = options.contract;
@@ -340,7 +345,8 @@ class IdbRuntimeImpl extends RuntimeCore<IdbQueryPlan, IdbPlanBody, IdbMiddlewar
 
   async transaction(storeNames: string[], mode: IDBTransactionMode = "readwrite"): Promise<IdbTransactionScope> {
     await this.#ensureMarkerChecked();
-    return this.#driver.transaction(storeNames, mode);
+    if (this.#middleware.length === 0) return this.#driver.transaction(storeNames, mode);
+    return observeTransaction(() => this.#driver.transaction(storeNames, mode), this.#middleware, this.#ctxFields);
   }
 
   override async close(): Promise<void> {

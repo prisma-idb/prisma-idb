@@ -26,12 +26,23 @@ import type { IdbLoweredPlan } from "@prisma-idb/adapter-idb/runtime";
  * - Observation-only hooks (telemetry, cache population, logging) work
  *   correctly — they just receive rows from an already-complete scan.
  *
- * ## Which statements middleware sees
+ * ## Statements inside a transaction
  *
- * Only top-level `query()` and `execute()` calls run as activities.
- * `IdbTransactionScope.execute()` bypasses middleware, so `activityStarted`,
- * `beforeEncode` and `activityEnded` never fire for statements inside a
- * transaction, and `ctx.scope` is always `"runtime"`.
+ * Top-level `query()` and `execute()` calls run the full middleware chain.
+ * Statements inside a transaction (`db.transaction()`, and the scoped reads and
+ * writes of nested and foreign-key-checked mutations) are observed instead:
+ *
+ * - The transaction is an activity with `ctx.scope === "transaction"`. Its
+ *   `activityStarted` hooks are awaited before IndexedDB opens it.
+ * - Each statement's `activityStarted`, `beforeEncode`, `onRow` and
+ *   `activityEnded` hooks are called but not awaited, because IndexedDB commits
+ *   a transaction that waits. Only their synchronous part runs before the next
+ *   request. An async `beforeEncode` is warned about once.
+ * - `intercept` hooks are not consulted, so a cache never serves a read inside
+ *   a transaction.
+ * - When the transaction completes or aborts, every statement and then the
+ *   transaction get `activityFinalized` with `committed`, `rolled-back`, or
+ *   `unknown`. `commit()` resolves after those hooks.
  */
 export interface IdbMiddleware extends RuntimeMiddleware<IdbLoweredPlan> {
   readonly familyId?: "idb";

@@ -4,6 +4,7 @@ import type { ContractSpace, MigrationPackage } from "@prisma/orm-framework/comp
 import { APP_SPACE_ID } from "@prisma/orm-framework/components/control";
 import type { IdbExtensionSpace } from "@prisma-idb/family-idb/control";
 import { MARKER_STORE_NAME } from "@prisma-idb/driver-idb/runtime";
+import type { IdbMiddleware } from "@prisma-idb/runtime-idb/runtime";
 // Browser-safe (WebCrypto) hash — the framework's `@prisma/orm-toolchain/migration-tools/hash`
 // uses `node:crypto`, which is unavailable in the browser.
 import { computeMigrationHash } from "./migration-hash";
@@ -45,6 +46,8 @@ export interface AutoMigrateClientOptions<TContract extends IdbContract> {
    * global scope has no IndexedDB, for example fake-indexeddb outside a browser.
    */
   readonly keyRange?: typeof IDBKeyRange;
+  /** Middleware for the client's runtime, as `createIdbClient` takes it. Migration runs without it. */
+  readonly middleware?: readonly IdbMiddleware[];
   /**
    * Additional contract spaces from IDB extensions.
    *
@@ -118,6 +121,7 @@ export async function createAutoMigratingIdbClient<TContract extends IdbContract
     dbName: options.dbName,
     factory,
     ...(options.keyRange !== undefined ? { keyRange: options.keyRange } : {}),
+    ...(options.middleware !== undefined ? { middleware: options.middleware } : {}),
   });
 }
 

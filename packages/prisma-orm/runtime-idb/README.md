@@ -16,6 +16,10 @@ A raw closure without a corresponding structured identity gets a fresh nonce on 
 
 Middleware that populates a cache in a later hook should compute the hash once per operation and retain it in `ctx.state(key)`, which holds one object per statement. Custom context overrides supply their own `contentHash` implementation and must preserve these correctness guarantees.
 
+## Middleware inside transactions
+
+Statements inside a transaction, from `db.transaction()` or from a nested, cascading or foreign-key-checked write, run as activities beneath a transaction activity with `ctx.scope === "transaction"`. IndexedDB commits a transaction that waits, so their `activityStarted`, `beforeEncode`, `onRow` and `activityEnded` hooks are called but not awaited, and a hook's error is logged instead of failing the statement. `intercept` hooks are not consulted, so a cache never serves a read inside a transaction. When the transaction completes or aborts, each statement and then the transaction get `activityFinalized` with `committed`, `rolled-back` or `unknown`, and `commit()` resolves after those hooks.
+
 ## License
 
 MIT
