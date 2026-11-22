@@ -7,6 +7,7 @@ import {
   type GeneratorFunctionRegistry,
   type MutationDefaultGeneratorDescriptor,
   assembleGeneratorFunctions,
+  createGeneratorHelpers,
   singleGeneratorBinding,
 } from "@prisma/orm-framework/components/components";
 import { CUID_VERSION, NANOID_SIZE, UUID_VERSIONS } from "@prisma/orm-framework/ids";
@@ -20,7 +21,11 @@ import {
   optional,
   refineArg,
 } from "@prisma/orm-framework/psl-parser";
+import type { ExecutionMutationDefaultValue } from "@prisma/orm-framework/contract/types";
+import type { IdbMutationDefaultGeneratorId } from "@prisma-idb/target-idb/pack";
 import { notOk, ok } from "@prisma/orm-framework/utils/result";
+import type { IdbGeneratorNode } from "./contract-definition";
+import idbTarget from "@prisma-idb/target-idb/pack";
 import { idbScalarTypes } from "./psl-scalars";
 
 /*
@@ -34,7 +39,6 @@ import { idbScalarTypes } from "./psl-scalars";
 
 const STRING_CODEC = idbScalarTypes.String.output.codecId;
 const DATE_CODEC = idbScalarTypes.DateTime.output.codecId;
-const INT_CODEC = idbScalarTypes.Int.output.codecId;
 
 const NANOID_DEFAULT_SIZE = 21;
 
@@ -123,12 +127,17 @@ function checkedInteger<Allowed extends number>(
   });
 }
 
-/** The integer data type that reads a generator function's arguments. */
-function integerOf(dataTypes: DataTypeSupport): DataTypeId {
-  const integer = dataTypes.dataTypeOfCodec(INT_CODEC);
-  if (integer === undefined) throw new Error(`The IDB data types do not include the integer codec "${INT_CODEC}".`);
-  return integer;
-}
+/**
+ * The integer data type that reads a generator function's arguments, as in
+ * `uuid(7)`. It is fixed rather than looked up in the data types a signature is
+ * built against, because `createGeneratorHelpers` builds each signature against
+ * an empty set only to read its argument names.
+ */
+const INTEGER: DataTypeId = (() => {
+  const integer = idbTarget.dataTypes.find((dataType) => dataType.id === "idb/int32");
+  if (integer === undefined) throw new Error('The IDB target does not register the "idb/int32" data type.');
+  return integer.id;
+})();
 
 function uuidSignature(dataTypes: DataTypeSupport) {
   const versions = [UUID_VERSIONS.v4, UUID_VERSIONS.v7] as const;
@@ -138,14 +147,10 @@ function uuidSignature(dataTypes: DataTypeSupport) {
       {
         key: "version",
         type: optional(
-          checkedInteger<(typeof versions)[number]>(
-            integerOf(dataTypes),
-            dataTypes,
-            listed(versions),
-            (version, written) =>
-              versions.some((allowed) => allowed === version)
-                ? undefined
-                : `uuid: version must be ${UUID_VERSIONS.v4} or ${UUID_VERSIONS.v7}, got ${written}`
+          checkedInteger<(typeof versions)[number]>(INTEGER, dataTypes, listed(versions), (version, written) =>
+            versions.some((allowed) => allowed === version)
+              ? undefined
+              : `uuid: version must be ${UUID_VERSIONS.v4} or ${UUID_VERSIONS.v7}, got ${written}`
           )
         ),
         documentation: `The UUID version: \`${UUID_VERSIONS.v4}\` or \`${UUID_VERSIONS.v7}\`. Defaults to \`${UUID_VERSIONS.v4}\`.`,
@@ -160,12 +165,8 @@ function cuidSignature(dataTypes: DataTypeSupport) {
     positional: [
       {
         key: "version",
-        type: checkedInteger<typeof CUID_VERSION>(
-          integerOf(dataTypes),
-          dataTypes,
-          listed([CUID_VERSION]),
-          (version, written) =>
-            version === CUID_VERSION ? undefined : `cuid: version must be ${CUID_VERSION}, got ${written}`
+        type: checkedInteger<typeof CUID_VERSION>(INTEGER, dataTypes, listed([CUID_VERSION]), (version, written) =>
+          version === CUID_VERSION ? undefined : `cuid: version must be ${CUID_VERSION}, got ${written}`
         ),
         documentation: `The CUID version. Only \`${CUID_VERSION}\` is supported.`,
       },
@@ -181,7 +182,7 @@ function nanoidSignature(dataTypes: DataTypeSupport) {
         key: "size",
         type: optional(
           checkedInteger<number>(
-            integerOf(dataTypes),
+            INTEGER,
             dataTypes,
             { label: `integer from ${NANOID_SIZE.min} to ${NANOID_SIZE.max}`, suggestions: [] },
             (size, written) =>
@@ -231,3 +232,21 @@ export const idbGeneratorFunctionRegistry: GeneratorFunctionRegistry = assembleG
     controlMutationDefaults: { generatorDescriptors: idbGeneratorDescriptors },
   },
 ]);
+
+/**
+ * The TypeScript counterparts of the generator functions, as upstream's
+ * `defineContract` callback receives them: `gen.uuid(7)` is the call
+ * `@onCreate(uuid(7))` writes in PSL. Each call resolves through the same
+ * registry when the contract is built.
+ */
+export const gen = createGeneratorHelpers([{ generatorFunctions: idbGeneratorFunctions }]);
+
+/**
+ * The definition node of a generator a generator function resolved to. Every id
+ * IDB's functions produce is an {@link IdbMutationDefaultGeneratorId}: the
+ * registry refuses a binding whose generator no IDB descriptor registers.
+ */
+export function idbGeneratorNode(generator: ExecutionMutationDefaultValue): IdbGeneratorNode {
+  const id = generator.id as IdbMutationDefaultGeneratorId;
+  return generator.params === undefined ? { id } : { id, params: { ...generator.params } };
+}

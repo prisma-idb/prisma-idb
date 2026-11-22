@@ -168,33 +168,18 @@ function validateExecutionDefault(model: IdbModelNode, field: IdbFieldNode, repo
       at
     );
   }
-  for (const phase of ["onUpdate", "onCreate"] as const) {
-    const generator = execution[phase];
-    if (!generator) continue;
-    if (generator.id === "literal") {
-      const codecId = generator.params?.["codecId"];
-      if (codecId !== undefined && (codecId !== field.codecId || field.enumName !== undefined || field.list)) {
-        report("IDB_INVALID_DEFAULT_VALUE", `${label} cannot use a tagged default with codec "${String(codecId)}".`, [
-          ...at,
-          "executionDefault",
-          phase,
-        ]);
-      }
-      continue;
-    }
-    const isTimestamp = generator.id === "timestampNow";
-    const expectedCodec = isTimestamp ? "idb/date@1" : "idb/string@1";
-    if (field.codecId !== expectedCodec || field.enumName !== undefined || field.list) {
-      if (phase === "onUpdate" && isTimestamp) {
-        report("IDB_UPDATED_AT_NOT_DATETIME", `${label} has an auto-managed update timestamp but is not DateTime.`, at);
-      } else {
-        report(
-          "IDB_INVALID_DEFAULT_VALUE",
-          `${label} uses generator "${generator.id}" on ${phase}, which requires a ${isTimestamp ? "DateTime" : "String"} scalar field with codec "${expectedCodec}".`,
-          [...at, "executionDefault", phase]
-        );
-      }
-    }
+  // Generator functions and tagged literals are checked against the field's codec
+  // when they are read. `now()` in PSL `@default(now())` and the TypeScript `now()`
+  // helper fills a field without a generator function, so it is checked here.
+  if (
+    execution.onCreate?.id === "timestampNow" &&
+    (field.codecId !== "idb/date@1" || field.enumName !== undefined || field.list)
+  ) {
+    report("IDB_INVALID_DEFAULT_VALUE", `${label} uses now(), which requires a DateTime field.`, [
+      ...at,
+      "executionDefault",
+      "onCreate",
+    ]);
   }
 }
 

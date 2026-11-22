@@ -1,5 +1,5 @@
 import type { ContractSourceDiagnostic, ContractSourceDiagnostics } from "@prisma/orm-framework/config/config-types";
-import type { Contract, ExecutionMutationDefaultValue } from "@prisma/orm-framework/contract/types";
+import type { Contract } from "@prisma/orm-framework/contract/types";
 import { readWrittenValueIntoCodec } from "@prisma/orm-framework/components/authoring";
 import { nodePslSpan } from "@prisma/orm-framework/psl-parser";
 import { idbCodecLookup } from "@prisma-idb/target-idb/runtime";
@@ -26,7 +26,7 @@ import type {
   IdbRelationNode,
 } from "./contract-definition";
 import { createIdbAttributeBinder, idbDataTypeSupport } from "./psl-binder";
-import { idbGeneratorFunctionRegistry } from "./generator-functions";
+import { idbGeneratorFunctionRegistry, idbGeneratorNode } from "./generator-functions";
 import type { IdbAttributeBinder, IdbDefaultValue } from "./psl-binder";
 import { PslDefinitionSourceMap } from "./psl-definition-source-map";
 import { SCALAR_TO_CODEC_ID } from "./psl-scalars";
@@ -40,16 +40,6 @@ const TIMESTAMP_NOW_GENERATOR_ID: IdbMutationDefaultGeneratorId = "timestampNow"
 
 /** Generator id for plain literals and codec-backed tagged literals. */
 const LITERAL_GENERATOR_ID: IdbMutationDefaultGeneratorId = "literal";
-
-/**
- * The definition node of a generator a generator function resolved to. Every id
- * IDB's functions produce is an {@link IdbMutationDefaultGeneratorId}: the
- * registry refuses a binding whose generator no IDB descriptor registers.
- */
-function generatorNode(generator: ExecutionMutationDefaultValue): IdbGeneratorNode {
-  const id = generator.id as IdbMutationDefaultGeneratorId;
-  return generator.params === undefined ? { id } : { id, params: { ...generator.params } };
-}
 
 /** A resolved field default before it is attached to its definition field. */
 type FieldExecutionDefault = IdbExecutionDefaultNode & { readonly fieldName: string };
@@ -479,7 +469,7 @@ function interpretModel(
               { codecId, typeParams: undefined, length: undefined }
             );
       if (resolution?.ok) {
-        generated[phase] = generatorNode(resolution.generator);
+        generated[phase] = idbGeneratorNode(resolution.generator);
         continue;
       }
       diagnostics.push({

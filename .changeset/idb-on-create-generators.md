@@ -12,4 +12,6 @@ Breaking: Prisma 8 removed some Prisma 6 forms, and `contract emit` now refuses 
 - `@default(uuid())` and `@default(cuid())`: write `@onCreate(uuid())` and `@onCreate(cuid(2))` (`PSL_GENERATOR_IN_DEFAULT`).
 - `@updatedAt` and the `temporal.updatedAt()` type: write `DateTime @onCreate(now()) @onUpdate(now())`.
 
-The rewritten schema emits the same contract, so existing databases need no migration. A schema shared with a SQL sync server now means the same thing on both sides. `@default(now())` and `@default(autoincrement())` are unchanged.
+TypeScript contracts write the same generators with upstream's `gen` helpers, from `@prisma-idb/family-idb/contract-ts`: `defaults: { id: { onCreate: gen.uuid(7) }, updatedAt: { onCreate: gen.now(), onUpdate: gen.now() } }`. Each call resolves through the same functions as PSL. Breaking: `uuidv4()`, `uuidv7()`, `cuid2()` and `updatedAt()` are removed; write `{ onCreate: gen.uuid() }`, `{ onCreate: gen.uuid(7) }`, `{ onCreate: gen.cuid(2) }` and `{ onCreate: gen.now(), onUpdate: gen.now() }`. `now()` and `autoincrement()` are unchanged.
+
+The rewritten schema or contract emits the same contract, so existing databases need no migration. A schema shared with a SQL sync server now means the same thing on both sides. `@default(now())` and `@default(autoincrement())` are unchanged.

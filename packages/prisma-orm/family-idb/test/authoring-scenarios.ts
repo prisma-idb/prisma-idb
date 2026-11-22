@@ -1,4 +1,4 @@
-import { autoincrement, cuid2, now, updatedAt, uuidv4, uuidv7 } from "../src/exports/contract-ts";
+import { autoincrement, gen, now } from "../src/exports/contract-ts";
 import type { DefineContractInput, EnumDefs } from "../src/exports/contract-ts";
 
 /** Model and enum declarations shared with the current TypeScript authoring API. */
@@ -217,7 +217,12 @@ export const authoringScenarios: AuthoringScenario[] = [
           store: "doc",
           key: "id",
           fields: { id: "String", v7: "String", at: "DateTime", c: "String" },
-          defaults: { id: uuidv4(), v7: uuidv7(), at: now(), c: cuid2() },
+          defaults: {
+            id: { onCreate: gen.uuid() },
+            v7: { onCreate: gen.uuid(7) },
+            at: now(),
+            c: { onCreate: gen.cuid(2) },
+          },
         },
       },
     },
@@ -251,7 +256,12 @@ export const authoringScenarios: AuthoringScenario[] = [
     `,
     ts: {
       models: {
-        Row: { store: "row", key: "id", fields: { id: "String", t: "DateTime" }, defaults: { t: updatedAt() } },
+        Row: {
+          store: "row",
+          key: "id",
+          fields: { id: "String", t: "DateTime" },
+          defaults: { t: { onCreate: gen.now(), onUpdate: gen.now() } },
+        },
       },
     },
   },
@@ -575,7 +585,12 @@ export const authoringScenarios: AuthoringScenario[] = [
     `,
     ts: {
       models: {
-        Row: { store: "row", key: "id", fields: { id: "String", t: "DateTime?" }, defaults: { t: updatedAt() } },
+        Row: {
+          store: "row",
+          key: "id",
+          fields: { id: "String", t: "DateTime?" },
+          defaults: { t: { onCreate: gen.now(), onUpdate: gen.now() } },
+        },
       },
     },
   },

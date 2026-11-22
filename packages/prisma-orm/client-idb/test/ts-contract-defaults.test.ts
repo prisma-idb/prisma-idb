@@ -8,15 +8,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { buildSymbolTable } from "@prisma/orm-framework/psl-parser";
 import { parse } from "@prisma/orm-framework/psl-parser/syntax";
 import { interpretPslDocumentToIdbContract } from "@prisma-idb/family-idb/contract-psl";
-import {
-  autoincrement,
-  cuid2,
-  defineContract,
-  now,
-  updatedAt,
-  uuidv4,
-  uuidv7,
-} from "@prisma-idb/family-idb/contract-ts";
+import { autoincrement, defineContract, gen, now } from "@prisma-idb/family-idb/contract-ts";
 import idbFamilyPack from "@prisma-idb/family-idb/pack";
 import idbTargetPack from "@prisma-idb/target-idb/pack";
 import { createIdbClient } from "../src/exports/client";
@@ -52,11 +44,11 @@ const tsContract = defineContract({
       },
       defaults: {
         id: autoincrement(),
-        uid: uuidv4(),
-        ordered: uuidv7(),
-        slug: cuid2(),
+        uid: { onCreate: gen.uuid() },
+        ordered: { onCreate: gen.uuid(7) },
+        slug: { onCreate: gen.cuid(2) },
         createdAt: now(),
-        touchedAt: updatedAt(),
+        touchedAt: { onCreate: gen.now(), onUpdate: gen.now() },
       },
     },
   },
@@ -192,7 +184,7 @@ describe("TypeScript-authored execution defaults", () => {
     ["TypeScript", tsContract],
     ["PSL", pslContract],
   ])("%s contract", (_surface, contract) => {
-    it("fills now(), uuidv4(), uuidv7(), cuid2(), autoincrement() and updatedAt() on create()", async () => {
+    it("fills now(), autoincrement() and the uuid(), uuid(7), cuid(2) and now() generators on create()", async () => {
       client = await openClient(contract);
       const events = client.orm["event"]!;
       const before = Date.now();
@@ -212,7 +204,7 @@ describe("TypeScript-authored execution defaults", () => {
       }
     });
 
-    it("advances updatedAt() on update() but leaves now() alone", async () => {
+    it("advances onUpdate: gen.now() on update() but leaves now() alone", async () => {
       client = await openClient(contract);
       const events = client.orm["event"]!;
       const old = new Date("2020-01-01T00:00:00.000Z");

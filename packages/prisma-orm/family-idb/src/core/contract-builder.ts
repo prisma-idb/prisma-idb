@@ -13,7 +13,8 @@ import type {
 import type { ContractProjection } from "./psl-interpreter";
 import { warnDroppedRelation } from "./psl-interpreter";
 import { IdbContractError } from "./contract-error";
-import type { FieldDefault } from "./field-defaults";
+import type { FieldDefault, GeneratedDefault } from "./field-defaults";
+import { idbGeneratorFunctionRegistry, idbGeneratorNode } from "./generator-functions";
 import { validateIdbContractDefinition } from "./validate-definition";
 
 // ── Field type system ─────────────────────────────────────────────────────────
@@ -99,13 +100,15 @@ export type ModelDef<EnumName extends string = never> = {
    * `@onCreate(...)` and `@onUpdate(...)`. A sibling map to `fields`, deliberately not folded into
    * `FieldSpec` (a bare type string) to avoid widening that type.
    *
-   * A helper from this package fills the field on `create()`: `now()`, `uuidv4()`,
-   * `uuidv7()`, `cuid2()`, or `updatedAt()` (also on `update()`). `autoincrement()`
-   * asks IndexedDB's key generator to assign the store's single `Int` key.
+   * `now()` fills the field with the time of `create()`, and `autoincrement()` asks
+   * IndexedDB's key generator to assign the store's single `Int` key. A
+   * `{ onCreate, onUpdate }` entry names the generator functions the client runs,
+   * written with `gen`: `{ onCreate: gen.uuid(7) }` or
+   * `{ onCreate: gen.now(), onUpdate: gen.now() }`.
    * A literal fills the field on `create()` and also feeds the `setDefault`
    * referential action, like PSL `@default("x")`.
    */
-  readonly defaults?: Record<string, FieldDefault | string | number | boolean | readonly unknown[]>;
+  readonly defaults?: Record<string, FieldDefault | GeneratedDefault | string | number | boolean | readonly unknown[]>;
   /**
    * Literal default values, keyed by field name — feeds only the `setDefault`
    * referential action (a child's FK field is reset to its own declared
@@ -291,31 +294,96 @@ function lowerIndex(name: string, idx: IndexDef): IdbIndexNode {
   };
 }
 
-/** A `defaults` entry: a helper's result or a literal value. */
-type DeclaredDefault = FieldDefault | string | number | boolean | readonly unknown[];
+/** A `defaults` entry: a helper's result, generator function calls, or a literal value. */
+type DeclaredDefault = FieldDefault | GeneratedDefault | string | number | boolean | readonly unknown[];
+
+const GENERATOR_PHASES = ["onCreate", "onUpdate"] as const;
+
+/** A generator function call as a `gen` helper returns it. */
+function isGeneratorCall(value: unknown): boolean {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as { name?: unknown }).name === "string" &&
+    typeof (value as { args?: unknown }).args === "object" &&
+    (value as { args?: unknown }).args !== null
+  );
+}
+
+/** `true` for a `{ onCreate, onUpdate }` entry: at least one phase, each a generator function call. */
+function isGeneratedDefault(value: DeclaredDefault): value is GeneratedDefault {
+  if (typeof value !== "object" || Array.isArray(value) || "kind" in value) return false;
+  const keys = Object.keys(value);
+  return (
+    keys.length > 0 &&
+    keys.every((key) => (GENERATOR_PHASES as readonly string[]).includes(key)) &&
+    keys.every((key) => isGeneratorCall((value as Record<string, unknown>)[key]))
+  );
+}
 
 /** Runtime callers must supply a scalar literal or one of this package's helper shapes. */
 function isDeclaredDefault(value: unknown): value is DeclaredDefault {
   if (Array.isArray(value) || typeof value === "string" || typeof value === "number" || typeof value === "boolean")
     return true;
   if (typeof value !== "object" || value === null) return false;
+  if (isGeneratedDefault(value as DeclaredDefault)) return true;
   const helper = value as FieldDefault;
   if (helper.kind === "autoincrement") return true;
   if (helper.kind !== "execution" || typeof helper.execution !== "object" || helper.execution === null) return false;
   const { onCreate, onUpdate } = helper.execution;
-  if (
-    typeof onCreate !== "object" ||
-    onCreate === null ||
-    !["timestampNow", "uuidv4", "uuidv7", "cuid2"].includes(onCreate.id)
-  )
-    return false;
-  return (
-    onUpdate === undefined ||
-    (onCreate.id === "timestampNow" &&
-      typeof onUpdate === "object" &&
-      onUpdate !== null &&
-      onUpdate.id === "timestampNow")
-  );
+  return typeof onCreate === "object" && onCreate !== null && onCreate.id === "timestampNow" && onUpdate === undefined;
+}
+
+/**
+ * Resolves the generator function calls of a `{ onCreate, onUpdate }` entry for
+ * the field's codec, through the same generator functions as PSL `@onCreate(...)`
+ * and `@onUpdate(...)`. A call that does not apply to the field is refused with
+ * upstream's message.
+ */
+function lowerGeneratedDefault(
+  modelName: string,
+  fieldName: string,
+  spec: FieldSpec<string>,
+  enums: EnumDefs,
+  declared: GeneratedDefault
+): IdbExecutionDefaultNode {
+  const { typeName, many } = parseFieldSpec(spec);
+  const codecId = Object.hasOwn(enums, typeName) ? undefined : SCALAR_TO_CODEC_ID[typeName as PrismaScalarType];
+  const subject = `Field "${modelName}.${fieldName}"`;
+  const fail = (message: string): never => {
+    throw new IdbContractError([
+      {
+        code: "IDB_INVALID_DEFAULT_VALUE",
+        message,
+        at: ["models", modelName, "fields", fieldName, "executionDefault"],
+      },
+    ]);
+  };
+  const node: { onCreate?: IdbExecutionDefaultNode["onCreate"]; onUpdate?: IdbExecutionDefaultNode["onUpdate"] } = {};
+  for (const phase of GENERATOR_PHASES) {
+    const call = declared[phase];
+    if (call === undefined) continue;
+    if (many) {
+      fail(`${subject} is a list and cannot use ${phase}: ${call.name}(). Lists have no per-element generated values.`);
+    }
+    if (!idbGeneratorFunctionRegistry.has(call.name)) {
+      fail(`${subject}: no pack in the contract declares the generator function "${call.name}".`);
+    }
+    const resolution =
+      codecId === undefined
+        ? undefined
+        : idbGeneratorFunctionRegistry.resolve(call, { codecId, typeParams: undefined, length: undefined });
+    if (resolution?.ok) {
+      node[phase] = idbGeneratorNode(resolution.generator);
+      continue;
+    }
+    fail(
+      resolution?.reason === "refused"
+        ? `${subject}: ${resolution.message}`
+        : `${subject}: ${call.name}() does not apply to ${codecId === undefined ? "the field's type" : `codec "${codecId}"`}.`
+    );
+  }
+  return node as IdbExecutionDefaultNode;
 }
 
 /**
@@ -338,6 +406,7 @@ function isAutoincrement(declared: DeclaredDefault | undefined): boolean {
     declared !== undefined &&
     typeof declared === "object" &&
     !isListDefault(declared) &&
+    "kind" in declared &&
     declared.kind === "autoincrement"
   );
 }
@@ -349,13 +418,21 @@ function isAutoincrement(declared: DeclaredDefault | undefined): boolean {
  */
 function lowerFieldDefaults(
   declared: DeclaredDefault | undefined,
-  setDefaultLiteral: string | number | boolean | undefined
+  setDefaultLiteral: string | number | boolean | undefined,
+  lowerGenerated: (declared: GeneratedDefault) => IdbExecutionDefaultNode
 ): { literalDefault?: string | number | boolean; executionDefault?: IdbExecutionDefaultNode } {
   if (declared === undefined || isAutoincrement(declared)) {
     return setDefaultLiteral !== undefined ? { literalDefault: setDefaultLiteral } : {};
   }
   if (isListDefault(declared)) {
     return { executionDefault: { onCreate: { id: "literal", params: { value: [...declared] } } } };
+  }
+  if (isGeneratedDefault(declared)) {
+    // A generator supplies the create value, so a `setDefault` literal is kept beside it.
+    return {
+      ...(setDefaultLiteral !== undefined ? { literalDefault: setDefaultLiteral } : {}),
+      executionDefault: lowerGenerated(declared),
+    };
   }
   if (typeof declared === "object") {
     return declared.kind === "execution" ? { executionDefault: declared.execution } : {};
@@ -428,7 +505,8 @@ function lowerModel(modelName: string, def: ProjectedModelDef, enums: EnumDefs):
     fields: Object.entries(def.fields).map(([name, spec]) => {
       const { literalDefault, executionDefault } = lowerFieldDefaults(
         ownEntry(def.defaults, name),
-        ownEntry(def.fieldDefaults, name)
+        ownEntry(def.fieldDefaults, name),
+        (declared) => lowerGeneratedDefault(modelName, name, spec, enums, declared)
       );
       return lowerField(name, spec, enums, literalDefault, executionDefault);
     }),

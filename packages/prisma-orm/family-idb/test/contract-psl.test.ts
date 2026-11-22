@@ -1438,6 +1438,16 @@ describe("interpretPslDocumentToIdbContract", () => {
   });
 
   describe("@default(now())", () => {
+    it.each(["String", "Int", "DateTime[]"])("errors on a %s field", (type) => {
+      const result = interpret(`model Post {\n id String @id\n at ${type} @default(now())\n}`);
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.failure.diagnostics[0]).toMatchObject({
+        code: "IDB_INVALID_DEFAULT_VALUE",
+        message: 'Field "Post.at" uses now(), which requires a DateTime field.',
+      });
+    });
+
     it("resolves to timestampNow, onCreate only (no onUpdate)", () => {
       const result = interpret(`
         model Post {
