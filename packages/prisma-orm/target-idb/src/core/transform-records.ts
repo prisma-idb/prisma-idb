@@ -43,6 +43,9 @@ export function transformRecord(
   return result;
 }
 
+const INT32_MIN = -2_147_483_648;
+const INT32_MAX = 2_147_483_647;
+
 /** Applies one value transform; an unfilled placeholder throws, wherever it sits in a pipe. */
 function transformValue(transform: IdbValueTransform, value: unknown, mode: RecordTransformMode): unknown {
   switch (transform.kind) {
@@ -57,11 +60,19 @@ function transformValue(transform: IdbValueTransform, value: unknown, mode: Reco
     case "coerce": {
       if (value === null || value === undefined) return value;
       switch (transform.to) {
-        case "int":
-          if (typeof value === "number") return value;
-          if (typeof value === "boolean") return value ? 1 : 0;
-          if (typeof value === "string" && !Number.isNaN(Number(value))) return Number(value);
+        case "int": {
+          // The result is stored as an `Int`, so it must pass the int32 check every write applies.
+          const n =
+            typeof value === "number"
+              ? value
+              : typeof value === "boolean"
+                ? Number(value)
+                : typeof value === "string" && value.trim() !== ""
+                  ? Number(value)
+                  : Number.NaN;
+          if (Number.isInteger(n) && n >= INT32_MIN && n <= INT32_MAX) return n;
           break;
+        }
         case "string":
           if (["string", "number", "boolean"].includes(typeof value)) return String(value);
           break;
