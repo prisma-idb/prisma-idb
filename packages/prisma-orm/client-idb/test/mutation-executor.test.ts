@@ -522,7 +522,8 @@ describe("ORM nested scalar validation", () => {
     expect(await orm["posts"]!.findUnique("p1")).toMatchObject({ title: "before", authorId: null });
   });
 
-  it.each(["disconnect-all", "disconnect-key", "delete"])("rolls back invalid generated %s patches", async (action) => {
+  // `onDelete: SetNull` on this required key is refused at authoring, so only disconnects reach the runtime check.
+  it.each(["disconnect-all", "disconnect-key"])("rolls back invalid generated %s patches", async (action) => {
     const requiredContract = defineContract({
       family: idbFamilyPack,
       target: idbTargetPack,
@@ -532,7 +533,7 @@ describe("ORM nested scalar validation", () => {
           key: "id",
           fields: { id: "String", name: "String" },
           relations: {
-            posts: { to: "Post", cardinality: "1:N", on: { local: ["id"], target: ["authorId"] }, onDelete: "setNull" },
+            posts: { to: "Post", cardinality: "1:N", on: { local: ["id"], target: ["authorId"] } },
           },
         },
         Post: {
@@ -548,14 +549,10 @@ describe("ORM nested scalar validation", () => {
     const orm = idbOrm({ contract: requiredContract, executor });
     await orm["users"]!.create({ id: "u1", name: "before" } as never);
     await orm["posts"]!.create({ id: "p1", title: "before", authorId: "u1" } as never);
-    const write =
-      action === "delete"
-        ? orm["users"]!.delete("u1")
-        : orm["users"]!.where({ id: "u1" }).update({
-            name: "after",
-            posts: (rel: RelMutator) =>
-              action === "disconnect-key" ? rel.disconnect([{ id: "p1" }]) : rel.disconnect(),
-          } as never);
+    const write = orm["users"]!.where({ id: "u1" }).update({
+      name: "after",
+      posts: (rel: RelMutator) => (action === "disconnect-key" ? rel.disconnect([{ id: "p1" }]) : rel.disconnect()),
+    } as never);
     await expect(write).rejects.toThrow(IdbRecordValidationError);
     expect(await orm["users"]!.findUnique("u1")).toMatchObject({ name: "before" });
     expect(await orm["posts"]!.findUnique("p1")).toMatchObject({ authorId: "u1" });
