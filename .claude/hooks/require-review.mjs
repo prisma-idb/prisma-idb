@@ -60,11 +60,11 @@ const input = JSON.parse(await text(process.stdin));
 const command = input.tool_input?.command ?? "";
 if (!/(^|[;&|(]\s*|\s)gh\s+pr\s+create\b/.test(command)) process.exit(0);
 
-// The checks below read HEAD before the command runs, so a commit made earlier in the same command would
-// reach the PR unchecked.
-if (/\bgit\b[^;&|\n]*\s(commit|merge|rebase|reset|checkout|switch|cherry-pick|revert|am|pull|stash)\b/.test(command)) {
+// The checks below read HEAD before the command runs. Anything that runs earlier in the same command could
+// move HEAD, so `gh pr create` must start the command.
+if (!/^\s*gh\s+pr\s+create\b/.test(command)) {
   console.error(
-    "Run `gh pr create` as its own command, after any command that changes HEAD, so the review check sees every commit."
+    "Run `gh pr create` as its own command, with nothing before it, so the review check sees the commits the PR will contain."
   );
   process.exit(2);
 }
