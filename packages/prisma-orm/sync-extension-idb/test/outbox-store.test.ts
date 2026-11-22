@@ -266,6 +266,46 @@ describe("getOldestPendingEvent", () => {
 });
 
 describe("markSynced", () => {
+  it("scans the outbox once for a whole batch, and keeps a record pending while another event for it is", async () => {
+    const { client } = await createTestSyncClient();
+    const metas = Array.from({ length: 30 }, (_, i) => `User::"u${i}"`);
+    await client.withTransaction(["_idb_sync_outbox", "_idb_sync_version_meta"], async (scope) => {
+      for (const [i, versionMetaId] of metas.entries()) {
+        await scope.execute({
+          kind: "add",
+          storeName: "_idb_sync_outbox",
+          record: outboxEvent({ id: `e${i}`, versionMetaId }) as unknown as Record<string, unknown>,
+        } as never);
+        const meta = { id: versionMetaId, model: "User", key: `u${i}`, lastAppliedChangeId: null };
+        await scope.execute({
+          kind: "add",
+          storeName: "_idb_sync_version_meta",
+          record: { ...meta, localChangePending: true },
+        } as never);
+      }
+      // A second, later edit of u0 that this batch doesn't send.
+      await scope.execute({
+        kind: "add",
+        storeName: "_idb_sync_outbox",
+        record: outboxEvent({ id: "later", versionMetaId: metas[0]! }) as unknown as Record<string, unknown>,
+      } as never);
+    });
+
+    let scans = 0;
+    await client.withTransaction(["_idb_sync_outbox", "_idb_sync_version_meta"], async (scope) => {
+      const execute = scope.execute.bind(scope);
+      scope.execute = async (plan) => {
+        if (plan.kind === "cursor-scan" && plan.storeName === "_idb_sync_outbox") scans++;
+        return execute(plan);
+      };
+      for (const i of metas.keys()) await markSynced(scope, `e${i}`);
+    });
+
+    expect(scans).toBe(1);
+    expect((await getVersionMeta(client, metas[0]!))?.localChangePending).toBe(true);
+    expect((await getVersionMeta(client, metas[1]!))?.localChangePending).toBe(false);
+  });
+
   it("sets synced + syncedAt and clears localChangePending on the linked version-meta row", async () => {
     const { client } = await createTestSyncClient();
     await client.withTransaction(["_idb_sync_outbox", "_idb_sync_version_meta"], async (scope) => {
