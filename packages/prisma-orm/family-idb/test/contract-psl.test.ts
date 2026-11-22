@@ -1969,3 +1969,39 @@ describe("shared definition diagnostics", () => {
     expect(schema.slice(span.start.offset, span.end.offset)).toBe('@default("wrong")');
   });
 });
+
+describe("field attributes IDB doesn't read", () => {
+  const codes = (schema: string) => {
+    const result = interpret(schema);
+    return result.ok ? [] : result.failure.diagnostics.map((d) => [d.code, d.message]);
+  };
+
+  it.each([
+    [
+      "an unknown attribute",
+      "name String @madeUp",
+      ["PSL_UNSUPPORTED_FIELD_ATTRIBUTE", 'Field "Item.name" uses unsupported attribute "@madeUp".'],
+    ],
+    [
+      "a second @default",
+      'name String @default("a") @default("b")',
+      ["PSL_DUPLICATE_ATTRIBUTE", '`@default` declared more than once on field "Item.name".'],
+    ],
+    [
+      "@relation on a scalar field",
+      "name String @relation(fields: [name], references: [id])",
+      [
+        "IDB_INVALID_RELATION",
+        'Field "Item.name" has type "String", which is not a model, so it can\'t declare @relation.',
+      ],
+    ],
+  ])("refuses %s instead of dropping it", (_, declaration, diagnostic) => {
+    expect(codes(`model Item {\n  id String @id\n  ${declaration}\n}`)).toEqual([diagnostic]);
+  });
+
+  it("accepts @map and @db.* from a schema shared with a SQL server", () => {
+    expect(codes(`model Item {\n  id String @id @db.Uuid\n  name String @map("item_name") @db.VarChar(20)\n}`)).toEqual(
+      []
+    );
+  });
+});

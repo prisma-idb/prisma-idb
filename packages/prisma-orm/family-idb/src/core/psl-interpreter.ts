@@ -388,6 +388,15 @@ function interpretModel(
 
     // FK-side relation field: non-list, type is a model, has @relation
     const relationAttr = fieldAttributes.relation;
+    if (relationAttr && !modelNames.has(field.typeName)) {
+      diagnostics.push({
+        code: "IDB_INVALID_RELATION",
+        message: `Field "${model.name}.${field.name}" has type "${field.typeName}", which is not a model, so it can't declare @relation.`,
+        sourceId,
+        span: relationAttr.span,
+      });
+      continue;
+    }
     if (!field.list && modelNames.has(field.typeName) && relationAttr) {
       if (excludedModelNames.has(field.typeName)) {
         // Same reasoning as the backrelation case above: drop the relation
