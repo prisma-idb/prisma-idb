@@ -433,18 +433,18 @@ describe("applyPull", () => {
     });
   });
 
-  it("skips logs for a model not present in the contract", async () => {
+  it("skips and consumes logs for a model not present in the contract", async () => {
     const { client } = await createTestSyncClient();
 
     const result = await applyPull(client, [log({ changelogId: "c1", operation: "create", model: "Nonexistent" })]);
 
     expect(result).toEqual({
-      changes: expect.any(Array),
+      changes: [],
       applied: 0,
       skipped: 1,
       validationFailed: 0,
       halted: false,
-      lastChangelogId: null,
+      lastChangelogId: "c1",
     });
   });
 

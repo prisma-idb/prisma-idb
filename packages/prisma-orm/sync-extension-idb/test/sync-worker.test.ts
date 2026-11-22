@@ -1355,6 +1355,28 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
       expect(await client.outbox.hasPending()).toBe(false);
     });
 
+    it("moves past a page whose rows all belong to a removed model", async () => {
+      const { client } = await createTestSyncClient();
+      const cursors: (string | null)[] = [];
+      const worker = trackedWorker({
+        syncClient: client,
+        pushHandler: async () => [],
+        pullHandler: async (from) => {
+          cursors.push(from);
+          if (from === null) {
+            const removed = [1, 2].map((n) => ({ ...userLog(changelogId(n), `gone${n}`), model: "Removed" }));
+            return { logs: removed, hasMore: true };
+          }
+          return lastPage(from === changelogId(2) ? [userLog(changelogId(3), "kept")] : []);
+        },
+      });
+
+      await worker.forceSync();
+
+      expect(cursors).toEqual([null, changelogId(2)]);
+      expect(await scanAll(client, "users")).toEqual([{ id: "kept", name: "kept" }]);
+    });
+
     it("ends the cycle when a page that reports more leaves the cursor in place", async () => {
       const { client } = await createTestSyncClient();
       const cursors: (string | null)[] = [];

@@ -80,7 +80,7 @@ Each row ends in one of four ways:
 | `invalid`         | The record or key fails the client contract. No retry can fix it. It is counted in `validationFailed`. Local data stays. | Continues. The cursor moves past it.                                 |
 | halt              | The write failed (for example a full disk) or the record has a pending local change.                                     | Stops. Later rows are not applied. The cursor stays before this row. |
 
-The `pullcompleted` event reports `halted: true` when a pull stopped early. The next pull restarts at the halted row. A row for a model that is not in the client contract is skipped and does not halt the pull.
+The `pullcompleted` event reports `halted: true` when a pull stopped early. The next pull restarts at the halted row. A row for a model that is not in the client contract, such as one a migration removed, is skipped and consumed: the cursor moves past it, and it does not halt the pull.
 
 ### Applied changes
 
