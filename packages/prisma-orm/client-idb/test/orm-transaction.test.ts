@@ -20,6 +20,7 @@ import { IdbExecuteError } from "@prisma-idb/driver-idb/runtime";
 import type { IdbTransactionScope } from "@prisma-idb/driver-idb/runtime";
 import { OpenTransaction } from "../src/core/open-transaction";
 import { createIdbClient, IdbTransactionCommittedEarlyError } from "../src/exports/client";
+import { IdbRecordValidationError } from "../src/exports/orm";
 
 const contract = defineContract({
   family: idbFamilyPack,
@@ -276,6 +277,21 @@ describe("db.transaction()", () => {
       const { cause } = failure as IdbTransactionCommittedEarlyError;
       expect(cause).toBeInstanceOf(IdbExecuteError);
       expect((cause as IdbExecuteError).code).toBe("TRANSACTION_INACTIVE");
+      expect(await userIds()).toEqual(["u1"]);
+    });
+
+    it("reports that earlier writes were committed when a write after a timer fails validation", async () => {
+      const failure = await db
+        .transaction(["users"], async (tx) => {
+          await tx.users.create({ id: "u1", name: "Alice" });
+          await transactions.untilAutoCommitted();
+          // Rejected before it reaches IndexedDB, so no operation finds the transaction finished.
+          await tx.users.create({ id: "u2", name: 42 } as never);
+        })
+        .catch((error: unknown) => error);
+
+      expect(failure).toBeInstanceOf(IdbTransactionCommittedEarlyError);
+      expect((failure as IdbTransactionCommittedEarlyError).cause).toBeInstanceOf(IdbRecordValidationError);
       expect(await userIds()).toEqual(["u1"]);
     });
 
