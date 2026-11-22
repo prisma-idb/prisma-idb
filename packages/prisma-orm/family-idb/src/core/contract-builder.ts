@@ -95,8 +95,8 @@ export type ModelDef<EnumName extends string = never> = {
   readonly indexes?: Record<string, IndexDef>;
   readonly relations?: Record<string, RelationDef>;
   /**
-   * Defaults keyed by field name, the TypeScript counterpart of PSL `@default(...)`
-   * and `@updatedAt`. A sibling map to `fields`, deliberately not folded into
+   * Defaults keyed by field name, the TypeScript counterpart of PSL `@default(...)`,
+   * `@onCreate(...)` and `@onUpdate(...)`. A sibling map to `fields`, deliberately not folded into
    * `FieldSpec` (a bare type string) to avoid widening that type.
    *
    * A helper from this package fills the field on `create()`: `now()`, `uuidv4()`,

@@ -96,18 +96,35 @@ Like keys, indexed fields must be `String`, `Int`, `Float`, `DateTime`, `Decimal
 
 Queries use an index automatically for supported equality filters on an indexed field. Decimal predicates and sorting run in memory because their stored strings have a different order from their numeric values. A query can still use a separate index to narrow candidates safely.
 
-## Defaults
+## Defaults and generated values
 
-| Attribute                                           | Sets the field to                                               |
-| --------------------------------------------------- | --------------------------------------------------------------- |
-| `@default("text")`, `@default(0)`, `@default(true)` | That literal value, on create.                                  |
-| `@default(now())`                                   | The current time, on create.                                    |
-| `@default(uuid())`                                  | A random UUID v4, on create. `uuid(7)` gives a UUID v7.         |
-| `@default(cuid())`                                  | A CUID2, on create.                                             |
-| `@default(autoincrement())`                         | The next number, assigned by IndexedDB. Single `Int` keys only. |
-| `@updatedAt`                                        | The current time, on create and on every update.                |
+`@default(...)` takes a value. `@onCreate(...)` and `@onUpdate(...)` take a generator function, which the client runs when a record is created or updated.
 
-A default only applies when the field is left out. It also counts as setting the field: a foreign key filled in by a default is checked like one you set yourself.
+| Attribute                                           | Sets the field to                                                    |
+| --------------------------------------------------- | -------------------------------------------------------------------- |
+| `@default("text")`, `@default(0)`, `@default(true)` | That literal value, on create.                                       |
+| `@default(now())`                                   | The current time, on create.                                         |
+| `@default(autoincrement())`                         | The next number, assigned by IndexedDB. Single `Int` keys only.      |
+| `@onCreate(now())`                                  | The current time, on create. Requires `DateTime`.                    |
+| `@onUpdate(now())`                                  | The current time, on every update. Requires `DateTime`.              |
+| `@onCreate(uuid())`                                 | A random UUID v4, on create. `uuid(7)` gives a UUID v7.              |
+| `@onCreate(cuid(2))`                                | A CUID2, on create.                                                  |
+| `@onCreate(ulid())`, `@onCreate(ksuid())`           | A ULID or a KSUID, on create.                                        |
+| `@onCreate(nanoid())`                               | A Nano ID of 21 characters, on create. `nanoid(10)` sets the length. |
+
+The identifier functions require a `String` field, and any of them also works in `@onUpdate(...)`. A field updated on every write takes both attributes: `updatedAt DateTime @onCreate(now()) @onUpdate(now())`.
+
+A default or generated value only applies when the field is left out; an explicit value, including `null` on an optional field, takes precedence. It also counts as setting the field: a foreign key filled in by a default is checked like one you set yourself. When a field has both `@default(...)` and `@onCreate(...)`, the generator supplies the value. List fields can't have a generator.
+
+Prisma 8 removed some Prisma 6 forms, and `contract emit` names the replacement:
+
+| Prisma 6                                        | Prisma 8                                     |
+| ----------------------------------------------- | -------------------------------------------- |
+| `@default(uuid())`, `@default(uuid(7))`         | `@onCreate(uuid())`, `@onCreate(uuid(7))`    |
+| `@default(cuid())`                              | `@onCreate(cuid(2))`                         |
+| `@updatedAt` or the `temporal.updatedAt()` type | `DateTime @onCreate(now()) @onUpdate(now())` |
+
+The contract these produce is unchanged, so an existing database needs no migration.
 
 ## Relations
 

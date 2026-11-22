@@ -3,7 +3,7 @@
  *
  * Exercises `applyCreateDefaults`/`applyUpdateDefaults` in isolation against
  * hand-built `ExecutionMutationDefault[]` lists — the PSL → contract wiring
- * that produces these lists (`temporal.updatedAt()`) is covered separately
+ * that produces these lists (`@onCreate(...)`, `@onUpdate(...)`) is covered separately
  * in family-idb's contract-psl.test.ts.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";

@@ -309,11 +309,11 @@ describe("buildIdbContractFromDefinition", () => {
       }
 
       model Post {
-        id        String   @id @default(uuid())
+        id        String   @id @onCreate(uuid())
         slug      String   @unique
         authorId  Int
         author    Author   @relation(fields: [authorId], references: [id], onDelete: Cascade)
-        updatedAt DateTime @updatedAt
+        updatedAt DateTime @onCreate(now()) @onUpdate(now())
       }
     `;
     const { document, sources } = parse(schema, "test.prisma");

@@ -205,10 +205,10 @@ export const authoringScenarios: AuthoringScenario[] = [
     name: "generated defaults",
     psl: `
       model Doc {
-        id String   @id @default(uuid())
-        v7 String   @default(uuid(7))
+        id String   @id @onCreate(uuid())
+        v7 String   @onCreate(uuid(7))
         at DateTime @default(now())
-        c  String   @default(cuid())
+        c  String   @onCreate(cuid(2))
       }
     `,
     ts: {
@@ -242,11 +242,11 @@ export const authoringScenarios: AuthoringScenario[] = [
     },
   },
   {
-    name: "updatedAt",
+    name: "update timestamp",
     psl: `
       model Row {
         id String   @id
-        t  DateTime @updatedAt
+        t  DateTime @onCreate(now()) @onUpdate(now())
       }
     `,
     ts: {
@@ -566,25 +566,11 @@ export const authoringScenarios: AuthoringScenario[] = [
     },
   },
   {
-    name: "temporal updatedAt",
+    name: "optional update timestamp",
     psl: `
       model Row {
-        id String @id
-        t temporal.updatedAt()
-      }
-    `,
-    ts: {
-      models: {
-        Row: { store: "row", key: "id", fields: { id: "String", t: "DateTime" }, defaults: { t: updatedAt() } },
-      },
-    },
-  },
-  {
-    name: "optional temporal updatedAt",
-    psl: `
-      model Row {
-        id String @id
-        t temporal.updatedAt()?
+        id String     @id
+        t  DateTime?  @onCreate(now()) @onUpdate(now())
       }
     `,
     ts: {

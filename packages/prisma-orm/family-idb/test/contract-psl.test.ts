@@ -1237,179 +1237,104 @@ describe("interpretPslDocumentToIdbContract", () => {
     });
   });
 
-  describe("temporal.updatedAt()", () => {
-    it("resolves the field as a DateTime and attaches an execution mutation default", () => {
-      const result = interpret(`
-        model Post {
-          id        String @id
-          title     String
-          updatedAt temporal.updatedAt()
-        }
-      `);
-      expect(result.ok).toBe(true);
-      if (!result.ok) return;
-
-      const model = result.value.domain.namespaces[NS]!.models["Post"] as unknown as TestContractModel;
-      expect(model.fields["updatedAt"]).toMatchObject({
-        nullable: false,
-        type: { kind: "scalar", codecId: "idb/date@1" },
-      });
-
-      expect(result.value.execution).toBeDefined();
-      expect(typeof result.value.execution?.executionHash).toBe("string");
-      expect(result.value.execution?.mutations.defaults).toEqual([
-        {
-          ref: { namespace: NS, entry: "post", field: "updatedAt" },
-          onCreate: { kind: "generator", id: "timestampNow" },
-          onUpdate: { kind: "generator", id: "timestampNow" },
-        },
-      ]);
-    });
-
-    it("omits `execution` entirely when no model uses temporal.updatedAt()", () => {
+  describe("type constructors", () => {
+    it("omits `execution` entirely when no model has a generated default", () => {
       const result = interpret(`model Post { id String @id }`);
       expect(result.ok).toBe(true);
       if (!result.ok) return;
       expect(result.value.execution).toBeUndefined();
     });
 
-    it("collects one execution default per model that uses it", () => {
-      const result = interpret(`
-        model User {
-          id        String @id
-          updatedAt temporal.updatedAt()
-        }
-        model Post {
-          id        String @id
-          updatedAt temporal.updatedAt()
-        }
-      `);
-      expect(result.ok).toBe(true);
-      if (!result.ok) return;
-      const tables = result.value.execution?.mutations.defaults.map((d) => d.ref.entry).sort();
-      expect(tables).toEqual(["post", "user"]);
-    });
-
-    it("errors on an unrecognized type-constructor namespace", () => {
-      const result = interpret(`
-        model Post {
-          id  String @id
-          foo other.thing()
-        }
-      `);
-      expect(result.ok).toBe(false);
-      if (result.ok) return;
-      expect(result.failure.diagnostics[0]!.code).toBe("IDB_UNSUPPORTED_TYPE_CONSTRUCTOR");
-    });
-
-    it("errors on an unrecognized temporal.* constructor", () => {
+    it.each(["other.thing()", "temporal.timestamp()"])("errors on the type constructor %s", (type) => {
       const result = interpret(`
         model Post {
           id String @id
-          ts temporal.timestamp()
+          ts ${type}
         }
       `);
       expect(result.ok).toBe(false);
       if (result.ok) return;
       expect(result.failure.diagnostics[0]!.code).toBe("IDB_UNSUPPORTED_TYPE_CONSTRUCTOR");
     });
-
-    it("errors when used on the @id key field", () => {
-      const result = interpret(`
-        model Post {
-          id temporal.updatedAt() @id
-        }
-      `);
-      expect(result.ok).toBe(false);
-      if (result.ok) return;
-      expect(result.failure.diagnostics[0]!.code).toBe("IDB_TEMPORAL_UPDATED_AT_ON_KEY_FIELD");
-    });
-
-    it("errors when the constructor call carries arguments", () => {
-      const result = interpret(`
-        model Post {
-          id        String @id
-          updatedAt temporal.updatedAt(3)
-        }
-      `);
-      expect(result.ok).toBe(false);
-      if (result.ok) return;
-      expect(result.failure.diagnostics[0]!.code).toBe("IDB_TEMPORAL_UPDATED_AT_TAKES_NO_ARGS");
-    });
   });
 
-  describe("@updatedAt (bare attribute)", () => {
-    it("resolves the same as temporal.updatedAt(): onCreate + onUpdate timestampNow", () => {
-      const result = interpret(`
-        model Post {
-          id        String   @id
-          title     String
-          updatedAt DateTime @updatedAt
-        }
-      `);
-      expect(result.ok).toBe(true);
-      if (!result.ok) return;
-
-      const model = result.value.domain.namespaces[NS]!.models["Post"] as unknown as TestContractModel;
-      expect(model.fields["updatedAt"]).toMatchObject({
-        nullable: false,
-        type: { kind: "scalar", codecId: "idb/date@1" },
-      });
-      expect(result.value.execution?.mutations.defaults).toEqual([
-        {
-          ref: { namespace: NS, entry: "post", field: "updatedAt" },
-          onCreate: { kind: "generator", id: "timestampNow" },
-          onUpdate: { kind: "generator", id: "timestampNow" },
-        },
+  describe("forms Prisma 8 removed", () => {
+    it.each([
+      ["updatedAt temporal.updatedAt()", "Write DateTime @onCreate(now()) @onUpdate(now())."],
+      ["updatedAt temporal.updatedAt()?", "Write DateTime? @onCreate(now()) @onUpdate(now())."],
+      ["updatedAt temporal.updatedAt(3)", "Write DateTime @onCreate(now()) @onUpdate(now())."],
+    ])("refuses the field preset in %s, naming the rewrite", (field, rewrite) => {
+      const result = interpret(`model Post {\n id String @id\n ${field}\n}`);
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.failure.diagnostics).toEqual([
+        expect.objectContaining({
+          code: "PSL_UNRESOLVED_REFERENCE",
+          message: `temporal.updatedAt() was a field preset, and Prisma 8 removed field presets. ${rewrite}`,
+        }),
       ]);
     });
 
+    it("refuses @updatedAt, naming @onCreate(now()) @onUpdate(now())", () => {
+      const result = interpret("model Post {\n id String @id\n updatedAt DateTime @updatedAt\n}");
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.failure.diagnostics).toEqual([
+        expect.objectContaining({
+          code: "PSL_UNSUPPORTED_FIELD_ATTRIBUTE",
+          message:
+            'Field "Post.updatedAt" uses unsupported attribute "@updatedAt". Use @onCreate(now()) @onUpdate(now()).',
+        }),
+      ]);
+    });
+
+    it("leaves the hint out when the field already writes @onUpdate(...)", () => {
+      const result = interpret(
+        "model Post {\n id String @id\n updatedAt DateTime @updatedAt @onCreate(now()) @onUpdate(now())\n}"
+      );
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.failure.diagnostics.map(({ message }) => message)).toEqual([
+        'Field "Post.updatedAt" uses unsupported attribute "@updatedAt"',
+      ]);
+    });
+
+    it.each(["uuid()", "uuid(7)", "cuid(2)", "ulid()", "nanoid(10)", "ksuid()"])(
+      "refuses @default(%s), naming @onCreate(...)",
+      (call) => {
+        const result = interpret(`model Post {\n id String @id @default(${call})\n}`);
+        expect(result.ok).toBe(false);
+        if (result.ok) return;
+        expect(result.failure.diagnostics).toEqual([
+          expect.objectContaining({
+            code: "PSL_GENERATOR_IN_DEFAULT",
+            message: `Field "Post.id": ${call} is a value the client generates, and @default sets a database default only. Write @onCreate(${call}) instead.`,
+          }),
+        ]);
+      }
+    );
+
+    it("still reports an unknown @default function", () => {
+      const result = interpret('model Post {\n id String @id @default(dbgenerated("gen_random_uuid()"))\n}');
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.failure.diagnostics[0]).toMatchObject({
+        code: "IDB_UNKNOWN_DEFAULT_FUNCTION",
+        message: expect.stringContaining("Supported: now(), autoincrement()."),
+      });
+    });
+  });
+
+  describe("@onUpdate(now()) on a key field", () => {
     it("errors when used on the @id key field", () => {
       const result = interpret(`
         model Post {
-          id DateTime @id @updatedAt
+          id DateTime @id @onCreate(now()) @onUpdate(now())
         }
       `);
       expect(result.ok).toBe(false);
       if (result.ok) return;
       expect(result.failure.diagnostics[0]!.code).toBe("IDB_TEMPORAL_UPDATED_AT_ON_KEY_FIELD");
-    });
-
-    it("keeps an optional field optional", () => {
-      const result = interpret(`
-        model Post {
-          id        String @id
-          updatedAt DateTime? @updatedAt
-        }
-      `);
-      expect(result.ok).toBe(true);
-      if (!result.ok) return;
-      const model = result.value.domain.namespaces[NS]!.models["Post"] as unknown as TestContractModel;
-      expect(model.fields["updatedAt"]).toMatchObject({ nullable: true });
-    });
-
-    it("errors on a non-DateTime field", () => {
-      const result = interpret(`
-        model Post {
-          id        String @id
-          updatedAt String @updatedAt
-        }
-      `);
-      expect(result.ok).toBe(false);
-      if (result.ok) return;
-      expect(result.failure.diagnostics[0]!.code).toBe("IDB_UPDATED_AT_NOT_DATETIME");
-    });
-
-    it("errors when combined with @default(...)", () => {
-      const result = interpret(`
-        model Post {
-          id        String @id
-          updatedAt DateTime @updatedAt @default(now())
-        }
-      `);
-      expect(result.ok).toBe(false);
-      if (result.ok) return;
-      expect(result.failure.diagnostics[0]!.code).toBe("IDB_UPDATED_AT_AND_DEFAULT_CONFLICT");
     });
   });
 
@@ -1495,12 +1420,12 @@ describe("interpretPslDocumentToIdbContract", () => {
       expect(postModel.storage.fieldDefaults).toEqual({ published: false, views: 0, title: "untitled" });
     });
 
-    it("does not populate fieldDefaults for generator-based defaults (uuid/cuid/now/autoincrement)", () => {
+    it("does not populate fieldDefaults for generated values (uuid/cuid/now/autoincrement)", () => {
       const result = interpret(`
         model Post {
           id        Int      @id @default(autoincrement())
-          slug      String   @default(uuid())
-          extId     String   @default(cuid())
+          slug      String   @onCreate(uuid())
+          extId     String   @onCreate(cuid(2))
           createdAt DateTime @default(now())
         }
       `);
@@ -1545,77 +1470,6 @@ describe("interpretPslDocumentToIdbContract", () => {
           onCreate: { kind: "generator", id: "timestampNow" },
         },
       ]);
-    });
-  });
-
-  describe("@default(uuid())", () => {
-    it("resolves uuid() and uuid(4) to the uuidv4 generator", () => {
-      const result = interpret(`
-        model Post {
-          id  String @id
-          a   String @default(uuid())
-          b   String @default(uuid(4))
-        }
-      `);
-      expect(result.ok).toBe(true);
-      if (!result.ok) return;
-      const defaults = result.value.execution?.mutations.defaults;
-      expect(defaults).toEqual(
-        expect.arrayContaining([
-          { ref: { namespace: NS, entry: "post", field: "a" }, onCreate: { kind: "generator", id: "uuidv4" } },
-          { ref: { namespace: NS, entry: "post", field: "b" }, onCreate: { kind: "generator", id: "uuidv4" } },
-        ])
-      );
-    });
-
-    it("resolves uuid(7) to the uuidv7 generator", () => {
-      const result = interpret(`
-        model Post {
-          id String @id @default(uuid(7))
-        }
-      `);
-      expect(result.ok).toBe(true);
-      if (!result.ok) return;
-      expect(result.value.execution?.mutations.defaults).toEqual([
-        { ref: { namespace: NS, entry: "post", field: "id" }, onCreate: { kind: "generator", id: "uuidv7" } },
-      ]);
-    });
-
-    it("errors on an unsupported uuid version", () => {
-      const result = interpret(`
-        model Post {
-          id String @id @default(uuid(9))
-        }
-      `);
-      expect(result.ok).toBe(false);
-      if (result.ok) return;
-      expect(result.failure.diagnostics[0]!.code).toBe("IDB_INVALID_DEFAULT_FUNCTION_ARGUMENT");
-    });
-  });
-
-  describe("@default(cuid())", () => {
-    it("resolves bare cuid() to the cuid2 generator", () => {
-      const result = interpret(`
-        model Post {
-          id String @id @default(cuid())
-        }
-      `);
-      expect(result.ok).toBe(true);
-      if (!result.ok) return;
-      expect(result.value.execution?.mutations.defaults).toEqual([
-        { ref: { namespace: NS, entry: "post", field: "id" }, onCreate: { kind: "generator", id: "cuid2" } },
-      ]);
-    });
-
-    it("errors on cuid(1) — no v1 generator available", () => {
-      const result = interpret(`
-        model Post {
-          id String @id @default(cuid(1))
-        }
-      `);
-      expect(result.ok).toBe(false);
-      if (result.ok) return;
-      expect(result.failure.diagnostics[0]!.code).toBe("IDB_INVALID_DEFAULT_FUNCTION_ARGUMENT");
     });
   });
 

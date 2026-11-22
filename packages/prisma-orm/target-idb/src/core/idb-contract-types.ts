@@ -121,9 +121,8 @@ export type IdbReferentialAction = "cascade" | "setNull" | "setDefault" | "restr
 /**
  * Mutation-default generator ids IDB recognizes in `contract.execution.mutations.defaults`.
  *
- * - `"timestampNow"` — `new Date()`. Backs `@default(now())`, `@onCreate(now())`,
- *   `@onUpdate(now())`, and `temporal.updatedAt()` and bare `@updatedAt`
- *   (onCreate + onUpdate).
+ * - `"timestampNow"` — `new Date()`. Backs `@default(now())`, `@onCreate(now())`
+ *   and `@onUpdate(now())`.
  * - `"literal"` — returns `params.value`, decoding its JSON form through
  *   `params.codecId` when present. Backs plain and tagged literal defaults.
  *   IDB has no storage-plane default slot (no server to render one), so even

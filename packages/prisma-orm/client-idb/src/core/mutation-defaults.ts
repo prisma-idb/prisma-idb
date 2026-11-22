@@ -6,7 +6,7 @@
  * Semantics mirror the SQL reference implementation:
  * - a caller-provided value always wins over a default;
  * - an empty update patch skips every `onUpdate` default (no write ⇒ no
- *   `@updatedAt` advance);
+ *   `@onUpdate(now())` advance);
  * - `timestampNow`'s value is cached per call so a whole top-level mutation
  *   call (e.g. a `createAll()` batch) shares one generated value across
  *   every row it backs, matching its `'query'`-stability in SQL. Every other

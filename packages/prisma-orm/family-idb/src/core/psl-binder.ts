@@ -270,17 +270,13 @@ const uniqueFieldSpec = fieldAttribute("unique", {
   named: portableKeyArgs,
 });
 
-const updatedAtFieldSpec = fieldAttribute("updatedAt", {
-  documentation: "Sets this field to the current time on every create and update.",
-});
-
 const defaultFieldSpec = fieldAttribute("default", {
   documentation: "Supplies a value when the field is omitted from a create.",
   positional: [
     {
       key: "value",
       type: defaultValueArg(),
-      documentation: "A literal, an enum member, or one of `now()`, `uuid()`, `cuid()` and `autoincrement()`.",
+      documentation: "A literal, a tagged literal, an enum member, `now()` or `autoincrement()`.",
     },
   ],
   named: { map: portableOnly },
@@ -321,7 +317,6 @@ export const idbAttributeSpecs = {
   field: {
     id: () => idFieldSpec,
     unique: () => uniqueFieldSpec,
-    updatedAt: () => updatedAtFieldSpec,
     default: () => defaultFieldSpec,
     // Editor tooling resolves the field's codec itself and passes it in the context.
     onCreate: generatorAttributeSpec("onCreate"),
@@ -564,8 +559,9 @@ export function createIdbAttributeBinder(input: IdbAttributeBinderInput): IdbAtt
           else unique ??= span;
           break;
         case "updatedAt":
-          if (interpret(updatedAtFieldSpec, attribute, ctx) === undefined) failed = true;
-          else updatedAt ??= span;
+          // Prisma 8 removed `@updatedAt`. Only its span is kept, so the
+          // interpreter can refuse it with what to write instead.
+          updatedAt ??= span;
           break;
         case "default": {
           const value = interpret(defaultFieldSpec, attribute, ctx);

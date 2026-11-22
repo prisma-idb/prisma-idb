@@ -318,7 +318,7 @@ function assertNoAutoIncrementTrackedModels(config: SyncInterceptorConfig): void
   throw new Error(
     `Synced models can't use @default(autoincrement()) keys: ${offending.join(", ")}. ` +
       "Each device generates its own sequence, so keys created offline on different devices collide. " +
-      "Use @default(uuid()) or @default(cuid()) instead, or leave the model out of trackedModels."
+      "Use @onCreate(uuid()) or @onCreate(cuid(2)) instead, or leave the model out of trackedModels."
   );
 }
 

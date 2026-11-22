@@ -25,11 +25,11 @@ import type { IdbContract } from "../src/exports/orm";
 const PSL = `
   model Event {
     id        Int      @id @default(autoincrement())
-    uid       String   @default(uuid())
-    ordered   String   @default(uuid(7))
-    slug      String   @default(cuid())
+    uid       String   @onCreate(uuid())
+    ordered   String   @onCreate(uuid(7))
+    slug      String   @onCreate(cuid(2))
     createdAt DateTime @default(now())
-    touchedAt DateTime @updatedAt
+    touchedAt DateTime @onCreate(now()) @onUpdate(now())
     name      String
   }
 `;

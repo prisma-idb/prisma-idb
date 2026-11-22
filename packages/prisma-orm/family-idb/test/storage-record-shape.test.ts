@@ -84,13 +84,13 @@ describe("IDB storage record shape", () => {
     const schema = (comment: string, value: string) => `
       ${comment}
       model User {
-        id String @id @default(${value})
+        id String @id ${value}
         /// Name shown to the user.
         name String? @default("initial")
       }
     `;
-    expect(psl(schema("", '"one"')).storage.storageHash).toBe(
-      psl(schema("/// Updated model documentation.", "uuid()")).storage.storageHash
+    expect(psl(schema("", '@default("one")')).storage.storageHash).toBe(
+      psl(schema("/// Updated model documentation.", "@onCreate(uuid())")).storage.storageHash
     );
   });
 

@@ -254,8 +254,8 @@ type ExecutionDefaultsOf<TContract> = TContract extends {
 
 /**
  * Column names with an `onCreate` execution default for this model's store —
- * e.g. `temporal.updatedAt()`/bare `@updatedAt` fields, or any
- * `@default(...)` field (literal, `now()`, `uuid()`, `cuid()`). These are
+ * any `@default(...)` field (a literal or `now()`) or `@onCreate(...)` field
+ * (`now()`, `uuid()`, `cuid(2)`, ...). These are
  * omittable in `create()` even though the field itself isn't nullable,
  * since the runtime fills them in (`client-idb/src/core/mutation-defaults.ts`).
  */
