@@ -38,9 +38,34 @@ interface ChangelogQuery {
   all(): Promise<ChangelogRow[]>;
 }
 
-/** Whether the push event with this outbox id already wrote its changelog row (pushes are idempotent on it). */
-export async function isEventApplied(tx: unknown, outboxEventId: string): Promise<boolean> {
-  return Boolean(await ormRootFor(tx, "Changelog").first({ outboxEventId }));
+/** The write a push event makes: who made it, and to which row. */
+export interface PushEventIdentity {
+  readonly scopeKey: string;
+  readonly model: string;
+  /** The wire-form key, as the changelog row stores it. */
+  readonly keyPath: unknown;
+  readonly operation: string;
+}
+
+/**
+ * Whether the push event with this outbox id already wrote its changelog row.
+ * Pushes are idempotent on the id, but only for the same write: `"other"`
+ * means a row with this id records another scope, model, key or operation,
+ * so this event was never applied and must not be acknowledged.
+ */
+export async function appliedEvent(
+  tx: unknown,
+  outboxEventId: string,
+  identity: PushEventIdentity
+): Promise<"none" | "same" | "other"> {
+  const row = (await ormRootFor(tx, "Changelog").first({ outboxEventId })) as Partial<PushEventIdentity> | null;
+  if (!row) return "none";
+  const same =
+    row.scopeKey === identity.scopeKey &&
+    row.model === identity.model &&
+    row.operation === identity.operation &&
+    JSON.stringify(row.keyPath) === JSON.stringify(identity.keyPath);
+  return same ? "same" : "other";
 }
 
 /** The highest changelog id `scopeKey` has, or `null` for an empty scope (an index seek on `(scopeKey, id)`). */

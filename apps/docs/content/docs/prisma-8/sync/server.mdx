@@ -215,7 +215,7 @@ Push results include the first retryable failure and omit all later events. The 
 
 When a database write fails, `applyPushEvent` logs the real error on the server and returns a generic failure. Database details such as constraint names do not reach the browser. The failure is non-retryable when the database reports SQLSTATE class 22 (data exception) or class 23 (integrity constraint violation), such as a unique violation. Retrying the same write cannot succeed. Every other failure stays retryable, including lost connections, timeouts, deadlocks and errors with no SQLSTATE.
 
-If a retry hits a unique key of its own first request, which timed out but still committed, `applyPushEvent` returns `success: true`.
+Pushes are idempotent on the event id. An event whose id is already in the changelog for the same scope, model, key and operation returns `success: true` without writing again. This includes a retry that hits a unique key of its own first request, which timed out but still committed. If the changelog records that id for a different write, the event fails as non-retryable and is never acknowledged.
 
 ### Rejected events carry the server's row
 

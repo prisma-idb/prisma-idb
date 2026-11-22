@@ -278,6 +278,32 @@ describe("applyPushEvent", () => {
     expect(await ormRootFor(db, "User").first({ id: "u1" })).toEqual({ id: "u1", name: "Ann" }); // untouched
   });
 
+  it.each([
+    ["another scope", { scopeKey: "u2" }],
+    ["another row", { keyPath: "u2" }],
+    ["another operation", { operation: "delete" }],
+  ])("refuses an event id already used by a write to %s instead of acknowledging it", async (_, other) => {
+    const db = await testDb();
+    await seed(db, {
+      User: [{ id: "u1", name: "Ann" }],
+      Changelog: [
+        { model: "User", keyPath: "u1", operation: "update", scopeKey: "u1", outboxEventId: "evt1", ...other },
+      ],
+    });
+    const check: OwnershipCheck = { kind: "root", keyField: "id", key: "u1", scopeKey: "u1", authorized: true };
+    const result = await applyPushEvent(
+      db,
+      contract,
+      getKeyField,
+      { id: "evt1", operation: "update", payload: { key: "u1", patch: { name: "Changed" } } },
+      "User",
+      check,
+      "u1"
+    );
+    expect(result).toEqual({ id: "evt1", success: false, error: "Failed to apply event evt1", retryable: false });
+    expect(await ormRootFor(db, "User").first({ id: "u1" })).toEqual({ id: "u1", name: "Ann" });
+  });
+
   it("reports unknown-model without touching the database", async () => {
     const db = await testDb();
     const result = await applyPushEvent(
