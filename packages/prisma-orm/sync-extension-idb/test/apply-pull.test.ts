@@ -9,6 +9,7 @@ import { createSyncIdbClient } from "../src/exports/client";
 import {
   OUTBOX_STORE,
   OUTBOX_ORDER_STORE,
+  SYNC_META_STORE,
   VERSION_META_STORE,
   asAccessors,
   changelogId,
@@ -709,4 +710,68 @@ describe("applyPull with a compound key", () => {
     expect(await scanAll(client, "memberships")).toEqual([]);
     expect(await scanAll(client, "_idb_sync_version_meta")).toEqual([]);
   });
+});
+
+describe("applyPull with a Bytes key", () => {
+  it.each([
+    [false, false],
+    [true, false],
+    [false, true],
+    [true, true],
+  ])(
+    "halts at a row with an unsent local edit (compound: %s, pending flag from an earlier version: %s)",
+    async (compound, legacy) => {
+      const keyPath = compound ? ["tenant", "id"] : "id";
+      const dbName = testDbName();
+      (
+        await openTestDb(dbName, [
+          { name: "assets", keyPath },
+          OUTBOX_STORE,
+          OUTBOX_ORDER_STORE,
+          VERSION_META_STORE,
+          SYNC_META_STORE,
+        ])
+      ).close();
+      const contract = defineContract({
+        family: idbFamilyPack,
+        target: idbTargetPack,
+        models: { Asset: { store: "assets", key: keyPath, fields: { tenant: "String", id: "Bytes", name: "String" } } },
+      }) as unknown as IdbContract;
+      const client = createSyncIdbClient({ contract, dbName, trackedModels: "*" });
+      try {
+        const local = { tenant: "t1", id: new Uint8Array([1, 2, 255]), name: "Local edit" };
+        if (legacy) {
+          // Queued before Bytes parts were stored as base64: the id spells each byte out.
+          await client.withoutTracking((orm) => asAccessors(orm)["assets"]!.create(local));
+          const key = compound ? ["t1", local.id] : local.id;
+          await seedVersionMeta(client, {
+            id: `Asset::${JSON.stringify(key)}`,
+            model: "Asset",
+            key,
+            lastAppliedChangeId: null,
+            localChangePending: true,
+          });
+        } else {
+          await asAccessors(client.orm)["assets"]!.create(local);
+        }
+        const wireKey = compound ? ["t1", "AQL/"] : "AQL/";
+
+        const result = await applyPull(client, [
+          {
+            changelogId: changelogId(1),
+            model: "Asset",
+            operation: "update",
+            keyPath: wireKey,
+            record: { tenant: "t1", id: "AQL/", name: "Server" },
+          },
+        ]);
+
+        expect(result).toMatchObject({ applied: 0, halted: true, lastChangelogId: null });
+        expect(await scanAll(client, "assets")).toEqual([local]);
+        expect(await scanAll(client, "_idb_sync_version_meta")).toHaveLength(1);
+      } finally {
+        await client.close();
+      }
+    }
+  );
 });

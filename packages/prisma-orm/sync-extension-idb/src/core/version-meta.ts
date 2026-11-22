@@ -15,13 +15,28 @@ import {
 } from "@prisma-idb/client-idb/internal";
 import type { IdbTransactionScope } from "@prisma-idb/driver-idb/runtime";
 import type { VersionMetaRecord } from "../types";
-import { decodeJsonRecord, validateKeyPath } from "@prisma-idb/target-idb/runtime";
+import { codecValueToJson, decodeJsonRecord, idbCodecLookup, validateKeyPath } from "@prisma-idb/target-idb/runtime";
 import { getRecord, scanStore } from "./raw-store";
 
 export const VERSION_META_STORE = "_idb_sync_version_meta";
 
-/** The `_idb_sync_version_meta` id for the record of `modelName` stored under `key`. */
+const bytesCodec = idbCodecLookup.get("idb/bytes@1")!;
+
+/**
+ * The `_idb_sync_version_meta` id for the record of `modelName` stored under `key`.
+ * A local write passes the native key and a pull passes the wire key, so both
+ * must give one id: `Bytes` parts are written as base64, their wire form.
+ * `Date` parts already match, as `JSON.stringify` writes their wire form.
+ */
 export function versionMetaKey(modelName: string, key: unknown): string {
+  const json = JSON.stringify(key, (_name, value: unknown) =>
+    value instanceof Uint8Array ? codecValueToJson(bytesCodec, value) : value
+  );
+  return `${modelName}::${json}`;
+}
+
+/** The id an earlier version wrote for a key with `Bytes` parts, which spelled each byte out. */
+function legacyVersionMetaKey(modelName: string, key: unknown): string {
   return `${modelName}::${JSON.stringify(key)}`;
 }
 
@@ -34,8 +49,11 @@ export async function resolveVersionMeta(
   wireKey: unknown = key,
   snapshot?: ReadonlyMap<string, VersionMetaRecord>
 ): Promise<VersionMetaRecord | undefined> {
+  const read = (id: string) =>
+    snapshot ? snapshot.get(id) : getRecord<VersionMetaRecord>(scope, VERSION_META_STORE, id);
   const id = versionMetaKey(model, wireKey);
-  const exact = snapshot ? snapshot.get(id) : await getRecord<VersionMetaRecord>(scope, VERSION_META_STORE, id);
+  const legacyId = legacyVersionMetaKey(model, key);
+  const exact = (await read(id)) ?? (legacyId === id ? undefined : await read(legacyId));
   if (!hasDecimalPrimaryKey(contract, model)) return exact;
   const rows = snapshot ? [...snapshot.values()] : await scanStore<VersionMetaRecord>(scope, VERSION_META_STORE);
   const matches = rows.filter(
@@ -59,7 +77,9 @@ export function nativeVersionMetaKey(contract: IdbContract, model: string, key: 
 
 /** Compare an event's persisted id without reviving JSON-flattened non-Decimal key parts. */
 export function versionMetaMatches(contract: IdbContract, model: string, id: string, key: IDBValidKey): boolean {
-  if (versionMetaKey(model, key) === id) return true;
+  const sameId = (candidate: unknown) =>
+    versionMetaKey(model, candidate) === id || legacyVersionMetaKey(model, candidate) === id;
+  if (sameId(key)) return true;
   if (!hasDecimalPrimaryKey(contract, model) || !id.startsWith(`${model}::`)) return false;
   const storedKey: unknown = JSON.parse(id.slice(model.length + 2));
   const path = getKeyPath(contract, model);
@@ -68,5 +88,5 @@ export function versionMetaMatches(contract: IdbContract, model: string, id: str
   if (!Array.isArray(parts)) return false;
   const record = Object.fromEntries(fields.map((field, i) => [field, parts[i]]));
   const retained = preserveDecimalKeySpelling(contract, model, record, storedKey);
-  return versionMetaKey(model, extractKeyFromRow(retained, path)) === id;
+  return sameId(extractKeyFromRow(retained, path));
 }
