@@ -3,6 +3,7 @@ import type { SqlPushResult } from "./push";
 import type { SqlPushWireEvent } from "./apply-push";
 import { resolvePullRecord } from "./resolve-pull-record";
 import { WireValidationError } from "./wire-values";
+import { inReadSnapshot } from "./read-snapshot";
 
 /** The wire key an event targets, read straight from its payload (even when the rest of the payload is malformed). */
 function wireKeyOf(event: SqlPushWireEvent, keyField: string): unknown {
@@ -33,8 +34,10 @@ async function readCurrentRecord(
     scopeKey,
   })[0]!;
   if (check.kind === "unknown-model") return undefined;
-  // "update", so a rejected delete reports the row that still exists.
-  return resolvePullRecord(db, syncServer, contract, getKeyField, event.entityType, check, key, "update");
+  // "update", so a rejected delete reports the row that still exists. One snapshot, as in a pull.
+  return inReadSnapshot(db, contract.target, (tx) =>
+    resolvePullRecord(tx, syncServer, contract, getKeyField, event.entityType, check, key, "update")
+  );
 }
 
 /**

@@ -443,6 +443,8 @@ describe("pull", () => {
           Board: { first: vi.fn().mockRejectedValue(error) },
         },
       },
+      // A pull reads in one transaction; this fake runs it on itself.
+      transaction: (fn: (tx: unknown) => Promise<unknown>) => fn(failingDb),
     };
     await expect(adapter.pull(failingDb, { scopeKey: "u1" })).rejects.toBe(error);
   });
