@@ -1,6 +1,8 @@
 import { pullResponseSchema, pushResultSchema } from "../schemas";
 import { ContractMismatchError } from "./contract-mismatch-error";
+import { toWireEvent, WireEncodeError } from "./wire-event";
 import type { SyncWorkerOptions } from "./sync-worker";
+import type { OutboxEvent, PushResult } from "../types";
 import type { IdbContract } from "@prisma-idb/client-idb/orm";
 
 /** HTTP transport configuration for a sync worker. Relative URLs require a browser location. */
@@ -33,6 +35,18 @@ export function createSyncFetchHandlers(options: SyncFetchHandlersOptions): Sync
   const fetchRequest = options.fetch ?? globalThis.fetch.bind(globalThis);
   return {
     async pushHandler(events, signal, context) {
+      // An event that can't be encoded fails on its own, without a request, so the rest of the batch still syncs.
+      const wireEvents: OutboxEvent[] = [];
+      const unencodable: PushResult[] = [];
+      for (const event of events) {
+        try {
+          wireEvents.push(toWireEvent(context.contract, event));
+        } catch (error) {
+          if (!(error instanceof WireEncodeError)) throw error;
+          unencodable.push({ id: event.id, success: false, error: error.message, retryable: false });
+        }
+      }
+      if (events.length > 0 && wireEvents.length === 0) return unencodable;
       const headers = new Headers(options.headers);
       headers.set("content-type", "application/json");
       const response = await fetchRequest(options.pushUrl, {
@@ -40,10 +54,13 @@ export function createSyncFetchHandlers(options: SyncFetchHandlersOptions): Sync
         headers,
         credentials: options.credentials ?? "same-origin",
         redirect: "error",
-        body: JSON.stringify({ storageHash: context.storageHash, events }),
+        body: JSON.stringify({
+          storageHash: context.storageHash,
+          events: wireEvents,
+        }),
         signal,
       });
-      return pushResultSchema
+      const results = pushResultSchema
         .array()
         .parse(await readResponse(response, "Push"))
         .map(({ id, success, error, retryable, record }) => ({
@@ -53,6 +70,7 @@ export function createSyncFetchHandlers(options: SyncFetchHandlersOptions): Sync
           ...(retryable === undefined ? {} : { retryable }),
           ...(record === undefined ? {} : { record }),
         }));
+      return [...unencodable, ...results];
     },
     async pullHandler(fromChangelogId, signal, context) {
       const url = new URL(options.pullUrl, globalThis.location?.href);

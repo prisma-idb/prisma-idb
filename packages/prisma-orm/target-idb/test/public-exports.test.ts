@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import * as control from "../src/exports/control";
 import * as migration from "../src/exports/migration";
+import * as runtime from "../src/exports/runtime";
 
 describe("target entry points", () => {
   it.each([
@@ -17,5 +18,11 @@ describe("target entry points", () => {
     expect(migration.Migration).toBeTypeOf("function");
     expect(migration.MigrationCLI.run).toBeTypeOf("function");
     expect(migration.IdbMigrationPlanner).toBeTypeOf("function");
+  });
+
+  it("exports the wire JSON record helpers the sync packages call from the runtime entry", () => {
+    expect(runtime.decodeJsonRecord).toBeTypeOf("function");
+    expect(runtime.encodeJsonRecord).toBeTypeOf("function");
+    expect(runtime.encodeJsonFieldValue).toBeTypeOf("function");
   });
 });

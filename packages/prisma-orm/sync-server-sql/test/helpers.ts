@@ -68,23 +68,26 @@ export const testSyncServer = createSyncServer({
   getKeyField: (contract, model) => sqlGetKeyField(contract, model),
 });
 
-export const testBigSyncServer = createSyncServer({
-  contract: testContract,
-  clientContract: {
-    ...testClientContract,
-    domain: {
-      namespaces: {
-        public: {
-          ...testClientContract.domain.namespaces["public"]!,
-          models: Object.fromEntries(
-            Object.entries(testContract.domain.namespaces["public"]!.models).filter(([name]) =>
-              ["BigUser", "BigItem"].includes(name)
-            )
-          ),
-        },
+/** The client projection of the BigInt-keyed models alone, rooted at `BigUser`. */
+export const testBigClientContract: SyncServerContract = {
+  ...testClientContract,
+  domain: {
+    namespaces: {
+      public: {
+        ...testClientContract.domain.namespaces["public"]!,
+        models: Object.fromEntries(
+          Object.entries(testContract.domain.namespaces["public"]!.models).filter(([name]) =>
+            ["BigUser", "BigItem"].includes(name)
+          )
+        ),
       },
     },
   },
+};
+
+export const testBigSyncServer = createSyncServer({
+  contract: testContract,
+  clientContract: testBigClientContract,
   rootModel: "BigUser",
   getKeyField: sqlGetKeyField,
 });

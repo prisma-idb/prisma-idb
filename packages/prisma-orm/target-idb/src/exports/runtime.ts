@@ -5,7 +5,7 @@ export { compareDecimalValues, isDecimalString } from "../core/decimal-compare";
 export { codecValueFromJson, codecValueToJson, idbCodecLookup } from "../core/codecs";
 export { absentAsNull } from "../core/absent-as-null";
 export type { AbsentAsNull } from "../core/absent-as-null";
-export { decodeJsonRecord } from "../core/decode-json-record";
+export { decodeJsonRecord, encodeJsonFieldValue, encodeJsonRecord } from "../core/decode-json-record";
 export { assertRecordValidator, validateRecord, validateKeyFields, validateKeyPath } from "../core/validate-record";
 export type { ValidationResult, ValidationCodecLookup, RecordValidationOptions } from "../core/validate-record";
 export {

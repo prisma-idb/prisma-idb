@@ -5,7 +5,7 @@ import type {
   JsonValue,
 } from "@prisma/orm-framework/contract/types";
 import { domainModelsAtDefaultNamespace, valueObjectAt } from "@prisma/orm-framework/contract/types";
-import { codecValueFromJson, idbCodecLookup } from "./codecs";
+import { codecValueFromJson, codecValueToJson, idbCodecLookup } from "./codecs";
 
 /**
  * Decode a plain JS record that arrived as wire JSON (e.g. an HTTP pull
@@ -25,6 +25,81 @@ export function decodeJsonRecord(
   const model = domainModelsAtDefaultNamespace(contract.domain)[modelName];
   if (!model) return record;
   return decodeFields(record, model.fields, contract, `Model "${modelName}"`);
+}
+
+/**
+ * Encode a native record for `modelName` as wire JSON: the inverse of
+ * {@link decodeJsonRecord}. Each scalar field is written through its codec
+ * (`bigint` → string, `Uint8Array` → base64, `Date` → ISO string), so
+ * `JSON.stringify` neither throws nor turns bytes into a numeric-keyed object.
+ * Keys absent from the model pass through unchanged.
+ */
+export function encodeJsonRecord(
+  contract: ContractWithDomain,
+  modelName: string,
+  record: Record<string, unknown>
+): Record<string, unknown> {
+  const model = domainModelsAtDefaultNamespace(contract.domain)[modelName];
+  if (!model) return record;
+  return mapFields(record, model.fields, contract, `Model "${modelName}"`, encodeScalar);
+}
+
+/** Encode one scalar or value-object field value as wire JSON, the inverse of decoding it. */
+export function encodeJsonFieldValue(
+  contract: ContractWithDomain,
+  modelName: string,
+  fieldName: string,
+  value: unknown
+): unknown {
+  const field = domainModelsAtDefaultNamespace(contract.domain)[modelName]?.fields[fieldName];
+  if (!field) return value;
+  return mapFields({ [fieldName]: value }, { [fieldName]: field }, contract, `Model "${modelName}"`, encodeScalar)[
+    fieldName
+  ];
+}
+
+type ScalarMapper = (value: unknown, codecId: string) => unknown;
+
+function encodeScalar(value: unknown, codecId: string): unknown {
+  const codec = idbCodecLookup.get(codecId);
+  return codec ? codecValueToJson(codec, value) : value;
+}
+
+/** Applies `mapScalar` to every declared scalar, including list, dict and value-object members. */
+function mapFields(
+  record: Record<string, unknown>,
+  fields: Record<string, ContractField | ContractValueObjectField>,
+  contract: ContractWithDomain,
+  owner: string,
+  mapScalar: ScalarMapper
+): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...record };
+  for (const [key, field] of Object.entries(fields)) {
+    if (field.type.kind === "union") {
+      throw new Error(`${owner} field "${key}" uses a union type, which prisma-idb does not support`);
+    }
+    if (!(key in record)) continue;
+    const mapOne = (value: unknown): unknown => {
+      if (value === null || value === undefined) return value;
+      if (field.type.kind === "scalar") return mapScalar(value, field.type.codecId);
+      if (field.type.kind === "valueObject" && isPlainObject(value)) {
+        const voDef = valueObjectAt(contract.storage, field.type);
+        return voDef
+          ? mapFields(value, voDef.fields, contract, `Value object "${field.type.entityName}"`, mapScalar)
+          : value;
+      }
+      return value;
+    };
+    const value = record[key];
+    if (value === null || value === undefined) continue;
+    if (field.many) out[key] = Array.isArray(value) ? value.map(mapOne) : value;
+    else if (field.dict)
+      out[key] = isPlainObject(value)
+        ? Object.fromEntries(Object.entries(value).map(([k, v]) => [k, mapOne(v)]))
+        : value;
+    else out[key] = mapOne(value);
+  }
+  return out;
 }
 
 /** Decodes declared fields and rejects unsupported types before reading their values. */

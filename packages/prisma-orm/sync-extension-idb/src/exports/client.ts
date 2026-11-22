@@ -35,4 +35,5 @@ export type {
 } from "../types";
 
 export { createSyncFetchHandlers } from "../core/fetch-handlers";
+export { toWireEvent, WireEncodeError } from "../core/wire-event";
 export type { SyncFetchHandlersOptions, SyncFetchHandlers } from "../core/fetch-handlers";
