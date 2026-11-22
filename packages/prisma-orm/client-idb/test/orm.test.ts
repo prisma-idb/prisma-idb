@@ -164,6 +164,7 @@ const POSTS_STORE: StoreSpec = {
 };
 
 const USER_FIELDS = { name: "String", email: "String" } as const;
+const POST_FIELDS = { title: "String", authorId: "String", published: "Boolean", views: "Int" } as const;
 const ALICE = { id: "u1", name: "Alice", email: "alice@example.com" };
 const BOB = { id: "u2", name: "Bob", email: "bob@example.com" };
 const POST_A = { id: "p1", title: "Hello", authorId: "u1" };
@@ -276,7 +277,10 @@ describe("IdbStoreAccessor — where / take / skip / orderBy", () => {
   });
 
   function makeClient() {
-    const contract = makeTestContract({ users: "User" }, { User: { storeName: "users", keyPath: "id" } });
+    const contract = makeTestContract(
+      { users: "User" },
+      { User: { storeName: "users", keyPath: "id", fields: USER_FIELDS } }
+    );
     return asRecord(idbOrm({ contract, executor }));
   }
 
@@ -285,6 +289,15 @@ describe("IdbStoreAccessor — where / take / skip / orderBy", () => {
     const rows = await client["users"]!.where({ name: "Alice" }).all().toArray();
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ name: "Alice" });
+  });
+
+  it("where() rejects a field the model doesn't have instead of matching every row", async () => {
+    const users = makeClient()["users"]!;
+    expect(() => users.where({ typo: null } as never)).toThrow('Model "User" has no field "typo"');
+    expect(() => users.where((m) => (m as never as Record<string, { eq(v: unknown): never }>)["typo"]!.eq(1))).toThrow(
+      'Model "User" has no field "typo"'
+    );
+    expect(await users.where({ name: null } as never).count()).toBe(0);
   });
 
   it("where() with no match returns empty", async () => {
@@ -517,6 +530,7 @@ function usersWithPostsContract() {
       User: {
         storeName: "users",
         keyPath: "id",
+        fields: USER_FIELDS,
         relations: {
           posts: { to: "Post", cardinality: "1:N", on: { localFields: ["id"], targetFields: ["authorId"] } },
         },
@@ -524,7 +538,7 @@ function usersWithPostsContract() {
       Post: {
         storeName: "posts",
         keyPath: "id",
-        fields: { authorId: "String" },
+        fields: POST_FIELDS,
         relations: {
           author: { to: "User", cardinality: "N:1", on: { localFields: ["authorId"], targetFields: ["id"] } },
         },
@@ -647,7 +661,7 @@ describe("IdbStoreAccessor — aggregate / groupBy", () => {
   function postsClient() {
     const contract = makeTestContract(
       { posts: "Post" },
-      { Post: { storeName: "posts", keyPath: "id", fields: { views: "Int" } } }
+      { Post: { storeName: "posts", keyPath: "id", fields: POST_FIELDS } }
     );
     return asRecord(idbOrm({ contract, executor }));
   }
@@ -805,7 +819,10 @@ describe("IdbStoreAccessor — select projection", () => {
   });
 
   it("select() composes with where()", async () => {
-    const contract = makeTestContract({ posts: "Post" }, { Post: { storeName: "posts", keyPath: "id" } });
+    const contract = makeTestContract(
+      { posts: "Post" },
+      { Post: { storeName: "posts", keyPath: "id", fields: POST_FIELDS } }
+    );
     const client = asRecord(idbOrm({ contract, executor }));
     const rows = await client["posts"]!.where({ published: true }).select("id").all().toArray();
     expect(rows).toHaveLength(3);

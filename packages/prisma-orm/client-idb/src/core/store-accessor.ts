@@ -14,6 +14,7 @@ import type {
   IdbQueryAst,
 } from "@prisma-idb/adapter-idb/runtime";
 import { shorthandToFilterExpr } from "@prisma-idb/adapter-idb/runtime";
+import { assertKnownFilterFields } from "./filter-fields";
 import {
   type CreateInput,
   type DefaultModelRow,
@@ -469,6 +470,7 @@ export class IdbStoreAccessorImpl<
     // to `undefined` — keep the existing filter list untouched so chained
     // `.where({})` calls don't produce noisy AND nodes.
     if (expr === undefined) return this.#clone<true>({});
+    assertKnownFilterFields(this.#contract, this.#modelName, expr);
     return this.#clone<true>({ filters: [...this.#state.filters, expr] });
   }
 
@@ -808,6 +810,7 @@ export class IdbStoreAccessorImpl<
     assertUniqueLookup(buildCatalog(this.#contract, this.#storeName, this.#modelName), where);
     const keyPath = getKeyPath(this.#contract, this.#modelName);
     const whereExpr = shorthandToFilterExpr(where);
+    assertKnownFilterFields(this.#contract, this.#modelName, whereExpr);
     const meta = this.#planMeta(this.#newGroupingKey());
     const createRecord = args.create as Record<string, unknown>;
     const resolvedUpdates = resolveFieldUpdates(this.#contract, this.#modelName, args.update);

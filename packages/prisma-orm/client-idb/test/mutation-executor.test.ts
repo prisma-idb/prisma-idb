@@ -246,6 +246,19 @@ describe("ORM nested update", () => {
     expect(posts[0]?.["authorId"]).toBe("u2");
   });
 
+  it("rejects a connect or disconnect criterion on a field the related model doesn't have", async () => {
+    await orm_()["users"]!.create({ id: "u1", name: "Alice" } as never);
+    await orm_()["posts"]!.create({ id: "p1", authorId: "u1", title: "Post" } as never);
+    const users = idbOrm({ contract, executor })["users"]!.where({ id: "u1" });
+    for (const mutate of [
+      (rel: RelMutator) => rel.connect([{ typo: "x" }]),
+      (rel: RelMutator) => rel.disconnect([{ typo: "x" }]),
+    ]) {
+      await expect(users.update({ posts: mutate } as never)).rejects.toThrow('Model "Post" has no field "typo"');
+    }
+    expect((await getAllRows(db, "posts"))[0]?.["authorId"]).toBe("u1");
+  });
+
   it("N:1 disconnect in update sets FK to null", async () => {
     await orm_()["users"]!.create({ id: "u1", name: "Alice" } as never);
     await orm_()["posts"]!.create({ id: "p1", authorId: "u1", title: "Post" } as never);
