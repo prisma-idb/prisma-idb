@@ -1,6 +1,7 @@
 import { pullRequestQuerySchema, pushRequestBodySchema } from "@prisma-idb/sync-extension-idb/schemas";
 import { createSyncServer } from "@prisma-idb/sync-server";
-import type { CreateSyncServerOptions } from "@prisma-idb/sync-server";
+import type { CreateSyncServerOptions, SyncServerContract } from "@prisma-idb/sync-server";
+import { encodeWireValues } from "./wire-values";
 import { sqlGetKeyField } from "./get-key-field";
 import { createSqlSyncAdapter } from "./create-adapter";
 import type { ModelWritePolicies } from "./write-policy";
@@ -32,6 +33,7 @@ export interface SqlSync {
 /** Internal SQL execution settings shared by the two HTTP routes. */
 interface HandlerOptions {
   readonly adapter: SqlSyncAdapter;
+  readonly contract: SyncServerContract;
   readonly maxBatchSize?: number;
   readonly pullLimit?: number;
 }
@@ -44,7 +46,7 @@ interface RequestContext {
 
 /** Validates the HTTP push envelope before applying events in the trusted scope. */
 async function handlePush(
-  { adapter, maxBatchSize }: HandlerOptions,
+  { adapter, contract, maxBatchSize }: HandlerOptions,
   request: Request,
   { db, scopeKey }: RequestContext
 ): Promise<Response> {
@@ -64,7 +66,18 @@ async function handlePush(
     ...(maxBatchSize === undefined ? {} : { maxBatchSize }),
     clientStorageHash: parsed.data.storageHash,
   });
-  if (outcome.ok) return Response.json(outcome.results);
+  if (outcome.ok) {
+    // A rejected event carries its row's current state, read natively from SQL.
+    const models = new Map(parsed.data.events.map((event) => [event.id, event.entityType]));
+    return Response.json(
+      outcome.results.map((result) => {
+        const model = models.get(result.id);
+        return result.record && model !== undefined
+          ? { ...result, record: encodeWireValues(contract, model, result.record) }
+          : result;
+      })
+    );
+  }
   switch (outcome.reason) {
     case "write-policy-violation":
       return Response.json(outcome, { status: 403 });
@@ -79,7 +92,7 @@ async function handlePush(
 
 /** Reads the URL cursor and maps pull outcomes to HTTP responses. */
 async function handlePull(
-  { adapter, pullLimit }: HandlerOptions,
+  { adapter, contract, pullLimit }: HandlerOptions,
   request: Request,
   { db, scopeKey }: RequestContext
 ): Promise<Response> {
@@ -93,7 +106,12 @@ async function handlePull(
     ...(pullLimit === undefined ? {} : { limit: pullLimit }),
     clientStorageHash: parsed.data.storageHash,
   });
-  if (outcome.ok) return Response.json({ logs: outcome.logs, hasMore: outcome.hasMore });
+  if (outcome.ok) {
+    const logs = outcome.logs.map((log) =>
+      log.record ? { ...log, record: encodeWireValues(contract, log.model, log.record) } : log
+    );
+    return Response.json({ logs, hasMore: outcome.hasMore });
+  }
   switch (outcome.reason) {
     case "contract-mismatch":
       return Response.json(outcome, { status: 409 });
@@ -121,6 +139,7 @@ export function createSqlSync(options: CreateSqlSyncOptions): SqlSync {
       syncServer,
       ...(options.writePolicies === undefined ? {} : { writePolicies: options.writePolicies }),
     }),
+    contract: options.contract,
     ...(options.maxBatchSize === undefined ? {} : { maxBatchSize: options.maxBatchSize }),
     ...(options.pullLimit === undefined ? {} : { pullLimit: options.pullLimit }),
   };

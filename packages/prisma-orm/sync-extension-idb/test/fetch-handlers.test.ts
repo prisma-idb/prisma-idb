@@ -1,8 +1,43 @@
 import { describe, expect, it } from "vitest";
+import { defineContract } from "@prisma-idb/family-idb/contract-ts";
+import idbFamilyPack from "@prisma-idb/family-idb/pack";
+import idbTargetPack from "@prisma-idb/target-idb/pack";
+import type { IdbContract } from "@prisma-idb/client-idb/orm";
 import { createSyncFetchHandlers } from "../src/core/fetch-handlers";
 import { ContractMismatchError } from "../src/core/contract-mismatch-error";
+import type { OutboxEvent } from "../src/types";
 
-const context = { storageHash: "client-contract" };
+const contract = defineContract({
+  family: idbFamilyPack,
+  target: idbTargetPack,
+  models: {
+    Asset: {
+      store: "assets",
+      key: "id",
+      fields: { id: "Bytes", size: "BigInt", sizes: "BigInt[]", checksum: "Bytes?", at: "DateTime" },
+    },
+  },
+}) as unknown as IdbContract;
+const context = { storageHash: "client-contract", contract };
+
+/** An outbox row as the worker hands it to the push handler. */
+function outboxEvent(id: string, operation: string, payload: unknown): OutboxEvent {
+  return {
+    id,
+    entityType: "Asset",
+    operation,
+    payload,
+    createdAt: new Date(0),
+    synced: false,
+    syncedAt: null,
+    lastAttemptedAt: null,
+    tries: 0,
+    lastError: null,
+    migrationError: null,
+    retryable: true,
+    versionMetaId: null,
+  };
+}
 
 /** Network boundary that echoes the public request properties for assertions. */
 function echoRequest(input: string | URL | Request, init?: RequestInit): Request {
@@ -40,6 +75,34 @@ describe("fetch sync handlers", () => {
     expect(await client.pushHandler([], controller.signal, context)).toEqual([]);
     controller = new AbortController();
     expect(await client.pullHandler("cursor+/?", controller.signal, context)).toEqual({ logs: [], hasMore: true });
+  });
+
+  it("sends BigInt, Bytes and DateTime values in the wire form the server revives", async () => {
+    let body: unknown;
+    const client = createSyncFetchHandlers({
+      pushUrl: "https://sync.test/push",
+      pullUrl: "https://sync.test/pull",
+      fetch: async (input, init) => {
+        body = await new Request(input, init).json();
+        return Response.json([]);
+      },
+    });
+    const id = new Uint8Array([1, 2, 255]);
+    const at = new Date("2026-01-01T00:00:00.000Z");
+    await client.pushHandler(
+      [
+        outboxEvent("c", "create", { id, size: 9007199254740993n, sizes: [1n, 2n], checksum: null, at }),
+        outboxEvent("u", "update", { key: id, patch: { size: 1n, checksum: new Uint8Array([0]) } }),
+        outboxEvent("d", "delete", { key: id }),
+      ],
+      new AbortController().signal,
+      context
+    );
+    expect((body as { events: { payload: unknown }[] }).events.map((event) => event.payload)).toEqual([
+      { id: "AQL/", size: "9007199254740993", sizes: ["1", "2"], checksum: null, at: "2026-01-01T00:00:00.000Z" },
+      { key: "AQL/", patch: { size: "1", checksum: "AA==" } },
+      { key: "AQL/" },
+    ]);
   });
 
   it.each([409, 401, 500])("handles HTTP %s before parsing a non-JSON body", async (status) => {

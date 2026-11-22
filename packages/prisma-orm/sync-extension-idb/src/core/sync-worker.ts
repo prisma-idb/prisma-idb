@@ -35,6 +35,12 @@ export interface SyncRequestContext {
    * and forward it as `clientStorageHash` to the server's `pull`/`applyPush`.
    */
   readonly storageHash: string;
+  /**
+   * The client contract. A custom transport encodes each event with
+   * `toWireEvent(context.contract, event)` before `JSON.stringify`, as the
+   * built-in fetch handlers do.
+   */
+  readonly contract: IdbContract;
 }
 
 /** Configures transport handlers, batching, and retry timing. */
@@ -241,6 +247,7 @@ export function createSyncWorker<TContract extends IdbContract>(options: SyncWor
 
   const requestContext: SyncRequestContext = {
     storageHash: syncClient.contract.storage.storageHash,
+    contract: syncClient.contract,
   };
 
   /** Emits the contract-mismatch notification for a refused transport request. */

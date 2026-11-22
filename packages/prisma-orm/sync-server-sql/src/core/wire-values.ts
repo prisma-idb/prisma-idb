@@ -29,6 +29,32 @@ export function encodeWireKey(contract: SyncServerContract, model: string, keyFi
   return codec && key != null ? codecValueToJson(codec, key) : key;
 }
 
+/**
+ * Encode a native SQL row as sync wire JSON, the counterpart of `reviveWireValues`:
+ * `bigint` becomes a string and bytes become base64, as the IDB client decodes them.
+ * `JSON.stringify` would otherwise throw on a `bigint` and turn bytes into a
+ * numeric-keyed object.
+ */
+export function encodeWireValues(
+  contract: SyncServerContract,
+  model: string,
+  record: Record<string, unknown>
+): Record<string, unknown> {
+  const fields = domainModelsAtDefaultNamespace(contract.domain)[model]?.fields;
+  if (!fields) return record;
+  return Object.fromEntries(
+    Object.entries(record).map(([name, value]) => {
+      const field = fields[name];
+      const codecId = field?.type.kind === "scalar" ? nativeJsonCodecs[field.type.codecId] : undefined;
+      const codec = codecId ? idbCodecLookup.get(codecId) : undefined;
+      if (!codec || value === null || value === undefined) return [name, value];
+      const encode = (input: unknown): unknown => (input === null ? input : codecValueToJson(codec, input));
+      if (field?.many && Array.isArray(value)) return [name, value.map(encode)];
+      return [name, encode(value)];
+    })
+  );
+}
+
 /** A sync payload value or key that cannot be decoded or shaped; `code` is the stable wire error code, `message` keeps the diagnostic for direct callers. */
 export class WireValidationError extends Error {
   constructor(

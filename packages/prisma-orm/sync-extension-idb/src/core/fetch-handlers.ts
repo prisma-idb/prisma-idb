@@ -1,5 +1,6 @@
 import { pullResponseSchema, pushResultSchema } from "../schemas";
 import { ContractMismatchError } from "./contract-mismatch-error";
+import { toWireEvent } from "./wire-event";
 import type { SyncWorkerOptions } from "./sync-worker";
 import type { IdbContract } from "@prisma-idb/client-idb/orm";
 
@@ -40,7 +41,10 @@ export function createSyncFetchHandlers(options: SyncFetchHandlersOptions): Sync
         headers,
         credentials: options.credentials ?? "same-origin",
         redirect: "error",
-        body: JSON.stringify({ storageHash: context.storageHash, events }),
+        body: JSON.stringify({
+          storageHash: context.storageHash,
+          events: events.map((event) => toWireEvent(context.contract, event)),
+        }),
         signal,
       });
       return pushResultSchema

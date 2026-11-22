@@ -1,7 +1,15 @@
 import { describe, expect, it } from "vitest";
 import { createSyncFetchHandlers, ContractMismatchError } from "@prisma-idb/sync-extension-idb/client";
+import type { IdbContract } from "@prisma-idb/client-idb/orm";
 import { createSqlSync } from "../src/exports/index";
-import { testClientContract, testContract, testDb, testSyncServer } from "./helpers";
+import {
+  testBigClientContract,
+  testBigSyncServer,
+  testClientContract,
+  testContract,
+  testDb,
+  testSyncServer,
+} from "./helpers";
 
 const handlers = createSqlSync({
   contract: testContract,
@@ -12,7 +20,11 @@ const handlers = createSqlSync({
   maxBatchSize: 1,
   pullLimit: 1,
 });
-const context = { storageHash: testSyncServer.clientStorageHash };
+// These tests push no events through the client transport, so it never reads the contract's fields.
+const context = {
+  storageHash: testSyncServer.clientStorageHash,
+  contract: testClientContract as unknown as IdbContract,
+};
 
 /** Builds real HTTP requests with the fixture's client storage hash. */
 async function pushRequest(body: Record<string, unknown>): Promise<Request> {
@@ -113,7 +125,7 @@ describe("sync HTTP handlers", () => {
         pullUrl: "https://sync.test/pull",
         fetch: await transport(),
       });
-      const oldContext = { storageHash };
+      const oldContext = { ...context, storageHash };
       const signal = new AbortController().signal;
       await expect(client.pushHandler([], signal, oldContext)).rejects.toBeInstanceOf(ContractMismatchError);
       await expect(client.pullHandler(null, signal, oldContext)).rejects.toBeInstanceOf(ContractMismatchError);
@@ -121,6 +133,51 @@ describe("sync HTTP handlers", () => {
       expect(accepted).toEqual({ logs: [], hasMore: false });
     }
   );
+
+  it("sends BigInt values in pulled and rejected records as strings instead of failing to serialize", async () => {
+    const big = createSqlSync({
+      contract: testContract,
+      clientContract: testBigClientContract,
+      rootModel: "BigUser",
+      db: testDb,
+      scopeKey: "1",
+    });
+    const storageHash = testBigSyncServer.clientStorageHash;
+    const push = async (events: unknown[]) =>
+      big.push(
+        new Request("https://sync.test/push", { method: "POST", body: JSON.stringify({ storageHash, events }) })
+      );
+    const created = await push([
+      { id: "root", entityType: "BigUser", operation: "create", payload: { id: "1", name: "Ann" } },
+      { id: "item", entityType: "BigItem", operation: "create", payload: { id: "11", ownerId: "1", name: "first" } },
+    ]);
+    expect(await created.json()).toEqual([
+      { id: "root", success: true },
+      { id: "item", success: true },
+    ]);
+
+    const pulled = await big.pull(new Request(`https://sync.test/pull?storageHash=${storageHash}`));
+    expect(pulled.status).toBe(200);
+    const { logs } = (await pulled.json()) as { logs: { record: unknown }[] };
+    expect(logs.map((log) => log.record)).toEqual([
+      { id: "1", name: "Ann" },
+      { id: "11", ownerId: "1", name: "first" },
+    ]);
+
+    // Moving the item to another owner is refused; the result carries the server's row.
+    const rejected = await push([
+      { id: "move", entityType: "BigItem", operation: "update", payload: { key: "11", patch: { ownerId: "2" } } },
+    ]);
+    expect(await rejected.json()).toEqual([
+      {
+        id: "move",
+        success: false,
+        error: "SCOPE_VIOLATION",
+        retryable: false,
+        record: { id: "11", ownerId: "1", name: "first" },
+      },
+    ]);
+  });
 
   it("maps malformed JSON, malformed events, duplicate ids, oversized batches and invalid cursors to 400", async () => {
     const invalidJson = await handlers.push(new Request("https://sync.test/push", { method: "POST", body: "{" }));
