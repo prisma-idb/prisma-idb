@@ -2179,3 +2179,82 @@ describe("restrict — null in the parent's referenced fields", () => {
     db.close();
   });
 });
+
+describe("referential actions — foreign key without a declared inverse relation", () => {
+  /** `Post.author` owns the foreign key; `User` declares no `posts` relation. */
+  function oneSidedContract(author: { onDelete?: "cascade"; onUpdate?: "cascade" }) {
+    return defineContract({
+      family: idbFamilyPack,
+      target: idbTargetPack,
+      models: {
+        User: { store: "users", key: "id", fields: { id: "String", email: "String" } },
+        Post: {
+          store: "posts",
+          key: "id",
+          fields: { id: "String", authorEmail: "String" },
+          relations: {
+            author: { to: "User", cardinality: "N:1", on: { local: ["authorEmail"], target: ["email"] }, ...author },
+          },
+        },
+      },
+    });
+  }
+
+  /** Open the stores and indexes the contract declares, including the foreign-key index on `posts`. */
+  async function setupFromStorage(contract: ReturnType<typeof oneSidedContract>) {
+    const name = nextDbName();
+    const stores = contract.storage.stores as Record<
+      string,
+      { keyPath: string; indexes?: Record<string, { keyPath: string }> }
+    >;
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const req = indexedDB.open(name, 1);
+      req.onupgradeneeded = () => {
+        for (const [storeName, spec] of Object.entries(stores)) {
+          const store = req.result.createObjectStore(storeName, { keyPath: spec.keyPath });
+          for (const [indexName, index] of Object.entries(spec.indexes ?? {}))
+            store.createIndex(indexName, index.keyPath);
+        }
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+    const executor = new TestExecutorWithTransaction(createIDBRuntimeDriver(name).create());
+    const orm = idbOrm({ contract, executor }) as unknown as Record<
+      string,
+      {
+        create(d: unknown): Promise<unknown>;
+        delete(k: unknown): Promise<unknown>;
+        where(f: unknown): { update(p: unknown): Promise<unknown> };
+      }
+    >;
+    return { db, orm };
+  }
+
+  it("cascades a delete to the children", async () => {
+    const { db, orm } = await setupFromStorage(oneSidedContract({ onDelete: "cascade" }));
+    await orm["users"]!.create({ id: "u1", email: "a@e.com" });
+    await orm["posts"]!.create({ id: "p1", authorEmail: "a@e.com" });
+    await orm["users"]!.delete("u1");
+    expect(await getAllRows(db, "posts")).toEqual([]);
+    db.close();
+  });
+
+  it("restricts a delete by default instead of leaving a dangling foreign key", async () => {
+    const { db, orm } = await setupFromStorage(oneSidedContract({}));
+    await orm["users"]!.create({ id: "u1", email: "a@e.com" });
+    await orm["posts"]!.create({ id: "p1", authorEmail: "a@e.com" });
+    await expect(orm["users"]!.delete("u1")).rejects.toThrow(/Cannot delete User 'u1'.*'Post\.author'/);
+    expect(await getAllRows(db, "users")).toHaveLength(1);
+    db.close();
+  });
+
+  it("cascades a change to the referenced field", async () => {
+    const { db, orm } = await setupFromStorage(oneSidedContract({ onUpdate: "cascade" }));
+    await orm["users"]!.create({ id: "u1", email: "a@e.com" });
+    await orm["posts"]!.create({ id: "p1", authorEmail: "a@e.com" });
+    await orm["users"]!.where({ id: "u1" }).update({ email: "b@e.com" });
+    expect(await getAllRows(db, "posts")).toEqual([{ id: "p1", authorEmail: "b@e.com" }]);
+    db.close();
+  });
+});
