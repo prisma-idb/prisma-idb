@@ -34,6 +34,8 @@ describe("idbAttributeSpecs", () => {
       "default",
       "id",
       "idb.exclude",
+      "onCreate",
+      "onUpdate",
       "relation",
       "unique",
       "updatedAt",

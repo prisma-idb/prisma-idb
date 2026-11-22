@@ -62,13 +62,16 @@ const tsContract = defineContract({
   },
 }) as IdbContract;
 
-const pslContract = (() => {
-  const { document, sources } = parse(PSL, "schema.prisma");
+/** The contract of a PSL schema, as `contract.json` hands it to the client. */
+function pslContractOf(schema: string): IdbContract {
+  const { document, sources } = parse(schema, "schema.prisma");
   const { symbolTable } = buildSymbolTable({ documents: [document], sources, defaultNamespaceId: "__unbound__" });
   const result = interpretPslDocumentToIdbContract(symbolTable, "schema.prisma");
   if (!result.ok) throw new Error(JSON.stringify(result.failure.diagnostics));
-  return result.value as IdbContract;
-})();
+  return JSON.parse(JSON.stringify(result.value)) as IdbContract;
+}
+
+const pslContract = pslContractOf(PSL);
 
 let dbCounter = 0;
 let client: ReturnType<typeof createIdbClient> | undefined;
@@ -126,6 +129,55 @@ describe("PSL tagged date defaults", () => {
       { id: 3, startsAt: explicit },
       { id: 4, startsAt: null },
     ]);
+  });
+});
+
+describe("PSL @onCreate and @onUpdate generators", () => {
+  const contract = pslContractOf(`
+    model Event {
+      id        Int      @id @default(autoincrement())
+      ulid      String   @onCreate(ulid())
+      nanoid    String   @onCreate(nanoid(10))
+      ksuid     String   @onCreate(ksuid())
+      touchedAt DateTime @onCreate(now()) @onUpdate(now())
+      code      String?  @onCreate(ulid())
+      name      String
+    }
+  `);
+
+  it("fills ulid(), nanoid(size) and ksuid() with a fresh identifier on each create()", async () => {
+    client = await openClient(contract);
+    const events = client.orm["event"]!;
+
+    const first = (await events.create({ name: "first" })) as Record<string, unknown>;
+    const second = (await events.create({ name: "second" })) as Record<string, unknown>;
+
+    expect(first["ulid"]).toMatch(/^[0-9A-HJKMNP-TV-Z]{26}$/);
+    expect(first["nanoid"]).toMatch(/^[A-Za-z0-9_-]{10}$/);
+    expect(first["ksuid"]).toMatch(/^[0-9A-Za-z]{27}$/);
+    for (const field of ["ulid", "nanoid", "ksuid"]) expect(first[field]).not.toBe(second[field]);
+  });
+
+  it("fills an optional field when it is omitted, and keeps an explicit null", async () => {
+    client = await openClient(contract);
+    const events = client.orm["event"]!;
+
+    const filled = (await events.create({ name: "filled" })) as Record<string, unknown>;
+    const empty = (await events.create({ name: "empty", code: null })) as Record<string, unknown>;
+
+    expect(filled["code"]).toMatch(/^[0-9A-HJKMNP-TV-Z]{26}$/);
+    expect(empty["code"]).toBeNull();
+  });
+
+  it("advances @onUpdate(now()) on update()", async () => {
+    client = await openClient(contract);
+    const events = client.orm["event"]!;
+    const old = new Date("2020-01-01T00:00:00.000Z");
+    await events.create({ name: "first", touchedAt: old });
+
+    const updated = (await events.where({ id: 1 }).update({ name: "renamed" })) as Record<string, unknown>;
+
+    expect((updated["touchedAt"] as Date).getTime()).toBeGreaterThan(old.getTime());
   });
 });
 

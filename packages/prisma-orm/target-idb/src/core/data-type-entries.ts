@@ -1,6 +1,21 @@
 import type { DataTypeAuthoringEntry } from "@prisma/orm-framework/components/authoring";
-import { isoDateStringText } from "@prisma/orm-framework/components/codec";
-import { idbBool, idbDate, idbString } from "./data-types";
+import {
+  createNumberClassifier,
+  isoDateStringText,
+  numeralText,
+  signedRange,
+} from "@prisma/orm-framework/components/codec";
+import { idbBool, idbDate, idbDouble, idbInt32, idbString } from "./data-types";
+
+/**
+ * Which IDB type a written number is: an `idb/int32` when a 32-bit integer holds
+ * it, and an `idb/double` otherwise, as a JavaScript number either way.
+ */
+const classifyIdbNumber = createNumberClassifier({
+  integers: [{ type: idbInt32.id, form: "number", ...signedRange(32) }],
+  largerWhole: { type: idbDouble.id, form: "number" },
+  fraction: { type: idbDouble.id, form: "number" },
+});
 
 /**
  * Reads the text of a `date` literal as the instant `idb/date` stores, in the
@@ -14,15 +29,21 @@ function parseDate(text: string): string {
 }
 
 /**
- * How PSL writes a value of each IDB data type that a tagged default can name,
- * and how it reads the text back. Text and booleans are listed so that a
- * refusal names the form a field takes, as in "Expected a string".
+ * How PSL writes a value of each IDB data type, and how it reads the text back.
+ * Text and booleans are listed so that a refusal names the form a field takes,
+ * as in "Expected a string". Numbers are read for the integer arguments of
+ * generator functions, as in `uuid(7)`.
  */
 export const idbDataTypeEntries = {
   [idbString.id]: {
     written: { kind: "plain", syntax: "string", parse: (text) => text },
     print: (value) => String(value),
     documentation: "Text.",
+  },
+  [idbInt32.id]: {
+    written: { kind: "plain", syntax: "number", types: [idbInt32.id, idbDouble.id], classify: classifyIdbNumber },
+    print: (value) => (typeof value === "number" ? numeralText(value) : String(value)),
+    documentation: "A number: an Int when a 32-bit integer holds it, and a Float otherwise.",
   },
   [idbBool.id]: {
     written: { kind: "plain", syntax: "boolean", parse: (text) => text === "true" },

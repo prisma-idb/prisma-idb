@@ -1,6 +1,6 @@
 import { assembleAuthoringContributions } from "@prisma/orm-framework/components/control";
 import { type DataTypeSupport, knownTags, type WrittenScalar } from "@prisma/orm-framework/components/authoring";
-import { EMPTY_GENERATOR_FUNCTIONS } from "@prisma/orm-framework/components/components";
+import type { GeneratorPhase } from "@prisma/orm-framework/components/components";
 import { createDataTypeLookup, dataTypeId } from "@prisma/orm-framework/components/codec";
 import idbTarget from "@prisma-idb/target-idb/pack";
 import type { ContractSourceDiagnostic } from "@prisma/orm-framework/config/config-types";
@@ -10,6 +10,7 @@ import {
   createBinder,
   fieldAttribute,
   funcCall,
+  generatorAttributeSpec,
   identifier,
   interpretAttribute,
   leafDiagnostic,
@@ -23,6 +24,7 @@ import {
   optional,
   str,
   taggedLiteral,
+  typeGeneratorAttributeSpec,
 } from "@prisma/orm-framework/psl-parser";
 import type {
   ArgType,
@@ -36,6 +38,8 @@ import type {
   PslSpan,
   ResolvedAttribute,
   SymbolTable,
+  TypeAttributeSpecContext,
+  TypedFuncCall,
 } from "@prisma/orm-framework/psl-parser";
 import {
   FunctionCallAst,
@@ -51,6 +55,8 @@ import type {
   SyntaxNode,
 } from "@prisma/orm-framework/psl-parser/syntax";
 import { notOk, ok } from "@prisma/orm-framework/utils/result";
+import { idbGeneratorFunctionRegistry } from "./generator-functions";
+import { idbScalarTypes } from "./psl-scalars";
 
 /*
  * The only module that imports the PSL binder and attribute-spec APIs. They are
@@ -317,6 +323,9 @@ export const idbAttributeSpecs = {
     unique: () => uniqueFieldSpec,
     updatedAt: () => updatedAtFieldSpec,
     default: () => defaultFieldSpec,
+    // Editor tooling resolves the field's codec itself and passes it in the context.
+    onCreate: generatorAttributeSpec("onCreate"),
+    onUpdate: generatorAttributeSpec("onUpdate"),
     relation: () => relationFieldSpec,
     [IDB_EXCLUDE_ATTR]: () => excludeFieldSpec,
   },
@@ -355,12 +364,21 @@ export interface BoundRelation {
   readonly onUpdate?: string | undefined;
 }
 
+/** A generator function call, with the text it is written as, such as `uuid(7)`. */
+export interface BoundGeneratorCall extends TypedFuncCall {
+  readonly text: string;
+}
+
 /** The attributes of one field that the interpreter reads. `id`, `unique` and `updatedAt` carry only their span. */
 export interface BoundFieldAttributes {
   readonly id: PslSpan | undefined;
   readonly unique: PslSpan | undefined;
   readonly updatedAt: PslSpan | undefined;
   readonly default: BoundAttribute<IdbDefaultValue> | undefined;
+  /** The generator function call of `@onCreate(fn())`, checked against the field's codec. */
+  readonly onCreate: BoundAttribute<BoundGeneratorCall> | undefined;
+  /** The generator function call of `@onUpdate(fn())`, checked against the field's codec. */
+  readonly onUpdate: BoundAttribute<BoundGeneratorCall> | undefined;
   readonly relation: BoundAttribute<BoundRelation> | undefined;
   /** True when an attribute failed to bind; its diagnostics are already reported. */
   readonly failed: boolean;
@@ -370,7 +388,7 @@ export interface BoundFieldAttributes {
 export interface IdbAttributeBinder {
   /** Binds a model's `@@map`, `@@id`, `@@index` and `@@unique`, reporting failures once. */
   model(model: ModelSymbol): BoundModelAttributes;
-  /** Binds a field's `@id`, `@unique`, `@updatedAt`, `@default` and `@relation`, reporting failures once. */
+  /** Binds a field's `@id`, `@unique`, `@updatedAt`, `@default`, `@onCreate`, `@onUpdate` and `@relation`, reporting failures once. */
   field(model: ModelSymbol, field: FieldSymbol): BoundFieldAttributes;
   /** Validates exclusion markers and retains only key/index presence for a projected-out scalar. */
   excludedField(model: ModelSymbol, field: FieldSymbol): Pick<BoundFieldAttributes, "id" | "unique">;
@@ -423,7 +441,7 @@ export function createIdbAttributeBinder(input: IdbAttributeBinderInput): IdbAtt
     context: {
       authoringContributions: assembleAuthoringContributions([{ authoring: { attributeSpecs: idbAttributeSpecs } }]),
       dataTypes: EMPTY_DATA_TYPES,
-      generatorFunctions: EMPTY_GENERATOR_FUNCTIONS,
+      generatorFunctions: idbGeneratorFunctionRegistry,
       controlMutationDefaults: { defaultFunctionRegistry: new Map() },
     },
   });
@@ -490,6 +508,35 @@ export function createIdbAttributeBinder(input: IdbAttributeBinderInput): IdbAtt
 
   const boundFields = new Map<FieldSymbol, BoundFieldAttributes>();
 
+  /**
+   * What `@onCreate` and `@onUpdate` are checked against. The binder this file
+   * creates doesn't resolve field types, so the field's contributed type is read
+   * from the scalar it names; an enum or a model has none, and no generator
+   * function applies to it.
+   */
+  function generatorSpecContext(model: ModelSymbol, field: FieldSymbol): TypeAttributeSpecContext {
+    const descriptor = Object.hasOwn(idbScalarTypes, field.typeName)
+      ? idbScalarTypes[field.typeName as keyof typeof idbScalarTypes]
+      : undefined;
+    return {
+      symbols: table,
+      defaultFunctionRegistry: new Map(),
+      generatorFunctions: idbGeneratorFunctionRegistry,
+      dataTypes: idbDataTypeSupport,
+      subject: { kind: "field", name: `${model.name}.${field.name}` },
+      list: field.list,
+      typeName: field.typeName,
+      typeResolution: undefined,
+      contributedType:
+        descriptor === undefined
+          ? undefined
+          : {
+              symbol: { kind: "contributedType", name: field.typeName, path: [field.typeName], descriptor },
+              call: undefined,
+            },
+    };
+  }
+
   /** Binds one field's attributes. The owning model is part of the context upstream's specs receive. */
   function bindField(model: ModelSymbol, field: FieldSymbol): BoundFieldAttributes {
     const cached = boundFields.get(field);
@@ -501,6 +548,8 @@ export function createIdbAttributeBinder(input: IdbAttributeBinderInput): IdbAtt
     let unique: PslSpan | undefined;
     let updatedAt: PslSpan | undefined;
     let defaultValue: BoundFieldAttributes["default"];
+    const generators: { onCreate?: BoundAttribute<BoundGeneratorCall>; onUpdate?: BoundAttribute<BoundGeneratorCall> } =
+      {};
     let relation: BoundFieldAttributes["relation"];
 
     for (const attribute of field.attributes) {
@@ -524,6 +573,28 @@ export function createIdbAttributeBinder(input: IdbAttributeBinderInput): IdbAtt
           else defaultValue ??= { value: value.value, span };
           break;
         }
+        case "onCreate":
+        case "onUpdate": {
+          const phase: GeneratorPhase = attribute.name;
+          if (generators[phase] !== undefined) {
+            failed = true;
+            diagnostics.push({
+              code: "PSL_DUPLICATE_ATTRIBUTE",
+              message: `\`@${phase}\` declared more than once on field "${model.name}.${field.name}".`,
+              sourceId,
+              span,
+            });
+            break;
+          }
+          const value = interpret(
+            typeGeneratorAttributeSpec(phase, generatorSpecContext(model, field)),
+            attribute,
+            ctx
+          );
+          if (value === undefined) failed = true;
+          else generators[phase] = { value: { ...value.value, text: attribute.args[0]?.value.trim() ?? "" }, span };
+          break;
+        }
         case "relation": {
           const value = interpret(relationFieldSpec, attribute, ctx);
           if (value === undefined) failed = true;
@@ -535,7 +606,16 @@ export function createIdbAttributeBinder(input: IdbAttributeBinderInput): IdbAtt
           break;
       }
     }
-    const bound = { id, unique, updatedAt, default: defaultValue, relation, failed };
+    const bound = {
+      id,
+      unique,
+      updatedAt,
+      default: defaultValue,
+      onCreate: generators.onCreate,
+      onUpdate: generators.onUpdate,
+      relation,
+      failed,
+    };
     boundFields.set(field, bound);
     return bound;
   }

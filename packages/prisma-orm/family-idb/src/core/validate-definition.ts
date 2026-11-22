@@ -161,16 +161,6 @@ function validateExecutionDefault(model: IdbModelNode, field: IdbFieldNode, repo
     ]);
   }
 
-  if (
-    field.nullable &&
-    [execution.onCreate, execution.onUpdate].some((generator) => generator && generator.id !== "literal")
-  ) {
-    report(
-      "IDB_EXECUTION_DEFAULT_ON_OPTIONAL_FIELD",
-      `${label} cannot be optional with a generated default. Remove "?" or the generator.`,
-      [...at, "executionDefault"]
-    );
-  }
   if (execution.onUpdate?.id === "timestampNow" && keyPathFields(model.key).includes(field.name)) {
     report(
       "IDB_TEMPORAL_UPDATED_AT_ON_KEY_FIELD",

@@ -55,6 +55,9 @@ function computeGeneratedValue(spec: ExecutionMutationDefaultValue): unknown {
     case "uuidv4":
     case "uuidv7":
     case "cuid2":
+    case "ulid":
+    case "nanoid":
+    case "ksuid":
       return generateId(spec.params !== undefined ? { id, params: spec.params } : { id });
     default: {
       const _exhaustive: never = id;

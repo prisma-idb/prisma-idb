@@ -1,5 +1,5 @@
 import type { ContractSourceDiagnostic, ContractSourceDiagnostics } from "@prisma/orm-framework/config/config-types";
-import type { Contract } from "@prisma/orm-framework/contract/types";
+import type { Contract, ExecutionMutationDefaultValue } from "@prisma/orm-framework/contract/types";
 import { readWrittenValueIntoCodec } from "@prisma/orm-framework/components/authoring";
 import { nodePslSpan } from "@prisma/orm-framework/psl-parser";
 import { idbCodecLookup } from "@prisma-idb/target-idb/runtime";
@@ -20,11 +20,13 @@ import type {
   IdbEnumNode,
   IdbExecutionDefaultNode,
   IdbFieldNode,
+  IdbGeneratorNode,
   IdbIndexNode,
   IdbModelNode,
   IdbRelationNode,
 } from "./contract-definition";
 import { createIdbAttributeBinder, idbDataTypeSupport } from "./psl-binder";
+import { idbGeneratorFunctionRegistry } from "./generator-functions";
 import type { IdbAttributeBinder, IdbDefaultValue } from "./psl-binder";
 import { PslDefinitionSourceMap } from "./psl-definition-source-map";
 import { SCALAR_TO_CODEC_ID } from "./psl-scalars";
@@ -38,6 +40,16 @@ const TIMESTAMP_NOW_GENERATOR_ID: IdbMutationDefaultGeneratorId = "timestampNow"
 
 /** Generator id for plain literals and codec-backed tagged literals. */
 const LITERAL_GENERATOR_ID: IdbMutationDefaultGeneratorId = "literal";
+
+/**
+ * The definition node of a generator a generator function resolved to. Every id
+ * IDB's functions produce is an {@link IdbMutationDefaultGeneratorId}: the
+ * registry refuses a binding whose generator no IDB descriptor registers.
+ */
+function generatorNode(generator: ExecutionMutationDefaultValue): IdbGeneratorNode {
+  const id = generator.id as IdbMutationDefaultGeneratorId;
+  return generator.params === undefined ? { id } : { id, params: { ...generator.params } };
+}
 
 /** A resolved field default before it is attached to its definition field. */
 type FieldExecutionDefault = IdbExecutionDefaultNode & { readonly fieldName: string };
@@ -456,6 +468,63 @@ function interpretModel(
       sourceMap.set(["models", model.name, "fields", field.name, "executionDefault"], defaultAttr.span);
     }
 
+    // `@onCreate(fn())` and `@onUpdate(fn())`: a generator function the client
+    // runs when a record is created, or on every update. Each resolves through
+    // the generator functions bound to the field's codec.
+    const generated: { onCreate?: IdbGeneratorNode; onUpdate?: IdbGeneratorNode } = {};
+    let generatorFailed = false;
+    for (const phase of ["onCreate", "onUpdate"] as const) {
+      const attribute = fieldAttributes[phase];
+      if (attribute === undefined) continue;
+      if (updatedAtAttr !== undefined) {
+        diagnostics.push({
+          code: "IDB_GENERATOR_CONFLICT",
+          message: `Field "${model.name}.${field.name}" cannot combine @${phase}(...) with @updatedAt: both supply its value.`,
+          sourceId,
+          span: attribute.span,
+        });
+        generatorFailed = true;
+        continue;
+      }
+      const call = attribute.value;
+      if (field.list) {
+        diagnostics.push({
+          code: "PSL_LIST_EXECUTION_DEFAULT_UNSUPPORTED",
+          message: `Field "${model.name}.${field.name}" is a list and cannot use @${phase}(${call.text}). Lists have no per-element generated values; remove @${phase}(...).`,
+          sourceId,
+          span: attribute.span,
+        });
+        generatorFailed = true;
+        continue;
+      }
+      const resolution =
+        codecId === undefined || enumType !== undefined
+          ? undefined
+          : idbGeneratorFunctionRegistry.resolve(
+              { name: call.fn, args: call.args },
+              { codecId, typeParams: undefined, length: undefined }
+            );
+      if (resolution?.ok) {
+        generated[phase] = generatorNode(resolution.generator);
+        continue;
+      }
+      diagnostics.push({
+        code: "PSL_GENERATOR_NOT_APPLICABLE",
+        message:
+          resolution?.reason === "refused"
+            ? `Field "${model.name}.${field.name}": ${resolution.message}`
+            : `Field "${model.name}.${field.name}": ${call.fn}() does not apply to codec "${codecId}".`,
+        sourceId,
+        span: attribute.span,
+      });
+      generatorFailed = true;
+    }
+    if (generatorFailed) continue;
+    const generatorAttr = fieldAttributes.onCreate ?? fieldAttributes.onUpdate;
+    if (generatorAttr !== undefined && defaultAttr === undefined) {
+      sourceMap.set(["models", model.name, "fields", field.name, "executionDefault"], generatorAttr.span);
+    }
+
     if (updatedAtAttr && defaultAttr) {
       diagnostics.push({
         code: "IDB_UPDATED_AT_AND_DEFAULT_CONFLICT",
@@ -581,6 +650,20 @@ function interpretModel(
           });
         }
       }
+    }
+
+    if (generated.onCreate !== undefined || generated.onUpdate !== undefined) {
+      // A `@default(...)` may already give this field a create value. `@onCreate`
+      // replaces it, as a client generator always supplies the value before a SQL
+      // database default could; `@onUpdate` joins it.
+      const existing = fieldExecutionDefaults.findIndex(({ fieldName }) => fieldName === field.name);
+      const merged: FieldExecutionDefault = {
+        ...(existing === -1 ? { fieldName: field.name } : fieldExecutionDefaults[existing]!),
+        ...(generated.onCreate !== undefined ? { onCreate: generated.onCreate } : {}),
+        ...(generated.onUpdate !== undefined ? { onUpdate: generated.onUpdate } : {}),
+      };
+      if (existing === -1) fieldExecutionDefaults.push(merged);
+      else fieldExecutionDefaults[existing] = merged;
     }
 
     // @unique field attribute → unique index
