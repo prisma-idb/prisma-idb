@@ -50,6 +50,7 @@
  * unauthorized record has to stop existing locally, not just stop updating.
  */
 
+import { isKeyRange } from "./key-range";
 import type { IdbTransactionScope } from "@prisma-idb/driver-idb/runtime";
 import type { IdbContract } from "@prisma-idb/client-idb/orm";
 import { getStoreName, getKeyPath, extractKeyFromRow } from "@prisma-idb/client-idb/orm";
@@ -249,7 +250,7 @@ function recordDeletes(scope: IdbTransactionScope): { scope: IdbTransactionScope
   const recording: IdbTransactionScope = {
     execute: (plan) => {
       const result = scope.execute(plan);
-      if (plan.kind !== "delete" || plan.key instanceof IDBKeyRange) return result;
+      if (plan.kind !== "delete" || isKeyRange(plan.key)) return result;
       const { storeName, key } = plan;
       return result.then((rows) => {
         for (const row of rows) deleted.push({ storeName, key, row: row as Record<string, unknown> });

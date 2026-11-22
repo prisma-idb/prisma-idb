@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { IDBKeyRange as FakeIDBKeyRange } from "fake-indexeddb";
 import { applyPull, DISCARDED_BY_PULL } from "../src/core/apply-pull";
 import type { LogWithRecord, VersionMetaRecord } from "../src/types";
 import { defineContract } from "@prisma-idb/family-idb/contract-ts";
@@ -18,6 +19,7 @@ import {
   keyGet,
   openTestDb,
   scanAll,
+  testContract,
   testDbName,
 } from "./helpers";
 
@@ -1115,6 +1117,47 @@ describe("applyPull discarding unsent edits of cascaded rows", () => {
       });
       expect(await client.outbox.pendingCount()).toBe(1);
     } finally {
+      await client.close();
+    }
+  });
+});
+
+describe("applyPull with an injected IDBKeyRange and no global one", () => {
+  it("cascades a pulled delete instead of halting on the missing global", async () => {
+    const dbName = testDbName();
+    (
+      await openTestDb(dbName, [
+        { name: "users", keyPath: "id" },
+        { name: "posts", keyPath: "id", indexes: [{ name: "authorId", keyPath: "authorId" }] },
+        OUTBOX_STORE,
+        OUTBOX_ORDER_STORE,
+        VERSION_META_STORE,
+        SYNC_META_STORE,
+      ])
+    ).close();
+    const client = createSyncIdbClient({
+      contract: testContract(),
+      dbName,
+      trackedModels: "*",
+      keyRange: FakeIDBKeyRange,
+    });
+    try {
+      await applyPull(client, [
+        log({ changelogId: "c1", operation: "create" }),
+        log({
+          changelogId: "c2",
+          model: "Post",
+          keyPath: "p1",
+          operation: "create",
+          record: { id: "p1", title: "Hi", authorId: "u1" },
+        }),
+      ]);
+      vi.stubGlobal("IDBKeyRange", undefined);
+      const result = await applyPull(client, [log({ changelogId: "c3", operation: "delete", record: null })]);
+      expect(result).toMatchObject({ applied: 1, halted: false, lastChangelogId: "c3" });
+      expect(await scanAll(client, "posts")).toEqual([]);
+    } finally {
+      vi.unstubAllGlobals();
       await client.close();
     }
   });
