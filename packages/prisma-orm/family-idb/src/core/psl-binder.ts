@@ -192,16 +192,6 @@ function defaultValueArg(): ArgType<IdbDefaultValue, AttributeCtx> {
 }
 
 /**
- * A string literal read as its source text between the quotes, with escape
- * sequences left undecoded. Storage and index names have always been taken
- * verbatim, and decoding them would change the object-store name and the hash
- * for a name such as `"a\nb"`.
- */
-function verbatimStr(): ArgType<string, AttributeCtx> {
-  return mapArg(str(), (_decoded, arg) => sourceText(arg.syntax).slice(1, -1));
-}
-
-/**
  * A named argument that other Prisma targets give meaning (`sort`, `length`,
  * `clustered`, `type`, `map` on a field default, ...). IDB accepts and ignores
  * it, as it always has, so one schema can serve every target.
@@ -226,7 +216,7 @@ const portableKeyArgs = { map: portableOnly, length: portableOnly, sort: portabl
 
 const mapModelSpec = modelAttribute("map", {
   documentation: "Names the object store this model is stored in.",
-  positional: [{ key: "name", type: verbatimStr(), documentation: "The object store name." }],
+  positional: [{ key: "name", type: str(), documentation: "The object store name." }],
 });
 
 const idModelSpec = modelAttribute("id", {
@@ -240,8 +230,8 @@ const uniqueModelSpec = modelAttribute("unique", {
   positional: [{ key: "fields", type: list(identifier()), documentation: "The ordered indexed fields." }],
   named: {
     ...portableKeyArgs,
-    name: { type: optional(verbatimStr()), documentation: "The index name." },
-    map: { type: optional(verbatimStr()), documentation: "The index name, when `name` is not given." },
+    name: { type: optional(str()), documentation: "The index name." },
+    map: { type: optional(str()), documentation: "The index name, when `name` is not given." },
   },
 });
 
@@ -251,8 +241,8 @@ const indexModelSpec = modelAttribute("index", {
   named: {
     ...portableKeyArgs,
     type: portableOnly,
-    name: { type: optional(verbatimStr()), documentation: "The index name." },
-    map: { type: optional(verbatimStr()), documentation: "The index name, when `name` is not given." },
+    name: { type: optional(str()), documentation: "The index name." },
+    map: { type: optional(str()), documentation: "The index name, when `name` is not given." },
   },
 });
 
