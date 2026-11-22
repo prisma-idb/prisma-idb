@@ -201,8 +201,8 @@ it("fills a nonempty list default on every create path, with its own array per r
       Sample: {
         store: "samples",
         key: "id",
-        fields: { id: "String", tags: "String[]", roles: "Role[]" },
-        defaults: { tags: ["new", "unverified"], roles: ["USER"] },
+        fields: { id: "String", tags: "String[]", roles: "Role[]", prices: "Decimal[]" },
+        defaults: { tags: ["new", "unverified"], roles: ["USER"], prices: [1.5] },
       },
     },
   });
@@ -213,11 +213,16 @@ it("fills a nonempty list default on every create path, with its own array per r
   opened.push(client);
   const samples = client.orm["samples"]!;
   const first = await samples.create({ id: "a" });
-  expect(first).toEqual({ id: "a", tags: ["new", "unverified"], roles: ["USER"] });
+  expect(first).toEqual({ id: "a", tags: ["new", "unverified"], roles: ["USER"], prices: ["1.5"] });
   (first["tags"] as string[]).push("local-only");
   expect(await samples.createAll([{ id: "b" }, { id: "c", tags: [] }]).toArray()).toEqual([
-    { id: "b", tags: ["new", "unverified"], roles: ["USER"] },
-    { id: "c", tags: [], roles: ["USER"] },
+    { id: "b", tags: ["new", "unverified"], roles: ["USER"], prices: ["1.5"] },
+    { id: "c", tags: [], roles: ["USER"], prices: ["1.5"] },
   ]);
-  expect(await samples.findUnique("a")).toEqual({ id: "a", tags: ["new", "unverified"], roles: ["USER"] });
+  expect(await samples.findUnique("a")).toEqual({
+    id: "a",
+    tags: ["new", "unverified"],
+    roles: ["USER"],
+    prices: ["1.5"],
+  });
 });

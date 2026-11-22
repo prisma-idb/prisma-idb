@@ -103,6 +103,12 @@ describe("scalar lists", () => {
     }
   );
 
+  it("stores a TypeScript Decimal[] default written with numbers as decimal strings", () => {
+    expect(contract("Decimal[]", { values: [1.5, 2] }).execution?.mutations?.defaults).toEqual([
+      expect.objectContaining({ onCreate: { kind: "generator", id: "literal", params: { value: ["1.5", "2"] } } }),
+    ]);
+  });
+
   // Element types a scalar literal default can't hold either, and elements of the wrong type.
   const invalidDefaults = [
     ["BigInt", "[1]", [1], "IDB_INVALID_DEFAULT_VALUE"],
