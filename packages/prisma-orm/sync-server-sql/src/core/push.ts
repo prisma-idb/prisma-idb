@@ -8,7 +8,7 @@ import {
   prepareParentReferenceChecks,
 } from "./authorization";
 import { lockRow, lockingRowReader } from "./row-lock";
-import { appendChangelogRow, isEventApplied } from "./changelog";
+import { appendChangelogRow, appliedEvent, type PushEventIdentity } from "./changelog";
 import { isDeterministicWriteFailure, sqlState } from "./sqlstate";
 import { reviveWireValues, WireValidationError } from "./wire-values";
 
@@ -212,9 +212,20 @@ export async function applyPushEventDecoded(
       ? prepareParentReferenceChecks(contract, getKeyField, model, check)
       : [];
 
+  const identity: PushEventIdentity = { scopeKey, model, keyPath: check.key, operation: event.operation };
+  // Another write already used this event id. Retrying can't apply this one.
+  const reusedEventId: SqlPushResult = {
+    id: event.id,
+    success: false,
+    error: `Failed to apply event ${event.id}`,
+    retryable: false,
+  };
+
   try {
     return await (db as { transaction<T>(fn: (tx: unknown) => Promise<T>): Promise<T> }).transaction(async (tx) => {
-      if (await isEventApplied(tx, event.id)) return { id: event.id, success: true };
+      const applied = await appliedEvent(tx, event.id, identity);
+      if (applied === "same") return { id: event.id, success: true };
+      if (applied === "other") return reusedEventId;
 
       // The decoded payload carries the key; for an update, everything else is the patch.
       const keyField = getKeyField(contract, model);
@@ -278,8 +289,8 @@ export async function applyPushEventDecoded(
     // the retry then hits the first one's unique key. The event did apply.
     let retryable = !isDeterministicWriteFailure(err);
     if (sqlState(err) === "23505") {
-      const applied = await wasApplied(db, event.id);
-      if (applied === true) return { id: event.id, success: true };
+      const applied = await wasApplied(db, event.id, identity);
+      if (applied === "same") return { id: event.id, success: true };
       if (applied === undefined) retryable = true;
     }
     return {
@@ -292,9 +303,13 @@ export async function applyPushEventDecoded(
 }
 
 /** A fresh read, outside the failed transaction. `undefined` means the read failed, so the outcome is still unknown. */
-async function wasApplied(db: unknown, eventId: string): Promise<boolean | undefined> {
+async function wasApplied(
+  db: unknown,
+  eventId: string,
+  identity: PushEventIdentity
+): Promise<"none" | "same" | "other" | undefined> {
   try {
-    return await isEventApplied(db, eventId);
+    return await appliedEvent(db, eventId, identity);
   } catch {
     return undefined;
   }
