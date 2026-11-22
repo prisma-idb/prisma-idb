@@ -319,6 +319,24 @@ describe("stripIdbExcludeAttributes", () => {
     expect(result).not.toContain("@@idb.exclude");
   });
 
+  it("leaves @idb.exclude inside string literals and comments alone", () => {
+    const schema = `
+      model Note {
+        id     String @id
+        phrase String @default("prefix @idb.exclude suffix") @idb.exclude // keep @idb.exclude here
+        // @@idb.exclude is documented below
+        @@idb.exclude
+      }
+    `;
+    expect(stripIdbExcludeAttributes(schema)).toBe(`
+      model Note {
+        id     String @id
+        phrase String @default("prefix @idb.exclude suffix") // keep @idb.exclude here
+        // @@idb.exclude is documented below
+      }
+    `);
+  });
+
   it("round-trips through prismaIdbContract's own parser without error once stripped", async () => {
     const stripped = stripIdbExcludeAttributes(`
       model User {

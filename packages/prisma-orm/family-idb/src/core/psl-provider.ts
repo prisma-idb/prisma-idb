@@ -8,6 +8,7 @@ import { notOk } from "@prisma/orm-framework/utils/result";
 import { extname, basename } from "pathe";
 import type { ContractProjection } from "./psl-interpreter";
 import { interpretPslDocumentToIdbContract } from "./psl-interpreter";
+import { IDB_EXCLUDE_ATTR } from "./psl-binder";
 
 /**
  * Removes `@idb.exclude`/`@@idb.exclude` from raw PSL text — the `idb`
@@ -22,9 +23,39 @@ import { interpretPslDocumentToIdbContract } from "./psl-interpreter";
  * from the client.
  */
 export function stripIdbExcludeAttributes(schema: string): string {
-  return schema
-    .replace(/^[ \t]*@@idb\.exclude\b.*\n?/gm, "") // model-level: drop the whole line, incl. trailing comments
-    .replace(/[ \t]*@idb\.exclude\b/g, ""); // field-level: drop just the token, keep the field
+  // The parser locates each attribute, so text that only looks like one, such
+  // as `@idb.exclude` inside a string default or a comment, is left alone.
+  const { document, sources } = parse(schema, "schema.prisma");
+  const { symbolTable } = buildSymbolTable({ documents: [document], sources, defaultNamespaceId: "__unbound__" });
+  const spans: { start: number; end: number }[] = [];
+  for (const namespace of Object.values(symbolTable.namespaces)) {
+    for (const model of Object.values(namespace.models)) {
+      const attributes = [...model.attributes, ...Object.values(model.fields).flatMap((field) => field.attributes)];
+      for (const attribute of attributes) {
+        if (attribute.name === IDB_EXCLUDE_ATTR) {
+          spans.push({ start: attribute.span.start.offset, end: attribute.span.end.offset });
+        }
+      }
+    }
+  }
+  // Cut from the end, so earlier offsets stay valid.
+  let result = schema;
+  for (const { start, end } of spans.sort((a, b) => b.start - a.start)) {
+    const lineStart = result.lastIndexOf("\n", start - 1) + 1;
+    const lineEndIndex = result.indexOf("\n", end);
+    const lineEnd = lineEndIndex === -1 ? result.length : lineEndIndex;
+    const before = result.slice(lineStart, start);
+    const after = result.slice(end, lineEnd);
+    if (before.trim() === "" && (after.trim() === "" || after.trim().startsWith("//"))) {
+      // A model-level attribute alone on its line: drop the line, with any trailing comment.
+      result = result.slice(0, lineStart) + result.slice(lineEndIndex === -1 ? lineEnd : lineEnd + 1);
+    } else {
+      // A field-level attribute: drop it and the spaces before it, and keep the field.
+      const trimmedStart = start - (before.length - before.trimEnd().length);
+      result = result.slice(0, trimmedStart) + result.slice(end);
+    }
+  }
+  return result;
 }
 
 /** Place contract.json beside schema.prisma, or use the schema basename otherwise. */
