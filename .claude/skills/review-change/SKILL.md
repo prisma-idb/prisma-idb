@@ -16,10 +16,11 @@ In Claude Code, run this review in the `change-reviewer` subagent, so a fresh co
 BASE=${1:-main}
 git diff --stat "origin/$BASE...HEAD"
 git diff "origin/$BASE...HEAD"
+git diff HEAD        # staged and unstaged changes to tracked files
 git status --short   # uncommitted work is part of the review too
 ```
 
-Read each changed function in full, not only the diff hunks. For every new rule, option, check or behavior in the diff, write down one sentence: "This change makes X true for Y."
+Read each changed function in full, not only the diff hunks. Read each untracked file that `git status --short` lists in full. For every new rule, option, check or behavior in the diff, write down one sentence: "This change makes X true for Y."
 
 ## 2. Find every place it should apply
 

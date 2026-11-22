@@ -30,7 +30,7 @@ git diff --stat "origin/$BASE...HEAD"
 
 If the diff changes source code in more than one file, review it before you verify. In Claude Code, run the `change-reviewer` subagent; other agents follow the `review-change` skill directly. Fix each confirmed finding, and apply the same fix wherever the same mistake occurs. Ask the user about findings that depend on intent. Mention in the PR body what the review found and fixed.
 
-Then record the review with `node .claude/hooks/require-review.mjs --mark`. A hook blocks `gh pr create` until the branch has a recorded review. Commits that only fix the reviewed files, tests, docs or changesets keep it valid; a new source file needs another review. Never record a review that didn't run. If the user wants to skip it, they can open the PR themselves with `! gh pr create ...`.
+A hook blocks `gh pr create` until the branch has a recorded review. You record the review after you commit, in step 5. Never record a review that didn't run. If the user wants to skip it, they can open the PR themselves with `! gh pr create ...`.
 
 Skip this step for docs-only, dependency-only and one-file changes, unless the change touches a write path, migrations or sync.
 
@@ -41,6 +41,8 @@ Use the `verify-change` skill. At minimum, the relevant tests and `pnpm check` p
 ## 5. Commit
 
 Conventional Commits with a scope: `type(scope): lowercase summary`. Types: `feat`, `fix`, `docs`, `test`, `refactor`, `chore`, `ci`, `build`, `perf`. The scope is the package or app directory name, for example `client-idb` or `prisma-orm-kanban-example`. Stage files by name, not with `git add -A`. No `Co-Authored-By` trailer.
+
+If you reviewed the change in step 3, record the review after the reviewed changes are committed: `node .claude/hooks/require-review.mjs --mark`. It records `HEAD`, so a mark made before the commit doesn't cover it. Later commits that only fix the reviewed files, tests, docs or changesets keep the review valid; a new source file needs another review.
 
 ## 6. Write the PR
 
@@ -53,7 +55,7 @@ Body, following [.github/PULL_REQUEST_TEMPLATE.md](../../../.github/PULL_REQUEST
 - **How has this been tested?**: the tests you added or extended (`file > test name`), the checks you ran with results, and any you skipped with the reason. If no test was added, say why.
 - Name the ADR or upstream code you followed, and flag any deliberate difference from upstream Prisma for review.
 
-Show the title and body to the user before running:
+Show the title and body to the user, then run these as separate commands. The hook rejects `gh pr create` in the same command as anything that changes `HEAD`, such as `git commit`.
 
 ```bash
 git push -u origin HEAD

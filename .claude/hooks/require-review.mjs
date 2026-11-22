@@ -12,7 +12,7 @@ import { text } from "node:stream/consumers";
 const SOURCE = /\.(ts|tsx|mts|cts|js|mjs|cjs|svelte)$/;
 const GENERATED = /(^|\/)(src\/lib\/prisma-idb\/|contract\.d\.ts$|migrations[^/]*\/snapshots\/)/;
 // One changed file in these places still needs a review: write paths, migrations and sync.
-const RISKY = /^packages\/prisma-orm\/(client-idb|driver-idb|target-idb|sync-[^/]+)\/src\//;
+const RISKY = /^packages\/prisma-orm\/((client-idb|driver-idb|target-idb|sync-[^/]+)\/src|[^/]+\/migrations[^/]*)\//;
 // Files that may change after a review without a new one.
 const FOLLOW_UP_OK = /(\.(md|mdx)$|(^|\/)(test|tests)\/|\.(test|spec)\.[cm]?[jt]sx?$|^\.changeset\/)/;
 
@@ -59,6 +59,15 @@ if (process.argv.includes("--mark")) {
 const input = JSON.parse(await text(process.stdin));
 const command = input.tool_input?.command ?? "";
 if (!/(^|[;&|(]\s*|\s)gh\s+pr\s+create\b/.test(command)) process.exit(0);
+
+// The checks below read HEAD before the command runs, so a commit made earlier in the same command would
+// reach the PR unchecked.
+if (/\bgit\b[^;&|\n]*\s(commit|merge|rebase|reset|checkout|switch|cherry-pick|revert|am|pull|stash)\b/.test(command)) {
+  console.error(
+    "Run `gh pr create` as its own command, after any command that changes HEAD, so the review check sees every commit."
+  );
+  process.exit(2);
+}
 
 const cwd = input.cwd ?? process.cwd();
 let root, base, head;
