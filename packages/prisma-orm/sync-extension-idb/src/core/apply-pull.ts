@@ -258,13 +258,21 @@ async function discardPendingEdits(
   deleted: readonly DeletedRow[]
 ): Promise<void> {
   const pendingMetaIds = new Set<string>();
+  // A Decimal key is matched numerically against every metadata row, so read them once, not per row.
+  let snapshot: Map<string, VersionMetaRecord> | undefined;
   for (const { storeName, key } of deleted) {
     const model = modelForStore(contract, storeName);
     if (model === undefined) continue;
-    const meta = await resolveVersionMeta(scope, contract, model, key);
+    if (snapshot === undefined && hasDecimalPrimaryKey(contract, model)) {
+      const rows = await scanStore<VersionMetaRecord>(scope, VERSION_META_STORE);
+      snapshot = new Map(rows.map((row) => [row.id, row]));
+    }
+    const meta = await resolveVersionMeta(scope, contract, model, key, key, snapshot);
     if (!meta?.localChangePending) continue;
     pendingMetaIds.add(meta.id);
-    await putRecord(scope, VERSION_META_STORE, { ...meta, localChangePending: false } satisfies VersionMetaRecord);
+    const cleared = { ...meta, localChangePending: false } satisfies VersionMetaRecord;
+    await putRecord(scope, VERSION_META_STORE, cleared);
+    snapshot?.set(cleared.id, cleared);
   }
   if (pendingMetaIds.size === 0) return;
   for (const event of await scanStore<OutboxEvent>(scope, OUTBOX_STORE)) {
