@@ -26,15 +26,23 @@ git diff --stat "origin/$BASE...HEAD"
 - The six core Prisma 8 packages (`target`, `driver`, `adapter`, `runtime`, `client`, `family`) share one version, so one changeset naming the packages you touched is enough.
 - For docs-only, CI-only, app-only or test-only changes, add an empty changeset: `pnpm changeset --empty`.
 
-## 3. Verify
+## 3. Review
 
-Use the `verify-change` skill. At minimum, the relevant tests and `pnpm check` pass.
+If the diff changes source code in more than one file, review it before you verify. In Claude Code, run the `change-reviewer` subagent; other agents follow the `review-change` skill directly. Fix each confirmed finding, and apply the same fix wherever the same mistake occurs. Ask the user about findings that depend on intent. Mention in the PR body what the review found and fixed.
 
-## 4. Commit
+Then record the review with `node .claude/hooks/require-review.mjs --mark`. A hook blocks `gh pr create` until the branch has a recorded review. Commits that only fix the reviewed files, tests, docs or changesets keep it valid; a new source file needs another review. Never record a review that didn't run. If the user wants to skip it, they can open the PR themselves with `! gh pr create ...`.
+
+Skip this step for docs-only, dependency-only and one-file changes, unless the change touches a write path, migrations or sync.
+
+## 4. Verify
+
+Use the `verify-change` skill. At minimum, the relevant tests and `pnpm check` pass. Verify after the review, so the fixes are checked too.
+
+## 5. Commit
 
 Conventional Commits with a scope: `type(scope): lowercase summary`. Types: `feat`, `fix`, `docs`, `test`, `refactor`, `chore`, `ci`, `build`, `perf`. The scope is the package or app directory name, for example `client-idb` or `prisma-orm-kanban-example`. Stage files by name, not with `git add -A`. No `Co-Authored-By` trailer.
 
-## 5. Write the PR
+## 6. Write the PR
 
 Title: the same format as a commit, under 70 characters, naming the concrete change.
 

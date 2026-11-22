@@ -34,6 +34,10 @@
       {
         "matcher": "Edit|Write|MultiEdit",
         "hooks": [{ "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/protect-generated.mjs\"" }]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [{ "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/require-review.mjs\"" }]
       }
     ],
     "PostToolUse": [

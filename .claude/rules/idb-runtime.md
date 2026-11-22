@@ -32,6 +32,20 @@ A path that writes rows, nested and bulk writes included, must do all of these f
 
 A generated value can be a foreign key or a field other rows reference. Tests for a write path cover those fields, not only plain columns.
 
+## Code that scales with the store
+
+Tests use a handful of rows; users have many thousands.
+
+- Don't scan a whole store once per row or per outbox entry. Read once and index the result in memory, or use an IndexedDB index.
+- Don't spread an unbounded array into function arguments (`rows.push(...batch)`, `Math.max(...values)`). Large arrays throw `RangeError`. Use a loop or `concat`.
+- A missing index makes a query fall back to a full scan without an error. Check that the index you expect exists.
+
+## Callbacks and errors
+
+- A throwing listener or subscriber must not replace the error you were reporting. Deliver events in a `try`, and rethrow the original failure.
+- Keep the cause when you wrap an error, including every inner error of an `AggregateError`.
+- Resolve an injected dependency, such as the `indexedDB` factory, once, and reuse it for the matching cleanup.
+
 ## Browser-safe code only
 
 Runtime packages run in the browser. Don't import `node:*` modules or packages that need them. Use Web APIs instead, for example `crypto.subtle` or `crypto.randomUUID()` instead of `node:crypto`. Vitest runs in Node and `tsc` sees the types, so neither catches this; only the Playwright suites do. If every Playwright spec fails at fixture setup, suspect a client-initialization crash and read the page's error alert.
