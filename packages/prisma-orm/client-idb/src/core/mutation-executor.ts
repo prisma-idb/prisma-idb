@@ -38,6 +38,7 @@ import { assertValidRecord } from "./record-validation";
 import { deleteRecordNotFound } from "./record-not-found";
 import {
   applyUpdateDefaults,
+  updateDefaultsVaryByRow,
   completeCreateRecord,
   createMutationDefaultsCache,
   type MutationDefaultsCache,
@@ -491,22 +492,12 @@ async function applyChildOwnedMutation(
       for (const [childField, parentValue] of parentValues.entries()) {
         setValues[childField] = parentValue;
       }
-      const patch = applyUpdateDefaults(
-        contract.execution?.mutations.defaults,
-        relation.relatedStoreName,
-        setValues,
-        defaultsCache
-      );
       const where = shorthandToFilterExpr(criterion as Record<string, unknown>);
-      // scan-write + put-merged: set the FK fields on every child row matching
-      // the criterion. No `take` cap — the vendor's relational connect
-      // (`executeUpdateCount`) connects all matching rows; for the normal
-      // unique-key criterion that is exactly one row anyway.
-      await writeMutationRows(scope, contract, relation.relatedModelName, {
-        write: "put-merged",
-        patch,
-        ...(where === undefined ? {} : { where }),
-      });
+      // Set the FK fields on every child row matching the criterion. No `take`
+      // cap — the vendor's relational connect (`executeUpdateCount`) connects
+      // all matching rows; for the normal unique-key criterion that is exactly
+      // one row anyway.
+      await writeChildRows(scope, contract, relation, setValues, where, defaultsCache);
     }
     return;
   }
@@ -519,37 +510,16 @@ async function applyChildOwnedMutation(
 
   if (!mutation.criteria || mutation.criteria.length === 0) {
     // Disconnect all children of this parent.
-    const patch = applyUpdateDefaults(
-      contract.execution?.mutations.defaults,
-      relation.relatedStoreName,
-      setValues,
-      defaultsCache
-    );
-    const parentJoinWhere = buildParentJoinWhere(parentValues);
-    await writeMutationRows(scope, contract, relation.relatedModelName, {
-      write: "put-merged",
-      patch,
-      where: parentJoinWhere,
-    });
+    await writeChildRows(scope, contract, relation, setValues, buildParentJoinWhere(parentValues), defaultsCache);
     return;
   }
 
   // Disconnect specific children matching each criterion AND the parent join.
   for (const criterion of mutation.criteria) {
-    const patch = applyUpdateDefaults(
-      contract.execution?.mutations.defaults,
-      relation.relatedStoreName,
-      setValues,
-      defaultsCache
-    );
     const criterionWhere = shorthandToFilterExpr(criterion as Record<string, unknown>);
     const parentJoinWhere = buildParentJoinWhere(parentValues);
     const where = criterionWhere === undefined ? parentJoinWhere : andExpr([parentJoinWhere, criterionWhere]);
-    await writeMutationRows(scope, contract, relation.relatedModelName, {
-      write: "put-merged",
-      patch,
-      where,
-    });
+    await writeChildRows(scope, contract, relation, setValues, where, defaultsCache);
   }
 }
 
@@ -695,6 +665,41 @@ async function writeMutationRows(
     results.push(...rows);
   }
   return results;
+}
+
+/**
+ * Writes `setValues` and the child store's `onUpdate` defaults to every child
+ * row `where` matches. Defaults that give each row its own value, such as
+ * `uuid()`, are resolved once per row; otherwise one patch serves every row.
+ */
+async function writeChildRows(
+  scope: IdbTransactionScope,
+  contract: IdbContract,
+  relation: RelationDefinition,
+  setValues: Record<string, unknown>,
+  where: IdbFilterExpr | undefined,
+  defaultsCache: MutationDefaultsCache
+): Promise<void> {
+  const defaults = contract.execution?.mutations.defaults;
+  const { relatedModelName: modelName, relatedStoreName: storeName } = relation;
+  if (!updateDefaultsVaryByRow(defaults, storeName, setValues)) {
+    await writeMutationRows(scope, contract, modelName, {
+      write: "put-merged",
+      patch: applyUpdateDefaults(defaults, storeName, setValues, defaultsCache),
+      ...(where === undefined ? {} : { where }),
+    });
+    return;
+  }
+  // Every match is read before the first write, so a write cannot move a row
+  // into or out of the match set.
+  const meta = makePlanMeta(contract);
+  const keyPath = getKeyPath(contract, modelName);
+  for (const row of await readMutationRows(scope, contract, modelName, where)) {
+    const patch = applyUpdateDefaults(defaults, storeName, setValues, defaultsCache);
+    assertValidRecord(contract, modelName, "update", patch);
+    const key = extractKeyFromRow(row, keyPath);
+    await scope.execute({ meta, kind: "update", storeName, key, patch } as IdbAtomicPlan);
+  }
 }
 
 function buildParentJoinWhere(parentValues: Map<string, unknown>): IdbFilterExpr {
@@ -1316,14 +1321,15 @@ export async function executeBulkUpdateWithFkValidation(
 async function executeScalarUpdates(options: ScalarUpdateOptions, take?: 1): Promise<Record<string, unknown>[]> {
   const { executor, contract, modelName, filters, data } = options;
   const storeName = getStoreName(contract, modelName);
+  const defaults = contract.execution?.mutations.defaults;
+  // One cache for the call, so every row shares one `now()`.
+  const defaultsCache = createMutationDefaultsCache();
   // Apply defaults first, so the checks and the store list see every field
   // the write sets, including one an `onUpdate` default fills in.
-  const patch = applyUpdateDefaults(
-    contract.execution?.mutations.defaults,
-    storeName,
-    data,
-    createMutationDefaultsCache()
-  );
+  const patch = applyUpdateDefaults(defaults, storeName, data, defaultsCache);
+  // A default such as `@onUpdate(uuid())` gives each row its own value, so the
+  // rows are written one by one, each with its defaults resolved again.
+  const defaultsPerRow = updateDefaultsVaryByRow(defaults, storeName, data);
   assertEnumValues(contract, modelName, patch);
   assertValidRecord(contract, modelName, "update", patch);
   const { storeNames, enforcesOnUpdate } = collectUpdateStoreNames(contract, modelName, patch);
@@ -1332,7 +1338,7 @@ async function executeScalarUpdates(options: ScalarUpdateOptions, take?: 1): Pro
     if (!needsRowForFks) await validateScalarFks(scope, contract, modelName, patch);
     const meta = makePlanMeta(contract);
     const where = filters.length === 0 ? undefined : andExpr(filters);
-    if (!enforcesOnUpdate && !needsRowForFks && !options.operations?.length) {
+    if (!enforcesOnUpdate && !needsRowForFks && !options.operations?.length && !defaultsPerRow) {
       return writeMutationRows(scope, contract, modelName, {
         write: "put-merged",
         patch,
@@ -1347,7 +1353,13 @@ async function executeScalarUpdates(options: ScalarUpdateOptions, take?: 1): Pro
     const keyPath = getKeyPath(contract, modelName);
     const results: Record<string, unknown>[] = [];
     for (const oldRow of oldRows) {
-      const rowPatch = applyFieldUpdates(contract, modelName, { patch, operations: options.operations ?? [] }, oldRow);
+      const rowData = defaultsPerRow ? applyUpdateDefaults(defaults, storeName, data, defaultsCache) : patch;
+      const rowPatch = applyFieldUpdates(
+        contract,
+        modelName,
+        { patch: rowData, operations: options.operations ?? [] },
+        oldRow
+      );
       assertEnumValues(contract, modelName, rowPatch);
       assertValidRecord(contract, modelName, "update", rowPatch);
       if (needsRowForFks) await validateScalarFks(scope, contract, modelName, rowPatch, oldRow);

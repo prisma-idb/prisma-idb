@@ -75,10 +75,16 @@ async function openClient(contract: IdbContract): Promise<ReturnType<typeof crea
     const req = indexedDB.open(dbName, 1);
     req.onupgradeneeded = () => {
       for (const [name, store] of Object.entries(contract.storage.stores)) {
-        req.result.createObjectStore(name, {
+        const objectStore = req.result.createObjectStore(name, {
           keyPath: store.keyPath as string,
           autoIncrement: store.autoIncrement ?? false,
         });
+        for (const [indexName, index] of Object.entries(store.indexes ?? {})) {
+          objectStore.createIndex(indexName, index.keyPath as string | string[], {
+            unique: index.unique ?? false,
+            multiEntry: index.multiEntry ?? false,
+          });
+        }
       }
     };
     req.onsuccess = () => {
@@ -170,6 +176,68 @@ describe("PSL @onCreate and @onUpdate generators", () => {
     const updated = (await events.where({ id: 1 }).update({ name: "renamed" })) as Record<string, unknown>;
 
     expect((updated["touchedAt"] as Date).getTime()).toBeGreaterThan(old.getTime());
+  });
+});
+
+describe("@onUpdate(...) generators across several rows", () => {
+  const contract = pslContractOf(`
+    model Author {
+      id    String @id
+      posts Post[]
+    }
+    model Post {
+      id        String   @id
+      authorId  String?
+      author    Author?  @relation(fields: [authorId], references: [id])
+      token     String   @onCreate(uuid()) @onUpdate(uuid(7))
+      touchedAt DateTime @onCreate(now()) @onUpdate(now())
+      name      String
+    }
+  `);
+
+  async function seed() {
+    client = await openClient(contract);
+    await client.orm["author"]!.create({ id: "a1" });
+    for (const id of ["p1", "p2", "p3"]) await client.orm["post"]!.create({ id, authorId: "a1", name: id });
+    return client.orm["post"]!;
+  }
+
+  it("gives each row its own uuid() on updateAll(), and every row the same now()", async () => {
+    const posts = await seed();
+
+    const rows = (await posts.where({ authorId: "a1" }).updateAll({ name: "renamed" }).toArray()) as Record<
+      string,
+      unknown
+    >[];
+
+    expect(new Set(rows.map((row) => row["token"])).size).toBe(3);
+    expect(new Set(rows.map((row) => (row["touchedAt"] as Date).getTime())).size).toBe(1);
+  });
+
+  it("keeps an explicit value over the generator on every row", async () => {
+    const posts = await seed();
+
+    const rows = (await posts.where({ authorId: "a1" }).updateAll({ token: "fixed" }).toArray()) as Record<
+      string,
+      unknown
+    >[];
+
+    expect(rows.map((row) => row["token"])).toEqual(["fixed", "fixed", "fixed"]);
+  });
+
+  it("gives each child its own uuid() when a nested disconnect() writes several rows", async () => {
+    const posts = await seed();
+    const before = new Set((await posts.all().toArray()).map((row) => (row as Record<string, unknown>)["token"]));
+
+    await client!.orm["author"]!.where({ id: "a1" }).update({
+      posts: (rel: { disconnect(): unknown }) => rel.disconnect(),
+    } as never);
+
+    const rows = (await posts.all().toArray()) as Record<string, unknown>[];
+    expect(rows.map((row) => row["authorId"])).toEqual([null, null, null]);
+    const tokens = rows.map((row) => row["token"]);
+    expect(new Set(tokens).size).toBe(3);
+    for (const token of tokens) expect(before.has(token)).toBe(false);
   });
 });
 

@@ -122,6 +122,26 @@ export function completeCreateRecord(
 }
 
 /**
+ * Whether `patch`'s `onUpdate` defaults generate a new value for each row, as
+ * `uuid()` does. A write that applies `patch` to several rows must then resolve
+ * the defaults once per row; `now()` is shared across a call, so it never does.
+ */
+export function updateDefaultsVaryByRow(
+  defaults: readonly ExecutionMutationDefault[] | undefined,
+  storeName: string,
+  patch: Record<string, unknown>
+): boolean {
+  if (Object.values(patch).every((v) => v === undefined)) return false;
+  return (defaults ?? []).some(
+    (d) =>
+      d.ref.entry === storeName &&
+      d.onUpdate !== undefined &&
+      patch[d.ref.field] === undefined &&
+      !CACHEABLE_GENERATOR_IDS.has(d.onUpdate.id as IdbMutationDefaultGeneratorId)
+  );
+}
+
+/**
  * Fills in every column with an `onUpdate` default that `patch` doesn't
  * already set. A patch with no defined values (empty, or every field
  * explicitly `undefined`) is returned unchanged — no write means no default
