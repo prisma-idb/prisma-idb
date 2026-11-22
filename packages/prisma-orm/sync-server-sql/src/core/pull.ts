@@ -4,6 +4,7 @@ import type { ContractMismatchOutcome } from "./contract-check-gate";
 import { parseChangelogCursor, readChangelogPage } from "./changelog";
 import { resolvePullRecord } from "./resolve-pull-record";
 import { WireValidationError } from "./wire-values";
+import { inReadSnapshot } from "./read-snapshot";
 
 export const DEFAULT_PULL_LIMIT = 50;
 
@@ -67,8 +68,24 @@ export async function pull(
   const cursor = parseChangelogCursor(input.lastChangelogId);
   if (cursor === undefined) return { ok: false, reason: "invalid-cursor" };
 
+  // The page, each row and each ownership hop come from one snapshot.
+  return inReadSnapshot(db, contract.target, (tx) =>
+    readPage(tx, syncServer, contract, getKeyField, scopeKey, cursor, limit)
+  );
+}
+
+/** Reads one page through `tx`, one row at a time, since a transaction runs one statement at a time. */
+async function readPage(
+  tx: unknown,
+  syncServer: SyncServer,
+  contract: SyncServerContract,
+  getKeyField: GetKeyField,
+  scopeKey: string,
+  cursor: Parameters<typeof readChangelogPage>[2],
+  limit: number
+): Promise<PullOutcome> {
   // One row past the page tells whether more follow, without a separate count query.
-  const fetched = await readChangelogPage(db, scopeKey, cursor, limit + 1);
+  const fetched = await readChangelogPage(tx, scopeKey, cursor, limit + 1);
   const hasMore = fetched.length > limit;
   const rows = hasMore ? fetched.slice(0, limit) : fetched;
 
@@ -81,21 +98,19 @@ export async function pull(
       .map((result) => [result.changelogId, result])
   );
 
-  const logs = await Promise.all(
-    rows.map(async ({ id: changelogId, keyPath, operation }): Promise<SqlPullLog> => {
-      const { model, check } = checksById.get(changelogId)!;
-      const op = operation as SqlPullLog["operation"];
-      let record: Record<string, unknown> | null;
-      try {
-        record = await resolvePullRecord(db, syncServer, contract, getKeyField, model, check, keyPath, op);
-      } catch (error) {
-        if (!(error instanceof WireValidationError) || error.code !== "KEYPATH_VALIDATION_FAILURE") throw error;
-        // Preserve identity/cursor, but never signal a revoked-ownership delete.
-        return { changelogId, model, operation: op, keyPath, validationError: error.code };
-      }
-      return { changelogId, model, operation: op, keyPath, record };
-    })
-  );
+  const logs: SqlPullLog[] = [];
+  for (const { id: changelogId, keyPath, operation } of rows) {
+    const { model, check } = checksById.get(changelogId)!;
+    const op = operation as SqlPullLog["operation"];
+    try {
+      const record = await resolvePullRecord(tx, syncServer, contract, getKeyField, model, check, keyPath, op);
+      logs.push({ changelogId, model, operation: op, keyPath, record });
+    } catch (error) {
+      if (!(error instanceof WireValidationError) || error.code !== "KEYPATH_VALIDATION_FAILURE") throw error;
+      // Preserve identity/cursor, but never signal a revoked-ownership delete.
+      logs.push({ changelogId, model, operation: op, keyPath, validationError: error.code });
+    }
+  }
 
   return { ok: true, logs, hasMore };
 }
