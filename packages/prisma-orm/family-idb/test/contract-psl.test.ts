@@ -850,6 +850,48 @@ describe("interpretPslDocumentToIdbContract", () => {
       if (result.ok) return;
       expect(result.failure.diagnostics[0]!.code).toBe("IDB_UNRESOLVED_BACKRELATION");
     });
+
+    it("pairs named backrelations with the foreign key of the same name", () => {
+      const result = interpret(`
+        model User {
+          id      String @id
+          written Post[] @relation("Written")
+          edited  Post[] @relation("Edited")
+        }
+        model Post {
+          id       String @id
+          authorId String
+          editorId String
+          author   User   @relation("Written", fields: [authorId], references: [id])
+          editor   User   @relation("Edited", fields: [editorId], references: [id])
+        }
+      `);
+      if (!result.ok) throw new Error(JSON.stringify(result.failure.diagnostics));
+      const relations = (result.value.domain.namespaces[NS]!.models["User"] as { relations: Record<string, unknown> })
+        .relations;
+      expect(relations["written"]).toMatchObject({ on: { localFields: ["id"], targetFields: ["authorId"] } });
+      expect(relations["edited"]).toMatchObject({ on: { localFields: ["id"], targetFields: ["editorId"] } });
+    });
+
+    it("errors when an unnamed backrelation matches several foreign keys", () => {
+      const result = interpret(`
+        model User {
+          id    String @id
+          posts Post[]
+        }
+        model Post {
+          id       String @id
+          authorId String
+          editorId String
+          author   User   @relation("Written", fields: [authorId], references: [id])
+          editor   User   @relation("Edited", fields: [editorId], references: [id])
+        }
+      `);
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.failure.diagnostics.map((d) => d.code)).toEqual(["IDB_AMBIGUOUS_BACKRELATION"]);
+      expect(result.failure.diagnostics[0]!.message).toContain('"User.posts" matches multiple relations on "Post"');
+    });
   });
 
   describe("error cases", () => {

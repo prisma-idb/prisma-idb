@@ -176,10 +176,18 @@ function interpretEnums(
 // ── Per-model interpretation result ───────────────────────────────────────────
 
 /** A lowered model with mutable relations for the backrelation pass. */
+/** A relation field that holds a foreign key to another model. */
+interface ForeignKeyRelation {
+  readonly fieldName: string;
+  readonly relationName?: string;
+  readonly localFields: string[];
+  readonly targetFields: string[];
+}
+
 interface InterpretedModel {
   readonly definition: IdbModelNode & { readonly relations: IdbRelationNode[] };
   /** FK-side declarations keyed by target model for backrelation resolution. */
-  readonly fksByTarget: ReadonlyMap<string, { fieldName: string; localFields: string[]; targetFields: string[] }>;
+  readonly fksByTarget: ReadonlyMap<string, readonly ForeignKeyRelation[]>;
 }
 
 // ── Core interpreter ───────────────────────────────────────────────────────────
@@ -284,7 +292,7 @@ function interpretModel(
   const fields: Record<string, IdbFieldNode> = {};
   const relations: Record<string, IdbRelationNode> = {};
   const fieldDefaults: Record<string, string | number | boolean> = {};
-  const fksByTarget = new Map<string, { fieldName: string; localFields: string[]; targetFields: string[] }>();
+  const fksByTarget = new Map<string, ForeignKeyRelation[]>();
   const fieldExecutionDefaults: FieldExecutionDefault[] = [];
   let autoIncrement = false;
   const autoIncrementFields: string[] = [];
@@ -384,11 +392,14 @@ function interpretModel(
         ...(onUpdate !== undefined ? { onUpdate } : {}),
       };
       sourceMap.set(["models", model.name, "relations", field.name], relationAttr.span);
-      fksByTarget.set(field.typeName, {
+      const targetFks = fksByTarget.get(field.typeName) ?? [];
+      targetFks.push({
         fieldName: field.name,
+        ...(relationAttr.value.name !== undefined ? { relationName: relationAttr.value.name } : {}),
         localFields,
         targetFields,
       });
+      fksByTarget.set(field.typeName, targetFks);
 
       for (const fkField of localFields) {
         if (excludedFieldNames.has(fkField)) continue;
@@ -811,8 +822,22 @@ export function lowerPslDocumentToIdbContractDefinition(
       const targetInterp = interpretedByName.get(field.typeName);
       if (!targetInterp) continue;
 
-      // Find the FK in the target model that points back to this model
-      const fk = targetInterp.fksByTarget.get(model.name);
+      // Pair with the FK in the target model that points back to this model,
+      // and has the same relation name when the backrelation names one.
+      const relationName = attributes.field(model, field).relation?.value.name;
+      const pairFks = targetInterp.fksByTarget.get(model.name) ?? [];
+      const matches =
+        relationName === undefined ? pairFks : pairFks.filter((candidate) => candidate.relationName === relationName);
+      if (matches.length > 1) {
+        diagnostics.push({
+          code: "IDB_AMBIGUOUS_BACKRELATION",
+          message: `Backrelation field "${model.name}.${field.name}" matches multiple relations on "${field.typeName}". Add @relation("...") with the same name to the backrelation and to the matching relation.`,
+          sourceId,
+          span: field.span,
+        });
+        continue;
+      }
+      const fk = matches[0];
       if (!fk) {
         interp.definition.relations.push({
           name: field.name,

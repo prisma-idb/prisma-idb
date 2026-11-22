@@ -285,10 +285,14 @@ const defaultFieldSpec = fieldAttribute("default", {
 const relationFieldSpec = fieldAttribute("relation", {
   documentation: "Defines the foreign key behind this relation field.",
   positional: [
-    { key: "name", type: optional(str()), documentation: "The relation name. Accepted for schema portability." },
+    {
+      key: "name",
+      type: optional(str()),
+      documentation: "The relation name. Pairs a backrelation with its foreign key.",
+    },
   ],
   named: {
-    name: { type: optional(str()), documentation: "The relation name. Accepted for schema portability." },
+    name: { type: optional(str()), documentation: "The relation name. Pairs a backrelation with its foreign key." },
     fields: { type: optional(list(identifier())), documentation: "The local foreign-key fields." },
     references: { type: optional(list(identifier())), documentation: "The referenced fields on the other model." },
     map: { type: optional(str()), documentation: "Accepted for schema portability; IDB ignores it." },
@@ -353,6 +357,8 @@ export interface BoundModelAttributes {
 
 /** The arguments of `@relation(...)` that the interpreter reads. */
 export interface BoundRelation {
+  /** The relation name, written positionally or as `name:`. */
+  readonly name?: string | undefined;
   readonly fields?: readonly string[] | undefined;
   readonly references?: readonly string[] | undefined;
   readonly onDelete?: string | undefined;

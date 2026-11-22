@@ -209,14 +209,15 @@ export function buildContract(input: DefineContractInput) {
 
 ### Relations and client projection
 
-| Code                                        | Meaning                                                             |
-| ------------------------------------------- | ------------------------------------------------------------------- |
-| `IDB_INVALID_RELATION`                      | A relation declaration is malformed or references an unknown model. |
-| `IDB_MISSING_RELATION_ATTRIBUTE`            | A PSL to-one relation has no `@relation` declaration.               |
-| `IDB_UNKNOWN_REFERENTIAL_ACTION`            | A PSL relation names an unsupported referential action.             |
-| `IDB_CONFLICTING_RELATION_ACTIONS`          | Reciprocal relations both declare the same referential action.      |
-| `IDB_UNRESOLVED_BACKRELATION`               | A backrelation has no matching owning relation after projection.    |
-| `IDB_CANNOT_EXCLUDE_KEY_FIELD`              | Client projection removes a model's primary-key field.              |
-| `IDB_CANNOT_EXCLUDE_RELATION_FIELD`         | Client projection removes a field needed by a surviving relation.   |
-| `IDB_EXCLUDE_ON_RELATION_FIELD_UNSUPPORTED` | Client projection attempts to exclude a relation field directly.    |
-| `IDB_UNKNOWN_EXCLUDED_FIELD`                | A TypeScript exclusion names an undeclared field.                   |
+| Code                                        | Meaning                                                                                   |
+| ------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `IDB_INVALID_RELATION`                      | A relation declaration is malformed or references an unknown model.                       |
+| `IDB_MISSING_RELATION_ATTRIBUTE`            | A PSL to-one relation has no `@relation` declaration.                                     |
+| `IDB_UNKNOWN_REFERENTIAL_ACTION`            | A PSL relation names an unsupported referential action.                                   |
+| `IDB_CONFLICTING_RELATION_ACTIONS`          | Reciprocal relations both declare the same referential action.                            |
+| `IDB_UNRESOLVED_BACKRELATION`               | A backrelation has no matching owning relation after projection.                          |
+| `IDB_AMBIGUOUS_BACKRELATION`                | A backrelation matches several owning relations. Name both sides with `@relation("...")`. |
+| `IDB_CANNOT_EXCLUDE_KEY_FIELD`              | Client projection removes a model's primary-key field.                                    |
+| `IDB_CANNOT_EXCLUDE_RELATION_FIELD`         | Client projection removes a field needed by a surviving relation.                         |
+| `IDB_EXCLUDE_ON_RELATION_FIELD_UNSUPPORTED` | Client projection attempts to exclude a relation field directly.                          |
+| `IDB_UNKNOWN_EXCLUDED_FIELD`                | A TypeScript exclusion names an undeclared field.                                         |
