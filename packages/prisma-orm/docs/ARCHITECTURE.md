@@ -220,12 +220,12 @@ Adding a plan kind touches five places ([ADR 017](adrs/ADR%20017%20-%20Native%20
 
 One entrypoint, `./runtime`, exporting `createIdbRuntime`, `IdbRuntime` and `IdbMiddleware`. The runtime extends the framework's `RuntimeCore`:
 
-| Method                      | Does                                                                                                                                                                             |
-| --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `query(plan)`               | Lowers the plan, runs it, and yields rows through the middleware hooks.                                                                                                          |
-| `transaction(stores, mode)` | Opens an `IdbTransactionScope` that runs driver plans without middleware.                                                                                                        |
-| `verifyMarker()`            | Checks that the database's marker matches the contract's `storageHash`. The runtime also checks on first use, and again after a newer version reopens the connection, and warns. |
-| `close()`                   | Closes the connection.                                                                                                                                                           |
+| Method                      | Does                                                                                                                                                                                                                                                      |
+| --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `query(plan)`               | Lowers the plan, runs it, and yields rows through the middleware hooks.                                                                                                                                                                                   |
+| `transaction(stores, mode)` | Opens an `IdbTransactionScope` that runs driver plans directly. Middleware observes its statements without being awaited and cannot intercept them ([ADR 028](adrs/ADR%20028%20-%20Middleware%20Observes%20Transactions%20Without%20Being%20Awaited.md)). |
+| `verifyMarker()`            | Checks that the database's marker matches the contract's `storageHash`. The runtime also checks on first use, and again after a newer version reopens the connection, and warns.                                                                          |
+| `close()`                   | Closes the connection.                                                                                                                                                                                                                                    |
 
 Middleware gets a context with a `contentHash(plan)` function. It returns a SHA-512 digest of the plan's data. Functions that carry a structured identity hash by that identity, so equal queries produce equal hashes. A raw closure with no structured identity gets a fresh nonce on every call, so it never produces a stale cache hit. A cache middleware can use the digest as a key. Because rows are collected before they are yielded, `onRow` runs over rows already in memory. It can't slow down the cursor.
 

@@ -178,6 +178,5 @@ export interface IdbGroupByAst {
 
 // Nested create/update (relation-callback writes) and upsert deliberately do
 // NOT carry an AST node. They execute inside a single `withMutationScope`
-// transaction, which bypasses the RuntimeCore middleware chain by design (as
-// in the vendor runtimes, where transactions also bypass per-op middleware).
-// An AST here would be unreachable.
+// transaction, where middleware only observes the driver plans and never
+// rewrites them through an AST, so an AST here would be unused.

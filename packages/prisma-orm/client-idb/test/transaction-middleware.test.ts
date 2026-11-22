@@ -100,6 +100,21 @@ describe("middleware inside transactions", () => {
     expect(events).not.toContain("finalized:statement:committed");
   });
 
+  it("reports a failed statement and finalizes the transaction it aborted as rolled back", async () => {
+    const events: string[] = [];
+    const client = await open([recorder(events)]);
+    await (client.orm["users"] as unknown as Accessor).create({ id: "u1" });
+    events.length = 0;
+    await expect(
+      client.transaction(["users"], async (tx) => {
+        await (tx["users"] as unknown as Accessor).create({ id: "u1" });
+      })
+    ).rejects.toThrow();
+    await vi.waitFor(() => expect(events).toContain("finalized:transaction:rolled-back"));
+    expect(events).toContain("ended:statement:failed");
+    expect(events).not.toContain("finalized:statement:committed");
+  });
+
   it("observes the scoped statements of a delete, which checks referential actions, outside db.transaction()", async () => {
     const events: string[] = [];
     const client = await open([recorder(events)]);
