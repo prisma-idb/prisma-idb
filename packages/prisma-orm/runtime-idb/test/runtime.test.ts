@@ -774,3 +774,61 @@ describe("verifyMarker edge cases", () => {
     await expect(runtime.verifyMarker()).resolves.toBe(false);
   });
 });
+
+// ── First-use marker check ───────────────────────────────────────────────────
+
+describe("first-use marker check", () => {
+  const run = async (runtime: ReturnType<typeof createIdbRuntime>) => {
+    for await (const _row of runtime.query(makeQueryPlan())) {
+      // drain
+    }
+  };
+
+  it.each([
+    ["missing", null, "CONTRACT.MARKER_MISSING"],
+    ["for another contract", makeMarker({ storageHash: "other" }), "CONTRACT.MARKER_MISMATCH"],
+  ])("warns once, before the first query, when the marker is %s", async (_, marker, code) => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const readMarker = vi.fn(async () => marker);
+    try {
+      const runtime = createIdbRuntime({
+        adapter: makeMockAdapter(),
+        driver: makeMockDriver({ readMarker }),
+        contract: TEST_CONTRACT,
+      });
+      await Promise.all([run(runtime), run(runtime)]);
+      await run(runtime);
+      expect(readMarker).toHaveBeenCalledTimes(1);
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(String(warn.mock.calls[0]![0])).toContain(code);
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
+  it("stays quiet for a matching marker, and skips the read when turned off", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await run(
+        createIdbRuntime({
+          adapter: makeMockAdapter(),
+          driver: makeMockDriver({ readMarker: async () => makeMarker() }),
+          contract: TEST_CONTRACT,
+        })
+      );
+      const readMarker = vi.fn(async () => null);
+      await run(
+        createIdbRuntime({
+          adapter: makeMockAdapter(),
+          driver: makeMockDriver({ readMarker }),
+          contract: TEST_CONTRACT,
+          verifyMarker: false,
+        })
+      );
+      expect(readMarker).not.toHaveBeenCalled();
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+});

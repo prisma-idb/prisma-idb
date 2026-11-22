@@ -45,6 +45,13 @@ export interface IdbRuntimeOptions {
    * When omitted, a real context is derived from `contract`.
    */
   readonly ctx?: ActivityContextFields;
+  /**
+   * When to compare the database's contract marker with `contract`, as Prisma 8's
+   * SQL runtime does. `"onFirstUse"`, the default, reads the marker once, before
+   * the first query or transaction, and warns with `CONTRACT.MARKER_MISSING` or
+   * `CONTRACT.MARKER_MISMATCH`. The check never blocks the query. `false` skips it.
+   */
+  readonly verifyMarker?: "onFirstUse" | false;
 }
 
 /**
@@ -208,6 +215,35 @@ class IdbRuntimeImpl extends RuntimeCore<IdbQueryPlan, IdbPlanBody, IdbMiddlewar
     this.#adapter = options.adapter;
     this.#driver = options.driver;
     this.#contract = options.contract;
+    this.#verifyMarkerOption = options.verifyMarker ?? "onFirstUse";
+  }
+
+  readonly #verifyMarkerOption: "onFirstUse" | false;
+  // Shared by concurrent first uses, so they read the marker and warn once. Cleared when the read fails.
+  #markerCheck: Promise<void> | null = null;
+
+  /** Reads the marker on first use and warns when it is missing or names another contract. */
+  #ensureMarkerChecked(): Promise<void> {
+    if (this.#verifyMarkerOption === false) return Promise.resolve();
+    this.#markerCheck ??= this.#checkMarker().catch((error: unknown) => {
+      this.#markerCheck = null;
+      throw error;
+    });
+    return this.#markerCheck;
+  }
+
+  async #checkMarker(): Promise<void> {
+    const marker = await this.#driver.readMarker();
+    const expected = (this.#contract["storage"] as { storageHash?: unknown } | undefined)?.storageHash;
+    if (marker === null) {
+      console.warn(
+        `[prisma-idb] CONTRACT.MARKER_MISSING: the database has no contract marker, so nothing says it matches the contract (storageHash ${String(expected)}). Open it with an auto-migrating client, or apply its migrations first.`
+      );
+    } else if (marker.storageHash !== expected) {
+      console.warn(
+        `[prisma-idb] CONTRACT.MARKER_MISMATCH: the database was migrated to storageHash ${marker.storageHash}, but the client's contract has ${String(expected)}. Queries may read or write the wrong record shape.`
+      );
+    }
   }
 
   /**
@@ -236,7 +272,12 @@ class IdbRuntimeImpl extends RuntimeCore<IdbQueryPlan, IdbPlanBody, IdbMiddlewar
    * output types), it wires up here.
    */
   protected override runDriver(exec: IdbPlanBody): AsyncIterable<Record<string, unknown>> {
-    return this.#driver.execute(exec);
+    const markerChecked = this.#ensureMarkerChecked();
+    const driver = this.#driver;
+    return (async function* () {
+      await markerChecked;
+      yield* driver.execute(exec);
+    })();
   }
 
   /**
@@ -269,6 +310,7 @@ class IdbRuntimeImpl extends RuntimeCore<IdbQueryPlan, IdbPlanBody, IdbMiddlewar
   }
 
   async transaction(storeNames: string[], mode: IDBTransactionMode = "readwrite"): Promise<IdbTransactionScope> {
+    await this.#ensureMarkerChecked();
     return this.#driver.transaction(storeNames, mode);
   }
 
