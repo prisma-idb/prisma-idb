@@ -1038,6 +1038,26 @@ describe("defineContract — conflicting reciprocal relation actions", () => {
     ).not.toThrow();
   });
 
+  it("rejects a required one-to-one relation over a nullable field", () => {
+    expect(() =>
+      defineContract({
+        family: idbFamilyPack,
+        target: idbTargetPack,
+        models: {
+          User: { store: "users", key: "id", fields: { id: "String" } },
+          Profile: {
+            store: "profiles",
+            key: "id",
+            fields: { id: "String", userId: "String?" },
+            relations: {
+              user: { to: "User", cardinality: "1:1", on: { local: ["userId"], target: ["id"] }, nullable: false },
+            },
+          },
+        },
+      })
+    ).toThrow('IDB_INVALID_RELATION: Relation "Profile.user" is required but a local field it joins on is nullable.');
+  });
+
   it("does not false-positive on two distinct relations to the same model", () => {
     // Message.sender and Message.recipient both point at User, but neither is the
     // other's reciprocal (different local fields) — matching on `to` alone would

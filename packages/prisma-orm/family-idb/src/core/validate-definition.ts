@@ -406,7 +406,8 @@ function validateRelationNullability(
     names.map((name) => owner?.fields.find((field) => field.name === name)?.nullable);
   // Declaring an optional relation over a required key only widens its type, which the TypeScript `nullable`
   // override allows. The reverse promises a related row that a null key can't provide.
-  if (relation.cardinality === "N:1" && relation.nullable === false) {
+  // A null join field finds no row whichever side owns the key, so this holds for every to-one relation.
+  if ((relation.cardinality === "N:1" || relation.cardinality === "1:1") && relation.nullable === false) {
     if (nullableIn(model, relation.localFields).some((nullable) => nullable === true)) {
       report("IDB_INVALID_RELATION", `${label} is required but a local field it joins on is nullable.`, at);
     }
