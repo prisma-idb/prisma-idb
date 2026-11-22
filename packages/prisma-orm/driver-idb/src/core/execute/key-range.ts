@@ -8,16 +8,24 @@ import type { IdbKeyRangeDescriptor } from "../plan-body";
  * name, so the factory's own validation applies: an invalid key, or `bound` with `lower` above `upper`,
  * throws `DataError`.
  */
-export function toIdbKeyRange(range: IdbKeyRangeDescriptor): IDBKeyRange {
+export function toIdbKeyRange(
+  range: IdbKeyRangeDescriptor,
+  keyRange: typeof IDBKeyRange | undefined = globalThis.IDBKeyRange
+): IDBKeyRange {
+  if (keyRange === undefined) {
+    throw new Error(
+      "IDB: no IDBKeyRange is available. Pass `keyRange` with `factory` when the global scope has no IndexedDB."
+    );
+  }
   switch (range.kind) {
     case "only":
-      return IDBKeyRange.only(range.key);
+      return keyRange.only(range.key);
     case "lower":
-      return IDBKeyRange.lowerBound(range.key, range.open);
+      return keyRange.lowerBound(range.key, range.open);
     case "upper":
-      return IDBKeyRange.upperBound(range.key, range.open);
+      return keyRange.upperBound(range.key, range.open);
     case "bound":
-      return IDBKeyRange.bound(range.lower, range.upper, range.lowerOpen, range.upperOpen);
+      return keyRange.bound(range.lower, range.upper, range.lowerOpen, range.upperOpen);
   }
 }
 
@@ -25,6 +33,9 @@ export function toIdbKeyRange(range: IdbKeyRangeDescriptor): IDBKeyRange {
  * `toIdbKeyRange` for an optional range. `undefined` means "no restriction", which IndexedDB expresses
  * as an absent query.
  */
-export function toOptionalIdbKeyRange(range: IdbKeyRangeDescriptor | undefined): IDBKeyRange | undefined {
-  return range === undefined ? undefined : toIdbKeyRange(range);
+export function toOptionalIdbKeyRange(
+  range: IdbKeyRangeDescriptor | undefined,
+  keyRange?: typeof IDBKeyRange
+): IDBKeyRange | undefined {
+  return range === undefined ? undefined : toIdbKeyRange(range, keyRange);
 }

@@ -40,6 +40,11 @@ export interface AutoMigrateClientOptions<TContract extends IdbContract> {
   /** IDB factory override — primarily for tests. Defaults to `indexedDB`. */
   readonly factory?: IDBFactory;
   /**
+   * The `IDBKeyRange` of the same implementation as `factory`. Needed when the
+   * global scope has no IndexedDB, for example fake-indexeddb outside a browser.
+   */
+  readonly keyRange?: typeof IDBKeyRange;
+  /**
    * Additional contract spaces from IDB extensions.
    *
    * Every space with pending work — the application space plus each
@@ -111,6 +116,7 @@ export async function createAutoMigratingIdbClient<TContract extends IdbContract
     contract: options.contractSpace.contractJson,
     dbName: options.dbName,
     factory,
+    ...(options.keyRange !== undefined ? { keyRange: options.keyRange } : {}),
   });
 }
 

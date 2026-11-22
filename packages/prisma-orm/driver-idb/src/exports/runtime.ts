@@ -52,12 +52,19 @@ export { createTransactionScope } from "../core/transaction-scope";
 export function createIDBRuntimeDriver(
   dbName: string,
   version?: number,
-  options?: { readonly factory?: IDBFactory }
+  options?: {
+    readonly factory?: IDBFactory;
+    /**
+     * The `IDBKeyRange` of the same implementation as `factory`. Needed when the
+     * global scope has none, for example fake-indexeddb's `IDBKeyRange` outside a browser.
+     */
+    readonly keyRange?: typeof IDBKeyRange;
+  }
 ): RuntimeDriverDescriptor<"idb", "idb", void, IdbRuntimeDriverInstance> {
   return {
     ...idbDriverDescriptorMeta,
     create(): IdbRuntimeDriverInstance {
-      return new IdbRuntimeDriverInstance(dbName, version, options?.factory);
+      return new IdbRuntimeDriverInstance(dbName, version, options?.factory, options?.keyRange);
     },
   };
 }
