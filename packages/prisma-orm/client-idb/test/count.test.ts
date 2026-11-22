@@ -243,6 +243,17 @@ describe("count()", () => {
     it("take(0) gives 0", async () => {
       await check((a) => a.where({ category: "a" }).take(0), 0);
     });
+    // A full scan, an index scan and a primary-key lookup read a negative take differently.
+    it.each([
+      ["a full scan", (a: Accessor) => a],
+      ["an index scan", (a: Accessor) => a.where({ category: "a" })],
+      ["a primary-key lookup", (a: Accessor) => a.where((m) => m["id"]!.in(["i1", "i2", "i3"]))],
+    ])("rejects a negative or fractional take or skip on %s", (_, build) => {
+      for (const bad of [-1, 1.5, Number.NaN, Infinity]) {
+        expect(() => build(items).take(bad)).toThrow(RangeError);
+        expect(() => build(items).skip(bad)).toThrow(`skip must be an integer from 0 to ${Number.MAX_SAFE_INTEGER}`);
+      }
+    });
   });
 
   describe("values an index can't count by itself", () => {

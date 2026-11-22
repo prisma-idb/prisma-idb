@@ -403,6 +403,16 @@ export interface IdbStoreAccessor<
 // ── Implementation ────────────────────────────────────────────────────────────
 
 /**
+ * Rejects a page size or offset that isn't an integer from 0 to
+ * `Number.MAX_SAFE_INTEGER`, as Prisma 8 does. IndexedDB access paths would
+ * otherwise read a negative or fractional value differently from each other.
+ */
+function assertPageArgument(argument: "take" | "skip", value: number): void {
+  if (Number.isSafeInteger(value) && value >= 0) return;
+  throw new RangeError(`${argument} must be an integer from 0 to ${Number.MAX_SAFE_INTEGER}, got ${String(value)}`);
+}
+
+/**
  * Concrete immutable query builder.
  *
  * Internal details:
@@ -472,10 +482,12 @@ export class IdbStoreAccessorImpl<
   }
 
   take(n: number): IdbStoreAccessor<TContract, ModelName, TIncludes, TSelected, TFiltered> {
+    assertPageArgument("take", n);
     return this.#clone({ take: n });
   }
 
   skip(n: number): IdbStoreAccessor<TContract, ModelName, TIncludes, TSelected, TFiltered> {
+    assertPageArgument("skip", n);
     return this.#clone({ skip: n });
   }
 
