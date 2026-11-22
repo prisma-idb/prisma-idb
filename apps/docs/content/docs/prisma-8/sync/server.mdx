@@ -34,7 +34,7 @@ const syncServer = createSyncServer({ contract, clientContract, rootModel: "User
 
 Import each contract's `.json` and cast it to its generated `Contract` type. Id fields in the contract have branded types, so the raw JSON doesn't type-check without the cast.
 
-`createSyncServer` throws at startup if the ownership relations form a cycle, or a synced model has no path of many-to-one relations to `rootModel`.
+`createSyncServer` throws at startup if the ownership relations form a cycle, or a synced model has no path to `rootModel` through relations that own a foreign key. A many-to-one relation always owns its foreign key. A one-to-one relation owns it on the side whose table declares the foreign key, such as `UserProfile.user` with `userId String @unique`.
 
 Synced models need a single-field primary key. `createSyncServer` resolves the key field for each synced model at startup and rejects compound keys.
 
