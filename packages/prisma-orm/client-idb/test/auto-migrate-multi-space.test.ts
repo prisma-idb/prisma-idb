@@ -382,3 +382,30 @@ describe("auto-migrate combined multi-space apply", () => {
     ).rejects.toThrow(/duplicate or reserved/i);
   });
 });
+
+describe("concurrent auto-migrating opens", () => {
+  it("brings every caller's spaces to their heads when two opens race for the same version", async () => {
+    const name = dbName();
+    const appSpace = buildContractSpaceFixture([appV1]);
+    // Both calls read version 0 and plan version 1; only the first one's upgrade can run at version 1.
+    const [plain, withSync] = await Promise.all([
+      createAutoMigratingIdbClient({ contractSpace: appSpace, dbName: name }),
+      createAutoMigratingIdbClient({ contractSpace: appSpace, dbName: name, extensions: [syncExtension()] }),
+    ]);
+    await Promise.all([plain.close(), withSync.close()]);
+
+    const db = await openRawDb(name);
+    try {
+      expect([...db.objectStoreNames].sort()).toEqual([
+        "_idb_sync_outbox",
+        "_idb_sync_version_meta",
+        "_prisma_next_marker",
+        "users",
+      ]);
+      const [markers] = await readStores(db, ["_prisma_next_marker"]);
+      expect((markers as { space: string }[]).map((marker) => marker.space).sort()).toEqual(["app", "idb-sync"]);
+    } finally {
+      db.close();
+    }
+  });
+});

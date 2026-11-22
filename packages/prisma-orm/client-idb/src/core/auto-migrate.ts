@@ -10,6 +10,7 @@ import { computeMigrationHash } from "./migration-hash";
 // is not bundled into the browser client.
 import {
   isIdbDdlOp,
+  IdbUpgradeSupersededError,
   openAndUpgrade,
   readMarker,
   type IdbDdlOp,
@@ -141,9 +142,61 @@ export async function autoMigrate(input: {
   readonly factory: IDBFactory;
   readonly extensions?: ReadonlyArray<IdbExtensionSpace>;
 }): Promise<void> {
-  const { dbName, factory } = input;
-
   const spaces = resolveContractSpaces(input.contractSpace, input.extensions ?? []);
+
+  // Another connection, such as a second client in this page or another tab,
+  // can take the version this attempt planned for. Its upgrade carries only
+  // what that caller needed, so this caller reads the markers again and plans
+  // from them until every space it asked for is at its head.
+  for (let attempt = 1; ; attempt++) {
+    try {
+      await migrateOnce(input, spaces);
+    } catch (error) {
+      if (attempt < MAX_MIGRATION_ATTEMPTS && isLostUpgradeRace(error)) continue;
+      throw error;
+    }
+    const behind = await spacesBehindHead(input.dbName, input.factory, spaces);
+    if (behind.length === 0) return;
+    if (attempt >= MAX_MIGRATION_ATTEMPTS) {
+      throw new Error(
+        `IDB: "${input.dbName}" did not reach the head of space(s) ${behind.join(", ")} after ` +
+          `${MAX_MIGRATION_ATTEMPTS} attempts, because other connections kept upgrading it. Open it again to retry.`
+      );
+    }
+  }
+}
+
+/** How many times one open plans and applies an upgrade before giving up on a contended database. */
+const MAX_MIGRATION_ATTEMPTS = 5;
+
+/** Another connection upgraded the database between this attempt's read and its open. */
+function isLostUpgradeRace(error: unknown): boolean {
+  return (
+    error instanceof IdbUpgradeSupersededError ||
+    (typeof error === "object" && error !== null && (error as { name?: unknown }).name === "VersionError")
+  );
+}
+
+/** The spaces whose marker is not yet their head. */
+async function spacesBehindHead(
+  dbName: string,
+  factory: IDBFactory,
+  spaces: ReadonlyArray<{ spaceId: string; contractSpace: ContractSpace<Contract> }>
+): Promise<string[]> {
+  const behind: string[] = [];
+  for (const space of spaces) {
+    const { markerHash } = await openAndReadMarker(dbName, factory, space.spaceId);
+    if (markerHash !== space.contractSpace.headRef.hash) behind.push(space.spaceId);
+  }
+  return behind;
+}
+
+/** Read the markers once, then apply every space's pending migrations in one upgrade. */
+async function migrateOnce(
+  input: Parameters<typeof autoMigrate>[0],
+  spaces: ReadonlyArray<{ spaceId: string; contractSpace: ContractSpace<Contract> }>
+): Promise<void> {
+  const { dbName, factory } = input;
 
   // Read current DB version once (all spaces share the same IDB database).
   const { currentVersion: initialVersion } = await openAndReadMarker(dbName, factory, APP_SPACE_ID);

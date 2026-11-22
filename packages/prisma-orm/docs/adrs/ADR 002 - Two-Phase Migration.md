@@ -49,6 +49,12 @@ This includes a missing marker store. The migration chain should always create i
 
 When IndexedDB aborts an upgrade, the open request fails with a generic `AbortError`. `openAndUpgrade` keeps the original error and rejects with that instead.
 
+### Concurrent opens
+
+Two callers, in one page or in two tabs, can read the same version and plan the same next version. Only one `upgradeneeded` runs, and it carries only its own caller's operations. When an open reaches the target version without running its upgrade, `openAndUpgrade` rejects with `IdbUpgradeSupersededError` instead of reporting the operations as applied. The auto-migrating client then reads the markers again and plans the next upgrade from them. It also checks, after its upgrade, that every space it asked for is at its head. It gives up after five attempts.
+
+When a blocked upgrade times out, the open request is still live. If it is unblocked later, it aborts its upgrade instead of applying a migration its caller has already given up on.
+
 ### Schema operations still skip work that's already done
 
 `applyOneDdlOp` still checks for an existing store or index before creating one, and for a missing one before dropping it. IndexedDB itself would throw `ConstraintError` on an existing target and abort the upgrade. A normal run no longer replays anything, but a database can still have a schema ahead of its marker, for example one left by an older build that wrote the marker separately. The checks let those databases catch up.

@@ -75,7 +75,14 @@ export type { IdbMigrationPlanWithAuthoring } from "../core/migration-planner";
 
 // ── DDL apply helpers (shared by client-idb auto-migrate + family-idb preflight) ──
 
-export { applyOneDdlOp, openAndUpgrade, readMarker, writeMarker, writeMarkers } from "../core/apply-ddl-op";
+export {
+  applyOneDdlOp,
+  IdbUpgradeSupersededError,
+  openAndUpgrade,
+  readMarker,
+  writeMarker,
+  writeMarkers,
+} from "../core/apply-ddl-op";
 export type { IdbMarkerRecord, MarkerWriteInput } from "../core/apply-ddl-op";
 
 // ── Migration authoring surface (base class + self-emit CLI) ──────────────────

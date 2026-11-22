@@ -21,7 +21,14 @@ export {
 // These are re-exported here (in addition to the CLI-only `./migration` subpath)
 // so browser-side code (e.g. auto-migrate.ts) can import them without pulling
 // `MigrationCLI` → `node:fs` into the client bundle.
-export { applyOneDdlOp, openAndUpgrade, readMarker, writeMarker, writeMarkers } from "../core/apply-ddl-op";
+export {
+  applyOneDdlOp,
+  IdbUpgradeSupersededError,
+  openAndUpgrade,
+  readMarker,
+  writeMarker,
+  writeMarkers,
+} from "../core/apply-ddl-op";
 export type { IdbMarkerRecord, MarkerWriteInput } from "../core/apply-ddl-op";
 export { isIdbDdlOp } from "../core/migration-factories";
 export { transformRecord } from "../core/transform-records";
