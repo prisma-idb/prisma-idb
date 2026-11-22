@@ -340,6 +340,42 @@ describe("@onUpdate(...) generators on fields other rows depend on", () => {
     expect(await client!.orm["post"]!.findUnique("p1")).toMatchObject({ authorId: "a1", touchedAt: old });
   });
 
+  it("checks the whole compound foreign key when a nested disconnect() regenerates one of its fields", async () => {
+    client = await openClient(
+      pslContractOf(`
+        model Author {
+          id    String @id
+          notes Note[]
+        }
+        model Batch {
+          tenantId String
+          stamp    DateTime
+          notes    Note[]
+          @@id([tenantId, stamp])
+        }
+        model Note {
+          id       String   @id
+          authorId String?
+          author   Author?  @relation(fields: [authorId], references: [id])
+          tenantId String
+          stamp    DateTime @onUpdate(now())
+          batch    Batch    @relation(fields: [tenantId, stamp], references: [tenantId, stamp])
+        }
+      `)
+    );
+    const stamp = new Date("2020-01-01T00:00:00.000Z");
+    await client.orm["author"]!.create({ id: "a1" });
+    await client.orm["batch"]!.create({ tenantId: "t1", stamp });
+    await client.orm["note"]!.create({ id: "n1", authorId: "a1", tenantId: "t1", stamp });
+
+    await expect(
+      client.orm["author"]!.where({ id: "a1" }).update({
+        notes: (rel: { disconnect(): unknown }) => rel.disconnect(),
+      } as never)
+    ).rejects.toThrow(/FK violation on relation 'batch'/);
+    expect(await client.orm["note"]!.findUnique("n1")).toMatchObject({ authorId: "a1", tenantId: "t1", stamp });
+  });
+
   it("applies onUpdate: Cascade when a nested disconnect() regenerates a referenced field", async () => {
     const slug = await seedSlugs("Cascade");
 

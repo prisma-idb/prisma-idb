@@ -683,8 +683,9 @@ async function writeMutationRows(
  * Writes `setValues` and the child store's `onUpdate` defaults to every child
  * row `where` matches, with the foreign-key checks and `onUpdate` referential
  * actions of any update. Rows are written one by one when a default gives each
- * row its own value, such as `uuid()`, or when the patch changes a field other
- * rows reference; otherwise one patch serves every row.
+ * row its own value, such as `uuid()`, when the patch changes a field other
+ * rows reference, or when it sets only part of a compound foreign key, whose
+ * other fields come from each row; otherwise one patch serves every row.
  */
 async function writeChildRows(
   scope: IdbTransactionScope,
@@ -698,8 +699,13 @@ async function writeChildRows(
   const { relatedModelName: modelName, relatedStoreName: storeName } = relation;
   const sharedPatch = applyUpdateDefaults(defaults, storeName, setValues, defaultsCache);
   const enforces = collectOnUpdateEnforcementStoreNames(contract, modelName, sharedPatch).enforces;
-  if (!updateDefaultsVaryByRow(defaults, storeName, setValues) && !enforces) {
-    // One patch serves every row, so one check covers its foreign keys.
+  const sharedPatchFits =
+    !updateDefaultsVaryByRow(defaults, storeName, setValues) &&
+    !enforces &&
+    !fkCheckNeedsExistingRow(contract, modelName, sharedPatch);
+  if (sharedPatchFits) {
+    // One patch serves every row, and it sets whole foreign keys, so one
+    // check covers them.
     await validateScalarFks(scope, contract, modelName, sharedPatch);
     await writeMutationRows(scope, contract, modelName, {
       write: "put-merged",
