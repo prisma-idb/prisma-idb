@@ -52,7 +52,7 @@ import { extractKeyFromRow, getKeyPath, getStoreName } from "@prisma-idb/client-
 import type { IdbKeyPath } from "@prisma-idb/client-idb/orm";
 import { domainModelsAtDefaultNamespace } from "@prisma/orm-framework/contract/types";
 import type { OutboxEvent, OutboxWriteEntry, VersionMetaRecord } from "../types";
-import { OUTBOX_STORE } from "./outbox-store";
+import { OUTBOX_ORDER_STORE, OUTBOX_STORE } from "./outbox-store";
 import { scanStore } from "./raw-store";
 import { VERSION_META_STORE, versionMetaKey, resolveVersionMeta } from "./version-meta";
 import { hasDecimalPrimaryKey, preserveDecimalKeySpelling } from "@prisma-idb/client-idb/internal";
@@ -77,21 +77,11 @@ function isMutationAst(ast: IdbQueryAst): ast is MutationAst {
 // ── Outbox record builders ────────────────────────────────────────────────────
 
 /**
- * `getNextBatch` sorts outbox events by `createdAt` ascending for FIFO push
- * order — load-bearing for cascades: `applyReferentialActionsForRow` writes
- * a child row's outbox event (e.g. a cascade-deleted Todo) before its
- * parent's (the Board being deleted), and the server-side ownership check
- * for that child's delete walks Todo→Board→User, which only resolves while
- * the Board row still exists. Pushed out of order, the child's delete would
- * fail authorization once the parent is already gone.
- *
- * Plain `new Date()` has millisecond resolution; every op in one cascade
- * (or one batch plan) runs synchronously and can easily land in the same
- * millisecond, making `createdAt` ties resolve by IndexedDB cursor order
- * (the store's `id` keyPath — a random UUID, unrelated to write order) —
- * not the guarantee the sort claims. Monotonically bumping ensures each
- * successive call this session gets a strictly later timestamp than the
- * last, regardless of wall-clock resolution.
+ * Push order comes from `_idb_sync_outbox_order`, not from `createdAt` (see
+ * `outboxOpsFor`). `createdAt` orders only events queued before that store
+ * existed, and decides which acknowledged events pruning keeps. It still
+ * increases strictly within a page load, so events of one cascade or batch,
+ * written in the same millisecond, keep distinct times.
  */
 let lastOutboxTimestampMs = 0;
 /** Advances the session’s outbox timestamp so dependent writes retain their order. */
@@ -169,7 +159,14 @@ function outboxOpsFor(entries: readonly OutboxWriteEntry[], meta: IdbQueryPlan<u
   return entries.flatMap(({ modelName, operation, payload, key }) => {
     const versionMetaId = key !== undefined ? versionMetaKey(modelName, key) : null;
     const add = outboxAddOp(modelName, operation, payload, versionMetaId, meta);
-    return key !== undefined ? [add, versionMetaPutOp(modelName, key, meta)] : [add];
+    // The key generator gives the event its place in the push order, in this same transaction.
+    const order: IdbAddPlan = {
+      meta,
+      kind: "add",
+      storeName: OUTBOX_ORDER_STORE,
+      record: { eventId: (add.record as { id: string }).id },
+    };
+    return key !== undefined ? [add, order, versionMetaPutOp(modelName, key, meta)] : [add, order];
   });
 }
 
@@ -377,7 +374,7 @@ export class SyncInterceptorExecutor implements IdbQueryExecutorWithTransaction 
           "Pass an IdbRuntime (createIdbRuntime), not a plain IdbQueryExecutor."
       );
     }
-    const allStores = [...new Set([...storeNames, OUTBOX_STORE, VERSION_META_STORE])];
+    const allStores = [...new Set([...storeNames, OUTBOX_STORE, OUTBOX_ORDER_STORE, VERSION_META_STORE])];
     const scope = await inner.transaction(allStores, mode);
     return new SyncInterceptingTransactionScope(scope, this.#config);
   }
@@ -441,7 +438,12 @@ export class SyncInterceptorExecutor implements IdbQueryExecutorWithTransaction 
     const extraOps = outboxOpsFor(entries, meta);
     const touchesVersionMeta = entries.some(({ key }) => key !== undefined);
 
-    const allStores = [...originalStores, OUTBOX_STORE, ...(touchesVersionMeta ? [VERSION_META_STORE] : [])];
+    const allStores = [
+      ...originalStores,
+      OUTBOX_STORE,
+      OUTBOX_ORDER_STORE,
+      ...(touchesVersionMeta ? [VERSION_META_STORE] : []),
+    ];
 
     const batchPlan: IdbBatchPlan = {
       meta,
@@ -631,7 +633,7 @@ class SyncInterceptingTransactionScope implements IdbTransactionScope {
           await this.#inner.execute({ ...op, record });
           const meta = record as unknown as VersionMetaRecord;
           this.#versionMetaSnapshot?.set(meta.id, meta);
-        } else if (previous && op.kind === "add") {
+        } else if (previous && op.kind === "add" && op.storeName === OUTBOX_STORE) {
           await this.#inner.execute({ ...op, record: { ...op.record, versionMetaId: previous.id } });
         } else await this.#inner.execute(op);
       }

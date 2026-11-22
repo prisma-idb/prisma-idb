@@ -4,13 +4,18 @@ import { contractSpaceFromJson } from "@prisma/orm-toolchain/migration-tools/spa
 import contractJson from "../contract.json" with { type: "json" };
 import baselineMeta from "../../migrations/20261024T1019_baseline/migration.json" with { type: "json" };
 import baselineOps from "../../migrations/20261024T1019_baseline/ops.json" with { type: "json" };
+import outboxOrderMeta from "../../migrations/20261122T1425_outbox_order/migration.json" with { type: "json" };
+import outboxOrderOps from "../../migrations/20261122T1425_outbox_order/ops.json" with { type: "json" };
 import headRef from "../../migrations/refs/head.json" with { type: "json" };
 
 export const SYNC_SPACE_ID = "idb-sync" as const;
 
 const syncContractSpace = contractSpaceFromJson({
   contractJson,
-  migrations: [{ dirName: "20261024T1019_baseline", metadata: baselineMeta, ops: baselineOps }],
+  migrations: [
+    { dirName: "20261024T1019_baseline", metadata: baselineMeta, ops: baselineOps },
+    { dirName: "20261122T1425_outbox_order", metadata: outboxOrderMeta, ops: outboxOrderOps },
+  ],
   headRef: {
     hash: headRef.hash,
     invariants: headRef.invariants as readonly string[],

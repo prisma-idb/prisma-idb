@@ -1,0 +1,31 @@
+[
+  {
+    "kind": "createObjectStore",
+    "id": "object-store._idb_sync_outbox_order.create",
+    "label": "Create object store \"_idb_sync_outbox_order\"",
+    "operationClass": "additive",
+    "storeName": "_idb_sync_outbox_order",
+    "def": {
+      "keyPath": "seq",
+      "autoIncrement": true,
+      "indexes": {
+        "byEventId": {
+          "keyPath": "eventId",
+          "unique": true
+        }
+      }
+    }
+  },
+  {
+    "kind": "createIndex",
+    "id": "index._idb_sync_outbox_order.byEventId.create",
+    "label": "Create index \"byEventId\" on \"_idb_sync_outbox_order\"",
+    "operationClass": "additive",
+    "storeName": "_idb_sync_outbox_order",
+    "indexName": "byEventId",
+    "def": {
+      "keyPath": "eventId",
+      "unique": true
+    }
+  }
+]

@@ -8,6 +8,7 @@ import type { IdbContract } from "@prisma-idb/client-idb/orm";
 import { createSyncIdbClient } from "../src/exports/client";
 import {
   OUTBOX_STORE,
+  OUTBOX_ORDER_STORE,
   VERSION_META_STORE,
   changelogId,
   createTestSyncClient,
@@ -605,6 +606,7 @@ describe("applyPull with a compound key", () => {
     const bootstrapDb = await openTestDb(name, [
       { name: "memberships", keyPath: ["orgId", "userId"] },
       OUTBOX_STORE,
+      OUTBOX_ORDER_STORE,
       VERSION_META_STORE,
     ]);
     bootstrapDb.close();

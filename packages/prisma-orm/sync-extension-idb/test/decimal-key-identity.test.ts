@@ -11,7 +11,16 @@ import type { IdbContract } from "@prisma-idb/client-idb/orm";
 import { createSyncIdbClient } from "../src/exports/client";
 import { applyPull, decodePullLog } from "../src/core/apply-pull";
 import { planReconciliation, applyReconciliation } from "../src/core/reconcile-rejected";
-import { OUTBOX_STORE, VERSION_META_STORE, openTestDb, scanAll, testDbName, changelogId, asAccessors } from "./helpers";
+import {
+  OUTBOX_STORE,
+  OUTBOX_ORDER_STORE,
+  VERSION_META_STORE,
+  openTestDb,
+  scanAll,
+  testDbName,
+  changelogId,
+  asAccessors,
+} from "./helpers";
 
 /** Exercise native Decimal keys without changing application or sync store definitions. */
 async function setup(compound: boolean) {
@@ -33,6 +42,7 @@ async function setup(compound: boolean) {
     await openTestDb(dbName, [
       { name: "items", keyPath, indexes: [{ name: "byAmount", keyPath: "amount", unique: true }] },
       OUTBOX_STORE,
+      OUTBOX_ORDER_STORE,
       VERSION_META_STORE,
     ])
   ).close();
