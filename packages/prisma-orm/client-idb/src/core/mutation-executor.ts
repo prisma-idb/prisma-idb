@@ -241,6 +241,18 @@ function collectStoreNames(
     if (def.relationName in data && isRelationMutationCallback(data[def.relationName])) {
       stores.add(def.relatedStoreName);
       for (const store of fkParentStoreNames(contract, def.relatedModelName)) stores.add(store);
+      // A connect or disconnect of children writes their foreign key and their
+      // `onUpdate` defaults, whose referential actions may reach further stores.
+      if (!isChildEnforcementRelation(contract, modelName, def)) continue;
+      const childPatch = applyUpdateDefaults(
+        contract.execution?.mutations.defaults,
+        def.relatedStoreName,
+        Object.fromEntries(def.targetFields.map((field) => [field, null])),
+        createMutationDefaultsCache()
+      );
+      for (const store of collectOnUpdateEnforcementStoreNames(contract, def.relatedModelName, childPatch).storeNames) {
+        stores.add(store);
+      }
     }
   }
   if (kind === "update") {
@@ -669,8 +681,10 @@ async function writeMutationRows(
 
 /**
  * Writes `setValues` and the child store's `onUpdate` defaults to every child
- * row `where` matches. Defaults that give each row its own value, such as
- * `uuid()`, are resolved once per row; otherwise one patch serves every row.
+ * row `where` matches, with the foreign-key checks and `onUpdate` referential
+ * actions of any update. Rows are written one by one when a default gives each
+ * row its own value, such as `uuid()`, or when the patch changes a field other
+ * rows reference; otherwise one patch serves every row.
  */
 async function writeChildRows(
   scope: IdbTransactionScope,
@@ -682,10 +696,14 @@ async function writeChildRows(
 ): Promise<void> {
   const defaults = contract.execution?.mutations.defaults;
   const { relatedModelName: modelName, relatedStoreName: storeName } = relation;
-  if (!updateDefaultsVaryByRow(defaults, storeName, setValues)) {
+  const sharedPatch = applyUpdateDefaults(defaults, storeName, setValues, defaultsCache);
+  const enforces = collectOnUpdateEnforcementStoreNames(contract, modelName, sharedPatch).enforces;
+  if (!updateDefaultsVaryByRow(defaults, storeName, setValues) && !enforces) {
+    // One patch serves every row, so one check covers its foreign keys.
+    await validateScalarFks(scope, contract, modelName, sharedPatch);
     await writeMutationRows(scope, contract, modelName, {
       write: "put-merged",
-      patch: applyUpdateDefaults(defaults, storeName, setValues, defaultsCache),
+      patch: sharedPatch,
       ...(where === undefined ? {} : { where }),
     });
     return;
@@ -697,6 +715,10 @@ async function writeChildRows(
   for (const row of await readMutationRows(scope, contract, modelName, where)) {
     const patch = applyUpdateDefaults(defaults, storeName, setValues, defaultsCache);
     assertValidRecord(contract, modelName, "update", patch);
+    // A generated value can be a foreign key, or a field other rows reference,
+    // so each row's patch gets the checks and actions of any other update.
+    await validateScalarFks(scope, contract, modelName, patch, row);
+    await applyReferentialActionsForRowOnUpdate(scope, contract, modelName, row, patch);
     const key = extractKeyFromRow(row, keyPath);
     await scope.execute({ meta, kind: "update", storeName, key, patch } as IdbAtomicPlan);
   }
@@ -1335,7 +1357,9 @@ async function executeScalarUpdates(options: ScalarUpdateOptions, take?: 1): Pro
   const { storeNames, enforcesOnUpdate } = collectUpdateStoreNames(contract, modelName, patch);
   const needsRowForFks = fkCheckNeedsExistingRow(contract, modelName, patch);
   const updatedRows = await withMutationScope(executor, storeNames, async (scope) => {
-    if (!needsRowForFks) await validateScalarFks(scope, contract, modelName, patch);
+    // With defaults resolved per row, the first resolution is never written; each
+    // row's own patch is checked in the loop below.
+    if (!needsRowForFks && !defaultsPerRow) await validateScalarFks(scope, contract, modelName, patch);
     const meta = makePlanMeta(contract);
     const where = filters.length === 0 ? undefined : andExpr(filters);
     if (!enforcesOnUpdate && !needsRowForFks && !options.operations?.length && !defaultsPerRow) {
@@ -1362,7 +1386,7 @@ async function executeScalarUpdates(options: ScalarUpdateOptions, take?: 1): Pro
       );
       assertEnumValues(contract, modelName, rowPatch);
       assertValidRecord(contract, modelName, "update", rowPatch);
-      if (needsRowForFks) await validateScalarFks(scope, contract, modelName, rowPatch, oldRow);
+      if (needsRowForFks || defaultsPerRow) await validateScalarFks(scope, contract, modelName, rowPatch, oldRow);
       if (enforcesOnUpdate) await applyReferentialActionsForRowOnUpdate(scope, contract, modelName, oldRow, rowPatch);
       const key = extractKeyFromRow(oldRow, keyPath);
       const rows = await scope.execute({ meta, kind: "update", storeName, key, patch: rowPatch } as IdbAtomicPlan);

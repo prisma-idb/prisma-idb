@@ -241,6 +241,116 @@ describe("@onUpdate(...) generators across several rows", () => {
   });
 });
 
+describe("@onUpdate(...) generators on fields other rows depend on", () => {
+  it("checks the foreign key of every row updateAll() regenerates", async () => {
+    client = await openClient(
+      pslContractOf(`
+        model Owner {
+          id   String @id
+          pets Pet[]
+        }
+        model Pet {
+          id      String @id
+          ownerId String @onUpdate(uuid())
+          owner   Owner  @relation(fields: [ownerId], references: [id])
+          name    String
+        }
+      `)
+    );
+    await client.orm["owner"]!.create({ id: "o1" });
+    for (const id of ["p1", "p2"]) await client.orm["pet"]!.create({ id, ownerId: "o1", name: id });
+
+    await expect(client.orm["pet"]!.where({ ownerId: "o1" }).updateAll({ name: "renamed" }).toArray()).rejects.toThrow(
+      /FK violation on relation 'owner'/
+    );
+    expect(
+      (await client.orm["pet"]!.all().toArray()).map((row) => (row as Record<string, unknown>)["ownerId"])
+    ).toEqual(["o1", "o1"]);
+  });
+
+  /** Authors own posts; each post has a generated slug that attachments reference. */
+  function slugContract(onUpdate: "Restrict" | "Cascade") {
+    return pslContractOf(`
+      model Author {
+        id    String @id
+        posts Post[]
+      }
+      model Post {
+        id          String       @id
+        authorId    String?
+        author      Author?      @relation(fields: [authorId], references: [id])
+        slug        String       @unique @onCreate(uuid()) @onUpdate(uuid())
+        attachments Attachment[]
+      }
+      model Attachment {
+        id       String @id
+        postSlug String
+        post     Post   @relation(fields: [postSlug], references: [slug], onUpdate: ${onUpdate})
+      }
+    `);
+  }
+
+  async function seedSlugs(onUpdate: "Restrict" | "Cascade") {
+    client = await openClient(slugContract(onUpdate));
+    await client.orm["author"]!.create({ id: "a1" });
+    const post = (await client.orm["post"]!.create({ id: "p1", authorId: "a1" })) as Record<string, unknown>;
+    await client.orm["attachment"]!.create({ id: "f1", postSlug: post["slug"] });
+    return post["slug"];
+  }
+
+  const disconnectPosts = () =>
+    client!.orm["author"]!.where({ id: "a1" }).update({
+      posts: (rel: { disconnect(): unknown }) => rel.disconnect(),
+    } as never);
+
+  it("applies onUpdate: Restrict when a nested disconnect() regenerates a referenced field", async () => {
+    const slug = await seedSlugs("Restrict");
+
+    await expect(disconnectPosts()).rejects.toThrow(/would orphan child records on relation 'attachments'/);
+    expect(await client!.orm["post"]!.findUnique("p1")).toMatchObject({ authorId: "a1", slug });
+  });
+
+  it("applies onUpdate: Restrict when a nested disconnect() moves a referenced @onUpdate(now()) field", async () => {
+    client = await openClient(
+      pslContractOf(`
+        model Author {
+          id    String @id
+          posts Post[]
+        }
+        model Post {
+          id          String       @id
+          authorId    String?
+          author      Author?      @relation(fields: [authorId], references: [id])
+          touchedAt   DateTime     @unique @onCreate(now()) @onUpdate(now())
+          attachments Attachment[]
+        }
+        model Attachment {
+          id            String   @id
+          postTouchedAt DateTime
+          post          Post     @relation(fields: [postTouchedAt], references: [touchedAt], onUpdate: Restrict)
+        }
+      `)
+    );
+    await client.orm["author"]!.create({ id: "a1" });
+    const old = new Date("2020-01-01T00:00:00.000Z");
+    await client.orm["post"]!.create({ id: "p1", authorId: "a1", touchedAt: old });
+    await client.orm["attachment"]!.create({ id: "f1", postTouchedAt: old });
+
+    await expect(disconnectPosts()).rejects.toThrow(/would orphan child records on relation 'attachments'/);
+    expect(await client!.orm["post"]!.findUnique("p1")).toMatchObject({ authorId: "a1", touchedAt: old });
+  });
+
+  it("applies onUpdate: Cascade when a nested disconnect() regenerates a referenced field", async () => {
+    const slug = await seedSlugs("Cascade");
+
+    await disconnectPosts();
+
+    const post = (await client!.orm["post"]!.findUnique("p1")) as Record<string, unknown>;
+    expect(post["slug"]).not.toBe(slug);
+    expect(await client!.orm["attachment"]!.findUnique("f1")).toMatchObject({ postSlug: post["slug"] });
+  });
+});
+
 describe("TypeScript-authored execution defaults", () => {
   it("hashes the same as the equivalent PSL contract", () => {
     expect(tsContract.storage.storageHash).toBe(pslContract.storage.storageHash);
