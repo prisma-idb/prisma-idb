@@ -61,10 +61,11 @@ const command = input.tool_input?.command ?? "";
 if (!/(^|[;&|(]\s*|\s)gh\s+pr\s+create\b/.test(command)) process.exit(0);
 
 // The checks below read HEAD before the command runs. Anything that runs earlier in the same command could
-// move HEAD, so `gh pr create` must start the command.
-if (!/^\s*gh\s+pr\s+create\b/.test(command)) {
+// move HEAD, so `gh pr create` must start the command, and its arguments can't run commands of their own
+// through `$(...)`, backticks or `<(...)`, which the shell evaluates before it starts `gh`.
+if (!/^\s*gh\s+pr\s+create\b/.test(command) || /\$\(|`|[<>]\(/.test(command)) {
   console.error(
-    "Run `gh pr create` as its own command, with nothing before it, so the review check sees the commits the PR will contain."
+    "Run `gh pr create` as its own command, with nothing before it and no command substitution in its arguments, so the review check sees the commits the PR will contain. Put the PR body in a file and pass it with `--body-file`."
   );
   process.exit(2);
 }
