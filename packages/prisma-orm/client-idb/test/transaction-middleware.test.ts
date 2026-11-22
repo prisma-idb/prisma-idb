@@ -15,7 +15,12 @@ const contract = defineContract({
   family: idbFamilyPack,
   target: idbTargetPack,
   models: {
-    User: { store: "users", key: "id", fields: { id: "String" } },
+    User: {
+      store: "users",
+      key: "id",
+      fields: { id: "String" },
+      relations: { posts: { to: "Post", cardinality: "1:N", on: { local: ["id"], target: ["authorId"] } } },
+    },
     Post: {
       store: "posts",
       key: "id",
