@@ -1,3 +1,4 @@
+import { decimalIdentityToken } from "@prisma-idb/target-idb/runtime";
 import type { IdbFilterExpr, IdbGroupByAst, IdbQueryAst } from "@prisma-idb/adapter-idb/runtime";
 import {
   assertValidAggregateSpec,
@@ -68,8 +69,17 @@ interface GroupedAccessorInit {
  * Build a composite group key from type-tagged field tokens. Equal Date, binary,
  * array and JSON object values share a group; null and undefined also share a group.
  */
-function groupKeyOf(by: readonly string[], row: Record<string, unknown>): string {
-  return JSON.stringify(by.map((field) => groupToken(row[field])));
+function groupKeyOf(
+  by: readonly string[],
+  row: Record<string, unknown>,
+  fields: Readonly<Record<string, CatalogField>>
+): string {
+  // Decimal spellings of one value, such as "1" and "1.0", form one group.
+  return JSON.stringify(
+    by.map((field) =>
+      groupToken(fields[field]?.codecId === "idb/decimal@1" ? decimalIdentityToken(row[field]) : row[field])
+    )
+  );
 }
 
 /** Keep `1n`, `1` and `"1"` apart while preserving structural grouping for JSON objects. */
@@ -105,7 +115,7 @@ export function createGroupedAccessor<TContract, ModelName extends string, Field
       // Partition rows by their composite group key, preserving first-seen order.
       const groups = new Map<string, { key: Record<string, unknown>; rows: Record<string, unknown>[] }>();
       for (const row of rows) {
-        const gk = groupKeyOf(init.by, row);
+        const gk = groupKeyOf(init.by, row, init.fields);
         let group = groups.get(gk);
         if (group === undefined) {
           const key: Record<string, unknown> = {};

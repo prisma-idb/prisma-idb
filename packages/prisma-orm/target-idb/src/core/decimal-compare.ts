@@ -46,3 +46,15 @@ export function compareDecimalValues(a: unknown, b: unknown): number {
   }
   return comparison === 0 ? 0 : left.negative ? -comparison : comparison;
 }
+
+/**
+ * One spelling per numeric value, for using Decimal text as a `Map` key:
+ * `"1"`, `"1.00"` and `"1e0"` all give the same token, as `compareDecimalValues`
+ * finds them equal. The token is an identity, not a display form. Text that
+ * isn't a valid Decimal is returned unchanged.
+ */
+export function decimalIdentityToken(value: unknown): unknown {
+  if (!isDecimalString(value)) return value;
+  const { negative, digits, position } = decimalParts(value);
+  return digits.length === 0 ? "0" : `${negative ? "-" : ""}0.${digits}e${position}`;
+}
