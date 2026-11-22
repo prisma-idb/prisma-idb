@@ -128,6 +128,16 @@ export const defaultGetKeyField: GetKeyField = (contract, modelName) => {
   return keyPath;
 };
 
+/**
+ * Whether a root key, in wire form, names the authenticated scope. The scope is
+ * always a string, while an `Int` or `Float` root key arrives as a JSON number,
+ * so a number matches the scope that spells it.
+ */
+export function sameScopeKey(key: unknown, scopeKey: string): boolean {
+  if (key === scopeKey) return true;
+  return typeof key === "number" && Number.isFinite(key) && String(key) === scopeKey;
+}
+
 /** Builds a root decision or the relation paths needed to authorize a scoped row. */
 function buildOwnershipCheck(
   dag: OwnershipDag,
@@ -139,7 +149,7 @@ function buildOwnershipCheck(
   scopeKey: string
 ): OwnershipCheck {
   if (modelName === dag.rootModel) {
-    return { kind: "root", keyField, key, scopeKey, authorized: key === scopeKey };
+    return { kind: "root", keyField, key, scopeKey, authorized: sameScopeKey(key, scopeKey) };
   }
   return {
     kind: "scoped",
