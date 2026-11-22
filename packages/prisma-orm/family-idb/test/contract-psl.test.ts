@@ -1795,3 +1795,19 @@ describe("shared definition diagnostics", () => {
     expect(schema.slice(span.start.offset, span.end.offset)).toBe('@default("wrong")');
   });
 });
+
+describe("Int literal defaults", () => {
+  it.each(["1.5", "2147483648", "-2147483649"])("rejects @default(%s), which no Int write would accept", (value) => {
+    const result = interpret(`
+      model Item {
+        id    String @id
+        count Int    @default(${value})
+      }
+    `);
+    expect(result.ok).toBe(false);
+  });
+
+  it("accepts an Int default at the edge of the range", () => {
+    expect(interpret(`model Item {\n  id String @id\n  count Int @default(2147483647)\n}`).ok).toBe(true);
+  });
+});
