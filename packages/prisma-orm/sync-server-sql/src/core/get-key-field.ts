@@ -7,7 +7,8 @@ import type { GetKeyField } from "@prisma-idb/sync-server";
  * don't have at all) — it's on the table definition, as a possibly-compound
  * array: `contract.storage.namespaces[ns].entries.table[table].primaryKey.columns`.
  * Only single-field keys are supported — a compound result throws rather
- * than silently picking one column.
+ * than silently picking one column. Returns the model field that stores the
+ * key column, which differs from the column under `@map`.
  */
 export const sqlGetKeyField: GetKeyField = (contract, modelName) => {
   const model = domainModelsAtDefaultNamespace(contract.domain)[modelName];
@@ -27,5 +28,9 @@ export const sqlGetKeyField: GetKeyField = (contract, modelName) => {
         `compound keys aren't supported.`
     );
   }
-  return columns[0]!;
+  // The ORM and the sync payloads use field names. A field mapped with `@map`
+  // stores under another column name, so find the field that owns the column.
+  const column = columns[0]!;
+  const fields = (storage as { fields?: Record<string, { column?: string }> }).fields ?? {};
+  return Object.entries(fields).find(([, field]) => field.column === column)?.[0] ?? column;
 };
