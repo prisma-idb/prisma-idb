@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { applyPull } from "../src/core/apply-pull";
+import { applyPull, DISCARDED_BY_PULL } from "../src/core/apply-pull";
 import type { LogWithRecord, VersionMetaRecord } from "../src/types";
 import { defineContract } from "@prisma-idb/family-idb/contract-ts";
 import idbFamilyPack from "@prisma-idb/family-idb/pack";
@@ -10,6 +10,7 @@ import {
   OUTBOX_STORE,
   OUTBOX_ORDER_STORE,
   VERSION_META_STORE,
+  asAccessors,
   changelogId,
   createTestSyncClient,
   keyGet,
@@ -189,6 +190,41 @@ describe("applyPull", () => {
     expect(await scanAll(client, "users")).toHaveLength(0);
     expect(await scanAll(client, "posts")).toHaveLength(0);
   });
+
+  it.each([
+    ["delete", "delete"],
+    ["revocation", "update"],
+  ] as const)(
+    "discards the unsent edit of a child that a pulled %s of its parent cascades to",
+    async (_, operation) => {
+      const { client } = await createTestSyncClient();
+      await applyPull(client, [
+        log({ changelogId: "c1", operation: "create" }),
+        log({
+          changelogId: "c2",
+          model: "Post",
+          keyPath: "p1",
+          operation: "create",
+          record: { id: "p1", title: "Hi", authorId: "u1" },
+        }),
+      ]);
+      await asAccessors(client.orm)["posts"]!.where({ id: "p1" }).update({ title: "Edited offline" });
+      expect(await client.outbox.hasPending()).toBe(true);
+
+      const result = await applyPull(client, [log({ changelogId: "c3", operation, record: null })]);
+
+      expect(result).toMatchObject({ applied: 1, halted: false, lastChangelogId: "c3" });
+      expect(await scanAll(client, "posts")).toEqual([]);
+      // The server deleted the child too: its edit can't apply, so the queue no longer holds it.
+      expect(await client.outbox.hasPending()).toBe(false);
+      expect(await scanAll(client, "_idb_sync_outbox")).toMatchObject([
+        { entityType: "Post", operation: "update", retryable: false, lastError: DISCARDED_BY_PULL },
+      ]);
+      expect(await keyGet(client, "_idb_sync_version_meta", 'Post::"p1"')).toMatchObject({
+        localChangePending: false,
+      });
+    }
+  );
 
   it("halts at a log when the local version-meta has a pending local change (local write wins)", async () => {
     const { client } = await createTestSyncClient();

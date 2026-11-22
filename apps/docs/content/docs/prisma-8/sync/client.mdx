@@ -67,6 +67,8 @@ For each synced record, `_idb_sync_version_meta` records two things:
 
 The worker maintains this store; you don't write to it.
 
+A pulled delete, or a revocation that removes a row, can cascade to rows that have their own pending changes. The server deleted those rows too, so the server wins: in the pull's transaction, their queued events are marked non-retryable with a `lastError` that starts with `Discarded:`, and they stop counting as pending. Rows that a `SetNull` cascade only updates keep their pending changes, which still apply to the row on the server.
+
 ### The pull cursor
 
 A pull applies its rows in order. A later row can depend on an earlier one, so the pull never skips ahead of a row it could not apply: a write failure or a pending local change stops the pull, and no later row lands before it. The one exception is an `invalid` row, which the pull consumes without writing it.

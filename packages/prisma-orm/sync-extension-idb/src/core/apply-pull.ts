@@ -56,7 +56,9 @@ import { getStoreName, getKeyPath, extractKeyFromRow } from "@prisma-idb/client-
 import { collectDeleteStoreNames, applyReferentialActionsForRow } from "@prisma-idb/client-idb/internal";
 import { decodeJsonRecord, validateRecord, validateKeyPath } from "@prisma-idb/target-idb/runtime";
 import type { SyncIdbClient } from "./sync-client";
-import { deleteRecord, putRecord } from "./raw-store";
+import { deleteRecord, putRecord, scanStore } from "./raw-store";
+import { OUTBOX_STORE } from "./outbox-store";
+import { domainModelsAtDefaultNamespace } from "@prisma/orm-framework/contract/types";
 import { VERSION_META_STORE, versionMetaKey, resolveVersionMeta, nativeVersionMetaKey } from "./version-meta";
 import {
   decimalKeysEqual,
@@ -65,7 +67,7 @@ import {
   resolveDecimalKey,
   IdbDecimalIdentityConflictError,
 } from "@prisma-idb/client-idb/internal";
-import type { LogWithRecord, ApplyPullResult, PullChange, VersionMetaRecord } from "../types";
+import type { LogWithRecord, ApplyPullResult, OutboxEvent, PullChange, VersionMetaRecord } from "../types";
 
 /**
  * A committed change, an already-consumed entry, or a halt. The cursor can
@@ -174,7 +176,8 @@ async function applyLog<TContract extends IdbContract>(
 
   const storeName = getStoreName(contract, log.model);
   const isDelete = log.operation === "delete" || log.record === null;
-  const storeNames = isDelete ? collectDeleteStoreNames(contract, log.model) : [storeName];
+  // A delete may cascade to rows with unsent edits, whose outbox events it then discards.
+  const storeNames = isDelete ? [...collectDeleteStoreNames(contract, log.model), OUTBOX_STORE] : [storeName];
   const decoded = decodePullLog(contract, log, isDelete);
   if (!decoded) return "invalid";
   const { key, record } = decoded;
@@ -191,8 +194,10 @@ async function applyLog<TContract extends IdbContract>(
       const identity = await resolvePullIdentity(scope, contract, log, key, record, meta);
       if (isDelete) {
         if (identity.row) {
-          await applyReferentialActionsForRow(scope, contract, log.model, identity.row);
+          const cascaded = recordDeletes(scope);
+          await applyReferentialActionsForRow(cascaded.scope, contract, log.model, identity.row);
           await deleteRecord(scope, storeName, identity.key);
+          await discardPendingEdits(scope, contract, cascaded.deleted);
         }
       } else {
         await putRecord(scope, storeName, identity.record!);
@@ -214,6 +219,66 @@ async function applyLog<TContract extends IdbContract>(
     if (error instanceof IdbDecimalIdentityConflictError) throw error;
     return "halt";
   }
+}
+
+/** A row a pulled delete removed through a cascade. */
+interface DeletedRow {
+  readonly storeName: string;
+  readonly key: IDBValidKey;
+}
+
+/** Wrap `scope` so the keyed deletes issued through it, which is how a cascade removes rows, are recorded. */
+function recordDeletes(scope: IdbTransactionScope): { scope: IdbTransactionScope; deleted: DeletedRow[] } {
+  const deleted: DeletedRow[] = [];
+  const recording: IdbTransactionScope = {
+    execute: (plan) => {
+      if (plan.kind === "delete" && !(plan.key instanceof IDBKeyRange)) {
+        deleted.push({ storeName: plan.storeName, key: plan.key });
+      }
+      return scope.execute(plan);
+    },
+    commit: () => scope.commit(),
+    rollback: () => scope.rollback(),
+  };
+  return { scope: recording, deleted };
+}
+
+/** What a discarded event records as its last error. */
+export const DISCARDED_BY_PULL = "Discarded: a change pulled from the server deleted this row";
+
+/**
+ * The server wins over unsent edits of rows a pulled delete cascaded to: the
+ * server removed those rows too, so their queued events can no longer apply.
+ * Each one is marked non-retryable, and its row's pending flag is cleared, in
+ * the pull's transaction, so the local rows and the queue agree.
+ */
+async function discardPendingEdits(
+  scope: IdbTransactionScope,
+  contract: IdbContract,
+  deleted: readonly DeletedRow[]
+): Promise<void> {
+  const pendingMetaIds = new Set<string>();
+  for (const { storeName, key } of deleted) {
+    const model = modelForStore(contract, storeName);
+    if (model === undefined) continue;
+    const meta = await resolveVersionMeta(scope, contract, model, key);
+    if (!meta?.localChangePending) continue;
+    pendingMetaIds.add(meta.id);
+    await putRecord(scope, VERSION_META_STORE, { ...meta, localChangePending: false } satisfies VersionMetaRecord);
+  }
+  if (pendingMetaIds.size === 0) return;
+  for (const event of await scanStore<OutboxEvent>(scope, OUTBOX_STORE)) {
+    if (event.synced || !event.retryable || event.versionMetaId === null) continue;
+    if (!pendingMetaIds.has(event.versionMetaId)) continue;
+    await putRecord(scope, OUTBOX_STORE, { ...event, retryable: false, lastError: DISCARDED_BY_PULL });
+  }
+}
+
+/** The model stored in `storeName`, or `undefined` for a store no model uses. */
+function modelForStore(contract: IdbContract, storeName: string): string | undefined {
+  return Object.entries(domainModelsAtDefaultNamespace(contract.domain)).find(
+    ([, model]) => (model as { storage?: { storeName?: string } }).storage?.storeName === storeName
+  )?.[0];
 }
 
 /** Keep application and metadata aliases on their existing spelling after the pending-change guard. */
