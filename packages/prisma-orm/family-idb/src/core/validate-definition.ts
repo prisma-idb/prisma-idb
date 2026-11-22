@@ -161,10 +161,11 @@ function validateExecutionDefault(model: IdbModelNode, field: IdbFieldNode, repo
     ]);
   }
 
-  if (execution.onUpdate?.id === "timestampNow" && keyPathFields(model.key).includes(field.name)) {
+  // A primary key never changes, so no generator may rewrite one on update.
+  if (execution.onUpdate !== undefined && keyPathFields(model.key).includes(field.name)) {
     report(
-      "IDB_TEMPORAL_UPDATED_AT_ON_KEY_FIELD",
-      `${label} is part of the model's primary key and cannot have an auto-managed update timestamp.`,
+      "IDB_ON_UPDATE_ON_KEY_FIELD",
+      `${label} is part of the model's primary key and cannot generate a value on update. Primary keys never change.`,
       at
     );
   }

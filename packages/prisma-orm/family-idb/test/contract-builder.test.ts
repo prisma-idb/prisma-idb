@@ -1308,6 +1308,11 @@ describe("defineContract — execution defaults", () => {
         gen.uuid(5);
         // @ts-expect-error ulid() takes no arguments.
         gen.ulid(1);
+        import type { GeneratedDefault } from "../../src/exports/contract-ts";
+        const both: GeneratedDefault = { onCreate: gen.now(), onUpdate: gen.now() };
+        const updateOnly: GeneratedDefault = { onUpdate: gen.now() };
+        // @ts-expect-error A generated default names at least one phase.
+        const neither: GeneratedDefault = {};
       `,
     });
   });

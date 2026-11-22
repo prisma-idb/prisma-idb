@@ -14,10 +14,9 @@ export type FieldDefault =
  * `@onCreate(fn())` and `@onUpdate(fn())`. Write each phase with a `gen` helper:
  * `{ onCreate: gen.uuid(7) }`, or `{ onCreate: gen.now(), onUpdate: gen.now() }`.
  */
-export interface GeneratedDefault {
-  readonly onCreate?: GeneratorFunctionCall;
-  readonly onUpdate?: GeneratorFunctionCall;
-}
+export type GeneratedDefault =
+  | { readonly onCreate: GeneratorFunctionCall; readonly onUpdate?: GeneratorFunctionCall }
+  | { readonly onCreate?: GeneratorFunctionCall; readonly onUpdate: GeneratorFunctionCall };
 
 /** Declares that IndexedDB's key generator assigns the store's single `Int` key. Same as PSL `@default(autoincrement())`. */
 export function autoincrement(): FieldDefault {

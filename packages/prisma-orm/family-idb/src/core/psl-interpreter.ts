@@ -41,6 +41,15 @@ const TIMESTAMP_NOW_GENERATOR_ID: IdbMutationDefaultGeneratorId = "timestampNow"
 /** Generator id for plain literals and codec-backed tagged literals. */
 const LITERAL_GENERATOR_ID: IdbMutationDefaultGeneratorId = "literal";
 
+/**
+ * The call to write in `@onCreate(...)` for a generator function written in
+ * `@default(...)`. Prisma 6 wrote `cuid()` for a CUID2, and Prisma 8 requires its
+ * version, so `cuid()` is rewritten as `cuid(2)`; any other call stands as written.
+ */
+function onCreateRewrite(call: string): string {
+  return call.replace(/\s/g, "") === "cuid()" ? "cuid(2)" : call;
+}
+
 /** A resolved field default before it is attached to its definition field. */
 type FieldExecutionDefault = IdbExecutionDefaultNode & { readonly fieldName: string };
 
@@ -293,6 +302,21 @@ function interpretModel(
     const fieldAttributes = attributes.field(model, field);
     if (fieldAttributes.failed) continue;
 
+    // `@updatedAt` is a Prisma 6 attribute that Prisma 8 removed. It is refused on
+    // every field, relation fields included, with upstream's hint unless the field
+    // already writes `@onUpdate(...)`.
+    if (fieldAttributes.updatedAt !== undefined) {
+      const message = `Field "${model.name}.${field.name}" uses unsupported attribute "@updatedAt"`;
+      diagnostics.push({
+        code: "PSL_UNSUPPORTED_FIELD_ATTRIBUTE",
+        message:
+          fieldAttributes.onUpdate === undefined ? `${message}. Use @onCreate(now()) @onUpdate(now()).` : message,
+        sourceId,
+        span: fieldAttributes.updatedAt,
+      });
+      continue;
+    }
+
     // Relation list field (backrelation) — skip for now, resolved in second pass
     if (field.list && modelNames.has(field.typeName)) {
       if (excludedModelNames.has(field.typeName)) {
@@ -421,20 +445,6 @@ function interpretModel(
       list: field.list,
       ...(enumType !== undefined ? { enumName: field.typeName } : {}),
     };
-
-    // `@updatedAt` is a Prisma 6 attribute that Prisma 8 removed. It is refused
-    // with upstream's hint, unless the field already writes `@onUpdate(...)`.
-    if (fieldAttributes.updatedAt !== undefined) {
-      const message = `Field "${model.name}.${field.name}" uses unsupported attribute "@updatedAt"`;
-      diagnostics.push({
-        code: "PSL_UNSUPPORTED_FIELD_ATTRIBUTE",
-        message:
-          fieldAttributes.onUpdate === undefined ? `${message}. Use @onCreate(now()) @onUpdate(now()).` : message,
-        sourceId,
-        span: fieldAttributes.updatedAt,
-      });
-      continue;
-    }
 
     const defaultAttr = fieldAttributes.default;
     if (defaultAttr) {
@@ -579,7 +589,7 @@ function interpretModel(
           if (form.name !== "now" && idbGeneratorFunctionRegistry.has(form.name)) {
             diagnostics.push({
               code: "PSL_GENERATOR_IN_DEFAULT",
-              message: `Field "${model.name}.${field.name}": ${raw} is a value the client generates, and @default sets a database default only. Write @onCreate(${raw}) instead.`,
+              message: `Field "${model.name}.${field.name}": ${raw} is a value the client generates, and @default sets a database default only. Write @onCreate(${onCreateRewrite(raw)}) instead.`,
               sourceId,
               span: defaultAttr.span,
             });
@@ -598,6 +608,18 @@ function interpretModel(
                 resolution.reason === "unknown-function"
                   ? `Field "${model.name}.${field.name}" uses unsupported default function "${form.name}(...)". Supported: now(), autoincrement().`
                   : `Field "${model.name}.${field.name}" — @default(${form.name}(${callArg ?? ""})) has an unsupported argument.`,
+              sourceId,
+              span: defaultAttr.span,
+            });
+            continue;
+          }
+
+          // Checked here, before an `@onCreate(...)` can replace the create value
+          // and hide a `now()` the field cannot hold.
+          if (codecId !== SCALAR_TO_CODEC_ID["DateTime"] || enumType !== undefined || field.list) {
+            diagnostics.push({
+              code: "IDB_INVALID_DEFAULT_VALUE",
+              message: `Field "${model.name}.${field.name}" uses now(), which requires a DateTime field.`,
               sourceId,
               span: defaultAttr.span,
             });

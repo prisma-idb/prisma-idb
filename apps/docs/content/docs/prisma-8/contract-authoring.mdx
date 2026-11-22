@@ -203,7 +203,7 @@ export function buildContract(input: DefineContractInput) {
 | `PSL_UNSUPPORTED_FIELD_ATTRIBUTE`       | A PSL field uses `@updatedAt`. Use `@onCreate(now()) @onUpdate(now())`.             |
 | `PSL_UNRESOLVED_REFERENCE`              | A PSL field is typed `temporal.updatedAt()`. The message names the rewrite.         |
 | `IDB_INVALID_DEFAULT_FUNCTION_ARGUMENT` | A PSL default function has invalid arguments.                                       |
-| `IDB_TEMPORAL_UPDATED_AT_ON_KEY_FIELD`  | A primary-key field has an update timestamp.                                        |
+| `IDB_ON_UPDATE_ON_KEY_FIELD`            | A primary-key field generates a value on update. Primary keys never change.         |
 | `IDB_UNSUPPORTED_TYPE_CONSTRUCTOR`      | A field uses an unsupported type constructor.                                       |
 | `IDB_UNSUPPORTED_NAMESPACE_BLOCK`       | A schema declares a namespace block; IDB supports a single unbound namespace.       |
 

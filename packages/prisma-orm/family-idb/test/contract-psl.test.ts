@@ -1314,6 +1314,38 @@ describe("interpretPslDocumentToIdbContract", () => {
       }
     );
 
+    it("rewrites Prisma 6's @default(cuid()) as @onCreate(cuid(2)), the version Prisma 8 requires", () => {
+      const result = interpret("model Post {\n id String @id @default(cuid())\n}");
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.failure.diagnostics[0]!.message).toBe(
+        'Field "Post.id": cuid() is a value the client generates, and @default sets a database default only. Write @onCreate(cuid(2)) instead.'
+      );
+    });
+
+    it("refuses @updatedAt on a relation field", () => {
+      const result = interpret(`
+        model User {
+          id    String @id
+          posts Post[]
+        }
+        model Post {
+          id       String @id
+          authorId String
+          author   User   @relation(fields: [authorId], references: [id]) @updatedAt
+        }
+      `);
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.failure.diagnostics).toContainEqual(
+        expect.objectContaining({
+          code: "PSL_UNSUPPORTED_FIELD_ATTRIBUTE",
+          message:
+            'Field "Post.author" uses unsupported attribute "@updatedAt". Use @onCreate(now()) @onUpdate(now()).',
+        })
+      );
+    });
+
     it("still reports an unknown @default function", () => {
       const result = interpret('model Post {\n id String @id @default(dbgenerated("gen_random_uuid()"))\n}');
       expect(result.ok).toBe(false);
@@ -1325,16 +1357,19 @@ describe("interpretPslDocumentToIdbContract", () => {
     });
   });
 
-  describe("@onUpdate(now()) on a key field", () => {
-    it("errors when used on the @id key field", () => {
-      const result = interpret(`
-        model Post {
-          id DateTime @id @onCreate(now()) @onUpdate(now())
-        }
-      `);
-      expect(result.ok).toBe(false);
-      if (result.ok) return;
-      expect(result.failure.diagnostics[0]!.code).toBe("IDB_TEMPORAL_UPDATED_AT_ON_KEY_FIELD");
+  describe("@onUpdate(...) on a key field", () => {
+    it.each(["id DateTime @id @onCreate(now()) @onUpdate(now())", "id String @id @onUpdate(uuid(7))"])(
+      "errors on %s, because a primary key never changes",
+      (field) => {
+        const result = interpret(`model Post {\n ${field}\n}`);
+        expect(result.ok).toBe(false);
+        if (result.ok) return;
+        expect(result.failure.diagnostics[0]!.code).toBe("IDB_ON_UPDATE_ON_KEY_FIELD");
+      }
+    );
+
+    it("allows @onCreate(...) on a key field", () => {
+      expect(interpret("model Post {\n id String @id @onCreate(uuid(7))\n}").ok).toBe(true);
     });
   });
 
@@ -1438,6 +1473,16 @@ describe("interpretPslDocumentToIdbContract", () => {
   });
 
   describe("@default(now())", () => {
+    it("errors on a field that is not DateTime even when @onCreate(...) supplies the value", () => {
+      const result = interpret("model Post {\n id String @id\n token String @default(now()) @onCreate(uuid(7))\n}");
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.failure.diagnostics[0]).toMatchObject({
+        code: "IDB_INVALID_DEFAULT_VALUE",
+        message: 'Field "Post.token" uses now(), which requires a DateTime field.',
+      });
+    });
+
     it.each(["String", "Int", "DateTime[]"])("errors on a %s field", (type) => {
       const result = interpret(`model Post {\n id String @id\n at ${type} @default(now())\n}`);
       expect(result.ok).toBe(false);
