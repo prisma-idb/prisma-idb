@@ -1,0 +1,44 @@
+{
+  "contract": null,
+  "diagnostics": {
+    "interpretation": [
+      {
+        "code": "IDB_INVALID_RELATION",
+        "message": "Relation \"Post.author\" is required but a local field it joins on is nullable.",
+        "sourceId": "authoring.prisma",
+        "span": {
+          "end": {
+            "column": 73,
+            "line": 8,
+            "offset": 195
+          },
+          "start": {
+            "column": 9,
+            "line": 8,
+            "offset": 131
+          }
+        }
+      },
+      {
+        "code": "IDB_INVALID_RELATION",
+        "message": "Relation \"Post.editor\" declares onDelete: SetNull, but its foreign key has a required field, which can't be set to null. Make the foreign key optional or choose another action.",
+        "sourceId": "authoring.prisma",
+        "span": {
+          "end": {
+            "column": 92,
+            "line": 10,
+            "offset": 311
+          },
+          "start": {
+            "column": 9,
+            "line": 10,
+            "offset": 228
+          }
+        }
+      }
+    ],
+    "parse": [],
+    "symbols": []
+  },
+  "hashes": null
+}

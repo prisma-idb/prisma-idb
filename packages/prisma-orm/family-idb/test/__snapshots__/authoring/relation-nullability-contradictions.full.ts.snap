@@ -1,0 +1,5 @@
+{
+  "contract": null,
+  "error": "IDB_INVALID_RELATION: Relation \"Post.author\" is required but a local field it joins on is nullable.\nIDB_INVALID_RELATION: Relation \"Post.editor\" declares onDelete: SetNull, but its foreign key has a required field, which can't be set to null. Make the foreign key optional or choose another action.",
+  "hashes": null
+}

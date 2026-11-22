@@ -755,8 +755,8 @@ describe("interpretPslDocumentToIdbContract", () => {
         }
         model Post {
           id     String @id
-          userId String
-          user   User   @relation(fields: [userId], references: [id], onUpdate: SetNull)
+          userId String?
+          user   User?  @relation(fields: [userId], references: [id], onUpdate: SetNull)
         }
       `);
       expect(result.ok).toBe(true);

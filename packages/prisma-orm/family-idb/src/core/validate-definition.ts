@@ -389,6 +389,46 @@ function excludedInverse(model: IdbModelNode, relation: IdbRelationNode, definit
   );
 }
 
+/**
+ * A required to-one relation that owns its foreign key can't join on a
+ * nullable field, as in Prisma 8. A `SetNull` action writes
+ * `null` into the foreign key, so every field of it must be nullable.
+ */
+function validateRelationNullability(
+  model: IdbModelNode,
+  relation: IdbRelationNode,
+  target: IdbModelNode | undefined,
+  at: IdbDefinitionPath,
+  report: Report
+): void {
+  const label = `Relation "${model.modelName}.${relation.name}"`;
+  const nullableIn = (owner: IdbModelNode | undefined, names: readonly string[]) =>
+    names.map((name) => owner?.fields.find((field) => field.name === name)?.nullable);
+  // Declaring an optional relation over a required key only widens its type, which the TypeScript `nullable`
+  // override allows. The reverse promises a related row that a null key can't provide.
+  if (relation.cardinality === "N:1" && relation.nullable === false) {
+    if (nullableIn(model, relation.localFields).some((nullable) => nullable === true)) {
+      report("IDB_INVALID_RELATION", `${label} is required but a local field it joins on is nullable.`, at);
+    }
+  }
+  // The foreign key is this model's local fields on the owning side, and the related model's on a backrelation.
+  const fk =
+    relation.cardinality === "N:1"
+      ? nullableIn(model, relation.localFields)
+      : relation.cardinality === "1:N"
+        ? nullableIn(target, relation.targetFields)
+        : [];
+  for (const kind of ["onDelete", "onUpdate"] as const) {
+    if (relation[kind] === "setNull" && fk.some((nullable) => nullable === false)) {
+      report(
+        "IDB_INVALID_RELATION",
+        `${label} declares ${kind}: SetNull, but its foreign key has a required field, which can't be set to null. Make the foreign key optional or choose another action.`,
+        at
+      );
+    }
+  }
+}
+
 /** Validate relation field exclusions and conflicting reciprocal referential actions. */
 function validateRelations(model: IdbModelNode, definition: IdbContractDefinition, report: Report): void {
   const at = ["models", model.modelName];
@@ -417,6 +457,7 @@ function validateRelations(model: IdbModelNode, definition: IdbContractDefinitio
         relationAt
       );
     }
+    validateRelationNullability(model, relation, target, relationAt, report);
     for (const inverse of target?.relations ?? []) {
       if (
         inverse.to !== model.modelName ||

@@ -1051,7 +1051,7 @@ describe("defineContract — conflicting reciprocal relation actions", () => {
           Message: {
             store: "messages",
             key: "id",
-            fields: { id: "String", senderId: "String", recipientId: "String" },
+            fields: { id: "String", senderId: "String", recipientId: "String?" },
             relations: {
               sender: {
                 to: "User",
