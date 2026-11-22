@@ -16,7 +16,7 @@ import { planOriginOf } from "@prisma/orm-framework/components/control";
  * `indexedDB` singleton. Tests use unique db names to avoid cross-test state.
  */
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { diffIdbSchema } from "../src/core/schema-diff";
 import {
   createIndexOp,
@@ -26,7 +26,7 @@ import {
   dropObjectStoreOp,
 } from "../src/core/migration-factories";
 import { IdbMigrationPlanner, contractToIdbSchema } from "../src/core/migration-planner";
-import { openAndUpgrade, readMarker } from "../src/core/apply-ddl-op";
+import { IdbUpgradeSupersededError, openAndUpgrade, readMarker } from "../src/core/apply-ddl-op";
 import { IdbMigrationRunner } from "../src/core/migration-runner";
 import type { IdbDdlOp } from "../src/core/migration-factories";
 import type { IdbSchemaDiffInput } from "../src/core/schema-diff";
@@ -497,6 +497,52 @@ describe("IdbMigrationRunner", () => {
 // ── openAndUpgrade (DDL apply) ────────────────────────────────────────────────
 
 describe("openAndUpgrade", () => {
+  const openRaw = (name: string, version?: number) =>
+    new Promise<IDBDatabase>((res, rej) => {
+      const req = version === undefined ? indexedDB.open(name) : indexedDB.open(name, version);
+      req.onsuccess = () => res(req.result);
+      req.onerror = () => rej(req.error);
+    });
+
+  it("rejects, without reporting the ops as applied, when another connection already took the version", async () => {
+    const name = dbName();
+    (await openRaw(name, 1)).close();
+    const ops = diffIdbSchema(null, { stores: { users: { keyPath: "id" } } });
+
+    const upgrade = openAndUpgrade({ factory: indexedDB, dbName: name, targetVersion: 1, ops });
+
+    await expect(upgrade).rejects.toBeInstanceOf(IdbUpgradeSupersededError);
+    const db = await openRaw(name);
+    expect(db.objectStoreNames.contains("users")).toBe(false);
+    db.close();
+  });
+
+  it("does not apply an upgrade after its blocked timeout gave up", async () => {
+    const name = dbName();
+    const blocker = await openRaw(name, 1);
+    blocker.onversionchange = null; // stays open, blocking the upgrade
+    const ops = diffIdbSchema(null, { stores: { users: { keyPath: "id" } } });
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const upgrade = openAndUpgrade({ factory: indexedDB, dbName: name, targetVersion: 2, ops });
+      const settled = upgrade.catch((error: unknown) => error);
+      // Let the open request report that it is blocked, then run out the clock.
+      await vi.waitUntil(() => vi.getTimerCount() > 0);
+      vi.advanceTimersByTime(30_000);
+      expect(String(await settled)).toContain("is blocked");
+    } finally {
+      vi.useRealTimers();
+      vi.restoreAllMocks();
+    }
+    blocker.close();
+    // The abandoned request proceeds once unblocked, and must leave the schema alone.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const db = await openRaw(name);
+    expect(db.objectStoreNames.contains("users")).toBe(false);
+    db.close();
+  });
+
   it("creates a new object store in a fresh DB", async () => {
     const name = dbName();
     const ops = diffIdbSchema(null, { stores: { users: { keyPath: "id" } } });
