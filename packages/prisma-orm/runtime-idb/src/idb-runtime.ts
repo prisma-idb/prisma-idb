@@ -220,7 +220,8 @@ class IdbRuntimeImpl extends RuntimeCore<IdbQueryPlan, IdbPlanBody, IdbMiddlewar
   }
 
   readonly #verifyMarkerOption: "onFirstUse" | false;
-  // Shared by concurrent first uses, so they read the marker and warn once. Cleared when the read fails.
+  // Shared by concurrent first uses, so they read the marker and warn once. A failed read warns and is not
+  // retried; the reset below only runs if the check itself throws unexpectedly.
   #markerCheck: Promise<void> | null = null;
 
   /** Reads the marker on first use and warns when it is missing or names another contract. */
