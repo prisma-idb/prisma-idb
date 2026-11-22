@@ -128,6 +128,31 @@ describe("getNextBatch push order", () => {
   });
 });
 
+describe("the outbox order store", () => {
+  it("gets a row from each write path and loses the rows of acknowledged events when pruned", async () => {
+    const { client } = await createTestSyncClient();
+    const users = asAccessors(client.orm)["users"]!;
+    // A plain create takes the plan-level batch path; updateAll takes the transaction-scope path.
+    await users.create({ id: "u1", name: "One" });
+    await users.create({ id: "u2", name: "Two" });
+    await users.where({}).updateAll({ name: "Both" });
+
+    const events = await scanAll(client, "_idb_sync_outbox");
+    const orderRows = () => scanAll(client, "_idb_sync_outbox_order");
+    expect(events).toHaveLength(4);
+    expect((await orderRows()).map((row) => row["eventId"]).sort()).toEqual(events.map((event) => event["id"]).sort());
+
+    const [first] = await getNextBatch(client.rawClient, { limit: 1 });
+    await client.withTransaction(["_idb_sync_outbox", "_idb_sync_version_meta"], (scope) =>
+      markSynced(scope, first!.id)
+    );
+    await client.withTransaction(["_idb_sync_outbox", "_idb_sync_outbox_order"], pruneSyncedEvents);
+    const remaining = await orderRows();
+    expect(remaining).toHaveLength(3);
+    expect(remaining.map((row) => row["eventId"])).not.toContain(first!.id);
+  });
+});
+
 describe("getNextBatch push order after the order store was added", () => {
   it("sends events queued before the upgrade, which have no order row, first", async () => {
     const { client } = await createTestSyncClient();
