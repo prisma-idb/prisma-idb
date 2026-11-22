@@ -43,7 +43,9 @@ export type AutoMigratingSyncIdbClientOptions<TContract extends IdbContract> = A
 export async function createAutoMigratingSyncIdbClient<TContract extends IdbContract>(
   options: AutoMigratingSyncIdbClientOptions<TContract>
 ): Promise<SyncIdbClient<TContract>> {
-  const migrating = await createAutoMigratingIdbClient(options);
+  // Middleware belongs to the client returned below, not to the one that only migrates.
+  const { middleware, ...migrateOptions } = options;
+  const migrating = await createAutoMigratingIdbClient(migrateOptions);
   await migrating.close();
 
   return createSyncIdbClient<TContract>({
@@ -52,5 +54,6 @@ export async function createAutoMigratingSyncIdbClient<TContract extends IdbCont
     ...(options.factory !== undefined ? { factory: options.factory } : {}),
     ...(options.keyRange !== undefined ? { keyRange: options.keyRange } : {}),
     ...(options.trackedModels !== undefined ? { trackedModels: options.trackedModels } : {}),
+    ...(middleware !== undefined ? { middleware } : {}),
   });
 }
