@@ -194,9 +194,23 @@ describe("runPreflight", () => {
     expect(errors.join("")).toContain('store "users" cannot change key field "id"');
   });
 
-  it("returns 0 with no packages", async () => {
-    const code = await runPreflight({ migrationsDir: join(cwd, "migrations") });
-    expect(code).toBe(0);
+  it.each([false, true])(
+    "fails with no packages, whether or not the app directory exists (exists: %s)",
+    async (exists) => {
+      if (exists) await mkdir(join(cwd, "migrations", "app"), { recursive: true });
+      const errors: string[] = [];
+      expect(await runPreflight({ migrationsDir: join(cwd, "migrations"), err: (line) => errors.push(line) })).toBe(1);
+      expect(errors.join("")).toContain("No migration packages found");
+    }
+  );
+
+  it("fails like the browser when the chain never creates the marker store", async () => {
+    const head = await writeSnapshot({ users: { keyPath: "id" } });
+    await writePackage({ dirName: "0001_baseline", from: null, to: head, ops: [createUsers] });
+    const errors: string[] = [];
+
+    expect(await runPreflight({ migrationsDir: join(cwd, "migrations"), err: (line) => errors.push(line) })).toBe(1);
+    expect(errors.join("")).toContain('the "_prisma_next_marker" store does not exist after applying the migration');
   });
 
   it("returns 0 when every package applies cleanly", async () => {
@@ -295,7 +309,12 @@ describe("runPreflight", () => {
     },
   ])("fails on a hand-edited $name", async ({ store, message }) => {
     const head = await writeSnapshot({ users: { keyPath: "id" } });
-    await writePackage({ dirName: "0001_baseline", from: null, to: head, ops: [{ ...createUsers, def: store }] });
+    await writePackage({
+      dirName: "0001_baseline",
+      from: null,
+      to: head,
+      ops: [createMarker, { ...createUsers, def: store }],
+    });
     const errors: string[] = [];
 
     expect(await runPreflight({ migrationsDir: join(cwd, "migrations"), err: (line) => errors.push(line) })).toBe(1);
@@ -328,6 +347,7 @@ describe("runPreflight", () => {
       from: null,
       to: head,
       ops: [
+        createMarker,
         { ...createUsers, def: { keyPath: "id", autoIncrement: true } },
         { ...createPosts, def: { keyPath: ["userId", "id"] } },
         { ...indexOnMissingStore, storeName: "users", def: { keyPath: ["email", "id"], unique: true } },
@@ -362,7 +382,7 @@ describe("runPreflight", () => {
   });
 
   it("fails with a recovery hint when the head snapshot is missing", async () => {
-    await writePackage({ dirName: "0001_baseline", from: null, to: "sha256:A", ops: [createUsers] });
+    await writePackage({ dirName: "0001_baseline", from: null, to: "sha256:A", ops: [createMarker, createUsers] });
     const errors: string[] = [];
 
     expect(await runPreflight({ migrationsDir: join(cwd, "migrations"), err: (line) => errors.push(line) })).toBe(1);
@@ -371,7 +391,7 @@ describe("runPreflight", () => {
   });
 
   it("fails when the head snapshot is malformed", async () => {
-    await writePackage({ dirName: "0001_baseline", from: null, to: "sha256:A", ops: [createUsers] });
+    await writePackage({ dirName: "0001_baseline", from: null, to: "sha256:A", ops: [createMarker, createUsers] });
     const dir = join(cwd, "migrations", "snapshots", "sha256:A");
     await mkdir(dir, { recursive: true });
     await writeFile(join(dir, "contract.json"), "{", "utf-8");
