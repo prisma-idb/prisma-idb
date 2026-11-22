@@ -18,6 +18,26 @@ export type AuthoringScenario = {
 // Casts below deliberately exercise declarations outside the TS type system.
 export const authoringScenarios: AuthoringScenario[] = [
   {
+    name: "decimal defaults keep their digits",
+    psl: `
+      model Price {
+        id     String  @id
+        exact  Decimal @default(1234567890123456789.123)
+        simple Decimal @default(1.5)
+      }
+    `,
+    ts: {
+      models: {
+        Price: {
+          store: "price",
+          key: "id",
+          fields: { id: "String", exact: "Decimal", simple: "Decimal" },
+          defaults: { exact: "1234567890123456789.123", simple: 1.5 },
+        },
+      },
+    },
+  },
+  {
     name: "two models share a store name",
     psl: `
       model Todo {

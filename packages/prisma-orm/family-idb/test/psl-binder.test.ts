@@ -100,8 +100,8 @@ describe("createIdbAttributeBinder", () => {
   it.each([
     ['"x"', { kind: "string", value: "x" }],
     ["true", { kind: "boolean", value: true }],
-    ["12", { kind: "number", value: 12 }],
-    ["-1.5", { kind: "number", value: -1.5 }],
+    ["12", { kind: "number", value: 12, text: "12" }],
+    ["-1.5", { kind: "number", value: -1.5, text: "-1.5" }],
     ["USER", { kind: "identifier", name: "USER" }],
     ["now()", { kind: "call", name: "now", args: [] }],
     ["uuid(7)", { kind: "call", name: "uuid", args: ["7"] }],

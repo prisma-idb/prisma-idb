@@ -88,7 +88,8 @@ export interface IdbDefaultValue {
   readonly form:
     | { readonly kind: "string"; readonly value: string }
     | { readonly kind: "boolean"; readonly value: boolean }
-    | { readonly kind: "number"; readonly value: number }
+    /** `text` is the literal as written, which a `Decimal` default keeps without rounding. */
+    | { readonly kind: "number"; readonly value: number; readonly text: string }
     | { readonly kind: "tagged"; readonly written: WrittenScalar }
     | { readonly kind: "identifier"; readonly name: string }
     | { readonly kind: "list" }
@@ -180,7 +181,7 @@ function defaultValueArg(): ArgType<IdbDefaultValue, AttributeCtx> {
     oneOf(
       mapArg(bool(), (value) => ({ kind: "boolean" as const, value })),
       mapArg(str(), (value) => ({ kind: "string" as const, value })),
-      mapArg(numLiteral(), ({ text }) => ({ kind: "number" as const, value: Number(text) })),
+      mapArg(numLiteral(), ({ text }) => ({ kind: "number" as const, value: Number(text), text })),
       taggedDefault(),
       mapArg(identifier(), (name) => ({ kind: "identifier" as const, name })),
       // Bind list defaults so the interpreter can accept [] and diagnose other literals.
