@@ -1,3 +1,4 @@
+import { ownsForeignKey } from "./owning-relation";
 import { domainModelsAtDefaultNamespace } from "@prisma/orm-framework/contract/types";
 import type { GetKeyField } from "./sync-server";
 import type { SyncServerContract } from "./ownership-dag";
@@ -29,7 +30,7 @@ export function resolveAuthorizationPaths(
     if (!model) return;
 
     for (const [relationName, relation] of Object.entries(model.relations)) {
-      if (relation.cardinality !== "N:1") continue;
+      if (!ownsForeignKey(contract, current, relation)) continue;
       const target = relation.to.model;
       if (!models[target] || visited.has(target)) continue;
 
@@ -79,7 +80,7 @@ export function resolveParentReferenceChecks(
       const relation = model?.relations[relationName];
       if (
         !relation ||
-        relation.cardinality !== "N:1" ||
+        !ownsForeignKey(contract, current, relation) ||
         !("on" in relation) ||
         relation.on.localFields.length !== 1 ||
         relation.on.targetFields.length !== 1 ||

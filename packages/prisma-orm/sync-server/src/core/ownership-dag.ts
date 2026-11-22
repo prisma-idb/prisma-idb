@@ -1,4 +1,5 @@
 import type { Contract } from "@prisma/orm-framework/contract/types";
+import { ownsForeignKey } from "./owning-relation";
 import { domainModelsAtDefaultNamespace } from "@prisma/orm-framework/contract/types";
 
 /**
@@ -58,7 +59,7 @@ export function buildOwnershipDag(
   }
   for (const [modelName, model] of Object.entries(models)) {
     for (const relation of Object.values(model.relations)) {
-      if (relation.cardinality === "N:1" && models[relation.to.model]) {
+      if (models[relation.to.model] && ownsForeignKey(contract, modelName, relation)) {
         edges.get(modelName)?.add(relation.to.model);
       }
     }
