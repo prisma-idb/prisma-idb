@@ -30,6 +30,7 @@ import type { ContractReferenceRelation } from "@prisma/orm-framework/contract/t
 import { domainModelsAtDefaultNamespace } from "@prisma/orm-framework/contract/types";
 import type { IdbAtomicPlan, IdbPlanBody, IdbRowFilter } from "@prisma-idb/driver-idb/runtime";
 import { andExpr, fieldFilter, shorthandToFilterExpr } from "@prisma-idb/adapter-idb/runtime";
+import { assertKnownFilterFields } from "./filter-fields";
 import type { IdbFilterExpr } from "@prisma-idb/adapter-idb/runtime";
 import type { IdbReferentialAction } from "@prisma-idb/target-idb/pack";
 import type { IdbQueryExecutor } from "./executor";
@@ -505,6 +506,7 @@ async function applyChildOwnedMutation(
         setValues[childField] = parentValue;
       }
       const where = shorthandToFilterExpr(criterion as Record<string, unknown>);
+      assertKnownFilterFields(contract, relation.relatedModelName, where);
       // Set the FK fields on every child row matching the criterion. No `take`
       // cap — the vendor's relational connect (`executeUpdateCount`) connects
       // all matching rows; for the normal unique-key criterion that is exactly
@@ -529,6 +531,7 @@ async function applyChildOwnedMutation(
   // Disconnect specific children matching each criterion AND the parent join.
   for (const criterion of mutation.criteria) {
     const criterionWhere = shorthandToFilterExpr(criterion as Record<string, unknown>);
+    assertKnownFilterFields(contract, relation.relatedModelName, criterionWhere);
     const parentJoinWhere = buildParentJoinWhere(parentValues);
     const where = criterionWhere === undefined ? parentJoinWhere : andExpr([parentJoinWhere, criterionWhere]);
     await writeChildRows(scope, contract, relation, setValues, where, defaultsCache);
@@ -610,6 +613,7 @@ async function findRowByCriterion(
   if (!expr) {
     throw new Error(`Nested connect for model "${modelName}" requires a non-empty criterion`);
   }
+  assertKnownFilterFields(contract, modelName, expr);
   return (await readMutationRows(scope, contract, modelName, expr, 1))[0] ?? null;
 }
 
