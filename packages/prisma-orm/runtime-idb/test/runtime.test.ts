@@ -806,6 +806,35 @@ describe("first-use marker check", () => {
     }
   });
 
+  it("warns instead of failing when the marker can't be read, and checks before a transaction too", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const failing = createIdbRuntime({
+        adapter: makeMockAdapter(),
+        driver: makeMockDriver({
+          readMarker: async () => {
+            throw new Error("connection closed");
+          },
+        }),
+        contract: TEST_CONTRACT,
+      });
+      await expect(run(failing)).resolves.toBeUndefined();
+      expect(String(warn.mock.calls[0]![0])).toContain("CONTRACT.MARKER_UNREADABLE");
+
+      const readMarker = vi.fn(async () => null);
+      const scope = {} as IdbTransactionScope;
+      const inTransaction = createIdbRuntime({
+        adapter: makeMockAdapter(),
+        driver: makeMockDriver({ readMarker, transaction: async () => scope }),
+        contract: TEST_CONTRACT,
+      });
+      expect(await inTransaction.transaction(["User"])).toBe(scope);
+      expect(readMarker).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
   it("stays quiet for a matching marker, and skips the read when turned off", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {

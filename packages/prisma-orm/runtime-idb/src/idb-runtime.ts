@@ -49,7 +49,8 @@ export interface IdbRuntimeOptions {
    * When to compare the database's contract marker with `contract`, as Prisma 8's
    * SQL runtime does. `"onFirstUse"`, the default, reads the marker once, before
    * the first query or transaction, and warns with `CONTRACT.MARKER_MISSING` or
-   * `CONTRACT.MARKER_MISMATCH`. The check never blocks the query. `false` skips it.
+   * `CONTRACT.MARKER_MISMATCH`, or `CONTRACT.MARKER_UNREADABLE` when the read fails. The check never
+   * blocks the query. `false` skips it.
    */
   readonly verifyMarker?: "onFirstUse" | false;
 }
@@ -233,7 +234,14 @@ class IdbRuntimeImpl extends RuntimeCore<IdbQueryPlan, IdbPlanBody, IdbMiddlewar
   }
 
   async #checkMarker(): Promise<void> {
-    const marker = await this.#driver.readMarker();
+    let marker: Awaited<ReturnType<IdbRuntimeDriverInstance["readMarker"]>>;
+    try {
+      marker = await this.#driver.readMarker();
+    } catch (error) {
+      // The check reports; it never blocks. The query itself reports a broken connection.
+      console.warn("[prisma-idb] CONTRACT.MARKER_UNREADABLE: could not read the contract marker", error);
+      return;
+    }
     const expected = (this.#contract["storage"] as { storageHash?: unknown } | undefined)?.storageHash;
     if (marker === null) {
       console.warn(
