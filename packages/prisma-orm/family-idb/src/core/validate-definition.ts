@@ -39,6 +39,8 @@ export function literalValueMatchesCodec(value: string | number | boolean, codec
     case "idb/string@1":
       return typeof value === "string";
     case "idb/int32@1":
+      // An Int default is written as the field's value, so it must pass the int32 check every write applies.
+      return typeof value === "number" && Number.isInteger(value) && value >= -2_147_483_648 && value <= 2_147_483_647;
     case "idb/double@1":
     case "idb/decimal@1":
       return typeof value === "number";
