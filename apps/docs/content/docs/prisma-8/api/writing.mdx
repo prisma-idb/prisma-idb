@@ -35,6 +35,8 @@ Use `createCount()` when you only need the number of rows.
 const todo = await db.orm.todo.where({ id: todoId }).update({ done: true });
 ```
 
+It changes the row that `first()` would return for the same chain. `orderBy()` and `skip()` pick that row, and after `take(0)` it changes nothing and returns `null`. An update with a relation callback finds its row by the filter alone, so it throws `IdbRelationUpdateError` if the chain has `orderBy()`, `skip()` or `take()`.
+
 `updateAll()` changes every matching row in one transaction and returns them. `updateCount()` returns how many changed. Both follow the [rules for bulk writes](#rules-for-bulk-writes).
 
 ```ts

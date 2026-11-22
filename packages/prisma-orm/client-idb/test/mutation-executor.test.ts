@@ -16,8 +16,13 @@ import idbFamilyPack from "@prisma-idb/family-idb/pack";
 import idbTargetPack from "@prisma-idb/target-idb/pack";
 import { createIDBRuntimeDriver, type IdbRuntimeDriverInstance } from "@prisma-idb/driver-idb/runtime";
 import type { IdbQueryPlan } from "@prisma-idb/adapter-idb/runtime";
-import { idbOrm, IdbRecordValidationError } from "../src/exports/orm";
-import type { IdbQueryExecutor, IdbQueryExecutorWithTransaction, IdbRelationMutator } from "../src/exports/orm";
+import { idbOrm, IdbRecordValidationError, IdbRelationUpdateError } from "../src/exports/orm";
+import type {
+  IdbQueryExecutor,
+  IdbQueryExecutorWithTransaction,
+  IdbRelationMutator,
+  IdbStoreAccessor,
+} from "../src/exports/orm";
 
 // ── Test contract ─────────────────────────────────────────────────────────────
 
@@ -229,6 +234,21 @@ describe("ORM nested update", () => {
       ["users"]!.where(() => fieldFilter("id", "eq", "nonexistent"))
       .update({ posts: (rel: RelMutator) => rel.disconnect() } as never);
     expect(result).toBeNull();
+  });
+
+  it.each([
+    ["orderBy()", (q: IdbStoreAccessor<never, never>) => q.orderBy({ id: "desc" } as never), "an order"],
+    ["skip()", (q: IdbStoreAccessor<never, never>) => q.skip(1), "an offset"],
+    ["take()", (q: IdbStoreAccessor<never, never>) => q.take(1), "a limit"],
+  ])("rejects a relation update after %s instead of changing another row", async (_, chain, noun) => {
+    await orm_()["users"]!.create({ id: "u1", name: "Alice" } as never);
+    await orm_()["users"]!.create({ id: "u2", name: "Bob" } as never);
+    await orm_()["posts"]!.create({ id: "p1", authorId: "u1", title: "Post" } as never);
+    const posts = chain(idbOrm({ contract, executor })["posts"]!.where({}) as never);
+    const update = posts.update({ author: (rel: RelMutator) => rel.connect({ id: "u2" }) } as never);
+    await expect(update).rejects.toThrow(IdbRelationUpdateError);
+    await expect(update).rejects.toThrow(`the collection has ${noun}`);
+    expect((await getAllRows(db, "posts"))[0]?.["authorId"]).toBe("u1");
   });
 
   it("N:1 connect in update re-links the post to a new user", async () => {

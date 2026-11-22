@@ -877,6 +877,22 @@ describe("IdbStoreAccessor — update", () => {
     expect(row).toBeNull();
   });
 
+  it("updates the row first() returns for the same orderBy() and skip()", async () => {
+    const client = makeClient();
+    // Key order puts u1 first; the order and offset must pick u2 instead.
+    const byNameDesc = client["users"]!.where({}).orderBy({ name: "desc" });
+    expect(await byNameDesc.update({ email: "first@x.com" })).toMatchObject({ id: "u2" });
+    const byNameAsc = client["users"]!.where({}).orderBy({ name: "asc" });
+    expect(await byNameAsc.skip(1).update({ email: "second@x.com" })).toMatchObject({ id: "u2" });
+    expect(await client["users"]!.findUnique("u1")).toEqual(ALICE);
+  });
+
+  it("changes nothing after take(0)", async () => {
+    const client = makeClient();
+    expect(await client["users"]!.where({}).take(0).update({ name: "X" })).toBeNull();
+    expect(await client["users"]!.all().toArray()).toEqual([ALICE, BOB]);
+  });
+
   it("updates only the first matching row (take:1 semantics)", async () => {
     const client = makeClient();
     // Both rows pass the empty filter — only first should be updated
