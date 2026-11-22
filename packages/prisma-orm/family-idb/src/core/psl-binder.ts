@@ -294,7 +294,7 @@ const excludeFieldSpec = fieldAttribute(IDB_EXCLUDE_ATTR, {
 /**
  * Every attribute the IDB interpreter reads, keyed by PSL name. Upstream expects a
  * factory per entry because a spec may depend on the field or model; none of
- * these do. The binder refuses other attributes, except the portable `@map` and `@db.*`.
+ * these do. The binder refuses other attributes, except the portable `@map`, `@db.*` and `@@schema`.
  */
 export const idbAttributeSpecs = {
   model: {
@@ -317,6 +317,18 @@ export const idbAttributeSpecs = {
 } satisfies AttributeSpecNamespace;
 
 // ── Binding ────────────────────────────────────────────────────────────────────
+
+/** Model attributes IDB reads at most once per model. `@@index` and `@@unique` may repeat. */
+const SINGLE_MODEL_ATTRIBUTES = new Set(["map", "id", IDB_EXCLUDE_ATTR]);
+
+/**
+ * Model attributes IDB accepts: the indexes it reads, and `@@schema`, which
+ * names a SQL schema in a schema shared with a SQL server. Anything else is
+ * refused rather than dropped.
+ */
+function isPortableModelAttribute(name: string): boolean {
+  return name === "index" || name === "unique" || name === "schema";
+}
 
 /** Field attributes IDB reads, each at most once per field. `@onCreate`/`@onUpdate` report their own repeats. */
 const SINGLE_FIELD_ATTRIBUTES = new Set(["id", "unique", "default", "relation", "updatedAt", IDB_EXCLUDE_ATTR]);
@@ -469,9 +481,33 @@ export function createIdbAttributeBinder(input: IdbAttributeBinderInput): IdbAtt
     let map: BoundModelAttributes["map"];
     let id: BoundModelAttributes["id"];
     const indexes: BoundIndex[] = [];
+    const seen = new Set<string>();
 
     for (const attribute of model.attributes) {
       const span = attribute.span;
+      // A second `@@map` or `@@id` would otherwise lose to the first without a word.
+      if (SINGLE_MODEL_ATTRIBUTES.has(attribute.name)) {
+        if (seen.has(attribute.name)) {
+          failed = true;
+          diagnostics.push({
+            code: "PSL_DUPLICATE_ATTRIBUTE",
+            message: `\`@@${attribute.name}\` declared more than once on model "${model.name}".`,
+            sourceId,
+            span,
+          });
+          continue;
+        }
+        seen.add(attribute.name);
+      } else if (!isPortableModelAttribute(attribute.name)) {
+        failed = true;
+        diagnostics.push({
+          code: "PSL_UNSUPPORTED_MODEL_ATTRIBUTE",
+          message: `Model "${model.name}" uses unsupported attribute "@@${attribute.name}".`,
+          sourceId,
+          span,
+        });
+        continue;
+      }
       switch (attribute.name) {
         case "map": {
           const value = interpret(mapModelSpec, attribute, ctx);
