@@ -120,8 +120,18 @@ function buildRelations(model: IdbModelNode): {
 /** Collect the literal defaults that back the `setDefault` referential action. */
 function buildFieldDefaults(fields: readonly IdbFieldNode[]): Record<string, string | number | boolean> {
   return Object.fromEntries(
-    fields.flatMap((node) => (node.literalDefault !== undefined ? [[node.name, node.literalDefault]] : []))
+    fields.flatMap((node) =>
+      node.literalDefault !== undefined ? [[node.name, storedLiteral(node, node.literalDefault)]] : []
+    )
   );
+}
+
+/**
+ * A `Decimal` field stores its value as a decimal string, so a literal default
+ * written as a number is stored in that form too.
+ */
+function storedLiteral<T>(field: IdbFieldNode, value: T): T | string {
+  return field.codecId === "idb/decimal@1" && typeof value === "number" ? String(value) : value;
 }
 
 /** Build a model's domain entry from its node. */
@@ -183,11 +193,23 @@ function buildExecutionDefault(
   };
 }
 
+/** A literal `onCreate` value in its stored form; generator defaults are unchanged. */
+function decimalLiteralDefault(field: IdbFieldNode, node: IdbExecutionDefaultNode): IdbExecutionDefaultNode {
+  const onCreate = node.onCreate;
+  if (onCreate?.id !== "literal" || onCreate.params === undefined) return node;
+  return {
+    ...node,
+    onCreate: { ...onCreate, params: { ...onCreate.params, value: storedLiteral(field, onCreate.params["value"]) } },
+  };
+}
+
 /** Collect the execution-plane defaults of every model, in model then field order. */
 function buildExecutionDefaults(models: readonly IdbModelNode[]): ExecutionMutationDefault[] {
   return models.flatMap((model) =>
     model.fields.flatMap((field) =>
-      field.executionDefault !== undefined ? [buildExecutionDefault(model, field.name, field.executionDefault)] : []
+      field.executionDefault !== undefined
+        ? [buildExecutionDefault(model, field.name, decimalLiteralDefault(field, field.executionDefault))]
+        : []
     )
   );
 }

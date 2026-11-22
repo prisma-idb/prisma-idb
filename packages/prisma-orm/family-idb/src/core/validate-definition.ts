@@ -1,4 +1,5 @@
 import { keyPathFields } from "@prisma-idb/target-idb/pack";
+import { isDecimalString } from "@prisma-idb/target-idb/runtime";
 import type { IdbKeyPath } from "@prisma-idb/target-idb/pack";
 import { foreignKeyIndexes } from "./foreign-key-indexes";
 import type {
@@ -42,8 +43,10 @@ export function literalValueMatchesCodec(value: string | number | boolean, codec
       // An Int default is written as the field's value, so it must pass the int32 check every write applies.
       return typeof value === "number" && Number.isInteger(value) && value >= -2_147_483_648 && value <= 2_147_483_647;
     case "idb/double@1":
-    case "idb/decimal@1":
       return typeof value === "number";
+    case "idb/decimal@1":
+      // A string keeps every digit; a number is exact only up to double precision.
+      return typeof value === "string" ? isDecimalString(value) : typeof value === "number" && Number.isFinite(value);
     case "idb/bool@1":
       return typeof value === "boolean";
     default:
