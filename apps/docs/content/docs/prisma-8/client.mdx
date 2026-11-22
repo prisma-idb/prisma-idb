@@ -119,6 +119,8 @@ You don't plan or edit an extension's migrations. The sync extension is currentl
 | `db.withTransaction(stores, fn)` | Runs low-level plans in one transaction. See [Transactions](/docs/prisma-8/api/transactions). |
 | `db.close()`                     | Closes the connection.                                                                        |
 
+Every client also checks the marker once, before its first query or transaction, as Prisma 8's SQL runtime does. If the marker is missing, or names another contract, it logs a `CONTRACT.MARKER_MISSING` or `CONTRACT.MARKER_MISMATCH` warning and runs the query anyway. Clients don't expose a switch for it; `createIdbRuntime` takes `verifyMarker: false` to skip it.
+
 <Cards>
   <Card title="Querying" href="/docs/prisma-8/api/querying" />
   <Card title="Writing" href="/docs/prisma-8/api/writing" />
