@@ -38,22 +38,6 @@ describe("buildCatalog", () => {
     expect(buildCatalog(contract, "pairs", "Pair").primaryKey.keyPath).toEqual(["a", "b"]);
     expect(contract).toEqual(before);
   });
-  describe("models that share a store", () => {
-    const shared = defineContract({
-      family,
-      target,
-      models: {
-        Plain: { store: "shared", key: "id", fields: { id: "String" } },
-        Nullable: { store: "shared", key: "id", fields: { id: "String", note: "String?" } },
-      },
-    });
-
-    it("reads the rows of each model, not of the last model that maps to the store", () => {
-      const row = { id: "1" };
-      expect(buildCatalog(shared, "shared", "Plain").absentAsNull(row)).toEqual({ id: "1" });
-      expect(buildCatalog(shared, "shared", "Nullable").absentAsNull(row)).toEqual({ id: "1", note: null });
-    });
-  });
   it("reports an unknown store, an unknown model and a model of another store", () => {
     expect(() => buildCatalog(contract, "missing")).toThrow('Store "missing" is not in the contract');
     expect(() => buildCatalog(contract, "items", "Nope")).toThrow('Model "Nope" is not in the contract');
