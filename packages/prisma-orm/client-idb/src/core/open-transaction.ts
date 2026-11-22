@@ -62,6 +62,17 @@ export class OpenTransaction implements IdbQueryExecutorWithTransaction, IdbTran
    * it before rolling back or committing.
    */
   async hasAutoCommitted(): Promise<boolean> {
+    if (this.#state === "aborted") {
+      // A failure outside IndexedDB, such as validation, requests a rollback. If
+      // IndexedDB had already committed, that rollback did nothing: the scope's
+      // outcome, not the request, says whether the writes persisted.
+      const committed = await this.#scope.commit().then(
+        () => true,
+        () => false
+      );
+      if (committed) this.#state = "auto-committed";
+      return committed;
+    }
     if (this.#state !== "open") return this.#state === "auto-committed";
     const [storeName] = this.#storeNames;
     try {
