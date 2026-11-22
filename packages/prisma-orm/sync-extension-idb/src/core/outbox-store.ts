@@ -185,16 +185,39 @@ export async function pruneSyncedEvents(scope: IdbTransactionScope): Promise<voi
 }
 
 /**
- * True if some OTHER outbox event still references `versionMetaId` and could
- * still succeed (unsynced, retryable) — a full store scan, same as
- * `getNextBatch` (no queryable index; see that function's doc comment). The
- * event whose own write just triggered this check has already had its
- * `synced`/`retryable` field updated by the caller before this runs, so it
- * naturally doesn't match here — no need to also exclude it by id.
+ * The pending events of one bookkeeping scope, by `versionMetaId`. One scan
+ * builds it, and every event marked synced or failed later in the scope leaves
+ * it, so marking a batch costs one outbox scan rather than one per event.
+ */
+const pendingByMeta = new WeakMap<IdbTransactionScope, Map<string, Set<string>>>();
+
+async function pendingIndex(scope: IdbTransactionScope): Promise<Map<string, Set<string>>> {
+  let index = pendingByMeta.get(scope);
+  if (index) return index;
+  index = new Map();
+  for (const event of await scanStore<OutboxEvent>(scope, OUTBOX_STORE)) {
+    if (!isPending(event) || event.versionMetaId == null) continue;
+    let ids = index.get(event.versionMetaId);
+    if (!ids) index.set(event.versionMetaId, (ids = new Set()));
+    ids.add(event.id);
+  }
+  pendingByMeta.set(scope, index);
+  return index;
+}
+
+/** Records that `event` is no longer pending in this scope's index, if one was built. */
+function leavePending(scope: IdbTransactionScope, event: OutboxEvent): void {
+  if (event.versionMetaId == null) return;
+  pendingByMeta.get(scope)?.get(event.versionMetaId)?.delete(event.id);
+}
+
+/**
+ * True if some other outbox event still references `versionMetaId` and could
+ * still succeed (unsynced, retryable). The caller has already marked its own
+ * event, so it no longer counts.
  */
 async function hasOtherPendingOutboxEvents(scope: IdbTransactionScope, versionMetaId: string): Promise<boolean> {
-  const events = await scanStore<OutboxEvent>(scope, OUTBOX_STORE);
-  return events.some((e) => e.versionMetaId === versionMetaId && isPending(e));
+  return ((await pendingIndex(scope)).get(versionMetaId)?.size ?? 0) > 0;
 }
 
 /**
@@ -228,6 +251,7 @@ export async function markSynced(scope: IdbTransactionScope, id: string): Promis
   const existing = await getRecord<OutboxEvent>(scope, OUTBOX_STORE, id);
   if (!existing) return;
   await putRecord(scope, OUTBOX_STORE, { ...existing, synced: true, syncedAt: new Date() });
+  leavePending(scope, existing);
   await clearLocalChangePending(scope, existing.versionMetaId ?? null);
   changedScopes.add(scope);
 }
@@ -263,6 +287,9 @@ export async function markFailed(
     lastAttemptedAt: new Date(),
     retryable,
   });
-  if (!retryable) await clearLocalChangePending(scope, existing.versionMetaId ?? null);
+  if (!retryable) {
+    leavePending(scope, existing);
+    await clearLocalChangePending(scope, existing.versionMetaId ?? null);
+  }
   changedScopes.add(scope);
 }
