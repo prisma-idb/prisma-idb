@@ -309,7 +309,7 @@ const excludeFieldSpec = fieldAttribute(IDB_EXCLUDE_ATTR, {
 /**
  * Every attribute the IDB interpreter reads, keyed by PSL name. Upstream expects a
  * factory per entry because a spec may depend on the field or model; none of
- * these do. Any attribute not listed here is ignored, as before.
+ * these do. The binder refuses other attributes, except the portable `@map` and `@db.*`.
  */
 export const idbAttributeSpecs = {
   model: {
@@ -332,6 +332,19 @@ export const idbAttributeSpecs = {
 } satisfies AttributeSpecNamespace;
 
 // ── Binding ────────────────────────────────────────────────────────────────────
+
+/** Field attributes IDB reads, each at most once per field. `@onCreate`/`@onUpdate` report their own repeats. */
+const SINGLE_FIELD_ATTRIBUTES = new Set(["id", "unique", "default", "relation", "updatedAt", IDB_EXCLUDE_ATTR]);
+
+/**
+ * Field attributes IDB accepts without reading, so a schema shared with a SQL
+ * server still compiles: `@map` names a SQL column, and `@db.*` a native SQL
+ * type. Records are keyed by field name either way. Anything else is refused
+ * rather than dropped, since dropping it could change what the schema means.
+ */
+function isPortableFieldAttribute(name: string): boolean {
+  return name === "onCreate" || name === "onUpdate" || name === "map" || name.startsWith("db.");
+}
 
 /** One attribute's typed arguments and the source span of the whole attribute. */
 export interface BoundAttribute<Value> {
@@ -553,9 +566,33 @@ export function createIdbAttributeBinder(input: IdbAttributeBinderInput): IdbAtt
     const generators: { onCreate?: BoundAttribute<BoundGeneratorCall>; onUpdate?: BoundAttribute<BoundGeneratorCall> } =
       {};
     let relation: BoundFieldAttributes["relation"];
+    const seen = new Set<string>();
 
     for (const attribute of field.attributes) {
       const span = attribute.span;
+      // A second `@default` or `@relation` would otherwise lose to the first without a word.
+      if (SINGLE_FIELD_ATTRIBUTES.has(attribute.name)) {
+        if (seen.has(attribute.name)) {
+          failed = true;
+          diagnostics.push({
+            code: "PSL_DUPLICATE_ATTRIBUTE",
+            message: `\`@${attribute.name}\` declared more than once on field "${model.name}.${field.name}".`,
+            sourceId,
+            span,
+          });
+          continue;
+        }
+        seen.add(attribute.name);
+      } else if (!isPortableFieldAttribute(attribute.name)) {
+        failed = true;
+        diagnostics.push({
+          code: "PSL_UNSUPPORTED_FIELD_ATTRIBUTE",
+          message: `Field "${model.name}.${field.name}" uses unsupported attribute "@${attribute.name}".`,
+          sourceId,
+          span,
+        });
+        continue;
+      }
       switch (attribute.name) {
         case "id":
           if (interpret(idFieldSpec, attribute, ctx) === undefined) failed = true;
