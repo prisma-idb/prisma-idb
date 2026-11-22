@@ -55,7 +55,7 @@ Body, following [.github/PULL_REQUEST_TEMPLATE.md](../../../.github/PULL_REQUEST
 - **How has this been tested?**: the tests you added or extended (`file > test name`), the checks you ran with results, and any you skipped with the reason. If no test was added, say why.
 - Name the ADR or upstream code you followed, and flag any deliberate difference from upstream Prisma for review.
 
-Show the title and body to the user, then run these as separate commands. The hook rejects a command that runs anything before `gh pr create`, or that uses command substitution (`$(...)`, backticks, `<(...)`) in its arguments, because that could move `HEAD` past the commits it checked. Pass the body with `--body-file`.
+Show the title and body to the user, then run these as separate commands. The hook accepts `gh pr create` only as the only command in the call, with plain or quoted arguments and no shell operators, substitutions or redirections, because anything else could move `HEAD` past the commits it checked. Pass the body with `--body-file`.
 
 ```bash
 git push -u origin HEAD

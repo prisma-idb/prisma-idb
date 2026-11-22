@@ -60,12 +60,35 @@ const input = JSON.parse(await text(process.stdin));
 const command = input.tool_input?.command ?? "";
 if (!/(^|[;&|(]\s*|\s)gh\s+pr\s+create\b/.test(command)) process.exit(0);
 
-// The checks below read HEAD before the command runs. Anything that runs earlier in the same command could
-// move HEAD, so `gh pr create` must start the command, and its arguments can't run commands of their own
-// through `$(...)`, backticks or `<(...)`, which the shell evaluates before it starts `gh`.
-if (!/^\s*gh\s+pr\s+create\b/.test(command) || /\$\(|`|[<>]\(/.test(command)) {
+/**
+ * `true` when `command` is one simple `gh pr create` call that the shell can't turn into more commands: plain
+ * words, single-quoted strings, and double-quoted strings without `$`, backticks or backslashes. Any other
+ * shell syntax outside quotes (operators, redirections, expansions, subshells, newlines) is refused, so
+ * nothing can run before, during or after the call.
+ */
+function isLonePrCreate(command) {
+  if (!/^\s*gh\s+pr\s+create(\s|$)/.test(command)) return false;
+  let quote = "";
+  for (const char of command) {
+    if (quote === "'") {
+      if (char === "'") quote = "";
+    } else if (quote === '"') {
+      if (char === '"') quote = "";
+      else if (/[$`\\]/.test(char)) return false;
+    } else if (char === "'" || char === '"') {
+      quote = char;
+    } else if (!/[\w ,./:=@%+-]/.test(char)) {
+      return false;
+    }
+  }
+  return quote === "";
+}
+
+// The checks below read HEAD before the command runs, so the command must not be able to run anything else
+// that could move HEAD.
+if (!isLonePrCreate(command)) {
   console.error(
-    "Run `gh pr create` as its own command, with nothing before it and no command substitution in its arguments, so the review check sees the commits the PR will contain. Put the PR body in a file and pass it with `--body-file`."
+    "Run `gh pr create` as the only command in the call, with plain or quoted arguments and no shell operators, substitutions or redirections, so the review check sees the commits the PR will contain. Put the PR body in a file and pass it with `--body-file`."
   );
   process.exit(2);
 }
