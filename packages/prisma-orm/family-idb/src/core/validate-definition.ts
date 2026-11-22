@@ -446,11 +446,29 @@ function validateBackrelations(model: IdbModelNode, definition: IdbContractDefin
   }
 }
 
+/** Each model needs its own store: the contract keys stores and roots by store name, so a second model would replace the first. */
+function validateStoreNames(definition: IdbContractDefinition, report: Report): void {
+  const owners = new Map<string, string>();
+  for (const model of definition.models) {
+    const owner = owners.get(model.storeName);
+    if (owner === undefined) {
+      owners.set(model.storeName, model.modelName);
+      continue;
+    }
+    report(
+      "IDB_DUPLICATE_STORE_NAME",
+      `Models "${owner}" and "${model.modelName}" both use store "${model.storeName}". Give one of them another store name.`,
+      ["models", model.modelName, "storeName"]
+    );
+  }
+}
+
 /** Check shared IDB authoring rules without assembling a contract or stopping at the first error. */
 export function validateIdbContractDefinition(definition: IdbContractDefinition): IdbDiagnostic[] {
   const diagnostics: IdbDiagnostic[] = [];
   const report: Report = (code, message, at) => diagnostics.push({ code, message, at });
   validateEnums(definition, report);
+  validateStoreNames(definition, report);
   for (const model of definition.models) {
     validateKeys(model, report);
     validateIndexes(model, report);

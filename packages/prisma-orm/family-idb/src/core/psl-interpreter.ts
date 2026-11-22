@@ -274,6 +274,20 @@ function interpretModel(
 
   // ── Build indexes ────────────────────────────────────────────────────────────
   const indexes: Record<string, Omit<IdbIndexNode, "name">> = {};
+  /** Add an index, refusing a name already taken instead of replacing that index. */
+  const addIndex = (name: string, node: Omit<IdbIndexNode, "name">, span: ModelSymbol["span"]): void => {
+    if (Object.hasOwn(indexes, name)) {
+      diagnostics.push({
+        code: "IDB_INVALID_INDEX",
+        message: `Model "${model.name}" declares index name "${name}" more than once. Give each index its own name.`,
+        sourceId,
+        span,
+      });
+      return;
+    }
+    indexes[name] = node;
+    sourceMap.set(["models", model.name, "indexes", name], span);
+  };
   // Foreign-key fields of the relations seen so far. The builder indexes them (it has no opt-out in PSL).
   const foreignKeyFields = new Set<string>();
 
@@ -284,8 +298,7 @@ function interpretModel(
     const defaultName = fields.length === 1 ? fields[0]! : fields.join("_");
     const indexName = index.name ?? (index.unique ? `${defaultName}_unique` : defaultName);
     const keyPath: IdbKeyPath = fields.length === 1 ? fields[0]! : fields;
-    indexes[indexName] = { keyPath, unique: index.unique };
-    sourceMap.set(["models", model.name, "indexes", indexName], index.span);
+    addIndex(indexName, { keyPath, unique: index.unique }, index.span);
   }
 
   // ── Walk fields ──────────────────────────────────────────────────────────────
@@ -301,8 +314,7 @@ function interpretModel(
     const excludedAttributes = excludedScalarAttributes.get(field);
     if (excludedAttributes) {
       if (excludedAttributes.unique) {
-        indexes[`${field.name}_unique`] = { keyPath: field.name, unique: true };
-        sourceMap.set(["models", model.name, "indexes", `${field.name}_unique`], excludedAttributes.unique);
+        addIndex(`${field.name}_unique`, { keyPath: field.name, unique: true }, excludedAttributes.unique);
       }
       // Its type and other attributes belong to the server projection.
       continue;
@@ -670,8 +682,7 @@ function interpretModel(
         // builder adds no plain duplicate. Changing this changes `storageHash`.
         const takesForeignKeyIndexName = foreignKeyFields.has(field.name) && !Object.hasOwn(indexes, field.name);
         const indexName = takesForeignKeyIndexName ? field.name : `${field.name}_unique`;
-        indexes[indexName] = { keyPath: field.name, unique: true };
-        sourceMap.set(["models", model.name, "indexes", indexName], fieldAttributes.unique);
+        addIndex(indexName, { keyPath: field.name, unique: true }, fieldAttributes.unique);
       }
     }
   }

@@ -851,6 +851,23 @@ describe("interpretPslDocumentToIdbContract", () => {
       expect(result.failure.diagnostics[0]!.code).toBe("IDB_UNRESOLVED_BACKRELATION");
     });
 
+    it("errors when two indexes share a name instead of keeping only the last", () => {
+      const result = interpret(`
+        model Item {
+          id String @id
+          a  String
+          b  String
+          @@unique([a], name: "both")
+          @@index([b], name: "both")
+        }
+      `);
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.failure.diagnostics.map((d) => [d.code, d.message])).toEqual([
+        ["IDB_INVALID_INDEX", 'Model "Item" declares index name "both" more than once. Give each index its own name.'],
+      ]);
+    });
+
     it("pairs named backrelations with the foreign key of the same name", () => {
       const result = interpret(`
         model User {

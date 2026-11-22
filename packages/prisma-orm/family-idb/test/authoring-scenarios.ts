@@ -18,6 +18,23 @@ export type AuthoringScenario = {
 // Casts below deliberately exercise declarations outside the TS type system.
 export const authoringScenarios: AuthoringScenario[] = [
   {
+    name: "two models share a store name",
+    psl: `
+      model Todo {
+        id String @id
+      }
+      model todo {
+        num Int @id
+      }
+    `,
+    ts: {
+      models: {
+        Todo: { store: "todo", key: "id", fields: { id: "String" } },
+        todo: { store: "todo", key: "num", fields: { num: "Int" } },
+      },
+    },
+  },
+  {
     name: "feature-complete (no defaults)",
     clientProjection: true,
     psl: `

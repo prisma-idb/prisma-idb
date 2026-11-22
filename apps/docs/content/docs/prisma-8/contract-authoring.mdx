@@ -217,6 +217,7 @@ export function buildContract(input: DefineContractInput) {
 | `IDB_CONFLICTING_RELATION_ACTIONS`          | Reciprocal relations both declare the same referential action.                            |
 | `IDB_UNRESOLVED_BACKRELATION`               | A backrelation has no matching owning relation after projection.                          |
 | `IDB_AMBIGUOUS_BACKRELATION`                | A backrelation matches several owning relations. Name both sides with `@relation("...")`. |
+| `IDB_DUPLICATE_STORE_NAME`                  | Two models use the same store name, for example `Todo` and `todo` without `@@map`.        |
 | `IDB_CANNOT_EXCLUDE_KEY_FIELD`              | Client projection removes a model's primary-key field.                                    |
 | `IDB_CANNOT_EXCLUDE_RELATION_FIELD`         | Client projection removes a field needed by a surviving relation.                         |
 | `IDB_EXCLUDE_ON_RELATION_FIELD_UNSUPPORTED` | Client projection attempts to exclude a relation field directly.                          |
