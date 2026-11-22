@@ -255,7 +255,7 @@ describe("auto-migrate across contract evolution", () => {
     // `from === v1 hash`.
     const broken = buildContractSpaceFixture([v2, v3]);
     await expect(createAutoMigratingIdbClient({ contractSpace: broken, dbName: name })).rejects.toThrow(
-      /chain broken/i
+      /found no migrations from "[0-9a-f]+" to its head/
     );
   });
 });

@@ -1,0 +1,5 @@
+---
+"@prisma-idb/client-idb": minor
+---
+
+Auto-migration picks each contract space's migration path the way upstream's extension-space apply path does. It takes the shortest path from the marker to the head whose migrations provide every invariant the head requires, and records the provided invariants on the marker. A space whose head requires an invariant no migration provides is refused with the missing invariant's name, before anything is applied. Before, the runtime compared hashes only, so a head's invariants were ignored, and when two migrations left the same contract it took one arbitrarily. Migrations planned by `prisma-idb` provide no invariants, so existing chains migrate as before.

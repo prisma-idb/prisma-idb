@@ -158,15 +158,15 @@ Each migration package records the contract hash it starts `from` and the hash i
 createAutoMigratingIdbClient({ contractSpace, dbName, extensions })
   │
   ├── 1. open the database and read every marker from _prisma_next_marker
-  ├── 2. if each space's marker already matches its head, skip to step 5
-  ├── 3. walk each space's chain from its marker to its head, collecting every pending operation
+  ├── 2. if each space's marker already matches its head and records its required invariants, skip to step 5
+  ├── 3. find each space's shortest path from its marker to its head that provides the head's required invariants, collecting every pending operation
   ├── 4. reopen at db.version + 1; inside upgradeneeded, in one transaction:
   │       ├── apply every operation (extension spaces first, the app space last)
   │       └── write every space's new marker
   └── 5. return createIdbClient({ contract, dbName })
 ```
 
-Everything in step 4 commits together or not at all ([ADR 002](adrs/ADR%20002%20-%20Two-Phase%20Migration.md), [ADR 010](adrs/ADR%20010%20-%20Combined%20Single-Transaction%20Multi-Space%20Apply.md)). The browser applies each chain exactly as it was planned, including destructive operations ([ADR 019](adrs/ADR%20019%20-%20Apply%20Planned%20Migrations%20As%20Written.md)).
+Everything in step 4 commits together or not at all ([ADR 002](adrs/ADR%20002%20-%20Two-Phase%20Migration.md), [ADR 010](adrs/ADR%20010%20-%20Combined%20Single-Transaction%20Multi-Space%20Apply.md)). A marker also records the invariants its path provided, so a head that requires a new one, such as a data fix, runs again even at the same hash. The browser applies each path exactly as it was planned, including destructive operations ([ADR 019](adrs/ADR%20019%20-%20Apply%20Planned%20Migrations%20As%20Written.md)).
 
 The IndexedDB version number only triggers `upgradeneeded`. The marker, keyed by space id (`"app"`, `"idb-sync"`, …), is what records which contract the database has ([ADR 001](adrs/ADR%20001%20-%20IDB%20Version%20Integer%20as%20Migration%20Identity.md)).
 

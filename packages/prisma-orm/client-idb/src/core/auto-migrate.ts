@@ -1,11 +1,13 @@
 import { domainModelsAtDefaultNamespace } from "@prisma/orm-framework/contract/types";
 import type { Contract } from "@prisma/orm-framework/contract/types";
-import type { ContractSpace, MigrationPackage } from "@prisma/orm-framework/components/control";
+import type { ContractSpace } from "@prisma/orm-framework/components/control";
 import { APP_SPACE_ID } from "@prisma/orm-framework/components/control";
 import type { IdbExtensionSpace } from "@prisma-idb/family-idb/control";
 import { MARKER_STORE_NAME } from "@prisma-idb/driver-idb/runtime";
 // Browser-safe (WebCrypto) hash — the framework's `@prisma/orm-toolchain/migration-tools/hash`
 // uses `node:crypto`, which is unavailable in the browser.
+import { EMPTY_CONTRACT_HASH } from "@prisma/orm-toolchain/migration-tools/constants";
+import { findPathWithDecision, reconstructGraph } from "@prisma/orm-toolchain/migration-tools/migration-graph";
 import { computeMigrationHash } from "./migration-hash";
 // Import from `./runtime` (not `./migration`) so `MigrationCLI` → `node:fs`
 // is not bundled into the browser client.
@@ -64,11 +66,13 @@ export interface AutoMigrateClientOptions<TContract extends IdbContract> {
  *
  * 1. Open the database at the current local version, read the marker from
  *    `_prisma_next_marker`. (Null for a fresh database)
- * 2. If the marker hash equals `contractSpace.headRef.hash`, the database
- *    is already at the target — return the client immediately.
- * 3. Otherwise, walk `contractSpace.migrations` from the marker hash (or
- *    `null` for fresh) to `headRef.hash`, collecting each pending
- *    package's `ops` in chain order.
+ * 2. If the marker hash equals `contractSpace.headRef.hash` and the marker
+ *    records every invariant `headRef` requires, the database is already at
+ *    the target — return the client immediately.
+ * 3. Otherwise, find the shortest path through `contractSpace.migrations`
+ *    from the marker hash (or `null` for fresh) to `headRef.hash` whose
+ *    packages provide the missing invariants, as upstream's extension-space
+ *    apply path does, and collect its packages' `ops` in path order.
  * 4. If `extensions` are configured, repeat steps 1–3 for each extension
  *    space, then combine every space's pending ops into ONE reopen at
  *    `db.version + 1` so `upgradeneeded` fires once; apply every collected
@@ -175,15 +179,26 @@ export async function autoMigrate(input: {
 /** How many times one open plans and applies an upgrade before giving up on a contended database. */
 const MAX_MIGRATION_ATTEMPTS = 5;
 
+/** What a space's marker records: the head hash it reached and the invariants its path provided. */
+interface MarkerSnapshot {
+  readonly markerHash: string | null;
+  readonly markerInvariants: readonly string[];
+}
+
+/** A space with no marker row is at the empty contract with no invariants. */
+function markerOf(markers: ReadonlyMap<string, MarkerSnapshot>, spaceId: string): MarkerSnapshot {
+  return markers.get(spaceId) ?? { markerHash: null, markerInvariants: [] };
+}
+
 /** The spaces whose marker is not yet their head. */
 async function spacesBehindHead(
   dbName: string,
   factory: IDBFactory,
   spaces: ReadonlyArray<{ spaceId: string; contractSpace: ContractSpace<Contract> }>
 ): Promise<string[]> {
-  const { markerHashes } = await openAndReadMarkers(dbName, factory, spaces);
+  const { markers } = await openAndReadMarkers(dbName, factory, spaces);
   return spaces
-    .filter(({ spaceId, contractSpace }) => markerHashes.get(spaceId) !== contractSpace.headRef.hash)
+    .filter(({ spaceId, contractSpace }) => !atHead(markerOf(markers, spaceId), contractSpace))
     .map(({ spaceId }) => spaceId);
 }
 
@@ -194,21 +209,27 @@ async function migrateOnce(
 ): Promise<void> {
   const { dbName, factory } = input;
 
-  const { currentVersion, markerHashes } = await openAndReadMarkers(dbName, factory, spaces);
+  const { currentVersion, markers } = await openAndReadMarkers(dbName, factory, spaces);
 
   // Collect pending work per space without applying yet, so a broken chain in
   // any space fails before the database is touched.
-  const pendingPerSpace: Array<{ spaceId: string; ops: IdbDdlOp[]; storageHash: string }> = [];
+  const pendingPerSpace: Array<{
+    spaceId: string;
+    ops: IdbDdlOp[];
+    storageHash: string;
+    invariants: readonly string[];
+  }> = [];
 
   for (const space of spaces) {
     const targetHash = space.contractSpace.headRef.hash;
-    const markerHash = markerHashes.get(space.spaceId) ?? null;
-    if (markerHash === targetHash) continue;
+    const marker = markerOf(markers, space.spaceId);
+    if (atHead(marker, space.contractSpace)) continue;
 
-    const pendingOps = await walkChain({
-      markerHash,
-      headHash: targetHash,
-      migrations: space.contractSpace.migrations,
+    const { ops: pendingOps, invariants } = await planSpacePath({
+      spaceId: space.spaceId,
+      markerHash: marker.markerHash,
+      markerInvariants: marker.markerInvariants,
+      contractSpace: space.contractSpace,
     });
     // Push whenever the marker is behind `targetHash` — even if every package
     // walked had zero ops (a hash-only "bridge" migration, e.g. re-emitting
@@ -218,7 +239,7 @@ async function migrateOnce(
     // retry either, the marker gets stuck at the old hash forever — the
     // space never converges to `targetHash`, even though there was never
     // any actual work to do.
-    pendingPerSpace.push({ spaceId: space.spaceId, ops: pendingOps, storageHash: targetHash });
+    pendingPerSpace.push({ spaceId: space.spaceId, ops: pendingOps, storageHash: targetHash, invariants });
   }
 
   if (pendingPerSpace.length === 0) return;
@@ -244,7 +265,11 @@ async function migrateOnce(
     dbName,
     targetVersion: currentVersion + 1,
     ops: orderedPending.flatMap((space) => space.ops),
-    markers: orderedPending.map((space) => ({ space: space.spaceId, storageHash: space.storageHash })),
+    markers: orderedPending.map((space) => ({
+      space: space.spaceId,
+      storageHash: space.storageHash,
+      invariants: space.invariants,
+    })),
     onTransformRecords: createTransformRecordsCallback(input.contractSpace.contractJson, input.extensions ?? []),
   });
 }
@@ -335,63 +360,77 @@ function resolveContractSpaces(
 }
 
 /**
- * Walk the migration chain from `markerHash` (or `null` for a fresh DB) to
- * `headHash`, collecting every pending package's ops in order.
+ * Finds the migrations that take a space from its marker to its head, and the ops to apply.
  *
- * Throws on chain discontinuity (no package whose `from === cursor`) so
- * misconfigured `contractSpace` inputs fail loudly rather than silently
- * leaving the DB at an intermediate state.
+ * This follows upstream's extension-space apply path: the packages form a graph, and the
+ * path is the shortest one from the marker (`null` for a fresh database) to the head whose
+ * packages provide every invariant the head requires and the marker doesn't record yet. A
+ * space already at its head can still need a path, for example a data fix that provides a
+ * new invariant. Each walked package's hash is checked before its ops are used.
  */
-async function walkChain(input: {
+async function planSpacePath(input: {
+  readonly spaceId: string;
   readonly markerHash: string | null;
-  readonly headHash: string;
-  readonly migrations: readonly MigrationPackage[];
-}): Promise<IdbDdlOp[]> {
-  const byFrom = new Map<string | null, MigrationPackage>();
-  for (const pkg of input.migrations) {
-    byFrom.set(pkg.metadata.from, pkg);
+  readonly markerInvariants: readonly string[];
+  readonly contractSpace: ContractSpace<Contract>;
+}): Promise<{ readonly ops: IdbDdlOp[]; readonly invariants: readonly string[] }> {
+  const { spaceId, contractSpace } = input;
+  const head = contractSpace.headRef;
+  const required = new Set(head.invariants.filter((id) => !input.markerInvariants.includes(id)));
+  // Bundled packages have no directory on disk; the graph reads only their metadata and names.
+  const graph = reconstructGraph(contractSpace.migrations.map((pkg) => ({ ...pkg, dirPath: pkg.dirName })));
+  const outcome = findPathWithDecision(graph, input.markerHash ?? EMPTY_CONTRACT_HASH, head.hash, { required });
+  if (outcome.kind === "unreachable") {
+    throw new Error(
+      `Auto-migration for space "${spaceId}" found no migrations from ${JSON.stringify(input.markerHash)} ` +
+        `to its head ${head.hash}. Verify that contract-space.generated.ts is up to date by re-running ` +
+        "`prisma-idb migration contract-space`."
+    );
+  }
+  if (outcome.kind === "unsatisfiable") {
+    throw new Error(
+      `Auto-migration for space "${spaceId}" found no migrations to its head ${head.hash} that provide ` +
+        `the required invariant(s) ${outcome.missing.join(", ")}. Add a migration that provides them, ` +
+        "then re-run `prisma-idb migration contract-space`."
+    );
   }
 
-  const pendingOps: IdbDdlOp[] = [];
-  let cursor: string | null = input.markerHash;
-  const visited = new Set<string | null>();
-
-  while (cursor !== input.headHash) {
-    if (visited.has(cursor)) {
+  const byHash = new Map(contractSpace.migrations.map((pkg) => [pkg.metadata.migrationHash, pkg]));
+  const ops: IdbDdlOp[] = [];
+  const invariants = new Set(input.markerInvariants);
+  for (const edge of outcome.decision.selectedPath) {
+    const pkg = byHash.get(edge.migrationHash);
+    if (!pkg) throw new Error(`Auto-migration for space "${spaceId}" lost the package for edge ${edge.dirName}.`);
+    const computedHash = await computeMigrationHash(pkg.metadata, pkg.ops);
+    if (computedHash !== pkg.metadata.migrationHash) {
       throw new Error(
-        `Auto-migration chain contains a cycle at hash ${JSON.stringify(cursor)}. ` +
-          "Re-run `prisma-idb migration contract-space` to rebuild a valid chain."
-      );
-    }
-    visited.add(cursor);
-    const next = byFrom.get(cursor);
-    if (!next) {
-      throw new Error(
-        `Auto-migration chain broken: no migration package with from === ${JSON.stringify(cursor)}. ` +
-          "Verify that contract-space.generated.ts is up to date by re-running " +
-          "`prisma-idb migration contract-space`."
-      );
-    }
-    const computedHash = await computeMigrationHash(next.metadata, next.ops);
-    if (computedHash !== next.metadata.migrationHash) {
-      throw new Error(
-        `Migration package "${next.dirName}" failed integrity check: ` +
-          `stored migrationHash ${next.metadata.migrationHash} does not match ` +
+        `Migration package "${pkg.dirName}" failed integrity check: ` +
+          `stored migrationHash ${pkg.metadata.migrationHash} does not match ` +
           `computed hash ${computedHash}. ` +
           "The ops may have been edited after the package was generated. " +
           "Re-run `prisma-idb migration plan` to regenerate the package."
       );
     }
-    for (const op of next.ops) {
+    for (const op of pkg.ops) {
       if (!isIdbDdlOp(op)) {
-        throw new Error(`Non-IDB operation found in migration package ${next.dirName}: ${JSON.stringify(op)}`);
+        throw new Error(`Non-IDB operation found in migration package ${pkg.dirName}: ${JSON.stringify(op)}`);
       }
-      pendingOps.push(op);
+      ops.push(op);
     }
-    cursor = next.metadata.to;
+    for (const invariant of pkg.metadata.providedInvariants) invariants.add(invariant);
   }
+  return { ops, invariants: [...invariants].sort() };
+}
 
-  return pendingOps;
+/** `true` when the marker is at the head and records every invariant the head requires. */
+function atHead(
+  marker: { readonly markerHash: string | null; readonly markerInvariants: readonly string[] },
+  contractSpace: ContractSpace<Contract>
+): boolean {
+  return (
+    marker.markerHash === contractSpace.headRef.hash &&
+    contractSpace.headRef.invariants.every((id) => marker.markerInvariants.includes(id))
+  );
 }
 
 /**
@@ -402,7 +441,7 @@ function openAndReadMarkers(
   dbName: string,
   factory: IDBFactory,
   spaces: ReadonlyArray<{ spaceId: string }>
-): Promise<{ currentVersion: number; markerHashes: ReadonlyMap<string, string> }> {
+): Promise<{ currentVersion: number; markers: ReadonlyMap<string, MarkerSnapshot> }> {
   return new Promise((resolve, reject) => {
     let req: IDBOpenDBRequest;
     try {
@@ -414,8 +453,8 @@ function openAndReadMarkers(
 
     req.onsuccess = () => {
       const db = req.result;
-      const markerHashes = new Map<string, string>();
-      const snapshot = { currentVersion: db.version, markerHashes };
+      const markers = new Map<string, MarkerSnapshot>();
+      const snapshot = { currentVersion: db.version, markers };
       try {
         if (!db.objectStoreNames.contains(MARKER_STORE_NAME)) {
           resolve(snapshot);
@@ -429,7 +468,9 @@ function openAndReadMarkers(
           const markerRequest = store.get(spaceId);
           markerRequest.onsuccess = () => {
             const marker = markerRequest.result as IdbMarkerRecord | undefined;
-            if (marker?.storageHash != null) markerHashes.set(spaceId, marker.storageHash);
+            if (marker?.storageHash != null) {
+              markers.set(spaceId, { markerHash: marker.storageHash, markerInvariants: marker.invariants ?? [] });
+            }
           };
         }
       } catch (err) {
