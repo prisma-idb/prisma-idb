@@ -380,6 +380,13 @@ async function planSpacePath(input: {
   // Bundled packages have no directory on disk; the graph reads only their metadata and names.
   const graph = reconstructGraph(contractSpace.migrations.map((pkg) => ({ ...pkg, dirPath: pkg.dirName })));
   const outcome = findPathWithDecision(graph, input.markerHash ?? EMPTY_CONTRACT_HASH, head.hash, { required });
+  if (outcome.kind !== "ok" && input.markerHash === head.hash) {
+    throw new Error(
+      `Contract space "${spaceId}" is at its head ${head.hash}, but its marker does not record the required ` +
+        `invariant(s) ${[...required].join(", ")}, and no migration from the head provides them. Add a migration ` +
+        "from the head that provides them, then re-run `prisma-idb migration contract-space`."
+    );
+  }
   if (outcome.kind === "unreachable") {
     throw new Error(
       `Auto-migration for space "${spaceId}" found no migrations from ${JSON.stringify(input.markerHash)} ` +

@@ -15,7 +15,7 @@
 Each migration package holds the same operations in three files:
 
 - `ops.json`: the operations the browser applies.
-- `migration.json`: metadata, including `migrationHash`, a hash of `ops.json`. The browser checks it every time it walks the chain (`walkChain` in `client-idb/src/core/auto-migrate.ts`).
+- `migration.json`: metadata, including `migrationHash`, a hash of `ops.json`. The browser checks it for every migration on the path it applies (`planSpacePath` in `client-idb/src/core/auto-migrate.ts`).
 - `migration.ts`: an editable TypeScript version, for hand-authoring changes.
 
 Running `node migration.ts` regenerates `ops.json` and `migration.json` from the class's `operations` getter. It writes whatever the getter returns, with no IndexedDB-specific logic. So `migration.ts` must capture every detail of the original operations. If it loses anything, editing and re-running it silently produces a different `ops.json` and a different `migrationHash` from the committed ones.

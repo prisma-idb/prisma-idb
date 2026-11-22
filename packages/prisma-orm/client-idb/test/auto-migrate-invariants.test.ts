@@ -89,6 +89,15 @@ describe("auto-migrate invariants", () => {
     }
   });
 
+  it("says so when a database at the head lacks a required invariant that no migration provides", async () => {
+    const dbName = `auto-migrate-invariants-${++dbCounter}`;
+    const first = await createAutoMigratingIdbClient({ contractSpace: space([baseline, plain], []), dbName });
+    await first.close();
+    await expect(
+      createAutoMigratingIdbClient({ contractSpace: space([baseline, plain], ["fixed"]), dbName })
+    ).rejects.toThrow(/is at its head .* does not record the required invariant\(s\) fixed/);
+  });
+
   it("runs a migration for a newly required invariant on a database already at the head", async () => {
     const dbName = `auto-migrate-invariants-${++dbCounter}`;
     const first = await createAutoMigratingIdbClient({ contractSpace: space([baseline, plain], []), dbName });

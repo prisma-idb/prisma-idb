@@ -42,5 +42,5 @@ Upstream draws the same line. `prisma migrate`, which applies planned migration 
 
 - [ADR 002](ADR%20002%20-%20Two-Phase%20Migration.md): schema changes and markers commit in one transaction.
 - [ADR 018](ADR%20018%20-%20Separate%20prisma-idb%20CLI.md): where migrations are planned.
-- `client-idb/src/core/auto-migrate.ts`: `walkChain` and `autoMigrate`.
+- `client-idb/src/core/auto-migrate.ts`: `planSpacePath` and `autoMigrate`.
 - `family-idb/src/core/migration-plan.ts`: `warnAboutDeletedData`.
