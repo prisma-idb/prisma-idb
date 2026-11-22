@@ -42,6 +42,24 @@ const scalarTypes: Record<string, Type> = {
 const validators = new WeakMap<ContractWithDomain, WeakMap<ValidationCodecLookup, Map<string, Type>>>();
 
 /** Builds a native validator and rejects unsupported types with their field's owner. */
+/**
+ * A value JSON can represent: `null`, a string, a boolean, a finite number, or an
+ * array or plain object of such values. IndexedDB could store a `Map`, a `Date`
+ * or a class instance, but sync and SQL would lose it (a `Map` serializes as `{}`).
+ */
+function isJsonValue(value: unknown, ancestors: Set<object>): boolean {
+  if (value === null || typeof value === "string" || typeof value === "boolean") return true;
+  if (typeof value === "number") return Number.isFinite(value);
+  if (typeof value !== "object") return false;
+  if (ancestors.has(value)) return false;
+  const proto = Object.getPrototypeOf(value) as unknown;
+  if (!Array.isArray(value) && proto !== Object.prototype && proto !== null) return false;
+  ancestors.add(value);
+  const valid = Object.values(value).every((child) => isJsonValue(child, ancestors));
+  ancestors.delete(value);
+  return valid;
+}
+
 function buildType(
   contract: ContractWithDomain,
   fieldType: ContractFieldType,
@@ -61,6 +79,9 @@ function buildType(
     }
     if (fieldType.codecId === "idb/decimal@1") {
       validator = type("string").narrow(isDecimalString);
+    }
+    if (fieldType.codecId === "idb/json@1") {
+      validator = validator.narrow((value) => isJsonValue(value, new Set()));
     }
     return validator;
   }

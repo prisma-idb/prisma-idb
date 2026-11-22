@@ -43,6 +43,8 @@ For installation, monorepo configuration, and missing hints, follow [Editor Setu
 
 Add `?` to make a field optional. Its value is then `null` when it isn't set.
 
+A `Json` value must be something JSON can represent: `null`, strings, booleans, finite numbers, and arrays and plain objects of those. Writes reject a `Map`, a `Date`, a `bigint` or a class instance anywhere inside it, since sync and SQL would lose it.
+
 Decimal values stay as the strings you supply. A PSL `@default(1234567890123456789.123)` keeps every digit as written and stores it as a string. In TypeScript, write a Decimal default as a string, such as `"1234567890123456789.123"`; a number is stored as its JavaScript string form, so it is exact only up to double precision. Accepted forms include `"-12.50"`, `".5"` and `"1.25e3"`. Empty strings, whitespace, hexadecimal values, `NaN` and infinities are invalid. Creates and updates reject invalid Decimal values. Numeric filter operands must also be valid decimal text, even when the query would return no rows. A numeric comparison that encounters invalid text in existing records throws; repair those records before filtering or sorting them.
 
 Decimal equality, membership, range filters and `orderBy` compare exact numeric values without converting them to JavaScript numbers. For example, `"10"`, `"10.00"` and `"1e1"` compare equal. Primary-key lookups and unique constraints use the same numeric equality, including in compound keys.

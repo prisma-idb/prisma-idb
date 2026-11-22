@@ -130,6 +130,20 @@ describe("validateRecord", () => {
     }
   });
 
+  it("accepts only values JSON can represent in a Json field, including list elements", () => {
+    const scalar = contract({ json: field("idb/json@1") });
+    const list = contract({ json: field("idb/json@1", { many: { elementNullable: false } }) });
+    for (const json of [{ a: [1, "x", true, null, { b: 2 }] }, Object.assign(Object.create(null), { a: 1 })]) {
+      expect(validateRecord(scalar, "Item", { id: "a", json }).ok).toBe(true);
+    }
+    const cyclic: Record<string, unknown> = {};
+    cyclic["self"] = cyclic;
+    for (const json of [new Map([["a", 1]]), new Date(0), { at: new Date(0) }, [1n], { n: Number.NaN }, cyclic]) {
+      expect(validateRecord(scalar, "Item", { id: "a", json }).ok).toBe(false);
+    }
+    expect(validateRecord(list, "Item", { id: "a", json: [{ a: 1 }, new Set()] }).ok).toBe(false);
+  });
+
   it("honors mapped enum values on scalars and lists", () => {
     const status = field("idb/string@1", {
       valueSet: { plane: "domain", namespaceId: "default", entityKind: "enum", entityName: "Status" },
