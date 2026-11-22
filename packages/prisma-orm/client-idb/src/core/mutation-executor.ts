@@ -243,7 +243,7 @@ function collectStoreNames(
       for (const store of fkParentStoreNames(contract, def.relatedModelName)) stores.add(store);
       // A connect or disconnect of children writes their foreign key and their
       // `onUpdate` defaults, whose referential actions may reach further stores.
-      if (!isChildEnforcementRelation(contract, modelName, def)) continue;
+      if (!isDeclaredChildRelation(contract, modelName, def)) continue;
       const childPatch = applyUpdateDefaults(
         contract.execution?.mutations.defaults,
         def.relatedStoreName,
@@ -767,33 +767,7 @@ function sameFields(a: readonly string[], b: readonly string[]): boolean {
   return a.length === b.length && a.every((field, index) => field === b[index]);
 }
 
-/**
- * Resolves the referential action for a child-enforcement relation: prefers
- * the action stored directly on this side, falls back to the same action
- * stored on the inverse (FK-owning) side of the relation, and finally to
- * `defaultAction` when neither side declares one.
- *
- * Both branches are live, for different authoring paths. PSL only ever
- * stores the action on the `N:1` (FK-owning) side — enforcement always walks
- * from the parent (`1:N`/non-owning-`1:1`) side, which PSL leaves bare, so
- * the fallback is what actually finds it. TS-DSL relation entries are
- * self-contained (no PSL-style pairing requirement) and typically declare
- * the action directly on the side this function is called for, so the direct
- * check is what fires there — see `contract-builder.ts`'s
- * `validateNoConflictingRelationActions`, which rejects declaring the same
- * action kind on both sides so this fallback never has to arbitrate a real
- * conflict.
- */
-function getReferentialActionForRelation(
-  contract: IdbContract,
-  modelName: string,
-  def: RelationDefinition,
-  kind: ReferentialActionKind
-): EnforcedReferentialAction {
-  return enforcedAction(findDeclaredAction(contract, modelName, def, kind));
-}
-
-/** Find an action on the enforcement side or on its matching inverse relation. */
+/** Find an action declared on the parent-side relation or on its matching foreign-key relation. */
 function findDeclaredAction(
   contract: IdbContract,
   modelName: string,
@@ -804,15 +778,21 @@ function findDeclaredAction(
   if (direct !== undefined) return direct;
 
   for (const inverse of getRelationDefinitions(contract, def.relatedModelName)) {
-    if (inverse.relatedModelName !== modelName) continue;
-    if (!sameFields(inverse.localFields, def.targetFields)) continue;
-    if (!sameFields(inverse.targetFields, def.localFields)) continue;
-
+    if (!isInverseOf(inverse, modelName, def)) continue;
     const inverseAction = getStoredAction(contract, def.relatedModelName, inverse.relationName, kind);
     if (inverseAction !== undefined) return inverseAction;
   }
 
   return undefined;
+}
+
+/** `true` when `inverse`, declared on `def`'s related model, joins back to `modelName` on the same fields. */
+function isInverseOf(inverse: RelationDefinition, modelName: string, def: RelationDefinition): boolean {
+  return (
+    inverse.relatedModelName === modelName &&
+    sameFields(inverse.localFields, def.targetFields) &&
+    sameFields(inverse.targetFields, def.localFields)
+  );
 }
 
 /** A referential action after defaults are applied and `noAction` is resolved. */
@@ -833,8 +813,86 @@ function enforcedAction(declared: IdbReferentialAction | undefined): EnforcedRef
   return declared === undefined || declared === "noAction" ? "restrict" : declared;
 }
 
-/** Identify relations that need child checks when this model changes. */
-function isChildEnforcementRelation(contract: IdbContract, modelName: string, def: RelationDefinition): boolean {
+/**
+ * A reference from child rows to `modelName`, seen from the parent, with the
+ * actions enforced when a parent row is deleted or its referenced fields change.
+ * `localFields` are the parent's referenced fields; `targetFields` are the
+ * child's foreign key.
+ */
+interface ChildEnforcementEdge extends RelationDefinition {
+  readonly onDelete: EnforcedReferentialAction;
+  readonly onUpdate: EnforcedReferentialAction;
+}
+
+const childEdgesCache = new WeakMap<object, Map<string, ChildEnforcementEdge[]>>();
+
+/**
+ * Every reference to `modelName` whose actions a delete or key change must
+ * enforce. The edges come from each model's foreign keys (`N:1` relations), so
+ * a reference is enforced whether or not `modelName` declares the inverse
+ * relation. Parent-side relations that no foreign key covers, such as a
+ * shared-primary-key `1:1`, are enforced from their own declaration.
+ */
+function getChildEnforcementEdges(contract: IdbContract, modelName: string): ChildEnforcementEdge[] {
+  let perContract = childEdgesCache.get(contract);
+  if (!perContract) {
+    perContract = new Map();
+    childEdgesCache.set(contract, perContract);
+  }
+  const cached = perContract.get(modelName);
+  if (cached) return cached;
+
+  const edges: ChildEnforcementEdge[] = [];
+  const withActions = (
+    def: RelationDefinition,
+    action: (kind: ReferentialActionKind) => IdbReferentialAction | undefined
+  ) =>
+    edges.push({ ...def, onDelete: enforcedAction(action("onDelete")), onUpdate: enforcedAction(action("onUpdate")) });
+
+  for (const childModelName of Object.keys(domainModelsAtDefaultNamespace(contract.domain))) {
+    for (const fk of getRelationDefinitions(contract, childModelName)) {
+      if (fk.cardinality !== "N:1" || fk.relatedModelName !== modelName) continue;
+      // An action may be stored on either side; validation rejects declaring the same kind on both.
+      const parentSide = getRelationDefinitions(contract, modelName).filter((inverse) =>
+        isInverseOf(inverse, childModelName, fk)
+      );
+      const def: RelationDefinition = {
+        // Errors name the parent-side relation when there is one, else the child's foreign key.
+        relationName: parentSide[0]?.relationName ?? `${childModelName}.${fk.relationName}`,
+        relatedModelName: childModelName,
+        relatedStoreName: getStoreName(contract, childModelName),
+        cardinality: "1:N",
+        localFields: fk.targetFields,
+        targetFields: fk.localFields,
+      };
+      withActions(
+        def,
+        (kind) =>
+          getStoredAction(contract, childModelName, fk.relationName, kind) ??
+          parentSide.map((inverse) => getStoredAction(contract, modelName, inverse.relationName, kind)).find(Boolean)
+      );
+    }
+  }
+  for (const def of getRelationDefinitions(contract, modelName)) {
+    if (!isDeclaredChildRelation(contract, modelName, def)) continue;
+    if (edges.some((edge) => isSameEdge(edge, def))) continue;
+    withActions(def, (kind) => findDeclaredAction(contract, modelName, def, kind));
+  }
+
+  perContract.set(modelName, edges);
+  return edges;
+}
+
+function isSameEdge(edge: RelationDefinition, def: RelationDefinition): boolean {
+  return (
+    edge.relatedModelName === def.relatedModelName &&
+    sameFields(edge.localFields, def.localFields) &&
+    sameFields(edge.targetFields, def.targetFields)
+  );
+}
+
+/** Identify parent-side relations declared on this model that need child checks when it changes. */
+function isDeclaredChildRelation(contract: IdbContract, modelName: string, def: RelationDefinition): boolean {
   if (def.cardinality === "1:N") return true;
   if (def.cardinality === "1:1") {
     // Shared-PK 1:1: the non-owning side is the one whose *own* primary key
@@ -1005,10 +1063,9 @@ export function collectOnUpdateEnforcementStoreNames(
   const visitedModels = new Set<string>([modelName]);
   let enforces = false;
 
-  for (const def of getRelationDefinitions(contract, modelName)) {
-    if (!isChildEnforcementRelation(contract, modelName, def)) continue;
+  for (const def of getChildEnforcementEdges(contract, modelName)) {
     if (!def.localFields.some((f) => f in data)) continue;
-    const action = getReferentialActionForRelation(contract, modelName, def, "onUpdate");
+    const action = def.onUpdate;
     enforces = true;
     stores.add(def.relatedStoreName);
     if (action === "cascade") addOnUpdateCascadeStores(contract, def.relatedModelName, stores, visitedModels);
@@ -1052,12 +1109,11 @@ export async function applyReferentialActionsForRowOnUpdate(
   visited.add(rowKey);
 
   const meta = makePlanMeta(contract);
-  for (const def of getRelationDefinitions(contract, modelName)) {
-    if (!isChildEnforcementRelation(contract, modelName, def)) continue;
+  for (const def of getChildEnforcementEdges(contract, modelName)) {
     const changedFields = def.localFields.filter((f) => f in patch && !fieldValuesEqual(patch[f], oldRow[f]));
     if (changedFields.length === 0) continue;
 
-    const action = getReferentialActionForRelation(contract, modelName, def, "onUpdate");
+    const action = def.onUpdate;
 
     const childWhere = buildChildWhereFromRow(def, oldRow);
 
@@ -1276,10 +1332,9 @@ function addOnUpdateCascadeStores(
 ): void {
   if (visitedModels.has(modelName)) return;
   visitedModels.add(modelName);
-  for (const def of getRelationDefinitions(contract, modelName)) {
-    if (!isChildEnforcementRelation(contract, modelName, def)) continue;
+  for (const def of getChildEnforcementEdges(contract, modelName)) {
     stores.add(def.relatedStoreName);
-    if (getReferentialActionForRelation(contract, modelName, def, "onUpdate") === "cascade") {
+    if (def.onUpdate === "cascade") {
       addOnUpdateCascadeStores(contract, def.relatedModelName, stores, visitedModels);
     }
   }
@@ -1430,14 +1485,12 @@ async function executeScalarUpdates(
 // ── Delete referential action enforcement ─────────────────────────────────────
 
 /**
- * Returns true if the model has at least one child relation (1:N or parent-side
- * 1:1). Every such relation has an `onDelete` action to enforce: `noAction`
- * behaves like `restrict`, which is also the default.
+ * Returns true if any model references `modelName`, through a foreign key or
+ * a parent-side relation. Every such reference has an `onDelete` action to
+ * enforce: `noAction` behaves like `restrict`, which is also the default.
  */
 export function hasEnforceableChildRelations(contract: IdbContract, modelName: string): boolean {
-  return getRelationDefinitions(contract, modelName).some((def) =>
-    isChildEnforcementRelation(contract, modelName, def)
-  );
+  return getChildEnforcementEdges(contract, modelName).length > 0;
 }
 
 /** The store of `modelName` plus the store of every model it has a relation to, in either direction. */
@@ -1467,9 +1520,8 @@ export function collectDeleteStoreNames(contract: IdbContract, modelName: string
     if (visitedModels.has(mName)) return;
     visitedModels.add(mName);
     stores.add(getStoreName(contract, mName));
-    for (const def of getRelationDefinitions(contract, mName)) {
-      if (!isChildEnforcementRelation(contract, mName, def)) continue;
-      const action = getReferentialActionForRelation(contract, mName, def, "onDelete");
+    for (const def of getChildEnforcementEdges(contract, mName)) {
+      const action = def.onDelete;
       stores.add(def.relatedStoreName);
       if (action === "cascade") walk(def.relatedModelName);
     }
@@ -1510,9 +1562,8 @@ export async function applyReferentialActionsForRow(
   visited.add(rowKey);
 
   const meta = makePlanMeta(contract);
-  for (const def of getRelationDefinitions(contract, modelName)) {
-    if (!isChildEnforcementRelation(contract, modelName, def)) continue;
-    const action = getReferentialActionForRelation(contract, modelName, def, "onDelete");
+  for (const def of getChildEnforcementEdges(contract, modelName)) {
+    const action = def.onDelete;
 
     const childWhere = buildChildWhereFromRow(def, row);
 
