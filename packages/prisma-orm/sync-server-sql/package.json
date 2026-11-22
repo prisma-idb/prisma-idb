@@ -4,7 +4,7 @@
   "description": "Prisma 8 IDB — SQL execution adapter for sync-server (ownership checks + push/pull against a Prisma 8 SQL ORM client)",
   "license": "MIT",
   "files": ["dist"],
-  "keywords": ["prisma", "prisma-8", "indexeddb", "offline-first", "idb", "sync", "sql", "postgres", "sqlite"],
+  "keywords": ["prisma", "prisma-8", "indexeddb", "offline-first", "idb", "sync", "sql", "postgres"],
   "repository": {
     "type": "git",
     "url": "git+https://github.com/prisma-idb/prisma-idb.git",
