@@ -189,6 +189,8 @@ Without them, deleting a user who still has todos fails:
 Cannot delete User 'user_1': child records exist on relation 'todos'. Delete those children first, or declare onDelete: Cascade, SetNull or SetDefault on the relation.
 ```
 
+The error names the parent's relation, here `User.todos`. If the parent doesn't declare one, it names the foreign key's relation instead, such as `'Todo.user'`. Actions apply to every foreign key whether or not the parent declares the inverse relation.
+
 Both actions default to `Restrict`, matching Postgres, where an undeclared action is `NO ACTION`. So a synced app's client and server refuse the same changes. An update only triggers `onUpdate` when a referenced value actually changes.
 
 <Cards>
