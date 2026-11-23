@@ -301,8 +301,8 @@ export interface IdbStoreAccessor<
   delete(key: KeyType<TContract, ModelName>): Promise<DefaultModelRow<TContract, ModelName>>;
 
   /**
-   * Update the row that `first()` returns for the same chain: `orderBy()`
-   * and `skip()` pick the row, and `take(0)` matches none. Returns the
+   * Update the first row of the chain: `orderBy()` and `skip()` pick the
+   * row, as they do for `first()`, and `take(0)` matches none. Returns the
    * merged row, or `null` if no row matches.
    *
    * Relation fields accept `connect` or `disconnect` callbacks. When any

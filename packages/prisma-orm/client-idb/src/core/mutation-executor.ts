@@ -1320,8 +1320,8 @@ interface ScalarUpdateOptions {
 }
 
 /**
- * Updates the row `first()` would return for the same chain, with FK validation and referential actions. The
- * order and offset pick the row; a limit of 0 matches no row, so nothing is written.
+ * Updates the first row of the chain, with FK validation and referential actions. The order and offset pick
+ * the row, as they do for `first()`; a limit of 0 matches no row, so nothing is written.
  */
 export async function executeScalarUpdateWithFkValidation(
   options: ScalarUpdateOptions & { readonly window?: RowWindow & { readonly take?: number } }
