@@ -152,8 +152,9 @@ export async function autoMigrate(input: {
     try {
       await migrateOnce(input, spaces);
     } catch (error) {
-      if (attempt < MAX_MIGRATION_ATTEMPTS && isLostUpgradeRace(error)) continue;
-      throw error;
+      // The winning upgrade may already have brought every space this caller asked for to
+      // its head, even on the last attempt, so the markers decide whether to try again.
+      if (!isLostUpgradeRace(error)) throw error;
     }
     const behind = await spacesBehindHead(input.dbName, input.factory, spaces);
     if (behind.length === 0) return;

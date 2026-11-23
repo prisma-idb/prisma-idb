@@ -12,6 +12,7 @@ import idbFamilyPack from "@prisma-idb/family-idb/pack";
 import idbTargetPack from "@prisma-idb/target-idb/pack";
 import type { IdbExtensionSpace } from "@prisma-idb/family-idb/control";
 import { createAutoMigratingIdbClient } from "../src/exports/client-auto";
+import { autoMigrate } from "../src/core/auto-migrate";
 import type { IdbStoreAccessor } from "../src/exports/orm";
 import { buildContractSpaceFixture, buildExtensionContractSpaceFixture } from "./_contract-space-fixture";
 
@@ -407,5 +408,51 @@ describe("concurrent auto-migrating opens", () => {
     } finally {
       db.close();
     }
+  });
+
+  /**
+   * A factory whose versioned opens all lose the race with VersionError. Before refusing the
+   * open on attempt `competeOn`, it lets `compete` run in full, as a competing upgrade would.
+   */
+  function losingFactory(
+    competeOn: number,
+    compete: () => Promise<void>
+  ): { factory: IDBFactory; attempts: () => number } {
+    let attempts = 0;
+    const factory = new Proxy(indexedDB, {
+      get(target, property) {
+        if (property !== "open") return Reflect.get(target, property, target);
+        return (name: string, version?: number) => {
+          if (version === undefined) return target.open(name);
+          const request = { error: new DOMException("Another connection upgraded first.", "VersionError") } as {
+            error: DOMException;
+            onerror?: (event: { target: unknown }) => void;
+          };
+          const before = ++attempts === competeOn ? compete() : Promise.resolve();
+          void before.then(() => request.onerror?.({ target: request }));
+          return request;
+        };
+      },
+    });
+    return { factory, attempts: () => attempts };
+  }
+
+  it("gives up after five lost races while a space is still behind its head", async () => {
+    const { factory, attempts } = losingFactory(0, async () => {});
+    await expect(
+      autoMigrate({ contractSpace: buildContractSpaceFixture([appV1]), dbName: dbName(), factory })
+    ).rejects.toThrow(/did not reach the head of space\(s\) app after 5 attempts/);
+    expect(attempts()).toBe(5);
+  });
+
+  it("succeeds when the upgrade that won its last attempt brought every space to its head", async () => {
+    const name = dbName();
+    const appSpace = buildContractSpaceFixture([appV1]);
+    const { factory, attempts } = losingFactory(5, async () => {
+      const winner = await createAutoMigratingIdbClient({ contractSpace: appSpace, dbName: name });
+      await winner.close();
+    });
+    await autoMigrate({ contractSpace: appSpace, dbName: name, factory });
+    expect(attempts()).toBe(5);
   });
 });
