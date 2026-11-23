@@ -140,7 +140,7 @@ export async function createAutoMigratingIdbClient<TContract extends IdbContract
 export async function autoMigrate(input: {
   // `ContractSpace<Contract>` instead of `<unknown>` so the generic
   // constraint `TContract extends Contract` from the framework is satisfied.
-  // The internal apply path only reads `headRef.hash` and `migrations`, so
+  // The internal apply path only reads `headRef.hash`, `headRef.invariants` and `migrations`, so
   // the precise contract shape inside `contractJson` doesn't matter here.
   readonly contractSpace: ContractSpace<Contract>;
   readonly dbName: string;
@@ -342,7 +342,7 @@ function resolveContractSpaces(
   // must match the hash actually embedded in its contractJson. Catches an
   // extension author who edited the contract source without regenerating
   // migrations/refs/head.json — fails loudly here instead of surfacing as a
-  // confusing chain-walk error deep inside walkChain.
+  // confusing path-planning error deep inside planSpacePath.
   for (const space of spaces) {
     const declaredHash = space.contractSpace.contractJson.storage.storageHash;
     const headHash = space.contractSpace.headRef.hash;

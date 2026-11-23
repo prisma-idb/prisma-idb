@@ -57,7 +57,7 @@ export async function generateContractSpace(opts: GenerateContractSpaceOptions):
 
   // Warn when no packages exist — the output module will have an empty
   // migrations list and `hash: ""`, which breaks createAutoMigratingIdbClient
-  // on a fresh database (walkChain throws: "no migration with from === null").
+  // on a fresh database (auto-migration throws: "found no migrations from null").
   // The user should run `prisma-idb migration plan` first.
   if (packages.length === 0) {
     err(
