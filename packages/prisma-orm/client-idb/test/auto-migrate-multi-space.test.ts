@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { defineContract } from "@prisma-idb/family-idb/contract-ts";
 import idbFamilyPack from "@prisma-idb/family-idb/pack";
 import idbTargetPack from "@prisma-idb/target-idb/pack";
+import { writeMarkers } from "@prisma-idb/target-idb/runtime";
 import type { IdbExtensionSpace } from "@prisma-idb/family-idb/control";
 import { createAutoMigratingIdbClient } from "../src/exports/client-auto";
 import { autoMigrate } from "../src/core/auto-migrate";
@@ -150,7 +151,7 @@ describe("auto-migrate combined multi-space apply", () => {
     await client.close();
 
     const db = await openRawDb(name);
-    // A fresh DB's marker-read open (`openAndReadMarker`'s bare
+    // A fresh DB's marker-read open (`openAndReadMarkers`'s bare
     // `factory.open(dbName)`) implicitly creates it at version 1 before any
     // migration runs; the combined apply then bumps it to 2 — one bump
     // total, regardless of how many spaces had pending work (the old
@@ -454,5 +455,47 @@ describe("concurrent auto-migrating opens", () => {
     });
     await autoMigrate({ contractSpace: appSpace, dbName: name, factory });
     expect(attempts()).toBe(5);
+  });
+
+  it("rejects when app and extension heads only match across different committed states", async () => {
+    const name = dbName();
+    const appSpace = buildContractSpaceFixture([appV1, appV2]);
+    const extension = syncExtension();
+    const initial = await createAutoMigratingIdbClient({
+      contractSpace: buildContractSpaceFixture([appV1]),
+      dbName: name,
+    });
+    await initial.close();
+
+    const writer = await openRawDb(name);
+    let afterLastRace = false;
+    let switched: Promise<void> | undefined;
+    const { factory } = losingFactory(5, async () => {
+      await writeMarkers(writer, [{ space: "app", storageHash: appSpace.headRef.hash }]);
+      afterLastRace = true;
+    });
+
+    // Queue a competing write after the first retry read is queued. It can
+    // commit between separate read transactions, but cannot split one snapshot.
+    const get = IDBObjectStore.prototype.get;
+    const getSpy = vi.spyOn(IDBObjectStore.prototype, "get").mockImplementation(function (this: IDBObjectStore, key) {
+      const request = get.call(this, key);
+      if (afterLastRace && !switched && this.name === "_prisma_next_marker") {
+        switched = writeMarkers(writer, [
+          { space: "app", storageHash: appV1.storage.storageHash },
+          { space: extension.spaceId, storageHash: extension.contractSpace.headRef.hash },
+        ]);
+      }
+      return request;
+    });
+    try {
+      await expect(
+        autoMigrate({ contractSpace: appSpace, dbName: name, factory, extensions: [extension] })
+      ).rejects.toThrow(/did not reach the head of space\(s\) idb-sync after 5 attempts/);
+    } finally {
+      getSpy.mockRestore();
+      writer.close();
+      await switched;
+    }
   });
 });

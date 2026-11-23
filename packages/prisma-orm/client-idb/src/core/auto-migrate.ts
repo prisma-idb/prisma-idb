@@ -3,6 +3,7 @@ import type { Contract } from "@prisma/orm-framework/contract/types";
 import type { ContractSpace, MigrationPackage } from "@prisma/orm-framework/components/control";
 import { APP_SPACE_ID } from "@prisma/orm-framework/components/control";
 import type { IdbExtensionSpace } from "@prisma-idb/family-idb/control";
+import { MARKER_STORE_NAME } from "@prisma-idb/driver-idb/runtime";
 // Browser-safe (WebCrypto) hash — the framework's `@prisma/orm-toolchain/migration-tools/hash`
 // uses `node:crypto`, which is unavailable in the browser.
 import { computeMigrationHash } from "./migration-hash";
@@ -12,8 +13,8 @@ import {
   isIdbDdlOp,
   IdbUpgradeSupersededError,
   openAndUpgrade,
-  readMarker,
   type IdbDdlOp,
+  type IdbMarkerRecord,
   type TransformRecordsOp,
 } from "@prisma-idb/target-idb/runtime";
 import { createIdbClient, type IdbClient } from "./idb-client";
@@ -188,12 +189,10 @@ async function spacesBehindHead(
   factory: IDBFactory,
   spaces: ReadonlyArray<{ spaceId: string; contractSpace: ContractSpace<Contract> }>
 ): Promise<string[]> {
-  const behind: string[] = [];
-  for (const space of spaces) {
-    const { markerHash } = await openAndReadMarker(dbName, factory, space.spaceId);
-    if (markerHash !== space.contractSpace.headRef.hash) behind.push(space.spaceId);
-  }
-  return behind;
+  const { markerHashes } = await openAndReadMarkers(dbName, factory, spaces);
+  return spaces
+    .filter(({ spaceId, contractSpace }) => markerHashes.get(spaceId) !== contractSpace.headRef.hash)
+    .map(({ spaceId }) => spaceId);
 }
 
 /** Read the markers once, then apply every space's pending migrations in one upgrade. */
@@ -203,8 +202,7 @@ async function migrateOnce(
 ): Promise<void> {
   const { dbName, factory } = input;
 
-  // Read current DB version once (all spaces share the same IDB database).
-  const { currentVersion: initialVersion } = await openAndReadMarker(dbName, factory, APP_SPACE_ID);
+  const { currentVersion, markerHashes } = await openAndReadMarkers(dbName, factory, spaces);
 
   // Collect pending work per space without applying yet, so a broken chain in
   // any space fails before the database is touched.
@@ -212,7 +210,7 @@ async function migrateOnce(
 
   for (const space of spaces) {
     const targetHash = space.contractSpace.headRef.hash;
-    const { markerHash } = await openAndReadMarker(dbName, factory, space.spaceId);
+    const markerHash = markerHashes.get(space.spaceId) ?? null;
     if (markerHash === targetHash) continue;
 
     const pendingOps = await walkChain({
@@ -252,7 +250,7 @@ async function migrateOnce(
   await openAndUpgrade({
     factory,
     dbName,
-    targetVersion: initialVersion + 1,
+    targetVersion: currentVersion + 1,
     ops: orderedPending.flatMap((space) => space.ops),
     markers: orderedPending.map((space) => ({ space: space.spaceId, storageHash: space.storageHash })),
     onTransformRecords: createTransformRecordsCallback(input.contractSpace.contractJson, input.extensions ?? []),
@@ -405,15 +403,14 @@ async function walkChain(input: {
 }
 
 /**
- * Open the database at its current local version (no version arg), read the
- * marker for `spaceId`, then close the connection. Returns the current integer
- * version so the caller can compute `currentVersion + 1` for the upgrade re-open.
+ * Read all requested markers in one transaction at the current database version.
+ * Missing markers are left out of the snapshot.
  */
-function openAndReadMarker(
+function openAndReadMarkers(
   dbName: string,
   factory: IDBFactory,
-  spaceId: string
-): Promise<{ currentVersion: number; markerHash: string | null }> {
+  spaces: ReadonlyArray<{ spaceId: string }>
+): Promise<{ currentVersion: number; markerHashes: ReadonlyMap<string, string> }> {
   return new Promise((resolve, reject) => {
     let req: IDBOpenDBRequest;
     try {
@@ -425,20 +422,33 @@ function openAndReadMarker(
 
     req.onsuccess = () => {
       const db = req.result;
-      const currentVersion = db.version;
-      void (async () => {
-        try {
-          const record = await readMarker(db, spaceId);
-          resolve({ currentVersion, markerHash: record?.storageHash ?? null });
-        } catch (err) {
-          reject(err);
-        } finally {
-          db.close();
+      const markerHashes = new Map<string, string>();
+      const snapshot = { currentVersion: db.version, markerHashes };
+      try {
+        if (!db.objectStoreNames.contains(MARKER_STORE_NAME)) {
+          resolve(snapshot);
+          return;
         }
-      })();
+        const tx = db.transaction(MARKER_STORE_NAME, "readonly");
+        tx.oncomplete = () => resolve(snapshot);
+        tx.onabort = () => reject(tx.error ?? new Error(`IDB marker read aborted for "${dbName}"`));
+        const store = tx.objectStore(MARKER_STORE_NAME);
+        for (const { spaceId } of spaces) {
+          const markerRequest = store.get(spaceId);
+          markerRequest.onsuccess = () => {
+            const marker = markerRequest.result as IdbMarkerRecord | undefined;
+            if (marker?.storageHash != null) markerHashes.set(spaceId, marker.storageHash);
+          };
+        }
+      } catch (err) {
+        reject(err);
+      } finally {
+        // Pending transactions finish before IndexedDB closes the connection.
+        db.close();
+      }
     };
     req.onerror = () => {
-      reject(req.error ?? new Error(`IDB open failed while reading marker for "${dbName}"`));
+      reject(req.error ?? new Error(`IDB open failed while reading markers for "${dbName}"`));
     };
   });
 }
