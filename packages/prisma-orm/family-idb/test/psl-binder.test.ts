@@ -332,13 +332,14 @@ describe("interpretPslDocumentToIdbContract with portable attribute arguments", 
 
   it("decodes escape sequences in storage and index names, as upstream does", () => {
     const result = interpret(
-      'model Post {\n  id String @id\n  t String\n  @@map("a\\nb")\n  @@index([t], name: "by\\u0041")\n}'
+      'model Post {\n  id String @id\n  t String\n  @@map("a\\nb")\n  @@index([t], name: "by\\u0041")\n  @@unique([t], map: "u\\u0042")\n}'
     );
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(Object.keys(result.value.storage.stores)).toEqual(["a\nb"]);
     expect(Object.keys(result.value.storage.stores["a\nb"]!.indexes ?? {})).toContain("byA");
+    expect(Object.keys(result.value.storage.stores["a\nb"]!.indexes ?? {})).toContain("uB");
   });
 
   it("reports a list default on a scalar field as an invalid default value", () => {
