@@ -70,16 +70,27 @@ export async function observeTransaction(
   }
 
   let commitCalled = false;
+  // Once the transaction has ended, or commit() or rollback() was called, the activity takes no
+  // more statements. A later statement goes straight to the driver, so the caller gets the
+  // driver's TRANSACTION_INACTIVE error, which is how an early auto-commit is detected.
+  let closed = false;
   // `commit()` only waits for completion, so subscribing here also ends a transaction that
   // commits on its own because nothing more was sent.
   const ended = scope.commit().then(
-    () => run.end({ by: "commit", outcome: "succeeded" }),
-    () => run.end({ by: "rollback", outcome: "succeeded", commitAttempted: commitCalled })
+    () => {
+      closed = true;
+      return run.end({ by: "commit", outcome: "succeeded" });
+    },
+    () => {
+      closed = true;
+      return run.end({ by: "rollback", outcome: "succeeded", commitAttempted: commitCalled });
+    }
   );
   ended.catch((error: unknown) => run.ctx.log.error(error));
 
   return {
     execute(plan: IdbAtomicPlan) {
+      if (closed) return scope.execute(plan);
       try {
         return executeObserved(plan);
       } catch (error) {
@@ -88,11 +99,13 @@ export async function observeTransaction(
     },
     async commit() {
       commitCalled = true;
+      closed = true;
       run.stopAcceptingChildren();
       await scope.commit();
       await ended;
     },
     rollback() {
+      closed = true;
       run.stopAcceptingChildren();
       scope.rollback();
     },

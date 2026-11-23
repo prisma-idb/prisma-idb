@@ -8,6 +8,7 @@ import { defineContract } from "@prisma-idb/family-idb/contract-ts";
 import idbFamilyPack from "@prisma-idb/family-idb/pack";
 import idbTargetPack from "@prisma-idb/target-idb/pack";
 import type { IdbMiddleware } from "@prisma-idb/runtime-idb/runtime";
+import { IdbTransactionCommittedEarlyError } from "../src/exports/client";
 import { createAutoMigratingIdbClient } from "../src/exports/client-auto";
 import { buildContractSpaceFixture } from "./_contract-space-fixture";
 
@@ -149,5 +150,35 @@ describe("middleware inside transactions", () => {
     release();
     expect(events).toContain("finalized:transaction:committed");
     expect(await client.orm["users"]!.all().toArray()).toHaveLength(2);
+  });
+
+  describe("a transaction IndexedDB committed while the callback waited", () => {
+    const idle = () => new Promise((resolve) => setTimeout(resolve, 20));
+
+    it("reports the early commit when the callback returns without another operation", async () => {
+      const client = await open([recorder([])]);
+      const failure = await client
+        .transaction(["users"], async (tx) => {
+          await (tx["users"] as unknown as Accessor).create({ id: "u1" });
+          await idle();
+        })
+        .catch((error: unknown) => error);
+      expect(failure).toBeInstanceOf(IdbTransactionCommittedEarlyError);
+    });
+
+    it("reports the early commit with the driver's error when an operation follows", async () => {
+      const client = await open([recorder([])]);
+      const failure = await client
+        .transaction(["users"], async (tx) => {
+          await (tx["users"] as unknown as Accessor).create({ id: "u1" });
+          await idle();
+          await (tx["users"] as unknown as Accessor).create({ id: "u2" });
+        })
+        .catch((error: unknown) => error);
+      expect(failure).toBeInstanceOf(IdbTransactionCommittedEarlyError);
+      expect(((failure as IdbTransactionCommittedEarlyError).cause as { code?: string }).code).toBe(
+        "TRANSACTION_INACTIVE"
+      );
+    });
   });
 });

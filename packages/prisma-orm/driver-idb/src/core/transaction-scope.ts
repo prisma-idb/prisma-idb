@@ -6,8 +6,8 @@
  *
  * Design notes:
  * - `execute(plan)` runs `executeOpInTx` directly in the pre-opened transaction —
- *   NO new transaction is opened per call, and the middleware chain is bypassed
- *   entirely. This keeps the shared IDB transaction alive across multiple awaited
+ *   NO new transaction is opened per call, and this scope runs no middleware.
+ *   The runtime wraps it so middleware observes each statement. This keeps the shared IDB transaction alive across multiple awaited
  *   execute() calls (IDB auto-commits in a macro-task, not a microtask; each
  *   execute() issues new requests before the auto-commit check fires).
  * - `commit()` resolves when `tx.oncomplete` fires — the caller awaits this after
@@ -15,9 +15,9 @@
  * - `rollback()` is idempotent: calling it on an already-aborted transaction is
  *   a no-op (the DOMException from IDB is swallowed).
  *
- * Since this scope's execute() bypasses both of
- * `RuntimeCore`'s middleware chains (query()'s and execute()'s alike), the
- * cache middleware never fires inside a scope → reads are always fresh.
+ * The runtime's wrapper reports statements to middleware but never consults
+ * intercepts, so a cache middleware never answers a read inside a scope and
+ * reads are always fresh.
  */
 import type { IdbAtomicPlan } from "./plan-body";
 import { IdbExecuteError, isTransactionInactiveError, transactionInactiveError } from "./execute/error";
