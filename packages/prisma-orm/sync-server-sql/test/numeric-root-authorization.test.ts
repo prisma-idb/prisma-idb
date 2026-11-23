@@ -40,7 +40,7 @@ describe("authorization below a tenant root with an Int key", () => {
       [{ id: "e1", model: "Project", operation: "update", payload: row, wireKey: "p1" }],
       { scopeKey }
     );
-    if (!result?.check) throw new Error("validatePush returned no ownership check");
+    if (result?.check.kind !== "scoped") throw new Error("validatePush returned no scoped ownership check");
     return checkAuthorization(readRow, contract, "Project", result.check, row);
   };
 
