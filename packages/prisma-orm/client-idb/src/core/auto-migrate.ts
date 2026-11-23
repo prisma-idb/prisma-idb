@@ -146,16 +146,20 @@ export async function autoMigrate(input: {
 
   // Another connection, such as a second client in this page or another tab,
   // can take the version this attempt planned for. Its upgrade carries only
-  // what that caller needed, so this caller reads the markers again and plans
-  // from them until every space it asked for is at its head.
+  // what that caller needed, so after a lost race this caller reads the
+  // markers again and plans from them until every space it asked for is at
+  // its head.
   for (let attempt = 1; ; attempt++) {
     try {
       await migrateOnce(input, spaces);
+      // A successful attempt writes the marker of every space that was behind in the same
+      // upgrade, and a marker at its head stays there, so every space is now at its head.
+      return;
     } catch (error) {
-      // The winning upgrade may already have brought every space this caller asked for to
-      // its head, even on the last attempt, so the markers decide whether to try again.
       if (!isLostUpgradeRace(error)) throw error;
     }
+    // The winning upgrade may already have brought every space this caller asked for to its
+    // head, even on the last attempt, so the markers decide whether to try again.
     const behind = await spacesBehindHead(input.dbName, input.factory, spaces);
     if (behind.length === 0) return;
     if (attempt >= MAX_MIGRATION_ATTEMPTS) {
