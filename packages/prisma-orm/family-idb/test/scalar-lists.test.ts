@@ -129,6 +129,10 @@ describe("scalar lists", () => {
     expect(() => contract(`${scalar}[]`, { values: value })).toThrow(new RegExp(code));
   });
 
+  it.each([NaN, Infinity, -Infinity])("rejects the TypeScript Float[] default element %s", (element) => {
+    expect(() => contract("Float[]", { values: [1, element] })).toThrow(/IDB_INVALID_DEFAULT_VALUE/);
+  });
+
   it.each(scalars)("rejects %s lists in single and compound primary keys", (scalar) => {
     for (const key of ["values", ["id", "values"]] as const) {
       expect(() =>

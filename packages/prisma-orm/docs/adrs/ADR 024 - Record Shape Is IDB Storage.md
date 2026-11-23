@@ -70,4 +70,4 @@ After a server deploys a new client storage hash, sync requests from an old bund
 
 For the author workflow, see [Author a field change](../../../../apps/docs/content/docs/prisma-8/field-changes.mdx).
 
-[ADR 025](ADR%20025%20-%20Scalar%20Lists.md) applies these rules to required scalar lists and empty-list backfills.
+[ADR 025](ADR%20025%20-%20Scalar%20Lists.md) applies these rules to required scalar lists and list-default backfills.

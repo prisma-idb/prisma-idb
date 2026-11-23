@@ -349,6 +349,7 @@ function storedCreateDefault(
     const stored: (string | number | boolean)[] = [];
     for (const element of value) {
       if (typeof element !== "string" && typeof element !== "number" && typeof element !== "boolean") return undefined;
+      if (typeof element === "number" && !Number.isFinite(element)) return undefined;
       const one = storedLiteralDefault(field, element);
       if (one === undefined) return undefined;
       stored.push(one);

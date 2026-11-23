@@ -212,6 +212,8 @@ function validateListDefault(
       }
     } else if (
       (typeof element !== "string" && typeof element !== "number" && typeof element !== "boolean") ||
+      // JSON has no NaN or Infinity, so the emitted contract would store null instead.
+      (typeof element === "number" && !Number.isFinite(element)) ||
       !literalValueMatchesCodec(element, field.codecId)
     ) {
       report(
