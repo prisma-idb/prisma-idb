@@ -28,5 +28,20 @@ describe("a tenant root with an Int key", () => {
     expect(sameScopeKey(7, "7")).toBe(true);
     expect(sameScopeKey("7", "7")).toBe(true);
     expect(sameScopeKey(Number.NaN, "NaN")).toBe(false);
+    expect(sameScopeKey(Number.POSITIVE_INFINITY, "Infinity")).toBe(false);
+  });
+
+  it("spells a number the way String() does", () => {
+    expect(sameScopeKey(-0, "0")).toBe(true);
+    expect(sameScopeKey(1.5, "1.5")).toBe(true);
+    expect(sameScopeKey(1e21, "1e+21")).toBe(true);
+    expect(sameScopeKey(1e21, "1000000000000000000000")).toBe(false);
+  });
+
+  it("matches a bigint root key by its digits", () => {
+    expect(sameScopeKey(9007199254740993n, "9007199254740993")).toBe(true);
+    expect(sameScopeKey(9007199254740993n, "9007199254740992")).toBe(false);
+    // On the wire a BigInt key is already a digit string.
+    expect(sameScopeKey("9007199254740993", "9007199254740993")).toBe(true);
   });
 });

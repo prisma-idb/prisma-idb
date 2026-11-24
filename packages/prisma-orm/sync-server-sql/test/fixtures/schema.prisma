@@ -174,3 +174,16 @@ model ListItem {
   decimals Decimal[]
   jsons Json[]
 }
+
+model NumericTenant {
+  id   Int @id
+  name String
+  items NumericItem[]
+}
+
+model NumericItem {
+  id      Int @id
+  ownerId Int
+  owner   NumericTenant @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  name    String
+}

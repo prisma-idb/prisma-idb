@@ -7,6 +7,7 @@ import type { IdbContract } from "@prisma-idb/client-idb/orm";
 import { applyPull, createSyncIdbClient } from "@prisma-idb/sync-extension-idb/client";
 import { logWithRecordSchema } from "@prisma-idb/sync-extension-idb/schemas";
 import { createSqlSyncAdapter } from "../src/core/create-adapter";
+import { createSqlSync } from "../src/core/http-handlers";
 import { ormRootFor } from "../src/core/orm-root";
 import { testBigSyncServer, testContract, testDb, seed } from "./helpers";
 
@@ -20,11 +21,15 @@ async function browserClient() {
       BigItem: { store: "bigItems", key: "id", fields: { id: "String", ownerId: "String", name: "String" } },
     },
   }) as unknown as IdbContract;
+  return openSyncClient(contract, ["bigUsers", "bigItems"]);
+}
+
+async function openSyncClient(contract: IdbContract, stores: readonly string[]) {
   const dbName = `wire-key-roundtrip-${crypto.randomUUID()}`;
   await new Promise<void>((resolve, reject) => {
     const request = indexedDB.open(dbName, 1);
     request.onupgradeneeded = () => {
-      for (const store of ["bigUsers", "bigItems", "_idb_sync_outbox", "_idb_sync_version_meta"]) {
+      for (const store of [...stores, "_idb_sync_outbox", "_idb_sync_version_meta"]) {
         request.result.createObjectStore(store, { keyPath: "id" });
       }
     };
@@ -252,4 +257,111 @@ describe("wire-form SQL keys", () => {
       await client.close();
     }
   });
+});
+
+it("round-trips numeric keys from PostgreSQL to IndexedDB through create, update and delete", async () => {
+  const db = await testDb();
+  const contract = defineContract({
+    family: idbFamilyPack,
+    target: idbTargetPack,
+    models: {
+      NumericTenant: { store: "tenants", key: "id", fields: { id: "Int", name: "String" } },
+      NumericItem: { store: "items", key: "id", fields: { id: "Int", ownerId: "Int", name: "String" } },
+    },
+  }) as unknown as IdbContract;
+  const storageHash = contract.storage.storageHash;
+  const scopeKey = "7";
+  const handlers = createSqlSync({
+    contract: testContract,
+    clientContract: contract,
+    rootModel: "NumericTenant",
+    db,
+    scopeKey,
+  });
+  const client = await openSyncClient(contract, ["tenants", "items"]);
+  let cursor: string | null = null;
+  try {
+    async function push(id: string, entityType: string, operation: string, payload: unknown) {
+      const response = await handlers.push(
+        new Request("https://sync.test/push", {
+          method: "POST",
+          body: JSON.stringify({ storageHash, events: [{ id, entityType, operation, payload }] }),
+        })
+      );
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual([{ id, success: true }]);
+    }
+
+    async function pull(expected: {
+      model: string;
+      keyPath: number | string;
+      record?: unknown;
+      validationError?: string;
+    }) {
+      const url = new URL("https://sync.test/pull");
+      url.searchParams.set("storageHash", storageHash);
+      if (cursor) url.searchParams.set("since", cursor);
+      const response = await handlers.pull(new Request(url));
+      expect(response.status).toBe(200);
+      const { logs } = await response.json();
+      expect(logs).toMatchObject([expected]);
+      const changes = await applyPull(client, logWithRecordSchema.array().parse(logs));
+      expect(changes).toMatchObject(
+        expected.validationError
+          ? { applied: 0, skipped: 1, validationFailed: 1 }
+          : { applied: 1, skipped: 0, validationFailed: 0 }
+      );
+      cursor = changes.lastChangelogId;
+    }
+
+    const owner = { id: 7, name: "Ann" };
+    await db.orm.public.NumericTenant.select("id").create(owner);
+    await seed(db, {
+      Changelog: [
+        {
+          model: "NumericTenant",
+          keyPath: "7",
+          operation: "create",
+          scopeKey,
+          outboxEventId: "historical",
+        },
+      ],
+    });
+    await pull({ model: "NumericTenant", keyPath: 7, record: owner });
+
+    const item = { id: 8, ownerId: 7, name: "first" };
+    await push("create", "NumericItem", "create", item);
+    await pull({ model: "NumericItem", keyPath: item.id, record: item });
+    const readItem = () =>
+      client.withTransaction(["items"], (scope) =>
+        scope.execute({ kind: "key-get", storeName: "items", key: item.id } as never)
+      );
+    expect(await readItem()).toEqual([item]);
+
+    await push("update", "NumericItem", "update", { key: item.id, patch: { name: "second" } });
+    const updated = { ...item, name: "second" };
+    await pull({ model: "NumericItem", keyPath: item.id, record: updated });
+    expect(await readItem()).toEqual([updated]);
+
+    await seed(db, {
+      Changelog: [
+        {
+          id: "70000000-0000-7000-8000-000000000000",
+          model: "NumericItem",
+          keyPath: "8.5",
+          operation: "delete",
+          scopeKey,
+          outboxEventId: "bad-key",
+        },
+      ],
+    });
+    await pull({ model: "NumericItem", keyPath: "8.5", validationError: "KEYPATH_VALIDATION_FAILURE" });
+    expect(await readItem()).toEqual([updated]);
+
+    await push("delete", "NumericItem", "delete", { key: item.id });
+    await pull({ model: "NumericItem", keyPath: item.id, record: null });
+    expect(await readItem()).toEqual([]);
+  } finally {
+    await client.close();
+  }
 });

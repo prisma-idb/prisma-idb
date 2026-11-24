@@ -110,3 +110,37 @@ export function reviveWireValues(
 export function reviveWireKey(contract: SyncServerContract, model: string, keyField: string, key: unknown): unknown {
   return reviveWireValues(contract, model, { [keyField]: key }, keyField)[keyField];
 }
+
+// Integer codecs have a signed range. Float codecs accept finite wire numbers.
+const numericKeyLimits = new Map<string, number | null>([
+  ["sql/int@1", 2 ** 31],
+  ["pg/int@1", 2 ** 31],
+  ["pg/int2@1", 2 ** 15],
+  ["pg/int4@1", 2 ** 31],
+  ["pg/int8number@1", 2 ** 53],
+  ["sql/float@1", null],
+  ["pg/float@1", null],
+  ["pg/float4@1", null],
+  ["pg/float8@1", null],
+]);
+
+/** Restore a numeric key from the changelog's text column. */
+export function decodeStoredNumericKey(
+  contract: SyncServerContract,
+  model: string,
+  keyField: string,
+  key: unknown
+): unknown {
+  if (typeof key !== "string") return key;
+  const field = domainModelsAtDefaultNamespace(contract.domain)[model]?.fields[keyField];
+  const limit = field?.type.kind === "scalar" ? numericKeyLimits.get(field.type.codecId) : undefined;
+  if (limit === undefined) return key;
+
+  const value = Number(key);
+  // Changelog writes use the ordinary string representation of a wire number.
+  const outsideRange = limit !== null && (!Number.isSafeInteger(value) || value < -limit || value >= limit);
+  if (!Number.isFinite(value) || String(value) !== key || outsideRange) {
+    throw new WireValidationError("KEYPATH_VALIDATION_FAILURE", "Invalid numeric changelog key");
+  }
+  return value;
+}
