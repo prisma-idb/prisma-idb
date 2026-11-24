@@ -42,7 +42,7 @@ const mine = await db.orm.todo.where({ done: false, userId: "user_1" }).all();
 const noEmail = await db.orm.user.where({ email: null }).all(); // email is null
 ```
 
-A filter on a field the model doesn't have throws, in both forms. This applies to `where()`, `upsert()` and the criteria of `connect()` and `disconnect()`.
+Both forms of `where()` reject predicates on unknown fields. Shorthand filters omit entries with an `undefined` value. The same rules apply to `upsert()` filters and [nested relation criteria](./writing#write-related-rows).
 
 Pass a function to use operators. It receives each field of the model:
 

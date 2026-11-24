@@ -2,4 +2,6 @@
 "@prisma-idb/client-idb": patch
 ---
 
-A filter on a field the model doesn't have now throws `Model "<Model>" has no field "<field>"`, as in Prisma 8. This covers `where()` with an object or a function, `upsert()`, and `connect()` and `disconnect()` criteria. Before, an unknown field read as missing on every row, so `where({ typo: null })` matched every row, and a bulk write with it changed every row.
+A predicate on an unknown field throws `Model "<Model>" has no field "<field>"` in `where()`, a unique `upsert()` lookup, and nested relation criteria. Shorthand filters omit entries whose value is `undefined`.
+
+**Breaking:** Nested `connect()` and `disconnect()` reject an explicitly empty criterion, including objects containing only `undefined` values. Use `disconnect()` or `disconnect([])` to detach all related rows. When the row being written holds the foreign key, pass exactly one criterion to `connect()` and omit criteria from `disconnect()`.
