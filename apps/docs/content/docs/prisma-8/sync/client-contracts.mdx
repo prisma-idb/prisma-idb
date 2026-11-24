@@ -29,6 +29,8 @@ model Session {
 }
 ```
 
+`@ignore` and `@@ignore` don't mark data as server-only. As in Prisma, they leave the field or model out of the contract in every projection, so the server-side IDB contract doesn't have it either. Use `@idb.exclude` and `@@idb.exclude` for data the server keeps and the browser must not see. The sync server removes only the `idb` attributes, so the SQL family reads `@ignore` and `@@ignore` as you wrote them.
+
 Each side reads the schema differently:
 
 - **The browser** reads it through the IndexedDB family, with `prismaIdbContract(path, { projection: "client" })`. The `"client"` projection leaves out everything marked. Without `projection`, nothing is left out.

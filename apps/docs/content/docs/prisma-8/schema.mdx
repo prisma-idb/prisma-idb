@@ -158,6 +158,14 @@ contract: prismaIdbContract("src/prisma/schema.prisma", { projection: "client" }
 
 IDB reads the attributes it has a use for and refuses the rest, rather than dropping them and changing what the schema means. IndexedDB accepts `@map` for schemas shared with SQL. It also ignores the legacy `@db.*` and `@@schema` spellings. Prisma 8 SQL uses its own native type and schema syntax. Any other attribute, such as `@@fulltext`, fails to compile with `PSL_UNSUPPORTED_FIELD_ATTRIBUTE` or `PSL_UNSUPPORTED_MODEL_ATTRIBUTE`. Repeating a single-use IndexedDB attribute, such as `@default`, `@onCreate` or `@@map`, fails with `PSL_DUPLICATE_ATTRIBUTE`. A relation field stores no value, so `@id`, `@unique`, `@default`, `@onCreate` and `@onUpdate` on it fail with `PSL_UNSUPPORTED_FIELD_ATTRIBUTE`; put them on the foreign-key field. `@relation` on a field whose type isn't a model fails with `IDB_INVALID_RELATION`. These checks apply to excluded fields and models too. They concern PSL attributes only: a TypeScript model has no attribute syntax, so it has nothing to refuse here.
 
+`@ignore` on a field and `@@ignore` on a model leave it out of the contract in every projection, as in Prisma. A TypeScript model has no such attribute; leave the field or model out of `defineContract` instead. These rules apply:
+
+- A relation field that points to an `@@ignore` model must be marked `@ignore` too, or the schema fails with `IDB_INVALID_RELATION`.
+- When either side of a relation is `@ignore`, the relation leaves the contract on both sides. Its foreign-key fields stay as plain fields, and the client no longer checks them as foreign keys.
+- A primary key, an index or a relation that isn't ignored can't use an `@ignore` field. The schema fails with `IDB_IGNORED_FIELD_REFERENCED`.
+
+To keep data on the server and out of the browser, use `@idb.exclude` instead, as [Server-only fields and models](#server-only-fields-and-models) explains.
+
 ## Config
 
 `prisma.config.ts` wraps an `orm` section built with `defineConfig` from `@prisma-idb/family-idb/config-types`. The [Quick Start](/docs/prisma-8/getting-started#3-configure-the-clis) shows a complete file.

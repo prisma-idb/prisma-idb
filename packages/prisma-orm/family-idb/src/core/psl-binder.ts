@@ -71,6 +71,8 @@ import { idbScalarTypes } from "./psl-scalars";
 
 /** The attribute namespace family-idb owns. A foreign PSL parser rejects it, see `stripIdbExcludeAttributes`. */
 export const IDB_EXCLUDE_ATTR = "idb.exclude";
+/** Prisma's `@ignore`/`@@ignore`: the field or model is left out of the contract in every projection. */
+export const IGNORE_ATTR = "ignore";
 
 // ── Argument types ─────────────────────────────────────────────────────────────
 
@@ -260,6 +262,10 @@ const excludeModelSpec = modelAttribute(IDB_EXCLUDE_ATTR, {
   documentation: "Leaves this model out of the client contract.",
 });
 
+const ignoreModelSpec = modelAttribute(IGNORE_ATTR, {
+  documentation: "Leaves this model out of the contract, as Prisma's `@@ignore` does.",
+});
+
 const idFieldSpec = fieldAttribute("id", {
   documentation: "Makes this field the primary key.",
   named: portableKeyArgs,
@@ -301,6 +307,10 @@ const excludeFieldSpec = fieldAttribute(IDB_EXCLUDE_ATTR, {
   documentation: "Leaves this field out of the client contract.",
 });
 
+const ignoreFieldSpec = fieldAttribute(IGNORE_ATTR, {
+  documentation: "Leaves this field out of the contract, as Prisma's `@ignore` does.",
+});
+
 /**
  * Every attribute the IDB interpreter reads, keyed by PSL name. Upstream expects a
  * factory per entry because a spec may depend on the field or model; none of
@@ -313,6 +323,7 @@ export const idbAttributeSpecs = {
     unique: () => uniqueModelSpec,
     index: () => indexModelSpec,
     [IDB_EXCLUDE_ATTR]: () => excludeModelSpec,
+    [IGNORE_ATTR]: () => ignoreModelSpec,
   },
   field: {
     id: () => idFieldSpec,
@@ -323,13 +334,14 @@ export const idbAttributeSpecs = {
     onUpdate: generatorAttributeSpec("onUpdate"),
     relation: () => relationFieldSpec,
     [IDB_EXCLUDE_ATTR]: () => excludeFieldSpec,
+    [IGNORE_ATTR]: () => ignoreFieldSpec,
   },
 } satisfies AttributeSpecNamespace;
 
 // ── Binding ────────────────────────────────────────────────────────────────────
 
 /** Model attributes IDB reads at most once per model. `@@index` and `@@unique` may repeat. */
-const SINGLE_MODEL_ATTRIBUTES = new Set(["map", "id", IDB_EXCLUDE_ATTR]);
+const SINGLE_MODEL_ATTRIBUTES = new Set(["map", "id", IDB_EXCLUDE_ATTR, IGNORE_ATTR]);
 
 /**
  * Model attributes IDB accepts: the indexes it reads, and `@@schema`, which
@@ -349,6 +361,7 @@ const SINGLE_FIELD_ATTRIBUTES = new Set([
   "onUpdate",
   "relation",
   IDB_EXCLUDE_ATTR,
+  IGNORE_ATTR,
 ]);
 
 /** Field attributes that describe a stored value, so a relation field, which stores none, can't take them. */
@@ -429,6 +442,10 @@ export interface IdbAttributeBinder {
   isModelExcluded(model: ModelSymbol): boolean;
   /** Whether `@idb.exclude` is present. Checked without binding. */
   isFieldExcluded(field: FieldSymbol): boolean;
+  /** Whether `@ignore` is present. Checked without binding. */
+  isFieldIgnored(field: FieldSymbol): boolean;
+  /** Whether `@@ignore` is present. Checked without binding. */
+  isModelIgnored(model: ModelSymbol): boolean;
 }
 
 /** What {@link createIdbAttributeBinder} needs to bind a parsed schema and report problems against it. */
@@ -653,6 +670,9 @@ export function createIdbAttributeBinder(input: IdbAttributeBinderInput): IdbAtt
         case IDB_EXCLUDE_ATTR:
           if (interpret(excludeModelSpec, attribute, ctx) === undefined) failed = true;
           break;
+        case IGNORE_ATTR:
+          if (interpret(ignoreModelSpec, attribute, ctx) === undefined) failed = true;
+          break;
       }
     }
     const bound = { map, id, indexes, failed };
@@ -746,6 +766,9 @@ export function createIdbAttributeBinder(input: IdbAttributeBinderInput): IdbAtt
         case IDB_EXCLUDE_ATTR:
           if (interpret(excludeFieldSpec, attribute, ctx) === undefined) failed = true;
           break;
+        case IGNORE_ATTR:
+          if (interpret(ignoreFieldSpec, attribute, ctx) === undefined) failed = true;
+          break;
       }
     }
     const bound = {
@@ -792,5 +815,7 @@ export function createIdbAttributeBinder(input: IdbAttributeBinderInput): IdbAtt
       return markers.length > 0;
     },
     isFieldExcluded: (field) => field.attributes.some((attribute) => attribute.name === IDB_EXCLUDE_ATTR),
+    isFieldIgnored: (field) => field.attributes.some((attribute) => attribute.name === IGNORE_ATTR),
+    isModelIgnored: (model) => model.attributes.some((attribute) => attribute.name === IGNORE_ATTR),
   };
 }

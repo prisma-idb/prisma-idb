@@ -1938,6 +1938,126 @@ describe("attributes IDB doesn't read", () => {
   });
 });
 
+describe("@ignore and @@ignore", () => {
+  const codes = (schema: string, projection?: ContractProjection) => {
+    const result = interpret(schema, projection);
+    return result.ok ? [] : result.failure.diagnostics.map((d) => [d.code, d.message]);
+  };
+  const user = "model User {\n  id String @id\n}\n";
+
+  describe.each(["full", "client"] as const)("in the %s projection", (projection) => {
+    it.each([
+      [
+        "a list relation field that points to an @@ignore model without @ignore",
+        "model User {\n  id String @id\n  legacy Legacy[]\n}\nmodel Legacy {\n  id String @id\n  userId String\n  user User @relation(fields: [userId], references: [id])\n  @@ignore\n}",
+        [
+          "IDB_INVALID_RELATION",
+          'Field "User.legacy" points to model "Legacy", which is marked @@ignore. Mark the field @ignore as well.',
+        ],
+      ],
+      [
+        "a to-one relation field that points to an @@ignore model without @ignore",
+        "model Legacy {\n  id String @id\n  @@ignore\n}\nmodel Post {\n  id String @id\n  legacyId String\n  legacy Legacy @relation(fields: [legacyId], references: [id])\n}",
+        [
+          "IDB_INVALID_RELATION",
+          'Field "Post.legacy" points to model "Legacy", which is marked @@ignore. Mark the field @ignore as well.',
+        ],
+      ],
+      [
+        "an @ignore key field",
+        "model Item {\n  id String @id @ignore\n  name String\n}",
+        [
+          "IDB_IGNORED_FIELD_REFERENCED",
+          'Field "Item.id" is marked @ignore, but the primary key of model "Item" uses it, and a model needs its key. Remove @ignore from the field, or mark the model @@ignore.',
+        ],
+      ],
+      [
+        "an @ignore field in a compound key",
+        "model Item {\n  a String\n  b String @ignore\n  @@id([a, b])\n}",
+        [
+          "IDB_IGNORED_FIELD_REFERENCED",
+          'Field "Item.b" is marked @ignore, but the primary key of model "Item" uses it, and a model needs its key. Remove @ignore from the field, or mark the model @@ignore.',
+        ],
+      ],
+      [
+        "an @ignore field in an index",
+        "model Item {\n  id String @id\n  name String @ignore\n  @@index([name])\n}",
+        [
+          "IDB_IGNORED_FIELD_REFERENCED",
+          'Field "Item.name" is marked @ignore, but an index of model "Item" uses it, and the field is not in the contract. Remove @ignore from the field, or remove the field from the index.',
+        ],
+      ],
+      [
+        "a relation that joins on an @ignore foreign key",
+        `${user}model Post {\n  id String @id\n  authorId String @ignore\n  author User @relation(fields: [authorId], references: [id])\n}`,
+        [
+          "IDB_IGNORED_FIELD_REFERENCED",
+          'Field "Post.authorId" is marked @ignore, but relation field "Post.author" joins on it. Mark the relation field @ignore as well, or remove @ignore from the field.',
+        ],
+      ],
+      [
+        "a relation that references an @ignore field",
+        "model User {\n  id String @id\n  code String @unique @ignore\n}\nmodel Post {\n  id String @id\n  authorCode String\n  author User @relation(fields: [authorCode], references: [code])\n}",
+        [
+          "IDB_IGNORED_FIELD_REFERENCED",
+          'Field "User.code" is marked @ignore, but relation field "Post.author" references it. Mark the relation field @ignore as well, or remove @ignore from the field.',
+        ],
+      ],
+      [
+        "a second @ignore",
+        "model Item {\n  id String @id\n  s String @ignore @ignore\n}",
+        ["PSL_DUPLICATE_ATTRIBUTE", '`@ignore` declared more than once on field "Item.s".'],
+      ],
+      [
+        "a second @@ignore",
+        "model Item {\n  id String @id\n  @@ignore\n  @@ignore\n}",
+        ["PSL_DUPLICATE_ATTRIBUTE", '`@@ignore` declared more than once on model "Item".'],
+      ],
+      [
+        "an unknown attribute on an @ignore field",
+        "model Item {\n  id String @id\n  s String @ignore @madeUp\n}",
+        ["PSL_UNSUPPORTED_FIELD_ATTRIBUTE", 'Field "Item.s" uses unsupported attribute "@madeUp".'],
+      ],
+      [
+        "a second @default on an @ignore field",
+        'model Item {\n  id String @id\n  s String @ignore @default("a") @default("b")\n}',
+        ["PSL_DUPLICATE_ATTRIBUTE", '`@default` declared more than once on field "Item.s".'],
+      ],
+      [
+        "an unknown attribute on an @@ignore model",
+        "model Item {\n  id String @id\n  @@ignore\n  @@fulltext([id])\n}",
+        ["PSL_UNSUPPORTED_MODEL_ATTRIBUTE", 'Model "Item" uses unsupported attribute "@@fulltext".'],
+      ],
+      [
+        "an unknown field attribute in an @@ignore model",
+        "model Item {\n  id String @id @madeUp\n  @@ignore\n}",
+        ["PSL_UNSUPPORTED_FIELD_ATTRIBUTE", 'Field "Item.id" uses unsupported attribute "@madeUp".'],
+      ],
+    ])("refuses %s", (_, schema, diagnostic) => {
+      expect(codes(schema, projection)).toEqual([diagnostic]);
+    });
+
+    it("refuses @ignore with arguments", () => {
+      expect(codes("model Item {\n  id String @id\n  s String @ignore(1)\n}", projection)).toHaveLength(1);
+    });
+
+    it("leaves an @@ignore model with relations out, keeping the foreign key of the other side", () => {
+      const result = interpret(
+        "model User {\n  id String @id\n  legacy Legacy[] @ignore\n}\nmodel Legacy {\n  id String @id\n  userId String\n  user User @relation(fields: [userId], references: [id])\n  @@ignore\n}\nmodel Post {\n  id String @id\n  legacyId String\n  legacy Legacy @relation(fields: [legacyId], references: [id]) @ignore\n}",
+        projection
+      );
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      const models = result.value.domain.namespaces[NS]!.models as unknown as Record<string, TestContractModel>;
+      expect(Object.keys(models).sort()).toEqual(["Post", "User"]);
+      expect(Object.keys(models["Post"]!.fields)).toEqual(["id", "legacyId"]);
+      expect(models["Post"]!.relations).toEqual({});
+      expect(models["User"]!.relations).toEqual({});
+      expect(Object.keys(result.value.storage.stores).sort()).toEqual(["post", "user"]);
+    });
+  });
+});
+
 describe("shared definition diagnostics", () => {
   it.each([
     { type: "Role[]?", enums: { Role: ["A"] }, enumPsl: "enum Role {\n A\n}\n", code: "IDB_OPTIONAL_LIST" },
