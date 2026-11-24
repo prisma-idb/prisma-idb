@@ -34,6 +34,25 @@ export function isValidIdbKeyCodec(codecId: string): boolean {
   return !["idb/bool@1", "idb/bigint@1", "idb/json@1"].includes(codecId);
 }
 
+const INT32_MIN = -2_147_483_648;
+const INT32_MAX = 2_147_483_647;
+
+/** Why an `Int` default was refused. */
+export function intDefaultMessage(label: string, written: string): string {
+  return `${label} default ${written} is not an Int. Write a whole number from ${INT32_MIN} to ${INT32_MAX}.`;
+}
+
+/**
+ * Whether PSL numeral text names an `Int`: whole-number digits in the int32
+ * range. It reads the digits as written, so `2147483647.00000001` is refused
+ * instead of rounding to a valid `Int` first.
+ */
+export function isIntNumeralText(text: string): boolean {
+  if (!/^[+-]?\d+$/.test(text)) return false;
+  const value = BigInt(text);
+  return value >= BigInt(INT32_MIN) && value <= BigInt(INT32_MAX);
+}
+
 /** Literal defaults must match the field's stored scalar type. */
 export function literalValueMatchesCodec(value: string | number | boolean, codecId: string): boolean {
   switch (codecId) {
@@ -41,7 +60,7 @@ export function literalValueMatchesCodec(value: string | number | boolean, codec
       return typeof value === "string";
     case "idb/int32@1":
       // An Int default is written as the field's value, so it must pass the int32 check every write applies.
-      return typeof value === "number" && Number.isInteger(value) && value >= -2_147_483_648 && value <= 2_147_483_647;
+      return typeof value === "number" && Number.isInteger(value) && value >= INT32_MIN && value <= INT32_MAX;
     case "idb/double@1":
       return typeof value === "number";
     case "idb/decimal@1":
@@ -133,6 +152,10 @@ function validateLiteralDefault(
           `${label} default is not a declared value of enum "${field.enumName}".`,
           defaultAt
         );
+      }
+    } else if (field.codecId === "idb/int32@1" && typeof field.literalDefault === "number") {
+      if (!literalValueMatchesCodec(field.literalDefault, field.codecId)) {
+        report("IDB_INVALID_DEFAULT_VALUE", intDefaultMessage(label, String(field.literalDefault)), defaultAt);
       }
     } else if (!literalValueMatchesCodec(field.literalDefault, field.codecId)) {
       report(

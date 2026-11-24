@@ -30,7 +30,7 @@ import { idbGeneratorFunctionRegistry, idbGeneratorNode } from "./generator-func
 import type { IdbAttributeBinder, IdbDefaultValue } from "./psl-binder";
 import { PslDefinitionSourceMap } from "./psl-definition-source-map";
 import { SCALAR_TO_CODEC_ID } from "./psl-scalars";
-import { validateIdbContractDefinition } from "./validate-definition";
+import { intDefaultMessage, isIntNumeralText, validateIdbContractDefinition } from "./validate-definition";
 
 /** The removed Prisma field preset that set a field on create and on update. */
 const TEMPORAL_UPDATED_AT_PRESET = "temporal.updatedAt";
@@ -51,6 +51,7 @@ function onCreateRewrite(call: string): string {
 }
 
 const DECIMAL_CODEC_ID = "idb/decimal@1";
+const INT_CODEC_ID = "idb/int32@1";
 
 /** A resolved field default before it is attached to its definition field. */
 type FieldExecutionDefault = IdbExecutionDefaultNode & { readonly fieldName: string };
@@ -557,6 +558,15 @@ function interpretModel(
           onCreate: { id: LITERAL_GENERATOR_ID, params: { value } },
         });
         fieldDefaults[field.name] = value;
+      } else if (!field.list && form.kind === "number" && codecId === INT_CODEC_ID && !isIntNumeralText(form.text)) {
+        // Read the digits as written: converting first would round 2147483647.00000001 to a valid Int.
+        diagnostics.push({
+          code: "IDB_INVALID_DEFAULT_VALUE",
+          message: intDefaultMessage(`Field "${model.name}.${field.name}"`, form.text),
+          sourceId,
+          span: defaultAttr.span,
+        });
+        continue;
       } else {
         // A Decimal keeps the digits as written; a JS number would round them.
         const literal =
