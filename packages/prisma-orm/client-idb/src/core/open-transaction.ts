@@ -36,7 +36,7 @@ export class OpenTransaction implements IdbQueryExecutorWithTransaction, IdbTran
   readonly #storeNames: ReadonlySet<string>;
   readonly #meta: PlanMeta;
   #state: State = "open";
-  #autoCommitCause: unknown;
+  #failure: unknown;
   #ended = false;
 
   constructor(scope: IdbTransactionScope, storeNames: readonly string[], meta: PlanMeta) {
@@ -50,9 +50,9 @@ export class OpenTransaction implements IdbQueryExecutorWithTransaction, IdbTran
     this.#ended = true;
   }
 
-  /** The error of the first operation that found the transaction already finished, if any. */
+  /** The failure that led to detecting an early commit. */
   get autoCommitCause(): unknown {
-    return this.#autoCommitCause;
+    return this.#state === "auto-committed" ? this.#failure : undefined;
   }
 
   /**
@@ -81,7 +81,7 @@ export class OpenTransaction implements IdbQueryExecutorWithTransaction, IdbTran
     } catch (error) {
       if (!isTransactionInactive(error)) return false;
       this.#state = "auto-committed";
-      this.#autoCommitCause = error;
+      this.#failure = error;
       return true;
     }
   }
@@ -198,10 +198,11 @@ export class OpenTransaction implements IdbQueryExecutorWithTransaction, IdbTran
 
   /** Any failed operation aborts the whole transaction, even if the callback catches the error. */
   #recordFailure(error: unknown): void {
+    // A mutation scope can request rollback before the accessor reports why it failed.
+    if (this.#state !== "auto-committed" && this.#failure === undefined) this.#failure = error;
     if (this.#state !== "open") return;
     if (isTransactionInactive(error)) {
       this.#state = "auto-committed";
-      this.#autoCommitCause = error;
       return;
     }
     this.#state = "aborted";

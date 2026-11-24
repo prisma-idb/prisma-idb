@@ -280,18 +280,23 @@ describe("db.transaction()", () => {
       expect(await userIds()).toEqual(["u1"]);
     });
 
-    it("reports that earlier writes were committed when a write after a timer fails validation", async () => {
+    it.each(["uncaught", "caught"])("reports an early commit with a %s validation error as its cause", async (mode) => {
+      let validationError: unknown;
       const failure = await db
         .transaction(["users"], async (tx) => {
           await tx.users.create({ id: "u1", name: "Alice" });
           await transactions.untilAutoCommitted();
           // Rejected before it reaches IndexedDB, so no operation finds the transaction finished.
-          await tx.users.create({ id: "u2", name: 42 } as never);
+          await tx.users.create({ id: "u2", name: 42 } as never).catch((error: unknown) => {
+            validationError = error;
+            if (mode === "uncaught") throw error;
+          });
         })
         .catch((error: unknown) => error);
 
+      expect(validationError).toBeInstanceOf(IdbRecordValidationError);
       expect(failure).toBeInstanceOf(IdbTransactionCommittedEarlyError);
-      expect((failure as IdbTransactionCommittedEarlyError).cause).toBeInstanceOf(IdbRecordValidationError);
+      expect((failure as IdbTransactionCommittedEarlyError).cause).toBe(validationError);
       expect(await userIds()).toEqual(["u1"]);
     });
 
