@@ -5,4 +5,4 @@
 "@prisma-idb/client-idb": patch
 ---
 
-A migration that renames a model (`renameModel`) now moves unsynced outbox events and their version metadata to the new model name in the same upgrade transaction. An edit queued while a device was offline still reaches the server after the rename, instead of being rejected as an unknown model. Rename the model on the server in the same release.
+A same-store model rename records both model names in `renameModel` and moves unsynced outbox events and version metadata in the upgrade transaction. The upgrade stops if the new name already has retained sync history. Rename the model on the server in the same release.

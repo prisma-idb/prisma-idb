@@ -171,7 +171,7 @@ model Task {
 pnpm exec prisma-idb migration plan --name rename-todo --rename Todo:Task
 ```
 
-The migration carries `renameModel: "Todo"`. With the sync extension, the upgrade moves edits queued under the old model name and their version metadata to the new name. Rename the model on the server in the same release. The server classifies earlier changelog rows under the old name as `unknown-model` during pulls, so devices behind on pulls can miss those changes.
+The migration carries `renameModel: { from: "Todo", to: "Task" }`. With the sync extension, the upgrade moves edits queued under the old model name and their version metadata to the new name, including when a device skips releases. If the new name has retained outbox or version metadata from an earlier model, the upgrade stops. Use a fresh model name, or recover pending edits and clear the retired model’s sync history before retrying. Rename the model on the server in the same release. The server classifies earlier changelog rows under the old name as `unknown-model` during pulls, so devices behind on pulls can miss those changes.
 
 Planning refuses a model name change on an existing store without `--rename`. If both the model and store names change without a statement, the planner treats that as dropping one store and creating another. The new store starts empty, and queued edits stay under the old model name.
 

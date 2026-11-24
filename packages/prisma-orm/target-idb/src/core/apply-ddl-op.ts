@@ -81,6 +81,14 @@ export function applyOneDdlOp(
       break;
     }
     case "transformRecords": {
+      if (
+        op.renameModel !== undefined &&
+        (typeof op.renameModel?.from !== "string" || typeof op.renameModel?.to !== "string")
+      ) {
+        throw new Error(
+          "A model rename must name both the source and destination models. Regenerate the migration package."
+        );
+      }
       const store = tx.objectStore(op.storeName);
       const keys = typeof store.keyPath === "string" ? [store.keyPath] : (store.keyPath ?? []);
       const fields = [

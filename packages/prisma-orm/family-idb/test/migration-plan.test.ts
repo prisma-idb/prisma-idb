@@ -354,12 +354,12 @@ describe("migrationPlan — rename, convert and backfill statements", () => {
         kind: "transformRecords",
         storeName: "todos",
         renameFields: { name: "title" },
-        renameModel: "Todo",
+        renameModel: { from: "Todo", to: "Task" },
       }),
     ]);
     expect((await readOps(cwd, dirName))[0]).not.toHaveProperty("removeFields");
     expect(await readMigrationTs(cwd, dirName)).toContain(
-      'transformRecordsOp("todos", { renameFields: {"name":"title"}, renameModel: "Todo" })'
+      'transformRecordsOp("todos", { renameFields: {"name":"title"}, renameModel: {"from":"Todo","to":"Task"} })'
     );
   });
 

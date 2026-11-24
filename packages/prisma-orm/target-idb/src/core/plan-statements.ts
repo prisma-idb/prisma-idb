@@ -1,14 +1,15 @@
 import type { MigrationPlannerConflict, ResolvedMigrationStatement } from "@prisma/orm-framework/components/control";
 import type { IdbRecordField, IdbRecordShape, IdbStoreDefinition } from "./idb-contract-types";
 import { keyPathFields } from "./idb-contract-types";
+import type { TransformRecordsOp } from "./migration-factories";
 import type { IdbSchemaDiffInput } from "./schema-diff";
 
 /** What the statements ask of one store's existing rows. */
 export interface StoreStatementPlan {
   /** `{ newName: oldName }` for each renamed field. */
   readonly renameFields: Record<string, string>;
-  /** The name the store's model had before a model rename. */
-  renameModel?: string;
+  /** The source and destination models of a same-store rename. */
+  renameModel?: NonNullable<TransformRecordsOp["renameModel"]>;
   /** Fields whose values the author fills in by hand: backfills, conversions, and renames to an incompatible type. */
   readonly authored: Set<string>;
   /** The positions, in the statements list, of the statements this store carries out. */
@@ -108,7 +109,7 @@ export function planStatements(
         return;
       }
       const entry = entryFor(after.name);
-      entry.renameModel = statement.from.model;
+      entry.renameModel = { from: statement.from.model, to: statement.to.model };
       entry.statementIndexes.push(index);
       return;
     }

@@ -1,11 +1,18 @@
 import { IDBFactory } from "fake-indexeddb";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { ContractSpace, MigrationPackage } from "@prisma/orm-framework/components/control";
 import { computeMigrationHash } from "@prisma/orm-toolchain/migration-tools/hash";
 import { defineContract } from "@prisma-idb/family-idb/contract-ts";
 import idbFamilyPack from "@prisma-idb/family-idb/pack";
 import idbTargetPack from "@prisma-idb/target-idb/pack";
-import { coerce, createIndexOp, defaultIfMissing, transformRecordsOp } from "@prisma-idb/target-idb/migration";
+import {
+  coerce,
+  createIndexOp,
+  createObjectStoreOp,
+  defaultIfMissing,
+  dropObjectStoreOp,
+  transformRecordsOp,
+} from "@prisma-idb/target-idb/migration";
 import type { IdbDdlOp } from "@prisma-idb/target-idb/runtime";
 import { idbSyncExtension } from "../src/exports/control";
 import { createAutoMigratingSyncIdbClient } from "../src/exports/client";
@@ -300,7 +307,9 @@ describe("model renames", () => {
   }
 
   function renamedSpace(
-    ops: readonly IdbDdlOp[] = [transformRecordsOp("users", { renameFields: { label: "name" }, renameModel: "User" })]
+    ops: readonly IdbDdlOp[] = [
+      transformRecordsOp("users", { renameFields: { label: "name" }, renameModel: { from: "User", to: "Member" } }),
+    ]
   ): ContractSpace<typeof renamed> {
     return {
       contractJson: renamed,
@@ -393,7 +402,7 @@ describe("model renames", () => {
       ...options(factory),
       contractSpace: renamedSpace([
         transformRecordsOp("users", {
-          renameModel: "User",
+          renameModel: { from: "User", to: "Member" },
           renameFields: { label: "name" },
           fields: { enabled: coerce("boolean") },
         }),
@@ -407,6 +416,138 @@ describe("model renames", () => {
         versionMetaId: 'Member::"create"',
         migrationError: "IDB: cannot coerce invalid to boolean",
       });
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("refuses a rename package that records only the source name", async () => {
+    const factory = new IDBFactory();
+    await seed(factory);
+    const before = await snapshot(factory);
+    const contractSpace = renamedSpace([transformRecordsOp("users", { renameModel: "User" as never })]);
+    await expect(createAutoMigratingSyncIdbClient({ ...options(factory), contractSpace })).rejects.toThrow(
+      "A model rename must name both the source and destination models"
+    );
+    expect(await snapshot(factory)).toStrictEqual(before);
+  });
+
+  it.each(["dropped", "reused"])("honors the earlier model rename when the store is later %s", async (later) => {
+    const factory = new IDBFactory();
+    await seed(factory);
+    const dropped = defineContract({
+      family: idbFamilyPack,
+      target: idbTargetPack,
+      models: { Unrelated: { store: "unrelated", key: "id", fields: { id: "String" } } },
+    });
+    const reused = defineContract({
+      family: idbFamilyPack,
+      target: idbTargetPack,
+      models: {
+        Unrelated: { store: "unrelated", key: "id", fields: { id: "String" } },
+        Note: { store: "users", key: "id", fields: { id: "String" } },
+      },
+    });
+    const migrations = [
+      ...renamedSpace().migrations,
+      migration("0002_drop", renamed.storage.storageHash, dropped.storage.storageHash, [
+        dropObjectStoreOp("users"),
+        createObjectStoreOp("unrelated", { keyPath: "id" }),
+      ]),
+    ];
+    const contractJson = later === "dropped" ? dropped : reused;
+    if (later === "reused") {
+      migrations.push(
+        migration("0003_reuse", dropped.storage.storageHash, reused.storage.storageHash, [
+          createObjectStoreOp("users", { keyPath: "id" }),
+        ])
+      );
+    }
+
+    const client = await createAutoMigratingSyncIdbClient({
+      ...options(factory),
+      contractSpace: { contractJson, headRef: { hash: contractJson.storage.storageHash, invariants: [] }, migrations },
+    });
+    try {
+      const events = await scanAll(client, "_idb_sync_outbox");
+      expect(events.map((event) => event["entityType"])).toEqual(["Member", "Member", "Member"]);
+      expect(events.find((event) => event["operation"] === "create")?.["payload"]).toEqual({
+        id: "create",
+        label: "Create",
+        enabled: true,
+        obsolete: "old",
+      });
+      const metas = await scanAll(client, "_idb_sync_version_meta");
+      expect(metas.map((meta) => meta["model"])).toEqual(["Member", "Member", "Member"]);
+    } finally {
+      await client.close();
+    }
+  });
+
+  it.each(["pending delete", "version metadata"])(
+    "aborts a rename when the destination retained %s",
+    async (history) => {
+      const factory = new IDBFactory();
+      const events = await seed(factory);
+      const original = await createAutoMigratingSyncIdbClient({
+        ...options(factory),
+        contractSpace: buildContractSpaceFixture(v1),
+      });
+      const outbox = "_idb_sync_outbox";
+      const meta = "_idb_sync_version_meta";
+      if (history === "pending delete") {
+        const deletion = events.find((event) => event["operation"] === "delete")!;
+        await original.withTransaction([outbox], async (scope) => {
+          await scope.execute({
+            kind: "put",
+            storeName: outbox,
+            record: {
+              ...deletion,
+              id: "old-member-delete",
+              entityType: "Member",
+              versionMetaId: 'Member::"delete"',
+            },
+          } as never);
+        });
+      } else {
+        const record = (await scanAll(original, meta)).find((row) => row["id"] === 'User::"create"')!;
+        await original.withTransaction([meta], async (scope) => {
+          await scope.execute({
+            kind: "put",
+            storeName: meta,
+            record: {
+              ...record,
+              id: 'Member::"create"',
+              model: "Member",
+              localChangePending: false,
+            },
+          } as never);
+        });
+      }
+      await original.close();
+      const before = await snapshot(factory);
+      await expect(
+        createAutoMigratingSyncIdbClient({ ...options(factory), contractSpace: renamedSpace() })
+      ).rejects.toThrow(/cannot rename "User" to "Member".*retained sync history/i);
+      expect(await snapshot(factory)).toStrictEqual(before);
+    }
+  );
+
+  it("moves version metadata with an injected factory and no global IDBKeyRange", async () => {
+    const factory = new IDBFactory();
+    await seed(factory);
+    vi.stubGlobal("IDBKeyRange", undefined);
+    const client = await createAutoMigratingSyncIdbClient({
+      ...options(factory),
+      contractSpace: renamedSpace(),
+    }).finally(() => vi.unstubAllGlobals());
+    try {
+      const metas = await scanAll(client, "_idb_sync_version_meta");
+      expect(metas.map((meta) => meta["id"]).sort()).toEqual([
+        'Member::"create"',
+        'Member::"delete"',
+        'Member::"update"',
+      ]);
     } finally {
       await client.close();
     }
@@ -428,7 +569,7 @@ describe("model renames", () => {
     });
     const first = renamedSpace([
       transformRecordsOp("users", { renameFields: { label: "name" } }),
-      transformRecordsOp("users", { renameModel: "User" }),
+      transformRecordsOp("users", { renameModel: { from: "User", to: "Member" } }),
     ]);
     const contractSpace = {
       contractJson: final,
@@ -436,7 +577,10 @@ describe("model renames", () => {
       migrations: [
         ...first.migrations,
         migration("0002_rename", renamed.storage.storageHash, final.storage.storageHash, [
-          transformRecordsOp("users", { renameModel: "Member", renameFields: { displayName: "label" } }),
+          transformRecordsOp("users", {
+            renameModel: { from: "Member", to: "Account" },
+            renameFields: { displayName: "label" },
+          }),
         ]),
       ],
     };

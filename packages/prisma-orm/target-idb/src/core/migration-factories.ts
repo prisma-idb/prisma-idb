@@ -64,12 +64,8 @@ export type TransformRecordsOp = MigrationPlanOperation & {
   readonly renameFields?: Readonly<Record<string, string>>;
   /** Fields to delete. */
   readonly removeFields?: readonly string[];
-  /**
-   * The name the store's model had before a model rename. Stored records carry no model
-   * name, so this changes no record; it tells extensions that keep model names, such as
-   * the sync outbox, to move their entries to the store's current model.
-   */
-  readonly renameModel?: string;
+  /** Model names on both sides of a same-store rename, for extensions that store model names. */
+  readonly renameModel?: { readonly from: string; readonly to: string };
 };
 
 /** Union of all IDB migration plan operations. */

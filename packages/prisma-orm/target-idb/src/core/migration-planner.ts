@@ -441,7 +441,7 @@ function diffRecordShapes(
     // New stores have no rows to backfill. Legacy DDL-only contracts carry no field history.
     if (oldRecord === undefined || newRecord === undefined) continue;
     const storeStatements = statements.get(storeName);
-    if (oldRecord.model !== newRecord.model && storeStatements?.renameModel !== oldRecord.model) {
+    if (oldRecord.model !== newRecord.model && storeStatements?.renameModel?.from !== oldRecord.model) {
       conflicts.push({
         kind: "modelRenameRequired",
         summary: `The model for store "${storeName}" changed from "${oldRecord.model}" to "${newRecord.model}".`,

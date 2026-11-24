@@ -22,25 +22,36 @@ function renamedMetaId(id: string, from: string, to: string): string {
   return id.startsWith(`${from}::`) ? `${to}${id.slice(from.length)}` : id;
 }
 
-/**
- * Moves version metadata kept under a model's old name to its new name, so a pull or push after
- * a model rename finds the row's sync state. Each moved row gets the id its outbox events now name.
- */
-function renameVersionMeta(tx: IDBTransaction, from: string, to: string, onDone: (error?: unknown) => void): void {
-  const store = tx.objectStore(VERSION_META_STORE);
-  const request = store.openCursor(IDBKeyRange.bound(`${from}::`, `${from}::\uffff`));
+/** Visit only metadata whose primary key starts with this model's prefix. */
+function scanModelMeta(
+  store: IDBObjectStore,
+  model: string,
+  visit: (cursor: IDBCursorWithValue) => void,
+  onDone: (error?: unknown) => void
+): void {
+  const prefix = `${model}::`;
+  const request = store.openCursor();
   request.onsuccess = () => {
     try {
       const cursor = request.result;
-      if (!cursor) {
+      if (cursor === null) {
         onDone();
         return;
       }
-      const meta = cursor.value as VersionMetaRecord;
-      if (meta.model === from) {
-        cursor.delete();
-        store.put({ ...meta, id: renamedMetaId(meta.id, from, to), model: to });
+      // Seek by key so this also works with factories that do not supply a global IDBKeyRange.
+      if (typeof cursor.key !== "string") {
+        cursor.continue();
+        return;
       }
+      if (cursor.key < prefix) {
+        cursor.continue(prefix);
+        return;
+      }
+      if (!cursor.key.startsWith(prefix)) {
+        onDone();
+        return;
+      }
+      visit(cursor);
       cursor.continue();
     } catch (error) {
       onDone(error);
@@ -48,30 +59,44 @@ function renameVersionMeta(tx: IDBTransaction, from: string, to: string, onDone:
   };
 }
 
-/**
- * Rewrite unsynced payloads, pending and rejected, in the app store's upgrade transaction. After
- * a model rename (`op.renameModel`), events and version metadata queued under the old name move
- * to the new one, so an edit made offline before the upgrade still reaches the server.
- */
-export const transformOutbox: NonNullable<IdbExtensionSpace["onTransformRecords"]> = (tx, op, modelName, onDone) => {
-  const sourceModel = op.renameModel ?? modelName;
-  const rewritesPayload = op.fields !== undefined || op.renameFields !== undefined || op.removeFields !== undefined;
+function scanOutbox(
+  tx: IDBTransaction,
+  visit: (cursor: IDBCursorWithValue, event: OutboxEvent) => void,
+  onDone: (error?: unknown) => void
+): void {
   const request = tx.objectStore(OUTBOX_STORE).openCursor();
   request.onsuccess = () => {
     try {
       const cursor = request.result;
-      if (!cursor) {
-        if (sourceModel === modelName) onDone();
-        else renameVersionMeta(tx, sourceModel, modelName, onDone);
+      if (cursor === null) {
+        onDone();
         return;
       }
-      const event = cursor.value as OutboxEvent;
-      if (!event.synced && event.entityType === sourceModel) {
+      visit(cursor, cursor.value as OutboxEvent);
+      cursor.continue();
+    } catch (error) {
+      onDone(error);
+    }
+  };
+}
+
+/** Rewrite queued edits and version metadata inside the application's upgrade transaction. */
+export const transformOutbox: NonNullable<IdbExtensionSpace["onTransformRecords"]> = (tx, op, modelName, onDone) => {
+  const sourceModel = op.renameModel?.from ?? modelName;
+  const destinationModel = op.renameModel?.to ?? modelName;
+  const rename = sourceModel !== destinationModel;
+  const rewritesPayload = op.fields !== undefined || op.renameFields !== undefined || op.removeFields !== undefined;
+
+  const rewriteEvents = (): void => {
+    scanOutbox(
+      tx,
+      (cursor, event) => {
+        if (event.synced || event.entityType !== sourceModel) return;
         let next = event;
-        if (sourceModel !== modelName) {
-          next = { ...event, entityType: modelName };
+        if (rename) {
+          next = { ...event, entityType: destinationModel };
           if (typeof event.versionMetaId === "string") {
-            next = { ...next, versionMetaId: renamedMetaId(event.versionMetaId, sourceModel, modelName) };
+            next = { ...next, versionMetaId: renamedMetaId(event.versionMetaId, sourceModel, destinationModel) };
           }
         }
         if (rewritesPayload) {
@@ -85,11 +110,53 @@ export const transformOutbox: NonNullable<IdbExtensionSpace["onTransformRecords"
           }
         }
         if (next !== event) cursor.update(next);
+      },
+      (error) => {
+        if (error !== undefined || !rename) {
+          onDone(error);
+          return;
+        }
+        const store = tx.objectStore(VERSION_META_STORE);
+        scanModelMeta(
+          store,
+          sourceModel,
+          (cursor) => {
+            const meta = cursor.value as VersionMetaRecord;
+            if (meta.model !== sourceModel) return;
+            cursor.delete();
+            store.add({ ...meta, id: renamedMetaId(meta.id, sourceModel, destinationModel), model: destinationModel });
+          },
+          onDone
+        );
       }
-      cursor.continue();
-    } catch (error) {
-      // A bad queued value aborts the upgrade, which rolls back the app store and every rewritten event.
-      onDone(error);
-    }
+    );
   };
+
+  if (!rename) {
+    rewriteEvents();
+    return;
+  }
+
+  const retainedHistory = (): never => {
+    throw new Error(
+      `Cannot rename "${sourceModel}" to "${destinationModel}" because the destination has retained sync history. ` +
+        "Use a fresh model name, or recover pending edits and clear the retired model's outbox and version metadata before retrying."
+    );
+  };
+  scanModelMeta(tx.objectStore(VERSION_META_STORE), destinationModel, retainedHistory, (error) => {
+    if (error !== undefined) {
+      onDone(error);
+      return;
+    }
+    scanOutbox(
+      tx,
+      (_cursor, event) => {
+        if (event.entityType === destinationModel) retainedHistory();
+      },
+      (outboxError) => {
+        if (outboxError !== undefined) onDone(outboxError);
+        else rewriteEvents();
+      }
+    );
+  });
 };

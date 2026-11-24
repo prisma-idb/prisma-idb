@@ -218,14 +218,18 @@ function createTransformRecordsCallback(
         model,
       ])
     );
-    // Walk backwards from the head contract to recover each operation's destination model.
+    // A stored rename names its own destination. Infer names for field transforms only within the same store lifetime.
     for (let index = appOps.length - 1; index >= 0; index -= 1) {
       const op = appOps[index]!;
+      if (op.kind === "createObjectStore" || op.kind === "dropObjectStore") {
+        modelByStore.delete(op.storeName);
+        continue;
+      }
       if (op.kind !== "transformRecords") continue;
-      const model = modelByStore.get(op.storeName);
-      if (model === undefined) continue;
-      modelByOp.set(op, model);
-      if (op.renameModel !== undefined) modelByStore.set(op.storeName, op.renameModel);
+      const model = op.renameModel?.to ?? modelByStore.get(op.storeName);
+      if (model !== undefined) modelByOp.set(op, model);
+      const source = op.renameModel?.from;
+      if (typeof source === "string") modelByStore.set(op.storeName, source);
     }
   }
   return (tx: IDBTransaction, op: TransformRecordsOp, onDone: (error?: unknown) => void): void => {

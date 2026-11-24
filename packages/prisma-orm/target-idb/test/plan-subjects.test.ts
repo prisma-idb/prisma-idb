@@ -205,11 +205,15 @@ describe("plan statements", () => {
     const result = plan(modelContract("Todo", "todos", {}), modelContract("Task", "todos", {}), [rename]);
     if (result.kind !== "success") throw new Error("expected a plan");
     expect(result.plan.operations).toEqual([
-      expect.objectContaining({ kind: "transformRecords", storeName: "todos", renameModel: "Todo" }),
+      expect.objectContaining({
+        kind: "transformRecords",
+        storeName: "todos",
+        renameModel: { from: "Todo", to: "Task" },
+      }),
     ]);
     expect(result.appliedStatements).toEqual([{ statement: rename, operationIndexes: [0] }]);
     expect(result.plan.renderTypeScript(keepInternalSpecifiers)).toContain(
-      'transformRecordsOp("todos", { renameModel: "Todo" })'
+      'transformRecordsOp("todos", { renameModel: {"from":"Todo","to":"Task"} })'
     );
   });
 
@@ -234,7 +238,7 @@ describe("plan statements", () => {
     );
     if (result.kind !== "success") throw new Error("expected a plan");
     expect(result.plan.operations).toEqual([
-      expect.objectContaining({ renameModel: "Todo", renameFields: { name: "title" } }),
+      expect.objectContaining({ renameModel: { from: "Todo", to: "Task" }, renameFields: { name: "title" } }),
     ]);
     expect(result.appliedStatements.map((applied) => applied.operationIndexes)).toEqual([[0], [0]]);
   });
@@ -302,7 +306,7 @@ describe("plan statements", () => {
       if (result.kind !== "success") throw new Error("expected a plan");
       expect(result.plan.operations).toEqual([
         expect.objectContaining({
-          renameModel: "Todo",
+          renameModel: { from: "Todo", to: "Task" },
           fields: { title: { kind: "placeholder", slot: "Task.title" } },
         }),
       ]);
@@ -338,7 +342,7 @@ describe("plan statements", () => {
       if (result.kind !== "success") throw new Error("expected a plan");
       expect(result.plan.operations).toEqual([
         expect.objectContaining({
-          renameModel: "Todo",
+          renameModel: { from: "Todo", to: "Task" },
           renameFields: { name: "title" },
           fields: { name: { kind: "placeholder", slot: "Task.name" } },
         }),
