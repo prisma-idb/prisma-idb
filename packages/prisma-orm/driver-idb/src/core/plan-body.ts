@@ -184,7 +184,8 @@ export interface IdbPutPlan extends ExecutionPlan {
  * does a full replacement. The get and put are issued inside the same
  * readwrite transaction so no other writer can interleave.
  *
- * If no record exists for `key`, the driver echoes `patch` as-is (insert semantics).
+ * If no record exists for `key`, the driver writes nothing and yields no row.
+ * `IdbPutPlan` is the plan that inserts.
  */
 export interface IdbUpdatePlan extends ExecutionPlan {
   readonly kind: "update";

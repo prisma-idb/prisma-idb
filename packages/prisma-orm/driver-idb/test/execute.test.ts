@@ -705,7 +705,7 @@ describe("update", () => {
     expect(getRows[0]).toMatchObject({ id: "u1", score: 99 });
   });
 
-  it("inserts a record (insert semantics) when key does not exist", async () => {
+  it("updates nothing and returns no row when the key does not exist, even if the patch holds the key", async () => {
     const plan: IdbUpdatePlan = {
       meta: META,
       kind: "update",
@@ -713,9 +713,9 @@ describe("update", () => {
       key: "u99",
       patch: { id: "u99", email: "ghost@example.com", score: 0 },
     };
-    const rows = await executeIdbPlan(db, plan);
-    expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ id: "u99", email: "ghost@example.com" });
+    expect(await executeIdbPlan(db, plan)).toEqual([]);
+    // `put` is the operation that inserts.
+    expect(await executeIdbPlan(db, { meta: META, kind: "key-get", storeName: "users", key: "u99" })).toEqual([]);
   });
 
   it("patch does NOT affect other records in the store", async () => {
