@@ -1,0 +1,138 @@
+{
+  "contract": {
+    "capabilities": {
+      "idb": {
+        "ddlOnlyInUpgrade": true,
+        "transactionalDDL": true
+      }
+    },
+    "domain": {
+      "namespaces": {
+        "__unbound__": {
+          "models": {
+            "Employee": {
+              "fields": {
+                "id": {
+                  "nullable": false,
+                  "type": {
+                    "codecId": "idb/string@1",
+                    "kind": "scalar"
+                  }
+                },
+                "managerId": {
+                  "nullable": true,
+                  "type": {
+                    "codecId": "idb/string@1",
+                    "kind": "scalar"
+                  }
+                }
+              },
+              "relations": {
+                "manager": {
+                  "cardinality": "N:1",
+                  "nullable": true,
+                  "on": {
+                    "localFields": [
+                      "managerId"
+                    ],
+                    "targetFields": [
+                      "id"
+                    ]
+                  },
+                  "to": {
+                    "model": "Employee",
+                    "namespace": "__unbound__"
+                  }
+                },
+                "reports": {
+                  "cardinality": "1:N",
+                  "on": {
+                    "localFields": [
+                      "id"
+                    ],
+                    "targetFields": [
+                      "managerId"
+                    ]
+                  },
+                  "to": {
+                    "model": "Employee",
+                    "namespace": "__unbound__"
+                  }
+                }
+              },
+              "storage": {
+                "keyPath": "id",
+                "relations": {
+                  "manager": {
+                    "onDelete": "setNull"
+                  }
+                },
+                "storeName": "employee"
+              }
+            }
+          }
+        }
+      }
+    },
+    "extensions": {},
+    "meta": {},
+    "profileHash": "40329830af4e39e0774683fbebcdc24dcf983a5da02c5fe6079a2a57579f861c",
+    "roots": {
+      "employee": {
+        "model": "Employee",
+        "namespace": "__unbound__"
+      }
+    },
+    "storage": {
+      "namespaces": {
+        "__unbound__": {
+          "entries": {},
+          "id": "__unbound__"
+        }
+      },
+      "storageHash": "4e56646dad0b48033a8273b23a35e8031eb1726c98fa9408974db9f1e13e616c",
+      "stores": {
+        "employee": {
+          "indexes": {
+            "managerId": {
+              "keyPath": "managerId",
+              "unique": false
+            }
+          },
+          "keyPath": "id",
+          "record": {
+            "fields": {
+              "id": {
+                "nullable": false,
+                "type": {
+                  "codecId": "idb/string@1",
+                  "kind": "scalar"
+                }
+              },
+              "managerId": {
+                "nullable": true,
+                "type": {
+                  "codecId": "idb/string@1",
+                  "kind": "scalar"
+                }
+              }
+            },
+            "model": "Employee"
+          }
+        }
+      }
+    },
+    "target": "idb",
+    "targetFamily": "idb"
+  },
+  "diagnostics": {
+    "interpretation": [],
+    "parse": [],
+    "symbols": []
+  },
+  "hashes": {
+    "executionHash": null,
+    "profileHash": "40329830af4e39e0774683fbebcdc24dcf983a5da02c5fe6079a2a57579f861c",
+    "storageHash": "4e56646dad0b48033a8273b23a35e8031eb1726c98fa9408974db9f1e13e616c"
+  }
+}

@@ -399,7 +399,8 @@ function isUniqueTuple(model: IdbModelNode, fields: readonly string[]): boolean 
  *   rows could point at one parent.
  * - `SetNull` writes `null` into every foreign-key field, so each must be optional.
  * - A `1:1` that isn't paired with a foreign key can't carry an action, because
- *   the client would never run it.
+ *   the client would never run it, and the fields it joins to must be unique,
+ *   as upstream requires of every one-to-one, or a read could match several rows.
  */
 function validateRelationNullability(
   model: IdbModelNode,
@@ -450,6 +451,14 @@ function validateRelationNullability(
       side === "inverse"
         ? `${label} is required, but "${relation.to}" holds the foreign key, so nothing in storage guarantees a "${relation.to}" row exists. Make the relation optional.`
         : `${label} is required, but no foreign key backs it, so nothing in storage guarantees a "${relation.to}" row exists. Make the relation optional, or declare it as N:1 if "${model.modelName}" holds the foreign key.`,
+      at
+    );
+  }
+
+  if (side === "undetermined" && target && !isUniqueTuple(target, relation.targetFields)) {
+    report(
+      "IDB_INVALID_RELATION",
+      `${label} is one-to-one, but the fields ${relation.targetFields.map((name) => `"${name}"`).join(", ")} of model "${relation.to}" are not unique, so several "${relation.to}" rows could match one "${model.modelName}". Add a unique index over exactly those fields, or make "${relation.name}" a 1:N relation.`,
       at
     );
   }

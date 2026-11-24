@@ -64,6 +64,121 @@ export const authoringScenarios: AuthoringScenario[] = [
     },
   },
   {
+    name: "compound foreign key with one optional field",
+    psl: `
+      model User {
+        tenant String
+        id     String
+        posts  Post[]
+        @@id([tenant, id])
+      }
+      model Post {
+        id       String  @id
+        tenant   String
+        authorId String?
+        author   User?   @relation(fields: [tenant, authorId], references: [tenant, id])
+      }
+    `,
+    ts: {
+      models: {
+        User: {
+          store: "user",
+          key: ["tenant", "id"],
+          fields: { tenant: "String", id: "String" },
+          relations: {
+            posts: { to: "Post", cardinality: "1:N", on: { local: ["tenant", "id"], target: ["tenant", "authorId"] } },
+          },
+        },
+        Post: {
+          store: "post",
+          key: "id",
+          fields: { id: "String", tenant: "String", authorId: "String?" },
+          relations: {
+            author: {
+              to: "User",
+              cardinality: "N:1",
+              on: { local: ["tenant", "authorId"], target: ["tenant", "id"] },
+              nullable: true,
+            },
+          },
+        },
+      },
+    },
+  },
+  {
+    name: "SetNull on a compound foreign key with a required field",
+    psl: `
+      model User {
+        tenant String
+        id     String
+        posts  Post[]
+        @@id([tenant, id])
+      }
+      model Post {
+        id       String  @id
+        tenant   String
+        authorId String?
+        author   User?   @relation(fields: [tenant, authorId], references: [tenant, id], onDelete: SetNull)
+      }
+    `,
+    ts: {
+      models: {
+        User: {
+          store: "user",
+          key: ["tenant", "id"],
+          fields: { tenant: "String", id: "String" },
+          relations: {
+            posts: { to: "Post", cardinality: "1:N", on: { local: ["tenant", "id"], target: ["tenant", "authorId"] } },
+          },
+        },
+        Post: {
+          store: "post",
+          key: "id",
+          fields: { id: "String", tenant: "String", authorId: "String?" },
+          relations: {
+            author: {
+              to: "User",
+              cardinality: "N:1",
+              on: { local: ["tenant", "authorId"], target: ["tenant", "id"] },
+              nullable: true,
+              onDelete: "setNull",
+            },
+          },
+        },
+      },
+    },
+  },
+  {
+    name: "reciprocal self-relation",
+    psl: `
+      model Employee {
+        id        String     @id
+        managerId String?
+        manager   Employee?  @relation("Reports", fields: [managerId], references: [id], onDelete: SetNull)
+        reports   Employee[] @relation("Reports")
+      }
+    `,
+    ts: {
+      models: {
+        Employee: {
+          store: "employee",
+          key: "id",
+          fields: { id: "String", managerId: "String?" },
+          relations: {
+            manager: {
+              to: "Employee",
+              cardinality: "N:1",
+              on: { local: ["managerId"], target: ["id"] },
+              nullable: true,
+              onDelete: "setNull",
+            },
+            reports: { to: "Employee", cardinality: "1:N", on: { local: ["id"], target: ["managerId"] } },
+          },
+        },
+      },
+    },
+  },
+  {
     name: "feature-complete (no defaults)",
     clientProjection: true,
     psl: `

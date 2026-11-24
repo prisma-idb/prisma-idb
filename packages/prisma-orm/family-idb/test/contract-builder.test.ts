@@ -1239,7 +1239,7 @@ describe("defineContract — the owning side of a one-to-one", () => {
 });
 
 describe("defineContract — the referenced side of a one-to-one", () => {
-  const define = (profile: Partial<RelationDef> = {}, declareOwner = true) =>
+  const define = (profile: Partial<RelationDef> = {}, declareOwner = true, uniqueUserEmail = true) =>
     defineContract({
       family: idbFamilyPack,
       target: idbTargetPack,
@@ -1257,7 +1257,7 @@ describe("defineContract — the referenced side of a one-to-one", () => {
           store: "profiles",
           key: "id",
           fields: { id: "String", userEmail: "String" },
-          indexes: { userEmail: { keyPath: "userEmail", unique: true } },
+          indexes: { userEmail: { keyPath: "userEmail", unique: uniqueUserEmail } },
           relations: declareOwner
             ? { user: { to: "User", cardinality: "N:1", on: { local: ["userEmail"], target: ["email"] } } }
             : {},
@@ -1287,6 +1287,16 @@ describe("defineContract — the referenced side of a one-to-one", () => {
   it("refuses a required 1:1 that no foreign key backs", () => {
     expect(() => define({ nullable: false }, false)).toThrow(
       'IDB_INVALID_RELATION: Relation "User.profile" is required, but no foreign key backs it'
+    );
+  });
+
+  it("accepts a 1:1 that no foreign key backs when the fields it joins to are unique", () => {
+    expect(relations(define({}, false), "User")["profile"]!.nullable).toBe(true);
+  });
+
+  it("refuses a 1:1 that no foreign key backs when the fields it joins to aren't unique", () => {
+    expect(() => define({}, false, false)).toThrow(
+      'IDB_INVALID_RELATION: Relation "User.profile" is one-to-one, but the fields "userEmail" of model "Profile" are not unique, so several "Profile" rows could match one "User". Add a unique index over exactly those fields, or make "profile" a 1:N relation.'
     );
   });
 
