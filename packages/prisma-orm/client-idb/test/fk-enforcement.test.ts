@@ -2092,7 +2092,7 @@ describe("restrict — shared-primary-key 1:1 (child's own PK is the FK)", () =>
 // MATCH SIMPLE), so a parent whose referenced field is null has no children,
 // however many unrelated children carry null foreign keys.
 describe("referential actions — null in the parent's referenced fields", () => {
-  function contractFor(action: "restrict" | "cascade" | "setNull") {
+  function contractFor(action: "restrict" | "cascade" | "setNull" | "setDefault") {
     return defineContract({
       family: idbFamilyPack,
       target: idbTargetPack,
@@ -2115,12 +2115,14 @@ describe("referential actions — null in the parent's referenced fields", () =>
           store: "members",
           key: "id",
           fields: { id: "String", memberOrgId: "String?", memberHandle: "String?" },
+          // setDefault would point a member at the "full" org.
+          fieldDefaults: { memberOrgId: "A", memberHandle: "h" },
         },
       },
     });
   }
 
-  async function seed(action: "restrict" | "cascade" | "setNull" = "restrict") {
+  async function seed(action: "restrict" | "cascade" | "setNull" | "setDefault" = "restrict") {
     const { db, orm } = await setup(contractFor(action), { orgs: "id", members: "id" });
     // Org rows: one fully set, one with a partly null tuple, one fully null.
     await orm["orgs"]!.create({ id: "full", orgId: "A", handle: "h" });
@@ -2132,18 +2134,19 @@ describe("referential actions — null in the parent's referenced fields", () =>
     return { db, orm, members: await getAllRows(db, "members") };
   }
 
-  it.each([
-    ["cascade", "delete"],
-    ["cascade", "update"],
-    ["setNull", "delete"],
-    ["setNull", "update"],
-  ] as const)("%s on %s leaves rows with a partly null foreign key alone", async (action, operation) => {
+  it.each(
+    (["cascade", "setNull", "setDefault"] as const).flatMap((action) =>
+      (["partial", "empty"] as const).flatMap((parent) =>
+        (["delete", "update"] as const).map((operation) => [action, operation, parent] as const)
+      )
+    )
+  )("%s on %s of the %s parent leaves rows with null foreign keys alone", async (action, operation, parent) => {
     const { db, orm, members } = await seed(action);
     try {
       if (operation === "delete") {
-        await orm["orgs"]!.delete("partial");
+        await orm["orgs"]!.delete(parent);
       } else {
-        await orm["orgs"]!.where({ id: "partial" }).update({ handle: "h2" });
+        await orm["orgs"]!.where({ id: parent }).update({ handle: "h2" });
       }
       expect(await getAllRows(db, "members")).toEqual(members);
     } finally {
