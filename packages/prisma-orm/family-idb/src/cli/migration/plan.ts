@@ -12,7 +12,12 @@ export const migrationPlanCommand = defineIdbCommand({
       "Compares the emitted contract against the latest on-disk migration state and\n" +
       "produces a new migration package and regenerates the app contract-space module. Offline —\n" +
       "never opens IndexedDB (there is no live database on the Node side to consult).",
-    examples: ["migration plan", "migration plan --name add-posts", "migration plan --space idb-sync"],
+    examples: [
+      "migration plan",
+      "migration plan --name add-posts",
+      "migration plan --name rename-title --rename Todo.title:Todo.name",
+      "migration plan --space idb-sync",
+    ],
   },
   args: {
     flags: {
@@ -38,6 +43,22 @@ export const migrationPlanCommand = defineIdbCommand({
       }),
     },
   },
+  statements: {
+    rename: {
+      arity: 1,
+      brief: "Rename a field while keeping its values. Use Model.old:Model.new and repeat for several renames.",
+    },
+    convert: {
+      arity: 1,
+      brief:
+        "Convert the values of a field whose type changes with a transform you write into the migration: Model.field, named as the new contract names it",
+    },
+    backfill: {
+      arity: 1,
+      brief:
+        "Fill a required field in existing rows with a transform you write into the migration: Model.field, new or made required",
+    },
+  },
   handler: async (args, ctx) => {
     const contractPath = requireContractPath(ctx.config, ctx.cwd, args.flags.contract);
     const migrationsDir = resolveMigrationsDir(ctx.config, ctx.cwd, args.flags.migrationsDir);
@@ -52,6 +73,9 @@ export const migrationPlanCommand = defineIdbCommand({
       ...(args.flags.out !== undefined && { outPath: resolve(ctx.cwd, args.flags.out) }),
       ...(args.flags.name !== undefined && { name: args.flags.name }),
       ...(args.flags.space !== undefined && { spaceId: args.flags.space }),
+      statements: (["rename", "convert", "backfill"] as const).flatMap((verb) =>
+        ctx.statements.take(verb).map(({ text }) => ({ verb, text }))
+      ),
     });
 
     if (exitCode === 2) {

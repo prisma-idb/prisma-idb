@@ -103,7 +103,7 @@ Regenerate the contract space, run preflight, and commit the files together. Tes
 
 ## Fill an unresolved transform
 
-When you add a required field without a supported literal default, or make an incompatible field change, planning writes a scaffold with unresolved placeholders. Emitting it unchanged reports `MIGRATION.UNFILLED_PLACEHOLDER`. The structured error lists all unfilled slots, including those nested in `pipe`. Replace each placeholder with a field transform, then emit the migration again. For example, adding `status String` produces a field transform like this:
+When you add a required field without a supported literal default, or make an incompatible field change, planning writes a scaffold with unresolved placeholders. Use `--backfill Model.field` to supply values for a new or newly required field, or `--convert Model.field` to control a type change. Emitting it unchanged reports `MIGRATION.UNFILLED_PLACEHOLDER`. The structured error lists all unfilled slots, including those nested in `pipe`. Replace each placeholder with a field transform, then emit the migration again. For example, adding `status String` produces a field transform like this:
 
 ```ts
 transformRecordsOp("Todo", {
@@ -139,24 +139,35 @@ Do not ship the scaffold unchanged. Package emission, preflight, and runtime app
 
 ## Rename a field without losing its values
 
-Change the field name in the schema, emit the contract, and plan a migration. The planner treats this as a removal and an addition. It does not infer a rename.
+The planner never guesses a rename: on its own, a changed field name plans a removal and an addition. Tell it about the rename with `--rename old:new`, naming the field's model as the new schema names it:
 
-To rename `title` to `label`, replace the planned `title` removal and the `label` backfill or placeholder with:
+```bash
+pnpm exec prisma-idb migration plan --name rename-title --rename Todo.title:Todo.label
+```
+
+The planned migration moves each record's value instead of dropping it:
 
 ```ts
-import { transformRecordsOp } from "@prisma-idb/target-idb/migration";
-
 transformRecordsOp("Todo", {
   renameFields: { label: "title" },
 });
 ```
 
-`renameFields` maps the new name to the old name. Keep unrelated field transforms and removals. If the renamed field also changes type, put its value transform under the new name. Renames run before value transforms; removals run last. Key fields cannot be renamed, transformed, or removed.
+`renameFields` maps the new name to the old name. If the renamed field's values don't fit its new type, the plan also leaves a placeholder under the new name for you to fill. Renames run before value transforms; removals run last. Key fields cannot be renamed, transformed, or removed. Repeat `--rename` for several renames.
 
-Run the edited migration file with `npx tsx`, regenerate the contract space, and run preflight as shown above. Check an old record to confirm that its value survives under the new name.
+You can also write `renameFields` by hand in an existing migration. Run the edited migration file with `npx tsx`, regenerate the contract space, and run preflight as shown above. Check an old record to confirm that its value survives under the new name.
+
+## Convert or backfill a field
+
+`--convert Model.field` and `--backfill Model.field` ask the planner for a placeholder you fill in. Name the field as the new contract spells it, even if the field is also renamed. For example, `--convert Todo.name --rename Todo.title:Todo.name` converts the values stored as `Todo.title`. Flag order does not matter.
+
+- `--convert` needs the field's type to change. A field with the same type in both contracts has no values to convert, and planning refuses the statement.
+- `--backfill` needs a required field that is new or was optional. A field that was already required has a value in every row, and planning refuses the statement. Omit `--backfill` for a new field with a supported literal default. The planner already uses that default to fill existing records.
+- Neither works on a primary-key field, which IndexedDB cannot rewrite.
+- A statement that names a model or field missing from the contract is refused, so a typo never plans silently.
 
 ## Remove a field
 
 Remove the field from the schema, emit, and plan. Review the generated `removeFields` operation and the planner's data-loss warning. The migration deletes that field from existing records. It also removes it from queued sync payloads.
 
-If the change was a rename, replace the removal and addition as shown above before shipping. Otherwise, regenerate the contract space, run preflight, and commit the migration with the emitted contract and snapshot.
+For a field rename, edit the generated migration to use `renameFields` as shown above. You can also remove the unshipped migration package and plan it again with `--rename`. Regenerate the contract space, run preflight, and commit the migration with the emitted contract and snapshot.

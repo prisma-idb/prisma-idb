@@ -27,7 +27,8 @@ import {
   type IdbDdlOp,
   type IdbValueTransform,
 } from "./migration-factories";
-import { dataLossOf, refuseStatements } from "./plan-subjects";
+import { dataLossOf } from "./plan-subjects";
+import { planStatements, type StatementPlan, type StoreStatementPlan } from "./plan-statements";
 import type { IdbSchemaDiffInput } from "./schema-diff";
 import { diffIdbSchema } from "./schema-diff";
 
@@ -197,9 +198,7 @@ function renderOpCall(op: IdbDdlOp): string {
         });
         parts.push(`fields: { ${fields.join(", ")} }`);
       }
-      if (op.renameFields !== undefined) {
-        throw new Error("IDB: renames must be authored by hand in migration.ts");
-      }
+      if (op.renameFields !== undefined) parts.push(`renameFields: ${JSON.stringify(op.renameFields)}`);
       if (op.removeFields !== undefined) parts.push(`removeFields: ${JSON.stringify(op.removeFields)}`);
       return `transformRecordsOp(${JSON.stringify(op.storeName)}, { ${parts.join(", ")} })`;
     }
@@ -374,12 +373,24 @@ function planStoreRecordTransform(
   store: IdbStoreDefinition,
   oldRecord: IdbRecordShape,
   newRecord: IdbRecordShape,
-  conflicts: MigrationPlannerConflict[]
+  conflicts: MigrationPlannerConflict[],
+  statements: StoreStatementPlan | undefined
 ): IdbDdlOp | undefined {
   const fields: Record<string, IdbValueTransform> = Object.create(null);
-  const removeFields = Object.keys(oldRecord.fields).filter((name) => !Object.hasOwn(newRecord.fields, name));
+  const renameFields = statements?.renameFields ?? {};
+  const renamedFrom = new Set(Object.values(renameFields));
+  const removeFields = Object.keys(oldRecord.fields).filter(
+    (name) => !Object.hasOwn(newRecord.fields, name) && !renamedFrom.has(name)
+  );
   for (const [name, field] of Object.entries(newRecord.fields)) {
-    const oldField = Object.hasOwn(oldRecord.fields, name) ? oldRecord.fields[name] : undefined;
+    // A renamed field's old value moves here, so it is checked against its old declaration.
+    const sourceName = Object.hasOwn(renameFields, name) ? renameFields[name]! : name;
+    const oldField = Object.hasOwn(oldRecord.fields, sourceName) ? oldRecord.fields[sourceName] : undefined;
+    // The author supplies the values for a backfill or conversion statement.
+    if (statements?.authored.has(name)) {
+      fields[name] = placeholder(`${newRecord.model}.${name}`);
+      continue;
+    }
     if (oldField === undefined) {
       const transform = planAddedFieldTransform(contract, storeName, newRecord, name, field);
       if (transform !== undefined) fields[name] = transform;
@@ -399,9 +410,13 @@ function planStoreRecordTransform(
       fields[name] = placeholder(`${newRecord.model}.${name}`);
     }
   }
-  if (Object.keys(fields).length === 0 && removeFields.length === 0) return undefined;
+  const hasRenames = Object.keys(renameFields).length > 0;
+  if (Object.keys(fields).length === 0 && removeFields.length === 0 && !hasRenames) {
+    return undefined;
+  }
   return transformRecordsOp(storeName, {
     ...(Object.keys(fields).length > 0 ? { fields } : {}),
+    ...(hasRenames ? { renameFields: { ...renameFields } } : {}),
     ...(removeFields.length > 0 ? { removeFields } : {}),
   });
 }
@@ -410,7 +425,8 @@ function planStoreRecordTransform(
 function diffRecordShapes(
   from: IdbSchemaDiffInput | null,
   to: IdbSchemaDiffInput,
-  contract: Contract
+  contract: Contract,
+  statements: StatementPlan
 ): { ops: IdbDdlOp[]; conflicts: MigrationPlannerConflict[] } {
   assertSupportedSchemaRecords(from);
   assertSupportedSchemaRecords(to);
@@ -422,7 +438,15 @@ function diffRecordShapes(
     const newRecord = store.record;
     // New stores have no rows to backfill. Legacy DDL-only contracts carry no field history.
     if (oldRecord === undefined || newRecord === undefined) continue;
-    const op = planStoreRecordTransform(contract, storeName, store, oldRecord, newRecord, conflicts);
+    const op = planStoreRecordTransform(
+      contract,
+      storeName,
+      store,
+      oldRecord,
+      newRecord,
+      conflicts,
+      statements.get(storeName)
+    );
     if (op !== undefined) ops.push(op);
   }
   return { ops, conflicts };
@@ -452,16 +476,13 @@ export class IdbMigrationPlanner implements MigrationPlanner<"idb", "idb"> {
     readonly fromContract: Contract | null;
     /** The origin the plan asserts, which the runner checks against the marker; `null` skips the check. */
     readonly origin: PlanOrigin | null;
-    /** Statements the user gave; the IDB planner refuses every one of them. */
+    /** Field rename, backfill and conversion statements. */
     readonly statements: readonly ResolvedMigrationStatement[];
     readonly frameworkComponents: ReadonlyArray<TargetBoundComponentDescriptor<"idb", "idb">>;
     /** Accepted for framework interface conformance; the IDB planner does not use this value. */
     readonly spaceId: string;
   }): MigrationPlannerResult {
     const { contract, fromContract, origin, statements } = options;
-
-    const refusal = refuseStatements(statements, fromContract, contract as Contract);
-    if (refusal !== undefined) return refusal;
 
     const fromSchema = contractToIdbSchema(fromContract);
     const toSchema = contractToIdbSchema(contract);
@@ -480,7 +501,15 @@ export class IdbMigrationPlanner implements MigrationPlanner<"idb", "idb"> {
       };
     }
 
-    const recordDiff = diffRecordShapes(fromSchema, toSchema, contract as Contract);
+    const statementPlan = planStatements(
+      statements,
+      fromSchema,
+      toSchema,
+      (store, name, field) =>
+        !field.nullable && storedCreateDefault(contract as Contract, store, name, field) !== undefined
+    );
+    if (!statementPlan.ok) return { kind: "failure", conflicts: statementPlan.conflicts };
+    const recordDiff = diffRecordShapes(fromSchema, toSchema, contract as Contract, statementPlan.plan);
     if (recordDiff.conflicts.length > 0) return { kind: "failure", conflicts: recordDiff.conflicts };
     const ops = [...diffIdbSchema(fromSchema, toSchema), ...recordDiff.ops];
 
@@ -510,7 +539,14 @@ export class IdbMigrationPlanner implements MigrationPlanner<"idb", "idb"> {
     return {
       kind: "success",
       plan,
-      appliedStatements: [],
+      appliedStatements: statements.map((statement, index) => ({
+        statement,
+        operationIndexes: ops.flatMap((op, opIndex) =>
+          op.kind === "transformRecords" && statementPlan.plan.get(op.storeName)?.statementIndexes.includes(index)
+            ? [opIndex]
+            : []
+        ),
+      })),
       dataLoss: dataLossOf(ops, fromSchema),
       accessChanges: [],
       temporaryValues: [],

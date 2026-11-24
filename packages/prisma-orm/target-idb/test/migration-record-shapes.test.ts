@@ -177,7 +177,7 @@ describe("record shape migration planning", () => {
     ]);
     expect(result.operations[0]).not.toHaveProperty("renameFields");
     expect(deletedDataWarning(result.operations)).toContain("users.old");
-    expect(deletedDataWarning(result.operations)).toContain("renameFields");
+    expect(deletedDataWarning(result.operations)).toContain("--rename Model.old:Model.new");
   });
 
   it.each([

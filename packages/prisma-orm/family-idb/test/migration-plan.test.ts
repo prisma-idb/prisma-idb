@@ -317,6 +317,113 @@ describe("migrationPlan — record field changes", () => {
 
 // ── Baseline-mode file layout (mirrors the old generate-baseline suite) ──────
 
+describe("migrationPlan — rename, convert and backfill statements", () => {
+  function contract(source: string) {
+    const { document, sources } = parse(source, "test.prisma");
+    const { symbolTable } = buildSymbolTable({ documents: [document], sources, defaultNamespaceId: "__unbound__" });
+    const result = interpretPslDocumentToIdbContract(symbolTable, "test.prisma");
+    if (!result.ok) throw new Error(JSON.stringify(result));
+    return result.value;
+  }
+  const todo = (model: string, fields: string, map = '@@map("todos")') =>
+    contract(`model ${model} {\n id String @id\n ${fields}\n ${map}\n}`);
+
+  async function planFrom(from: ReturnType<typeof contract>, to: ReturnType<typeof contract>, texts: string[]) {
+    await writeContract(cwd, from);
+    expect(await migrationPlan(defaultPaths(cwd))).toBe(0);
+    await writeContract(cwd, to);
+    return migrationPlan({
+      ...defaultPaths(cwd),
+      name: "rename",
+      statements: texts.map((text) => {
+        const [verb, value] = text.split(" ") as ["rename" | "convert" | "backfill", string];
+        return { verb, text: value };
+      }),
+    });
+  }
+
+  it("plans a field rename without removing the old values", async () => {
+    const code = await planFrom(todo("Todo", "title String"), todo("Todo", "name String"), [
+      "rename Todo.title:Todo.name",
+    ]);
+    expect(code).toBe(0);
+    const dirName = (await listMigrationDirs(cwd)).find((dir) => dir.endsWith("_rename"))!;
+    expect(await readOps(cwd, dirName)).toEqual([
+      expect.objectContaining({
+        kind: "transformRecords",
+        storeName: "todos",
+        renameFields: { name: "title" },
+      }),
+    ]);
+    expect((await readOps(cwd, dirName))[0]).not.toHaveProperty("removeFields");
+    expect(await readMigrationTs(cwd, dirName)).toContain(
+      'transformRecordsOp("todos", { renameFields: {"name":"title"} })'
+    );
+  });
+
+  it("refuses a backfill when a new field's default already fills existing records", async () => {
+    const code = await planFrom(todo("Todo", ""), todo("Todo", 'state String @default("open")'), [
+      "backfill Todo.state",
+    ]);
+    expect(code).toBe(1);
+    expect(capturedStderr).toContain("Leave out the --backfill statement.");
+    expect(await listMigrationDirs(cwd)).toHaveLength(1);
+  });
+
+  it("keeps the backfill for existing nullable rows when a field becomes required with a default", async () => {
+    const code = await planFrom(todo("Todo", "state String?"), todo("Todo", 'state String @default("open")'), [
+      "backfill Todo.state",
+    ]);
+    expect(code).toBe(0);
+    const dirName = (await listMigrationDirs(cwd)).find((dir) => dir.endsWith("_rename"))!;
+    expect(await readMigrationTs(cwd, dirName)).toContain('placeholder("Todo.state")');
+  });
+
+  it.each(["backfill Todo.title", "convert Todo.title"])(
+    "refuses %s when the contract is unchanged, instead of exiting as if nothing was asked",
+    async (statement) => {
+      const same = todo("Todo", "title String?");
+      const code = await planFrom(same, same, [statement]);
+      expect(code).toBe(1);
+      expect(capturedStderr).toContain(`Cannot resolve statement "--${statement}"`);
+      expect(await listMigrationDirs(cwd)).toHaveLength(1);
+    }
+  );
+
+  it("still reports an unchanged contract as nothing to do when no statement was given", async () => {
+    const same = todo("Todo", "title String");
+    expect(await planFrom(same, same, [])).toBe(0);
+    expect(await listMigrationDirs(cwd)).toHaveLength(1);
+  });
+
+  it.each([
+    [
+      "a field rename",
+      todo("Todo", "title Int"),
+      todo("Todo", "name String"),
+      ["convert Todo.name", "rename Todo.title:Todo.name"],
+    ],
+  ])("accepts a convert of the destination name after %s", async (_name, from, to, texts) => {
+    expect(await planFrom(from, to, texts)).toBe(0);
+    const dirName = (await listMigrationDirs(cwd)).find((dir) => dir.endsWith("_rename"))!;
+    expect(await readMigrationTs(cwd, dirName)).toContain("placeholder(");
+  });
+
+  it("refuses a name that neither contract declares", async () => {
+    const code = await planFrom(todo("Todo", ""), todo("Todo", "name String?"), ["rename Todo.nope:Todo.name"]);
+    expect(code).toBe(1);
+    expect(capturedStderr).toContain(`The origin model "Todo" has no field "nope"`);
+  });
+
+  it("refuses statements on a first migration, which has no old names", async () => {
+    await writeContract(cwd, todo("Todo", ""));
+    expect(
+      await migrationPlan({ ...defaultPaths(cwd), statements: [{ verb: "rename", text: "Todo.title:Todo.name" }] })
+    ).toBe(1);
+    expect(capturedStderr).toContain("need an earlier migration");
+  });
+});
+
 describe("migrationPlan — baseline mode", () => {
   it("creates all three package files, plus a snapshot store entry keyed by the contract hash", async () => {
     await migrationPlan(defaultPaths(cwd));

@@ -7,6 +7,7 @@ import type {
   HelpSpec,
   PositionalSpec,
   SpawnDeclarations,
+  StatementSpec,
 } from "@prisma/cli-engine";
 import { defineCommand } from "@prisma/cli-engine";
 import { CliStructuredError, notOk } from "@prisma/cli-engine/protocol";
@@ -61,6 +62,7 @@ export function defineIdbCommand<
     readonly help: HelpSpec;
     readonly args?: ArgsSpec<TFlags, TPositionals>;
     readonly exitCodes?: Readonly<Record<TCode, string>>;
+    readonly statements?: Readonly<Record<string, StatementSpec>>;
     readonly handler: Handler<TFlags, TPositionals, PrismaNextConfig, TCode, false, false>;
   } & SpawnDeclarations
 ): CommandDefinition<TFlags, TPositionals, PrismaNextConfig, TCode, false, false> {

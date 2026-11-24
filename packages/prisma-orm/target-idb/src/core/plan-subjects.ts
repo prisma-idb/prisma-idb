@@ -1,12 +1,5 @@
 import { UNBOUND_DOMAIN_NAMESPACE_ID, asNamespaceId } from "@prisma/orm-framework/contract/types";
-import type { Contract } from "@prisma/orm-framework/contract/types";
-import { describeMigrationStatement } from "@prisma/orm-framework/components/control";
-import type {
-  MigrationDataLoss,
-  MigrationPlannerFailureResult,
-  MigrationSubject,
-  ResolvedMigrationStatement,
-} from "@prisma/orm-framework/components/control";
+import type { MigrationDataLoss, MigrationSubject } from "@prisma/orm-framework/components/control";
 import type { IdbDdlOp } from "./migration-factories";
 import type { IdbSchemaDiffInput } from "./schema-diff";
 
@@ -54,10 +47,13 @@ function recordTransformLosses(
   }
   // A transform on a field that already held values re-types it; a field new to the record loses nothing.
   for (const field of Object.keys(op.fields ?? {})) {
-    if (!Object.hasOwn(record.fields, field)) continue;
+    // A renamed field's values come from its old name, so a transform under the new name re-types them.
+    const source =
+      op.renameFields !== undefined && Object.hasOwn(op.renameFields, field) ? op.renameFields[field]! : field;
+    if (!Object.hasOwn(record.fields, source)) continue;
     losses.push({
       operationIndex,
-      subject: fieldSubject(field),
+      subject: fieldSubject(source),
       loss: "typeChange",
       label: op.label,
       keepDataAdvice: KEEP_DATA_ADVICE,
@@ -88,37 +84,4 @@ export function dataLossOf(ops: readonly IdbDdlOp[], from: IdbSchemaDiffInput | 
     }
     return recordTransformLosses(operationIndex, op, from);
   });
-}
-
-/**
- * Refuses the statements the user gave, or returns `undefined` when there are none.
- *
- * The planner cannot carry out a rename, convert or backfill itself. Ignoring
- * one would plan a drop and create, which loses the rows the statement was
- * given to keep, so the first statement is refused instead.
- */
-export function refuseStatements(
-  statements: readonly ResolvedMigrationStatement[],
-  fromContract: Contract | null,
-  contract: Contract
-): MigrationPlannerFailureResult | undefined {
-  const [statement] = statements;
-  if (statement === undefined) return undefined;
-  const summary =
-    fromContract === null
-      ? `The IDB planner cannot carry out the ${statement.kind} statement.`
-      : `The IDB planner cannot carry out: ${describeMigrationStatement(statement, fromContract, contract)}`;
-  return {
-    kind: "failure",
-    conflicts: [
-      {
-        kind: "statementRefused",
-        summary,
-        why:
-          "Author the change in migration.ts with transformRecordsOp (renameFields, fields) " +
-          "so existing rows keep their data, then plan again.",
-        refusedStatement: statement,
-      },
-    ],
-  };
 }
