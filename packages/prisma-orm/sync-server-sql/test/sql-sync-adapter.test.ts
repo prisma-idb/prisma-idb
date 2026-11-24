@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { OwnershipCheck } from "@prisma-idb/sync-server";
 import { sqlGetKeyField } from "../src/core/get-key-field";
 import { ormRootFor } from "../src/core/orm-root";
-import { toSyncPushPayload, applyPushEvent } from "../src/core/push";
+import { toSyncPushPayload, applyPushEvent, decodeWireEvent } from "../src/core/push";
 import { reviveWireValues } from "../src/core/wire-values";
 import { checkAuthorization, plainRowReader } from "../src/core/authorization";
 import { resolvePullRecord } from "../src/core/resolve-pull-record";
@@ -306,8 +306,66 @@ describe("applyPushEvent", () => {
     expect(await db.orm.public.User.first({ id: "u1" })).toEqual({ id: "u1", name: "Changed" });
   });
 
+  it("acknowledges creates that gain a nullable field and updates with equivalent date spellings", async () => {
+    const db = await testDb();
+    const adapter = createSqlSyncAdapter({ contract, syncServer: testSyncServer, contractCheck: "off" });
+    await seed(db, { User: [{ id: "u1", name: "Ann" }], Board: [{ id: "b1", ownerId: "u1" }] });
+    const created = {
+      id: "create",
+      entityType: "Todo",
+      operation: "create" as const,
+      payload: { id: "t1", boardId: "b1" },
+    };
+    const updated = {
+      id: "update",
+      entityType: "Todo",
+      operation: "update" as const,
+      payload: { key: "t1", patch: { dueAt: "2026-01-02T03:04:05Z" } },
+    };
+    const send = (event: typeof created | typeof updated) => adapter.applyPush(db, { scopeKey: "u1", events: [event] });
+    const expected = (id: string) => ({ ok: true, results: [{ id, success: true }] });
+    expect(await send(created)).toEqual(expected(created.id));
+    expect(
+      await adapter.applyPush(db, {
+        scopeKey: "u1",
+        events: [{ ...created, payload: { ...created.payload, dueAt: null } }],
+      })
+    ).toEqual(expected(created.id));
+    expect(await send(updated)).toEqual(expected(updated.id));
+    const replay = {
+      ...updated,
+      payload: { ...updated.payload, clientMetadata: "ignored", patch: { dueAt: "2026-01-02T03:04:05.000Z" } },
+    };
+    expect(await send(replay)).toEqual(expected(updated.id));
+    expect(await db.orm.public.Changelog.all().toArray()).toHaveLength(2);
+  });
+
+  it("pins the persisted hash of decoded Date, BigInt and Bytes values", () => {
+    const payload = {
+      id: "list-1",
+      dates: ["2026-01-02T03:04:05Z"],
+      bigs: ["9007199254740993"],
+      bytes: ["AQI="],
+    };
+    const event = { id: "value-types", operation: "create" as const, payload };
+    const fingerprint = decodeWireEvent(contract, getKeyField, "ListItem", event).payloadHash;
+    expect(fingerprint).toBe("a43e665892027c3297e8eac0b80bba7efddbdd5c213cf7986dd113d35d493ef3");
+    expect(
+      decodeWireEvent(contract, getKeyField, "ListItem", {
+        ...event,
+        payload: {
+          bytes: [new Uint8Array([1, 2])],
+          dates: [new Date("2026-01-02T03:04:05.000Z")],
+          bigs: [9007199254740993n],
+          id: "list-1",
+        },
+      }).payloadHash
+    ).toBe(fingerprint);
+  });
+
   it.each([
     ["another scope", { scopeKey: "u2" }],
+    ["another model", { model: "Board" }],
     ["another row", { keyPath: "u2" }],
     ["another operation", { operation: "delete" }],
   ])("refuses an event id already used by a write to %s instead of acknowledging it", async (_, other) => {
@@ -407,6 +465,40 @@ describe("applyPushEvent", () => {
         "u1"
       );
     };
+
+    it.each([
+      ["matches", null, { success: true }],
+      ["differs", "2026-01-02T03:04:05Z", { success: false, error: "Failed to apply event todo", retryable: false }],
+    ])("checks a stored hash that %s after the retry hits a unique violation", async (_, dueAt, expected) => {
+      const db = await testDb();
+      const adapter = createSqlSyncAdapter({ contract, syncServer: testSyncServer, contractCheck: "off" });
+      await seed(db, { User: [{ id: "u1", name: "Ann" }], Board: [{ id: "b1", ownerId: "u1" }] });
+      const event = {
+        id: "todo",
+        entityType: "Todo",
+        operation: "create" as const,
+        payload: { id: "t1", boardId: "b1" },
+      };
+      expect(await adapter.applyPush(db, { scopeKey: "u1", events: [event] })).toEqual({
+        ok: true,
+        results: [{ id: "todo", success: true }],
+      });
+      const [check] = testSyncServer.validatePush(
+        [{ id: "todo", model: "Todo", operation: "create", payload: event.payload, wireKey: "t1" }],
+        { scopeKey: "u1" }
+      );
+      expect(
+        await adapter.applyPushEvent(
+          blindToChangelog(db),
+          { ...event, payload: { ...event.payload, dueAt } },
+          "Todo",
+          check!.check,
+          "u1"
+        )
+      ).toEqual({ id: "todo", ...expected });
+      expect((await db.orm.public.Changelog.first({ outboxEventId: "todo" }))?.payloadHash).toMatch(/^[a-f0-9]{64}$/);
+      expect((await db.orm.public.Todo.first({ id: "t1" }))?.dueAt).toBeNull();
+    });
 
     it.each([
       ["the same write", "create", { success: true }],

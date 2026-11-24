@@ -208,13 +208,20 @@ describe("concurrent pushes on one scope", () => {
     }
   );
 
-  it("acknowledges a scoped delete redelivered before the first commit", async () => {
+  it.each(["u1", "u2"])("checks the committed identity after a scoped delete locks for %s", async (scopeKey) => {
     const db = await testDb();
-    await seed(db, { User: [{ id: "u1", name: "Ann" }], Board: [{ id: "ba", ownerId: "u1" }] });
+    await seed(db, {
+      User: [
+        { id: "u1", name: "Ann" },
+        { id: "u2", name: "Bo" },
+      ],
+      Meal: [{ id: "meal", userId: "u2" }],
+      FoodEntry: [{ id: "entry", userId: "u1", mealId: "meal" }],
+    });
 
     const input = {
       scopeKey: "u1",
-      events: [{ id: "ea", entityType: "Board", operation: "delete" as const, payload: { key: "ba" } }],
+      events: [{ id: "ea", entityType: "FoodEntry", operation: "delete" as const, payload: { key: "entry" } }],
     };
     const first = pausedAfterChangelogInsert(db);
     const pushFirst = adapter.applyPush(first.db, input);
@@ -244,7 +251,7 @@ describe("concurrent pushes on one scope", () => {
           throw new Error("The first delete finished before inserting its changelog row");
         }),
       ]);
-      retry = adapter.applyPush(retryDb, input);
+      retry = adapter.applyPush(retryDb, { ...input, scopeKey });
       await Promise.race([
         locking,
         retry.then(() => {
@@ -256,8 +263,16 @@ describe("concurrent pushes on one scope", () => {
     }
 
     const expected = { ok: true, results: [{ id: "ea", success: true }] };
-    expect(await Promise.all([pushFirst, retry])).toEqual([expected, expected]);
-    expect(await db.orm.public.Board.all().toArray()).toEqual([]);
+    expect(await pushFirst).toEqual(expected);
+    expect(await retry).toEqual(
+      scopeKey === "u1"
+        ? expected
+        : {
+            ok: true,
+            results: [{ id: "ea", success: false, error: "Failed to apply event ea", retryable: false, record: null }],
+          }
+    );
+    expect(await db.orm.public.FoodEntry.all().toArray()).toEqual([]);
     expect(await db.orm.public.Changelog.where({ outboxEventId: "ea" }).all().toArray()).toHaveLength(1);
   });
 

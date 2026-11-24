@@ -54,6 +54,8 @@ pnpm --filter @prisma-idb/prisma-orm-kanban-example db:update
 
 See the [kanban explanation](https://prisma-idb.dev/docs/prisma-8/kanban-example) for the client setup in `src/lib/prisma/db.ts`, ORM calls in `src/lib/stores/kanban.svelte.ts`, and sync transport in `src/lib/prisma/sync.ts`.
 
+Databases on the committed PostgreSQL migration history can apply the changelog hash migration with `pnpm --filter @prisma-idb/prisma-orm-kanban-example exec prisma db migrate --config prisma.config.postgres.ts`. It adds the nullable hash column and trims older PostgreSQL timestamps to the millisecond precision used by the app's JavaScript dates.
+
 ## Stop the database
 
 ```sh

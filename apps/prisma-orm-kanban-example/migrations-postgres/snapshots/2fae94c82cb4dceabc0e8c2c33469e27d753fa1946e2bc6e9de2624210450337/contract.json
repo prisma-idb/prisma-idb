@@ -310,7 +310,7 @@
       "defaults": [
         {
           "onCreate": { "id": "uuidv7", "kind": "generator" },
-          "ref": { "column": "id", "namespace": "public", "table": "Changelog" }
+          "ref": { "entry": "Changelog", "field": "id", "namespace": "public" }
         }
       ]
     }

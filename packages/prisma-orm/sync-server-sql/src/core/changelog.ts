@@ -53,8 +53,13 @@ export interface PushEventIdentity {
  * `keyPath` is a text column, so a numeric wire key (`7`) comes back as its
  * text (`"7"`). Compare keys by their text.
  */
-function sameStoredKey(stored: unknown, key: unknown): boolean {
-  return String(stored) === String(key);
+function sameStoredKey(stored: unknown, key: unknown, normalize: (key: unknown) => unknown): boolean {
+  if (String(stored) === String(key)) return true;
+  try {
+    return String(normalize(stored)) === String(key);
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -66,7 +71,8 @@ function sameStoredKey(stored: unknown, key: unknown): boolean {
 export async function appliedEvent(
   tx: unknown,
   outboxEventId: string,
-  identity: PushEventIdentity
+  identity: PushEventIdentity,
+  normalizeStoredKey: (key: unknown) => unknown = (key) => key
 ): Promise<"none" | "same" | "other"> {
   const row = (await ormRootFor(tx, "Changelog").first({ outboxEventId })) as
     (Omit<PushEventIdentity, "payloadHash"> & { payloadHash: string | null }) | null;
@@ -75,7 +81,7 @@ export async function appliedEvent(
     row.scopeKey === identity.scopeKey &&
     row.model === identity.model &&
     row.operation === identity.operation &&
-    sameStoredKey(row.keyPath, identity.keyPath) &&
+    sameStoredKey(row.keyPath, identity.keyPath, normalizeStoredKey) &&
     (row.payloadHash == null || row.payloadHash === identity.payloadHash);
   return same ? "same" : "other";
 }

@@ -1,5 +1,3 @@
-import { createHash } from "node:crypto";
-import { canonicalStringify } from "@prisma/orm-framework/utils/canonical-stringify";
 import { domainModelsAtDefaultNamespace } from "@prisma/orm-framework/contract/types";
 import type { GetKeyField, PushCheck, SyncPushEvent, SyncServerContract } from "@prisma-idb/sync-server";
 import { ormRootFor } from "./orm-root";
@@ -12,7 +10,8 @@ import {
 import { lockRow, lockingRowReader } from "./row-lock";
 import { appendChangelogRow, appliedEvent, type PushEventIdentity } from "./changelog";
 import { isDeterministicWriteFailure, sqlState } from "./sqlstate";
-import { reviveWireValues, WireValidationError } from "./wire-values";
+import { encodeWireKey, reviveWireKey, reviveWireValues, WireValidationError } from "./wire-values";
+import { hashPushPayload } from "./payload-hash";
 
 /**
  * The fields `applyPushEvent` actually reads out of a push request's event —
@@ -102,7 +101,7 @@ export function toSyncPushPayload(operation: string, payload: unknown, keyField:
   return { [keyField]: (payload as { key: unknown }).key };
 }
 
-/** A validated write carries the hash of its original payload shape. */
+/** A decoded write carries the hash of the record or patch it applies. */
 export interface DecodedSqlPushEvent extends SyncPushEvent {
   readonly payloadHash: string;
 }
@@ -131,11 +130,10 @@ export function decodeWireEvent(
   }
   const payload = event.payload;
   const wirePayload = keyField === undefined ? {} : toSyncPushPayload(event.operation, payload, keyField);
+  const decodedPayload = reviveWireValues(contract, model, wirePayload, keyField);
   let payloadHash: string;
   try {
-    payloadHash = createHash("sha256")
-      .update(canonicalStringify(keyField === undefined ? {} : payload))
-      .digest("hex");
+    payloadHash = hashPushPayload(event.operation, decodedPayload);
   } catch {
     throw new WireValidationError("RECORD_VALIDATION_FAILURE", "Unable to fingerprint sync payload");
   }
@@ -143,7 +141,7 @@ export function decodeWireEvent(
     id: event.id,
     model,
     operation: event.operation,
-    payload: reviveWireValues(contract, model, wirePayload, keyField),
+    payload: decodedPayload,
     payloadHash,
     wireKey: keyField === undefined ? undefined : wirePayload[keyField],
   };
@@ -229,10 +227,13 @@ export async function applyPushEventDecoded(
       ? prepareParentReferenceChecks(contract, getKeyField, model, check)
       : [];
 
+  const keyField = getKeyField(contract, model);
+  const normalizeStoredKey = (key: unknown) =>
+    encodeWireKey(contract, model, keyField, reviveWireKey(contract, model, keyField, key));
   const identity: PushEventIdentity = {
     scopeKey,
     model,
-    keyPath: check.key,
+    keyPath: encodeWireKey(contract, model, keyField, event.payload[keyField]),
     operation: event.operation,
     payloadHash: event.payloadHash,
   };
@@ -246,12 +247,11 @@ export async function applyPushEventDecoded(
 
   try {
     return await (db as { transaction<T>(fn: (tx: unknown) => Promise<T>): Promise<T> }).transaction(async (tx) => {
-      const applied = await appliedEvent(tx, event.id, identity);
+      const applied = await appliedEvent(tx, event.id, identity, normalizeStoredKey);
       if (applied === "same") return { id: event.id, success: true };
       if (applied === "other") return reusedEventId;
 
       // The decoded payload carries the key; for an update, everything else is the patch.
-      const keyField = getKeyField(contract, model);
       const { [keyField]: nativeKey, ...patch } = event.payload;
       const plainReadRow = plainRowReader(tx, contract, getKeyField);
       const readRow = lockingRowReader(db, tx, contract, getKeyField);
@@ -268,7 +268,7 @@ export async function applyPushEventDecoded(
       // Authorization decides how to handle a missing target on both dialects.
       if (event.operation !== "create" && !(await lockRow(db, tx, contract, model, nativeKey, "update"))) {
         // A concurrent delete can commit while this lock is waiting.
-        const replay = await appliedEvent(tx, event.id, identity);
+        const replay = await appliedEvent(tx, event.id, identity, normalizeStoredKey);
         if (replay === "same") return { id: event.id, success: true };
         if (replay === "other") return reusedEventId;
       }
@@ -302,7 +302,7 @@ export async function applyPushEventDecoded(
 
       await appendChangelogRow(db, tx, contract, scopeKey, {
         model,
-        keyPath: check.key,
+        keyPath: identity.keyPath,
         operation: event.operation,
         outboxEventId: event.id,
         payloadHash: event.payloadHash,
@@ -318,7 +318,7 @@ export async function applyPushEventDecoded(
     // the retry then hits the first one's unique key. The event did apply.
     let retryable = !isDeterministicWriteFailure(err);
     if (sqlState(err) === "23505") {
-      const applied = await wasApplied(db, event.id, identity);
+      const applied = await wasApplied(db, event.id, identity, normalizeStoredKey);
       if (applied === "same") return { id: event.id, success: true };
       if (applied === undefined) retryable = true;
     }
@@ -335,10 +335,11 @@ export async function applyPushEventDecoded(
 async function wasApplied(
   db: unknown,
   eventId: string,
-  identity: PushEventIdentity
+  identity: PushEventIdentity,
+  normalizeStoredKey: (key: unknown) => unknown
 ): Promise<"none" | "same" | "other" | undefined> {
   try {
-    return await appliedEvent(db, eventId, identity);
+    return await appliedEvent(db, eventId, identity, normalizeStoredKey);
   } catch {
     return undefined;
   }

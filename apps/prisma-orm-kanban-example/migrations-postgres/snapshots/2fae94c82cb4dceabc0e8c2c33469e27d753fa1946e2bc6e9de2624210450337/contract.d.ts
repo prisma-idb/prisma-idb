@@ -1732,9 +1732,9 @@ type ContractBase = Omit<
         {
           readonly onCreate: { readonly id: "uuidv7"; readonly kind: "generator" };
           readonly ref: {
-            readonly column: "id";
+            readonly entry: "Changelog";
+            readonly field: "id";
             readonly namespace: "public";
-            readonly table: "Changelog";
           };
         },
       ];

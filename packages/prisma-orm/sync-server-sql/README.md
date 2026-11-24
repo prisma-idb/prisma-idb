@@ -184,7 +184,7 @@ Returned pull and rejected-push records contain only top-level fields from the c
 
 `db` is your Prisma 8 SQL client; it needs `.transaction(fn)` and `.orm.public.<Model>`.
 
-Push replay matches the original scope, model, key, operation and payload. Regenerate the SQL contract and add the nullable text column `Changelog.payloadHash` before deploying the adapter. Existing changelog rows with a null hash match on the other fields.
+Push replay matches scope, model, key, operation and the decoded payload. Creates treat absent fields and null fields alike. A model rename between attempts is reported as a rejection. Regenerate the SQL contract and add the nullable text column `Changelog.payloadHash` before deploying the adapter. Existing changelog rows with a null hash match on the other fields.
 
 Malformed records and patches return `RECORD_VALIDATION_FAILURE`; malformed keys return `KEYPATH_VALIDATION_FAILURE`. These failures are non-retryable and open no transaction. The batch helper revives native dates, bigint and bytes from their JSON representations before validating against the server contract. Updates cannot change the primary key. The adapter's `applyPushEvent` accepts `validatePush`'s `validation-failure` check and returns its code directly.
 
