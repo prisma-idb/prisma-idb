@@ -114,6 +114,8 @@ Queries use an index automatically for supported equality filters on an indexed 
 | `@onCreate(ulid())`, `@onCreate(ksuid())`           | A ULID or a KSUID, on create.                                        |
 | `@onCreate(nanoid())`                               | A Nano ID of 21 characters, on create. `nanoid(10)` sets the length. |
 
+A literal default must be a value that a write to the field accepts. An `Int` default is a whole number from -2147483648 to 2147483647, written without a fraction or an exponent, so `@default(1.0)` is refused. PSL has no exponent syntax for any number, so write `@default(100000)`, not `@default(1e5)`.
+
 The identifier functions require a `String` field, and any of them also works in `@onUpdate(...)`. A field updated on every write takes both attributes: `updatedAt DateTime @onCreate(now()) @onUpdate(now())`.
 
 A default or generated value only applies when the field is left out; an explicit value, including `null` on an optional field, takes precedence. It also counts as setting the field: a foreign key filled in by a default is checked like one you set yourself. When a field has both `@default(...)` and `@onCreate(...)`, the generator supplies the value. List fields can't have a generator.
