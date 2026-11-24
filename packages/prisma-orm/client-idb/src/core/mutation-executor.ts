@@ -1330,15 +1330,17 @@ export async function executeScalarUpdateWithFkValidation(
     // No row is selected, but the data is still checked, because Prisma rejects
     // invalid data before it looks for a row. Checks that need a row or the
     // store (foreign keys, `onUpdate` actions) have nothing to run on.
-    const { contract, modelName, data } = options;
+    const { contract, modelName, data, filters } = options;
+    const storeName = getStoreName(contract, modelName);
     const patch = applyUpdateDefaults(
       contract.execution?.mutations.defaults,
-      getStoreName(contract, modelName),
+      storeName,
       data,
       createMutationDefaultsCache()
     );
     assertEnumValues(contract, modelName, patch);
     assertValidRecord(contract, modelName, "update", patch);
+    if (filters.length > 0) planQuery(buildCatalog(contract, storeName, modelName), { where: andExpr(filters) });
     return null;
   }
   const rows = await executeScalarUpdates(options, 1, options.window);
@@ -1382,14 +1384,14 @@ async function executeScalarUpdates(
   assertValidRecord(contract, modelName, "update", patch);
   const { storeNames, enforcesOnUpdate } = collectUpdateStoreNames(contract, modelName, patch);
   const needsRowForFks = fkCheckNeedsExistingRow(contract, modelName, patch);
+  const windowed = window.orderBy !== undefined || window.skip !== undefined;
   const updatedRows = await withMutationScope(executor, storeNames, async (scope) => {
     // With defaults resolved per row, the first resolution is never written; each
     // row's own patch is checked in the loop below.
-    if (!needsRowForFks && !defaultsPerRow) await validateScalarFks(scope, contract, modelName, patch);
+    if (!windowed && !needsRowForFks && !defaultsPerRow) await validateScalarFks(scope, contract, modelName, patch);
     const meta = makePlanMeta(contract);
     const where = filters.length === 0 ? undefined : andExpr(filters);
     // A cursor write visits rows in key order, so an order or offset needs the rows read first.
-    const windowed = window.orderBy !== undefined || window.skip !== undefined;
     if (!windowed && !enforcesOnUpdate && !needsRowForFks && !options.operations?.length && !defaultsPerRow) {
       return writeMutationRows(scope, contract, modelName, {
         write: "put-merged",
@@ -1414,7 +1416,9 @@ async function executeScalarUpdates(
       );
       assertEnumValues(contract, modelName, rowPatch);
       assertValidRecord(contract, modelName, "update", rowPatch);
-      if (needsRowForFks || defaultsPerRow) await validateScalarFks(scope, contract, modelName, rowPatch, oldRow);
+      if (windowed || needsRowForFks || defaultsPerRow) {
+        await validateScalarFks(scope, contract, modelName, rowPatch, oldRow);
+      }
       if (enforcesOnUpdate) await applyReferentialActionsForRowOnUpdate(scope, contract, modelName, oldRow, rowPatch);
       const key = extractKeyFromRow(oldRow, keyPath);
       const rows = await scope.execute({ meta, kind: "update", storeName, key, patch: rowPatch } as IdbAtomicPlan);

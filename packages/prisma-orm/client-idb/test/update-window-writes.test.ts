@@ -83,6 +83,12 @@ describe("windowed update() with foreign keys", () => {
     expect(await posts.orderBy({ rank: "desc" }).skip(1).update({ ownerId: "o2" })).toMatchObject({ id: "p1" });
     expect((await rowsOf("post")).map((row) => row["ownerId"])).toEqual(["o2", "o2"]);
   });
+
+  it("does not check an assigned foreign key when the offset selects no row", async () => {
+    const posts = await seed();
+    expect(await posts.skip(2).update({ ownerId: "missing" })).toBeNull();
+    expect((await rowsOf("post")).map((row) => row["ownerId"])).toEqual(["o1", "o1"]);
+  });
 });
 
 describe("windowed update() with a partially set compound foreign key", () => {
@@ -271,6 +277,7 @@ describe("update() after take(0)", () => {
     model User {
       id   String @id
       name String
+      amount Decimal?
     }
   `);
 
@@ -282,6 +289,14 @@ describe("update() after take(0)", () => {
     expect(await users.take(0).update({ name: "Bob" })).toBeNull();
     await expect(users.take(0).update({ name: 3 })).rejects.toThrow(IdbRecordValidationError);
     await expect(users.update({ name: 3 })).rejects.toThrow(IdbRecordValidationError);
-    expect(await rowsOf("user")).toEqual([{ id: "u1", name: "Alice" }]);
+    expect(await rowsOf("user")).toEqual([{ id: "u1", name: "Alice", amount: null }]);
+  });
+
+  it("rejects an invalid Decimal filter operand even when the window is empty", async () => {
+    client = await open(contract);
+    const users = client.orm["user"]!;
+    await expect(users.where({ amount: "0x2" }).take(0).update({ name: "Bob" })).rejects.toThrow(
+      "Expected finite Decimal text"
+    );
   });
 });
