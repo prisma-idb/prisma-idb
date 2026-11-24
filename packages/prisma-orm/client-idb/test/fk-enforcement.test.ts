@@ -1204,15 +1204,13 @@ describe("onUpdate — setDefault", () => {
     expect(posts[0]?.["authorSlug"]).toBe("alice");
   });
 
-  // Regression test: the row being updated is still present in the store
-  // (with its *old* slug) when `validateSetDefaultPatch` scans for a real
-  // row matching the default — without excluding that row's own key, the
-  // scan would find the row about to change away from "system" and wrongly
-  // treat the default as valid.
+  // The default is checked after the update lands. Checked any earlier, the
+  // row being updated would still have its old slug, "system", and would
+  // wrongly satisfy the default it is changing away from.
   it("does not accept the row's own pre-change value as satisfying the default", async () => {
     const orm = idbOrm({ contract: onUpdateSetDefaultContract, executor });
     await orm["users"]!.create({ id: "u1", slug: "system", name: "Coincidence" } as never);
-    await orm["posts"]!.create({ id: "p1", authorSlug: "alice", title: "Post" } as never);
+    await orm["posts"]!.create({ id: "p1", authorSlug: "system", title: "Post" } as never);
 
     await expect(orm["users"]!.where({ id: "u1" } as never).update({ slug: "alice2" } as never)).rejects.toThrow(
       /does not reference a real row/i
@@ -2204,7 +2202,10 @@ async function open(contract: ReturnType<typeof defineContract>) {
   return { client, orm: client.orm as unknown as Record<string, Orm> };
 }
 
-describe("setDefault — downstream actions", () => {
+// `SetDefault` changes a child's foreign key just like `SetNull` does, so the
+// child's own `onUpdate` actions run, and the default is checked once the
+// triggering write has landed.
+describe("setDefault — downstream actions and the parent's new value", () => {
   function contractFor(trigger: "onDelete" | "onUpdate") {
     return defineContract({
       family: idbFamilyPack,
@@ -2266,6 +2267,35 @@ describe("setDefault — downstream actions", () => {
       }
     }
   );
+
+  it("deleteAll: checks the default after every row is deleted", async () => {
+    const { client, orm } = await open(contractFor("onDelete"));
+    try {
+      await orm["users"]!.create({ id: "system", email: "system" });
+      await orm["users"]!.create({ id: "u1", email: "old" });
+      await orm["profiles"]!.create({ id: "p1", userEmail: "old" });
+      await expect(orm["users"]!.where({}).deleteAll().toArray()).rejects.toThrow(
+        "Cannot delete User 'u1': SetDefault on relation 'profiles' leaves Profile 'p1' with userEmail='system', " +
+          "which does not reference a real row: relation 'profiles' has no User with email='system'."
+      );
+      expect(await orm["users"]!.findUnique("system")).toEqual({ id: "system", email: "system" });
+      expect(await orm["profiles"]!.findUnique("p1")).toEqual({ id: "p1", userEmail: "old" });
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("accepts a default that the triggering update itself creates", async () => {
+    const { client, orm } = await open(contractFor("onUpdate"));
+    try {
+      await orm["users"]!.create({ id: "u1", email: "old" });
+      await orm["profiles"]!.create({ id: "p1", userEmail: "old" });
+      await orm["users"]!.where({ id: "u1" }).update({ email: "system" });
+      expect(await orm["profiles"]!.findUnique("p1")).toEqual({ id: "p1", userEmail: "system" });
+    } finally {
+      await client.close();
+    }
+  });
 });
 
 // A one-to-one relation declared on the foreign-key side holds a foreign key,

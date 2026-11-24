@@ -733,3 +733,61 @@ describe("applyPull with a compound key", () => {
     expect(await scanAll(client, "_idb_sync_version_meta")).toEqual([]);
   });
 });
+
+describe("applyPull with a SetDefault relation", () => {
+  async function createClient() {
+    const name = testDbName();
+    const bootstrapDb = await openTestDb(name, [
+      { name: "users", keyPath: "id" },
+      { name: "posts", keyPath: "id", indexes: [{ name: "authorId", keyPath: "authorId" }] },
+      OUTBOX_STORE,
+      VERSION_META_STORE,
+    ]);
+    bootstrapDb.close();
+    const contract = defineContract({
+      family: idbFamilyPack,
+      target: idbTargetPack,
+      models: {
+        User: { store: "users", key: "id", fields: { id: "String", name: "String" } },
+        Post: {
+          store: "posts",
+          key: "id",
+          fields: { id: "String", title: "String", authorId: "String" },
+          fieldDefaults: { authorId: "system" },
+          relations: {
+            author: {
+              to: "User",
+              cardinality: "N:1",
+              on: { local: ["authorId"], target: ["id"] },
+              onDelete: "setDefault",
+            },
+          },
+        },
+      },
+    }) as unknown as IdbContract;
+    return createSyncIdbClient({ contract, dbName: name, trackedModels: "*" });
+  }
+
+  // The pulled delete runs the same actions as a local one, and the default is
+  // checked once the delete lands, so a default with no matching row halts the
+  // page instead of leaving the post pointing at nothing.
+  it("halts a pulled delete whose default points at no row", async () => {
+    const client = await createClient();
+    await applyPull(client, [log({ changelogId: "c1", operation: "create" })]);
+    await applyPull(client, [
+      log({
+        changelogId: "c2",
+        model: "Post",
+        keyPath: "p1",
+        operation: "create",
+        record: { id: "p1", title: "Hi", authorId: "u1" },
+      }),
+    ]);
+
+    const result = await applyPull(client, [log({ changelogId: "c3", operation: "delete", record: null })]);
+
+    expect(result).toMatchObject({ applied: 0, halted: true });
+    expect(await scanAll(client, "users")).toEqual([{ id: "u1", name: "Alice" }]);
+    expect(await scanAll(client, "posts")).toEqual([{ id: "p1", title: "Hi", authorId: "u1" }]);
+  });
+});

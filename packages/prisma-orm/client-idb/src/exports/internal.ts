@@ -1,5 +1,10 @@
 /** @internal Shared mutation implementation for companion IDB packages. */
-export { collectDeleteStoreNames, applyReferentialActionsForRow } from "../core/mutation-executor";
+export {
+  collectDeleteStoreNames,
+  applyReferentialActionsForRow,
+  createReferentialWrites,
+  verifyReferentialWrites,
+} from "../core/mutation-executor";
 
 export {
   decimalKeysEqual,

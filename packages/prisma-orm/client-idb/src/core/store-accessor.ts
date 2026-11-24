@@ -67,6 +67,8 @@ import { OpenTransaction } from "./open-transaction";
 import { assertBulkWriteIgnoresNothing } from "./bulk-write-guard";
 import {
   applyReferentialActionsForRowOnUpdate,
+  createReferentialWrites,
+  verifyReferentialWrites,
   collectOnUpdateEnforcementStoreNames,
   collectScalarFkStoreNames,
   executeBulkUpdateWithFkValidation,
@@ -882,8 +884,10 @@ export class IdbStoreAccessorImpl<
       assertValidRecord(this.#contract, this.#modelName, "update", rowPatch);
       await validateScalarFks(scope, this.#contract, this.#modelName, rowPatch, existing);
       const key = extractKeyFromRow(existing, keyPath);
-      await applyReferentialActionsForRowOnUpdate(scope, this.#contract, this.#modelName, existing, rowPatch);
+      const writes = createReferentialWrites("update", this.#modelName, key);
+      await applyReferentialActionsForRowOnUpdate(scope, this.#contract, this.#modelName, existing, rowPatch, writes);
       const rows = await scope.execute({ meta, kind: "update", storeName, key, patch: rowPatch });
+      await verifyReferentialWrites(scope, this.#contract, [writes]);
       const updated = absentAsNull(this.#contract, this.#modelName)(rows[0] ?? existing);
       return updated as DefaultModelRow<TContract, ModelName>;
     });

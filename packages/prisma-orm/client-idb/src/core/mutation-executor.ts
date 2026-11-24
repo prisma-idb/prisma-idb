@@ -336,8 +336,10 @@ async function updateFirstGraph(
     assertEnumValues(contract, modelName, patch);
     assertValidRecord(contract, modelName, "update", patch);
     await validateScalarFks(scope, contract, modelName, patch, existingRow);
-    await applyReferentialActionsForRowOnUpdate(scope, contract, modelName, existingRow, patch);
+    const writes = createReferentialWrites("update", modelName, key);
+    await applyReferentialActionsForRowOnUpdate(scope, contract, modelName, existingRow, patch, writes);
     const rows = await scope.execute({ meta, kind: "update", storeName, key, patch });
+    await verifyReferentialWrites(scope, contract, [writes]);
     const updated = rows[0];
     if (updated) parentRow = absentAsNull(contract, modelName)(updated);
   }
@@ -712,16 +714,20 @@ async function writeChildRows(
   // into or out of the match set.
   const meta = makePlanMeta(contract);
   const keyPath = getKeyPath(contract, modelName);
+  const allWrites: ReferentialWrites[] = [];
   for (const row of await readMutationRows(scope, contract, modelName, where)) {
     const patch = applyUpdateDefaults(defaults, storeName, setValues, defaultsCache);
     assertValidRecord(contract, modelName, "update", patch);
     // A generated value can be a foreign key, or a field other rows reference,
     // so each row's patch gets the checks and actions of any other update.
     await validateScalarFks(scope, contract, modelName, patch, row);
-    await applyReferentialActionsForRowOnUpdate(scope, contract, modelName, row, patch);
     const key = extractKeyFromRow(row, keyPath);
+    const writes = createReferentialWrites("update", modelName, key);
+    allWrites.push(writes);
+    await applyReferentialActionsForRowOnUpdate(scope, contract, modelName, row, patch, writes);
     await scope.execute({ meta, kind: "update", storeName, key, patch } as IdbAtomicPlan);
   }
+  await verifyReferentialWrites(scope, contract, allWrites);
 }
 
 function buildParentJoinWhere(parentValues: Map<string, unknown>): IdbFilterExpr {
@@ -1019,56 +1025,6 @@ function buildSetDefaultPatch(contract: IdbContract, def: RelationDefinition): R
   return patch;
 }
 
-/**
- * Validates that a `setDefault` patch actually references a real row before
- * it's written — without this, `setDefault` would silently reintroduce the
- * exact dangling-FK problem the rest of this file exists to prevent. A real
- * SQL database only makes `SET DEFAULT` safe because its FK constraint
- * re-checks the new value transactionally at write time; IDB has no such
- * engine to delegate to, so this check is IDB's equivalent.
- *
- * Checks against `modelName`'s own store (the parent being deleted/updated)
- * using `def.localFields` — the relation's own semantics ("child.targetField
- * references parent.localField") mean that's exactly what a default value
- * written to the child's FK field must match. That store is always already
- * part of the transaction (it's the model literally being written), so no
- * store-list changes are needed to call this.
- *
- * A compound relation is checked as one tuple: a single parent row must
- * match every field's default.
- *
- * `excludeKey`, when given, excludes the parent row currently being
- * deleted/updated from the existence scan. That row is still physically
- * present in the store at this point (its own write/delete hasn't happened
- * yet — this check runs first, before the enforcement loop's caller applies
- * it), so without the exclusion, a default value equal to that row's *old*
- * `localField` value would false-positive: the scan would find the row about
- * to disappear (or change away from that value) and wrongly conclude the
- * default references a real row, when after the transaction nothing will.
- */
-async function validateSetDefaultPatch(
-  scope: IdbTransactionScope,
-  contract: IdbContract,
-  modelName: string,
-  def: RelationDefinition,
-  patch: Record<string, unknown>,
-  excludeKey?: IDBValidKey
-): Promise<void> {
-  const values = def.targetFields.map((f) => patch[f]);
-  // A default of null leaves no reference to check.
-  if (values.some((v) => v === null || v === undefined)) return;
-
-  const meta = makePlanMeta(contract);
-  const exists = await parentExists(scope, contract, meta, modelName, def.localFields, values, excludeKey);
-  if (!exists) {
-    throw new Error(
-      `setDefault referential action on relation '${def.relationName}' would set ` +
-        `${def.relatedModelName} to ${describeTuple(def.targetFields, values)}, but no ${modelName} with ` +
-        `${describeTuple(def.localFields, values)} exists — the declared default does not reference a real row.`
-    );
-  }
-}
-
 // ── Update referential action enforcement ─────────────────────────────────────
 
 /**
@@ -1106,6 +1062,40 @@ interface ReferentialRoot {
   readonly key: IDBValidKey;
 }
 
+/** A reference from a child's `fields` to a parent's `parentFields`, as checked after a referential write. */
+interface CheckedReference {
+  readonly relationName: string;
+  readonly fields: readonly string[];
+  readonly parentModelName: string;
+  readonly parentFields: readonly string[];
+}
+
+/**
+ * A row whose foreign key was rewritten by SetDefault. The relation can be
+ * declared on the parent only, so use the reference from the action itself.
+ */
+interface ReferentialWrite {
+  readonly modelName: string;
+  readonly key: IDBValidKey;
+  readonly cause: string;
+  readonly references: CheckedReference[];
+}
+
+/** Rows changed by SetDefault, checked after the triggering writes land. */
+export interface ReferentialWrites {
+  readonly root: ReferentialRoot;
+  readonly rows: Map<string, ReferentialWrite>;
+}
+
+/** Start collecting the referential writes caused by deleting or updating one row. */
+export function createReferentialWrites(
+  operation: ReferentialRoot["operation"],
+  modelName: string,
+  key: IDBValidKey
+): ReferentialWrites {
+  return { root: { operation, modelName, key }, rows: new Map() };
+}
+
 /** `Cascade`, `SetNull` or `SetDefault`, as the schema spells it. */
 function actionLabel(action: "cascade" | "setNull" | "setDefault"): string {
   return action === "cascade" ? "Cascade" : action === "setNull" ? "SetNull" : "SetDefault";
@@ -1116,48 +1106,111 @@ function describeRoot(root: ReferentialRoot): string {
   return `Cannot ${root.operation} ${root.modelName} '${keyToken(root.key)}'`;
 }
 
-/** Run each matching child's own onUpdate actions, then write the patch. */
+/** Check that each SetDefault action left a valid foreign key. */
+export async function verifyReferentialWrites(
+  scope: IdbTransactionScope,
+  contract: IdbContract,
+  all: readonly ReferentialWrites[]
+): Promise<void> {
+  const meta = makePlanMeta(contract);
+  // Many children usually point at the same parent, so each parent is looked up once.
+  const found = new Map<string, boolean>();
+  for (const writes of all) {
+    for (const write of writes.rows.values()) {
+      const storeName = getStoreName(contract, write.modelName);
+      const [row] = await scope.execute({ meta, kind: "key-get", storeName, key: write.key });
+      if (!row) continue;
+      for (const reference of write.references) {
+        const values = reference.fields.map((field) => row[field]);
+        if (values.some((value) => value === null || value === undefined)) continue;
+        const { parentModelName, parentFields } = reference;
+        const lookup = JSON.stringify([parentModelName, parentFields, keyToken(values as IDBValidKey[])]);
+        let exists = found.get(lookup);
+        if (exists === undefined) {
+          exists = await parentExists(scope, contract, meta, parentModelName, parentFields, values);
+          found.set(lookup, exists);
+        }
+        if (exists) continue;
+        throw new Error(
+          `${describeRoot(writes.root)}: ${write.cause} leaves ${write.modelName} '${keyToken(write.key)}' with ` +
+            `${describeTuple(reference.fields, values)}, which does not reference a real row: relation ` +
+            `'${reference.relationName}' has no ${parentModelName} with ${describeTuple(parentFields, values)}.`
+        );
+      }
+    }
+  }
+}
+
+/** `true` when both describe the same child fields pointing at the same parent fields. */
+function sameReference(a: CheckedReference, b: CheckedReference): boolean {
+  return a.parentModelName === b.parentModelName && sameJoinPairs(a.fields, a.parentFields, b.fields, b.parentFields);
+}
+
+/**
+ * Write a referential action's `patch` to every child `where` matches. Each
+ * child's own `onUpdate` actions run first. For SetDefault, record the new
+ * reference to verify after the triggering write lands.
+ */
 async function writeReferentialUpdate(
   scope: IdbTransactionScope,
   contract: IdbContract,
+  parentModelName: string,
   def: RelationDefinition,
   action: "cascade" | "setNull" | "setDefault",
   where: IdbFilterExpr,
   patch: Record<string, unknown>,
-  root: ReferentialRoot,
+  writes: ReferentialWrites,
   activeUpdates?: Set<string>
-): Promise<Record<string, unknown>[]> {
+): Promise<void> {
   const children = await readMutationRows(scope, contract, def.relatedModelName, where);
-  if (children.length === 0) return [];
+  if (children.length === 0) return;
+  const keyPath = getKeyPath(contract, def.relatedModelName);
+  const cause = `${actionLabel(action)} on relation '${def.relationName}'`;
   const hasDownstreamActions = getChildEnforcementEdges(contract, def.relatedModelName).some((edge) =>
     edge.localFields.some((field) => Object.hasOwn(patch, field))
   );
+  let updated: Record<string, unknown>[];
   if (!hasDownstreamActions) {
-    return writeMutationRows(scope, contract, def.relatedModelName, { write: "put-merged", where, patch });
+    updated = await writeMutationRows(scope, contract, def.relatedModelName, { write: "put-merged", where, patch });
+  } else {
+    assertValidRecord(contract, def.relatedModelName, "update", patch);
+    const meta = makePlanMeta(contract);
+    updated = [];
+    for (const child of children) {
+      const key = extractKeyFromRow(child, keyPath);
+      const via = `${cause} changes ${def.relatedModelName} '${keyToken(key)}'`;
+      await applyReferentialActionsForRowOnUpdate(
+        scope,
+        contract,
+        def.relatedModelName,
+        child,
+        patch,
+        writes,
+        activeUpdates,
+        via
+      );
+      const [row] = await scope.execute({ meta, kind: "update", storeName: def.relatedStoreName, key, patch });
+      if (row) updated.push(row);
+    }
   }
 
-  assertValidRecord(contract, def.relatedModelName, "update", patch);
-  const keyPath = getKeyPath(contract, def.relatedModelName);
-  const meta = makePlanMeta(contract);
-  const cause = `${actionLabel(action)} on relation '${def.relationName}'`;
-  const updated: Record<string, unknown>[] = [];
-  for (const child of children) {
-    const key = extractKeyFromRow(child, keyPath);
-    const via = `${cause} changes ${def.relatedModelName} '${keyToken(key)}'`;
-    await applyReferentialActionsForRowOnUpdate(
-      scope,
-      contract,
-      def.relatedModelName,
-      child,
-      patch,
-      root,
-      activeUpdates,
-      via
-    );
-    const [row] = await scope.execute({ meta, kind: "update", storeName: def.relatedStoreName, key, patch });
-    if (row) updated.push(row);
+  if (action !== "setDefault") return;
+  const reference = {
+    relationName: def.relationName,
+    fields: def.targetFields,
+    parentModelName,
+    parentFields: def.localFields,
+  };
+  for (const row of updated) {
+    const key = extractKeyFromRow(row, keyPath);
+    const rowId = keyToken([def.relatedStoreName, key]);
+    const recorded = writes.rows.get(rowId);
+    if (!recorded) {
+      writes.rows.set(rowId, { modelName: def.relatedModelName, key, cause, references: [reference] });
+    } else if (!recorded.references.some((checked) => sameReference(checked, reference))) {
+      recorded.references.push(reference);
+    }
   }
-  return updated;
 }
 
 /**
@@ -1171,7 +1224,8 @@ async function writeReferentialUpdate(
  * `cascade`, `setNull` and `setDefault` can trigger further `onUpdate`
  * actions on the child. Track active actions by row and relation so cycles
  * terminate and a different relation on the same row can still enforce its
- * own action.
+ * own action. The caller uses {@link verifyReferentialWrites} to check
+ * defaults after its own write.
  * `via` describes the action that is changing `oldRow` when this runs for a
  * child, so a refusal names the write the user made.
  *
@@ -1184,13 +1238,12 @@ export async function applyReferentialActionsForRowOnUpdate(
   modelName: string,
   oldRow: Record<string, unknown>,
   patch: Record<string, unknown>,
-  root?: ReferentialRoot,
+  writes: ReferentialWrites,
   activeUpdates: Set<string> = new Set(),
   via?: string
 ): Promise<void> {
   const keyPath = getKeyPath(contract, modelName);
   const key = extractKeyFromRow(oldRow, keyPath);
-  root ??= { operation: "update", modelName, key };
   patch = preserveDecimalKeySpelling(contract, modelName, patch, key);
 
   const meta = makePlanMeta(contract);
@@ -1207,6 +1260,7 @@ export async function applyReferentialActionsForRowOnUpdate(
     }
 
     if (action === "restrict") {
+      const { root } = writes;
       const rootKey = root.operation === "delete" && root.modelName === def.relatedModelName ? root.key : undefined;
       const excludeDeletedRoot =
         rootKey === undefined
@@ -1220,7 +1274,7 @@ export async function applyReferentialActionsForRowOnUpdate(
             ? `Cannot update ${modelName} '${keyToken(key)}': changing field(s) ${fields} ` +
                 `would orphan child records on relation '${def.relationName}'. ` +
                 "Update or remove those children first, or declare onUpdate: Cascade, SetNull or SetDefault on the relation."
-            : `${describeRoot(root)}: ${via}, and changing its field(s) ${fields} would orphan child ` +
+            : `${describeRoot(writes.root)}: ${via}, and changing its field(s) ${fields} would orphan child ` +
                 `records on relation '${def.relationName}'. Update or remove those children first, or declare ` +
                 `onUpdate: Cascade, SetNull or SetDefault on '${def.relationName}'.`
         );
@@ -1229,7 +1283,7 @@ export async function applyReferentialActionsForRowOnUpdate(
     }
 
     const childWhere = buildChildWhere(def, values);
-    const actionKey = JSON.stringify([modelName, keyToken(key), def.relationName]);
+    const actionKey = keyToken([modelName, key, def.relationName]);
     if (activeUpdates.has(actionKey)) continue;
     const childPatch =
       action === "setNull"
@@ -1241,10 +1295,19 @@ export async function applyReferentialActionsForRowOnUpdate(
                 changedFields.includes(field) ? [[def.targetFields[i]!, patch[field]]] : []
               )
             );
-    if (action === "setDefault") await validateSetDefaultPatch(scope, contract, modelName, def, childPatch, key);
     activeUpdates.add(actionKey);
     try {
-      await writeReferentialUpdate(scope, contract, def, action, childWhere, childPatch, root, activeUpdates);
+      await writeReferentialUpdate(
+        scope,
+        contract,
+        modelName,
+        def,
+        action,
+        childWhere,
+        childPatch,
+        writes,
+        activeUpdates
+      );
     } finally {
       activeUpdates.delete(actionKey);
     }
@@ -1520,6 +1583,7 @@ async function executeScalarUpdates(options: ScalarUpdateOptions, take?: 1): Pro
     const oldRows = await readMutationRows(scope, contract, modelName, where, take);
     const keyPath = getKeyPath(contract, modelName);
     const results: Record<string, unknown>[] = [];
+    const allWrites: ReferentialWrites[] = [];
     for (const oldRow of oldRows) {
       const rowData = defaultsPerRow ? applyUpdateDefaults(defaults, storeName, data, defaultsCache) : patch;
       const rowPatch = applyFieldUpdates(
@@ -1531,12 +1595,17 @@ async function executeScalarUpdates(options: ScalarUpdateOptions, take?: 1): Pro
       assertEnumValues(contract, modelName, rowPatch);
       assertValidRecord(contract, modelName, "update", rowPatch);
       if (needsRowForFks || defaultsPerRow) await validateScalarFks(scope, contract, modelName, rowPatch, oldRow);
-      if (enforcesOnUpdate) await applyReferentialActionsForRowOnUpdate(scope, contract, modelName, oldRow, rowPatch);
       const key = extractKeyFromRow(oldRow, keyPath);
+      if (enforcesOnUpdate) {
+        const writes = createReferentialWrites("update", modelName, key);
+        allWrites.push(writes);
+        await applyReferentialActionsForRowOnUpdate(scope, contract, modelName, oldRow, rowPatch, writes);
+      }
       const rows = await scope.execute({ meta, kind: "update", storeName, key, patch: rowPatch } as IdbAtomicPlan);
       const updated = rows[0];
       if (updated) results.push(updated);
     }
+    await verifyReferentialWrites(scope, contract, allWrites);
     return results;
   });
   // The rows come straight from the store, so a field added after they were written is absent.
@@ -1597,10 +1666,10 @@ export function collectDeleteStoreNames(contract: IdbContract, modelName: string
  * multi-hop chain (`User --cascade--> Post --cascade--> Comment`) is fully
  * torn down, and a `restrict` several hops deep still aborts the whole
  * transaction (recursing before deleting means the delete never happens if a
- * deeper hop throws). `setNull` and `setDefault` leave a child row in place and run its
- * `onUpdate` actions for changed fields.
+ * deeper hop throws). `setNull` leaves the child row in place and runs any
+ * `onUpdate` actions triggered by clearing its foreign key.
  *
- * `visited` (keyed by `storeName::key`) guards against row-level cycles — two
+ * `visited` (keyed by the store and primary key) guards against row-level cycles — two
  * specific rows whose FKs point at each other through a self-referential or
  * mutually-cascading relation graph. Callers should leave it at its default
  * (a fresh `Set` per top-level call) so independent rows deleted in the same
@@ -1613,14 +1682,12 @@ export async function applyReferentialActionsForRow(
   contract: IdbContract,
   modelName: string,
   row: Record<string, unknown>,
-  root?: ReferentialRoot,
+  writes: ReferentialWrites,
   visited: Set<string> = new Set(),
   via?: string
 ): Promise<void> {
   const keyPath = getKeyPath(contract, modelName);
-  const key = extractKeyFromRow(row, keyPath);
-  root ??= { operation: "delete", modelName, key };
-  const rowKey = `${getStoreName(contract, modelName)}::${keyToken(key)}`;
+  const rowKey = keyToken([getStoreName(contract, modelName), extractKeyFromRow(row, keyPath)]);
   if (visited.has(rowKey)) return;
   visited.add(rowKey);
 
@@ -1644,7 +1711,7 @@ export async function applyReferentialActionsForRow(
           via === undefined
             ? `Cannot delete ${modelName} '${keyToken(extractKeyFromRow(row, keyPath))}': child records exist on relation '${def.relationName}'. ` +
                 "Delete those children first, or declare onDelete: Cascade, SetNull or SetDefault on the relation."
-            : `${describeRoot(root)}: ${via}, but child records exist on relation '${def.relationName}'. ` +
+            : `${describeRoot(writes.root)}: ${via}, but child records exist on relation '${def.relationName}'. ` +
                 `Delete those children first, or declare onDelete: Cascade, SetNull or SetDefault on '${def.relationName}'.`
         );
       }
@@ -1658,7 +1725,7 @@ export async function applyReferentialActionsForRow(
       for (const child of children) {
         const childKey = extractKeyFromRow(child, childKeyPath);
         const childVia = `Cascade on relation '${def.relationName}' deletes ${def.relatedModelName} '${keyToken(childKey)}'`;
-        await applyReferentialActionsForRow(scope, contract, def.relatedModelName, child, root, visited, childVia);
+        await applyReferentialActionsForRow(scope, contract, def.relatedModelName, child, writes, visited, childVia);
         await scope.execute({ meta, kind: "delete", storeName: def.relatedStoreName, key: childKey } as IdbAtomicPlan);
       }
       continue;
@@ -1668,8 +1735,7 @@ export async function applyReferentialActionsForRow(
       action === "setNull"
         ? Object.fromEntries(def.targetFields.map((field) => [field, null]))
         : buildSetDefaultPatch(contract, def);
-    if (action === "setDefault") await validateSetDefaultPatch(scope, contract, modelName, def, patch, key);
-    await writeReferentialUpdate(scope, contract, def, action, childWhere, patch, root);
+    await writeReferentialUpdate(scope, contract, modelName, def, action, childWhere, patch, writes);
   }
 }
 
@@ -1692,8 +1758,10 @@ export async function executeDeleteWithReferentialActions(options: {
     const rows = await readMutationRows(scope, contract, modelName, where, 1);
     const row = rows[0];
     if (!row) throw deleteRecordNotFound(modelName);
-    await applyReferentialActionsForRow(scope, contract, modelName, row);
+    const writes = createReferentialWrites("delete", modelName, key);
+    await applyReferentialActionsForRow(scope, contract, modelName, row, writes);
     await scope.execute({ meta, kind: "delete", storeName, key } as IdbAtomicPlan);
+    await verifyReferentialWrites(scope, contract, [writes]);
     return row;
   });
 }
@@ -1719,11 +1787,15 @@ export async function executeDeleteAllWithReferentialActions(options: {
       return deleted.map(absentAsNull(contract, modelName));
     }
     const rows = await readMutationRows(scope, contract, modelName, where);
+    const allWrites: ReferentialWrites[] = [];
     for (const row of rows) {
-      await applyReferentialActionsForRow(scope, contract, modelName, row);
       const key = extractKeyFromRow(row, keyPath);
+      const writes = createReferentialWrites("delete", modelName, key);
+      allWrites.push(writes);
+      await applyReferentialActionsForRow(scope, contract, modelName, row, writes);
       await scope.execute({ meta, kind: "delete", storeName, key } as IdbAtomicPlan);
     }
+    await verifyReferentialWrites(scope, contract, allWrites);
     return rows;
   });
 }
