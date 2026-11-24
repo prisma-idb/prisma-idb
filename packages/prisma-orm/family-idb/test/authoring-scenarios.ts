@@ -684,6 +684,7 @@ export const authoringScenarios: AuthoringScenario[] = [
         id     String  @id
         exact  Decimal @default(1234567890123456789.123)
         simple Decimal @default(1.5)
+        signed Decimal @default(-0.10)
       }
     `,
     ts: {
@@ -691,8 +692,8 @@ export const authoringScenarios: AuthoringScenario[] = [
         Price: {
           store: "price",
           key: "id",
-          fields: { id: "String", exact: "Decimal", simple: "Decimal" },
-          defaults: { exact: "1234567890123456789.123", simple: 1.5 },
+          fields: { id: "String", exact: "Decimal", simple: "Decimal", signed: "Decimal" },
+          defaults: { exact: "1234567890123456789.123", simple: 1.5, signed: "-0.10" },
         },
       },
     },

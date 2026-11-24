@@ -1797,15 +1797,23 @@ describe("shared definition diagnostics", () => {
 });
 
 describe("Int literal defaults", () => {
-  it.each(["1.5", "2147483648", "-2147483649"])("rejects @default(%s), which no Int write would accept", (value) => {
-    const result = interpret(`
+  it.each(["1.5", "1.0", "2147483648", "-2147483649", "2147483647.00000001", "99999999999999999999"])(
+    "rejects @default(%s), which no Int write would accept",
+    (value) => {
+      const result = interpret(`
       model Item {
         id    String @id
         count Int    @default(${value})
       }
     `);
-    expect(result.ok).toBe(false);
-  });
+      expect(result.ok ? [] : result.failure.diagnostics.map((d) => [d.code, d.message])).toEqual([
+        [
+          "IDB_INVALID_DEFAULT_VALUE",
+          `Field "Item.count" default ${value} is not an Int. Write a whole number from -2147483648 to 2147483647.`,
+        ],
+      ]);
+    }
+  );
 
   it("accepts an Int default at the edge of the range", () => {
     expect(interpret(`model Item {\n  id String @id\n  count Int @default(2147483647)\n}`).ok).toBe(true);

@@ -1073,6 +1073,74 @@ describe("defineContract — conflicting reciprocal relation actions", () => {
   });
 });
 
+describe("defineContract — literal defaults range and form", () => {
+  const define = (type: "Decimal" | "Int", value: unknown) =>
+    defineContract({
+      family: idbFamilyPack,
+      target: idbTargetPack,
+      models: { Row: { store: "rows", key: "id", fields: { id: "String", v: type }, defaults: { v: value as never } } },
+    });
+
+  it.each([
+    ["Decimal", "abc"],
+    ["Decimal", Number.POSITIVE_INFINITY],
+    ["Decimal", Number.NaN],
+    ["Int", 1.5],
+    ["Int", 2_147_483_648],
+    ["Int", -2_147_483_649],
+    ["Int", Number.NaN],
+    ["Int", "1"],
+  ] as const)("rejects a %s default of %s, which no write of that type would accept", (type, value) => {
+    expect(() => define(type, value)).toThrow(/IDB_INVALID_DEFAULT_VALUE/);
+  });
+
+  it("names the Int range when it refuses an Int default", () => {
+    expect(() => define("Int", 2_147_483_648)).toThrow(
+      'Field "Row.v" default 2147483648 is not an Int. Write a whole number from -2147483648 to 2147483647.'
+    );
+  });
+
+  it.each([-2_147_483_648, 0, 2_147_483_647])("accepts an Int default of %s", (value) => {
+    const contract = define("Int", value);
+    expect(contract.execution?.mutations.defaults).toEqual([
+      {
+        ref: { namespace: "__unbound__", entry: "rows", field: "v" },
+        onCreate: { kind: "generator", id: "literal", params: { value } },
+      },
+    ]);
+  });
+
+  it.each([
+    ["-0.10", "-0.10"],
+    [1.5, "1.5"],
+  ])("stores a Decimal default of %s in its string form", (value, stored) => {
+    const contract = define("Decimal", value);
+    expect(contract.execution?.mutations.defaults).toEqual([
+      {
+        ref: { namespace: "__unbound__", entry: "rows", field: "v" },
+        onCreate: { kind: "generator", id: "literal", params: { value: stored } },
+      },
+    ]);
+    const withFieldDefault = defineContract({
+      family: idbFamilyPack,
+      target: idbTargetPack,
+      models: {
+        Row: {
+          store: "rows",
+          key: "id",
+          fields: { id: "String", v: "Decimal" },
+          fieldDefaults: { v: value as never },
+        },
+      },
+    });
+    const row = domainModelsAtDefaultNamespace(withFieldDefault.domain) as Record<
+      string,
+      { storage: { fieldDefaults?: unknown } }
+    >;
+    expect(row["Row"]!.storage.fieldDefaults).toEqual({ v: stored });
+  });
+});
+
 describe("defineContract — literal defaults", () => {
   it("ignores Object.prototype members when a field shares their name", () => {
     const contract = defineContract({
