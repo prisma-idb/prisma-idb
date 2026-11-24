@@ -67,6 +67,27 @@ function readMarker(
   });
 }
 
+/**
+ * An open request that starts only after `start` resolves. Handlers set on it before then are moved
+ * to the real request, and reads go to the real request once it exists.
+ */
+function deferredOpen(start: () => Promise<IDBOpenDBRequest>): IDBOpenDBRequest {
+  const handlers: Record<string, unknown> = {};
+  let real: IDBOpenDBRequest | undefined;
+  void start().then((request) => {
+    real = request;
+    Object.assign(request, handlers);
+  });
+  return new Proxy({} as IDBOpenDBRequest, {
+    get: (_target, property) => (real ? Reflect.get(real, property, real) : handlers[property as string]),
+    set: (_target, property, value) => {
+      handlers[property as string] = value;
+      if (real) Reflect.set(real, property, value, real);
+      return true;
+    },
+  });
+}
+
 let dbCounter = 0;
 describe("auto-migrate invariants", () => {
   it("takes the migration that provides a required invariant, whatever order the bundle lists them in", async () => {
@@ -210,13 +231,34 @@ describe("auto-migrate invariants", () => {
       providedInvariants: ["fixed"],
       createdAt: new Date(2026, 0, 3).toISOString(),
     });
-    // Both opens read an empty database and plan version 1. The first one's upgrade wins and leaves the
-    // marker at the head without `fixed`, so the second must plan again from that marker.
-    const [plainClient, fixedClient] = await Promise.all([
-      createAutoMigratingIdbClient({ contractSpace: space([baseline, plain], []), dbName }),
-      createAutoMigratingIdbClient({ contractSpace: space([baseline, plain, fix], ["fixed"]), dbName }),
-    ]);
-    await Promise.all([plainClient.close(), fixedClient.close()]);
+    // The invariant-aware open reads the empty database and plans its upgrade. Before that upgrade's
+    // open runs, a plain client wins the version and leaves the marker at the head without `fixed`, so
+    // the invariant-aware open loses the race and must plan again from that marker.
+    const versionedOpens: number[] = [];
+    const factory = new Proxy(indexedDB, {
+      get(target, property) {
+        if (property !== "open") return Reflect.get(target, property, target);
+        return (name: string, version?: number) => {
+          if (version === undefined) return target.open(name);
+          versionedOpens.push(version);
+          if (versionedOpens.length > 1) return target.open(name, version);
+          return deferredOpen(async () => {
+            const winner = await createAutoMigratingIdbClient({ contractSpace: space([baseline, plain], []), dbName });
+            await winner.close();
+            expect(await readMarker(dbName)).toMatchObject({ storageHash: v2.storage.storageHash, invariants: [] });
+            return target.open(name, version);
+          });
+        };
+      },
+    });
+    const fixedClient = await createAutoMigratingIdbClient({
+      contractSpace: space([baseline, plain, fix], ["fixed"]),
+      dbName,
+      factory,
+    });
+    await fixedClient.close();
+    // The first planned version was taken by the winner; the retry planned the next one.
+    expect(versionedOpens).toEqual([versionedOpens[0], versionedOpens[0]! + 1]);
     expect(await readMarker(dbName)).toMatchObject({ storageHash: v2.storage.storageHash, invariants: ["fixed"] });
   });
 });
