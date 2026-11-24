@@ -139,7 +139,7 @@ developer edits schema.prisma
   │
   ├── prisma-idb migration plan --name <slug>
   │     diffs the newest migration's contract against the new one
-  │     accepts field --rename, --backfill and --convert statements
+  │     accepts --rename, --backfill and --convert statements
   │     writes migrations/app/<timestamp>_<slug>/{migration.ts, migration.json, ops.json}
   │     writes migrations/snapshots/<storageHash>/{contract.json, contract.d.ts}
   │     warns on stderr if the migration drops a store
@@ -175,7 +175,7 @@ The IndexedDB version number only triggers `upgradeneeded`. The marker, keyed by
 
 Sync is an extension. It adds its own stores and its own migration chain, and wraps the ORM client. It doesn't change the core packages.
 
-- **In the browser,** `sync-extension-idb` wraps the client's executor. Every tracked write also writes an outbox event and a version record in the same IndexedDB transaction, so a write can't commit without its event. A `SyncWorker` pushes outbox events to the app's server and pulls changes back.
+- **In the browser,** `sync-extension-idb` wraps the client's executor. Every tracked write also writes an outbox event and a version record in the same IndexedDB transaction, so a write can't commit without its event. A `SyncWorker` pushes outbox events to the app's server and pulls changes back. A same-store model rename updates queued events and version metadata inside the upgrade transaction.
 - **On the server,** the app owns the HTTP routes and the database. `sync-server` reads the schema's relations once at startup and builds an ownership graph from each synced model back to a root model, usually `User` ([ADR 014](adrs/ADR%20014%20-%20Sync%20Ownership%20DAG.md)). For each pushed event or pulled changelog row, it returns a description of what to check. `sync-server-sql` runs those checks and the writes against a Prisma 8 SQL client.
 
 One `schema.prisma` serves both sides. The browser's contract leaves out fields and models marked `@idb.exclude` or `@@idb.exclude`. The server's config strips those attributes and adds a `Changelog` model ([ADR 012](adrs/ADR%20012%20-%20Client%20Contract%20Subsetting.md)).

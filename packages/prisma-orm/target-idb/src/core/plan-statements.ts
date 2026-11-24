@@ -7,6 +7,8 @@ import type { IdbSchemaDiffInput } from "./schema-diff";
 export interface StoreStatementPlan {
   /** `{ newName: oldName }` for each renamed field. */
   readonly renameFields: Record<string, string>;
+  /** The name the store's model had before a model rename. */
+  renameModel?: string;
   /** Fields whose values the author fills in by hand: backfills, conversions, and renames to an incompatible type. */
   readonly authored: Set<string>;
   /** The positions, in the statements list, of the statements this store carries out. */
@@ -41,7 +43,8 @@ function refused(statement: ResolvedMigrationStatement, summary: string, why: st
  * Turns the user's rename, backfill and convert statements into per-store
  * instructions for the record diff, or the conflicts that refuse them.
  *
- * A field rename moves the stored value to the new name. A backfill or a conversion leaves a
+ * A field rename moves the stored value to the new name. To rename a model,
+ * map it to its existing store. A backfill or a conversion leaves a
  * placeholder the author fills in `migration.ts`, as upstream leaves the code
  * to the user. Statements about namespaces, enum values and value objects
  * have no IndexedDB form and are refused.
@@ -70,15 +73,46 @@ export function planStatements(
   };
 
   // Statements use destination names. Collect renames first so flag order does not affect lookup.
+  const originalModel = new Map<string, string>();
   const originalField = new Map<string, string>();
   for (const statement of statements) {
     if (statement.kind !== "rename") continue;
-    if (statement.entity === "field") {
+    if (statement.entity === "model") originalModel.set(statement.to.model, statement.from.model);
+    else if (statement.entity === "field") {
       originalField.set(JSON.stringify([statement.to.model, statement.to.field]), statement.from.field);
     }
   }
 
   statements.forEach((statement, index) => {
+    if (statement.kind === "rename" && statement.entity === "model") {
+      const before = storeOfModel(from, statement.from.model);
+      const after = storeOfModel(to, statement.to.model);
+      if (before === undefined || after === undefined) {
+        conflicts.push(
+          refused(
+            statement,
+            `Cannot rename model "${statement.from.model}" to "${statement.to.model}": ${before === undefined ? `the origin contract has no model "${statement.from.model}"` : `the destination contract has no model "${statement.to.model}"`}.`,
+            "Name the model as each contract declares it."
+          )
+        );
+        return;
+      }
+      if (before.name !== after.name) {
+        conflicts.push(
+          refused(
+            statement,
+            `Cannot rename model "${statement.from.model}" to "${statement.to.model}": its store would change from "${before.name}" to "${after.name}".`,
+            `Model renames must keep the same store. Add @@map(${JSON.stringify(before.name)}) to model ${statement.to.model} (or store: ${JSON.stringify(before.name)} in a TypeScript model), then plan again.`
+          )
+        );
+        return;
+      }
+      const entry = entryFor(after.name);
+      entry.renameModel = statement.from.model;
+      entry.statementIndexes.push(index);
+      return;
+    }
+
     if (statement.kind === "rename" && statement.entity === "field") {
       const before = storeOfModel(from, statement.from.model);
       const after = storeOfModel(to, statement.to.model);
@@ -134,7 +168,7 @@ export function planStatements(
       const after = storeOfModel(to, statement.field.model);
       const field = statement.field.field;
       const label = `${statement.field.model}.${field}`;
-      const originModel = statement.field.model;
+      const originModel = originalModel.get(statement.field.model) ?? statement.field.model;
       const before = storeOfModel(from, originModel);
       const originField = originalField.get(JSON.stringify([statement.field.model, field])) ?? field;
       const originLabel = `${originModel}.${originField}`;
@@ -195,13 +229,6 @@ export function planStatements(
       const entry = entryFor(after.name);
       entry.authored.add(field);
       entry.statementIndexes.push(index);
-      return;
-    }
-
-    if (statement.kind === "rename" && statement.entity === "model") {
-      conflicts.push(
-        refused(statement, "The IDB planner cannot carry out a model rename.", "Only field renames are supported.")
-      );
       return;
     }
 

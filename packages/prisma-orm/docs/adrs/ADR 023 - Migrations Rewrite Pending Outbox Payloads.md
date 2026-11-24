@@ -3,6 +3,7 @@
 - **Status:** Accepted.
 - **Date:** 2026-10-08
 - **Area:** Migrations, Sync
+- **Updated:** 2026-11-24: a model rename passed to `migration plan --rename` now moves queued outbox events to the new name.
 
 ## Summary
 
@@ -46,7 +47,8 @@ An outbox payload has the shape of the model at the time of the edit. After a mi
 These limits assume the server checks the storage hash, which is the default ([ADR 015](ADR%20015%20-%20Contract-Derived%20Validation.md)). The storage hash covers model names, fields, value objects and enums.
 
 - **A push already in flight in another tab is safe, because of the storage hash.** The request carries the old contract's storage hash. If the server has already migrated, it answers 409 before it validates anything. The worker marks the events as failed but retryable, so they stay queued, and the upgrade rewrites them. If the server has not migrated yet, it may apply the push. The old tab then cannot mark the events as synced, because its connection is closed. The rewritten events are pushed again, and the server treats the repeated event id as already applied.
-- **Model renames are not rewritten.** The hook matches `entityType` against the current model name, so it skips events queued under the old name. While the client and server contracts differ, pushes get a 409 and the events wait. Once both sides are on the new contract, the server rejects the old name as an unknown model. That rejection is permanent and carries no row to reconcile to, so the local write stays until a pull overwrites it, and the unsent edit never reaches the server. Let the outbox drain before you ship a model rename.
+- **Explicit same-store model renames move queued edits.** Since 2026-11-24, `migration plan --rename Old:New` writes the old name as `renameModel`. The hook moves unsynced events and version metadata in the same upgrade transaction. Plan again with `--rename` if the model name changes and retains the store. Changing the store name without a statement drops the old store and leaves queued edits under the old model name.
+- **Server changelog rows keep their model names.** Rename the server model in the same release. Pulls classify earlier rows under the old name as `unknown-model`. Devices behind on pulls can miss those changes.
 - **The storage hash checks shape, not values.** If the client and server migrations produce the same fields from different values, the storage hash matches and the server accepts the events. Write both migrations to produce the same values.
 - **Turning the check off removes the protection.** With `contractCheck: "off"`, a push that does not match the server's contract is rejected as invalid, and the client replaces the local row with the server row ([ADR 022](ADR%20022%20-%20Rejected%20Pushes%20Reconcile%20to%20the%20Server%20Row.md)). The unsent edit is lost. Only turn the check off if your deploys keep clients and server on one contract.
 - **Repeated 409s count as failed tries.** Each refused push adds a try and a backoff to every event in the batch. After 10 tries the worker reports the outbox as stalled, but it never drops the events.

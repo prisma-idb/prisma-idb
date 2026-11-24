@@ -64,6 +64,12 @@ export type TransformRecordsOp = MigrationPlanOperation & {
   readonly renameFields?: Readonly<Record<string, string>>;
   /** Fields to delete. */
   readonly removeFields?: readonly string[];
+  /**
+   * The name the store's model had before a model rename. Stored records carry no model
+   * name, so this changes no record; it tells extensions that keep model names, such as
+   * the sync outbox, to move their entries to the store's current model.
+   */
+  readonly renameModel?: string;
 };
 
 /** Union of all IDB migration plan operations. */
@@ -184,7 +190,7 @@ export function deletedDataWarning(ops: readonly unknown[]): string | undefined 
 /** Create a record rewrite. The planner emits field renames, defaults, removals, and unfilled slots. */
 export function transformRecordsOp(
   storeName: string,
-  options: Pick<TransformRecordsOp, "fields" | "renameFields" | "removeFields">
+  options: Pick<TransformRecordsOp, "fields" | "renameFields" | "removeFields" | "renameModel">
 ): TransformRecordsOp {
   return {
     kind: "transformRecords",

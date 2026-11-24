@@ -191,20 +191,45 @@ export async function autoMigrate(input: {
     targetVersion: initialVersion + 1,
     ops: orderedPending.flatMap((space) => space.ops),
     markers: orderedPending.map((space) => ({ space: space.spaceId, storageHash: space.storageHash })),
-    onTransformRecords: createTransformRecordsCallback(input.contractSpace.contractJson, input.extensions ?? []),
+    onTransformRecords: createTransformRecordsCallback(
+      input.contractSpace.contractJson,
+      input.extensions ?? [],
+      orderedPending.find((space) => space.spaceId === APP_SPACE_ID)?.ops ?? []
+    ),
   });
 }
 
 /**
  * Build the `openAndUpgrade` callback that runs extension hooks after a `transformRecords` op.
- * Hooks see app model names, so they never learn the app's store naming. A store with no app
- * model, such as an extension's own store, skips the hooks.
+ * Each hook sees the app model name at the end of that operation, even if a later
+ * migration renames it again.
  */
-function createTransformRecordsCallback(contract: Contract, extensions: ReadonlyArray<IdbExtensionSpace>) {
-  const models = Object.keys(domainModelsAtDefaultNamespace(contract.domain));
+function createTransformRecordsCallback(
+  contract: Contract,
+  extensions: ReadonlyArray<IdbExtensionSpace>,
+  appOps: readonly IdbDdlOp[]
+) {
   const hooks = extensions.flatMap((extension) => (extension.onTransformRecords ? [extension.onTransformRecords] : []));
+  const modelByOp = new Map<TransformRecordsOp, string>();
+  if (hooks.length > 0) {
+    const modelByStore = new Map(
+      Object.keys(domainModelsAtDefaultNamespace(contract.domain)).map((model) => [
+        getStoreName(contract as IdbContract, model),
+        model,
+      ])
+    );
+    // Walk backwards from the head contract to recover each operation's destination model.
+    for (let index = appOps.length - 1; index >= 0; index -= 1) {
+      const op = appOps[index]!;
+      if (op.kind !== "transformRecords") continue;
+      const model = modelByStore.get(op.storeName);
+      if (model === undefined) continue;
+      modelByOp.set(op, model);
+      if (op.renameModel !== undefined) modelByStore.set(op.storeName, op.renameModel);
+    }
+  }
   return (tx: IDBTransaction, op: TransformRecordsOp, onDone: (error?: unknown) => void): void => {
-    const modelName = models.find((model) => getStoreName(contract as IdbContract, model) === op.storeName);
+    const modelName = modelByOp.get(op);
     if (modelName === undefined) {
       onDone();
       return;

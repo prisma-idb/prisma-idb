@@ -94,6 +94,8 @@ export function applyOneDdlOp(
           throw new Error(`IDB: transformRecords on store "${op.storeName}" cannot change key field "${field}"`);
         }
       }
+      // A model rename alone changes no stored record, so the store is not walked.
+      if (fields.length === 0) break;
       const request = store.openCursor();
       request.onsuccess = () => {
         try {
