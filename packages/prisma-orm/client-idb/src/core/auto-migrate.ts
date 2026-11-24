@@ -377,6 +377,16 @@ async function planSpacePath(input: {
   const { spaceId, contractSpace } = input;
   const head = contractSpace.headRef;
   const required = new Set(head.invariants.filter((id) => !input.markerInvariants.includes(id)));
+  const dirNames = new Set<string>();
+  for (const pkg of contractSpace.migrations) {
+    if (dirNames.has(pkg.dirName)) {
+      throw new Error(
+        `Auto-migration for space "${spaceId}" found two migration packages named "${pkg.dirName}". ` +
+          "Re-run `prisma-idb migration contract-space` to rebuild the bundle."
+      );
+    }
+    dirNames.add(pkg.dirName);
+  }
   const graph = reconstructGraph(toGraphPackages(contractSpace.migrations));
   const outcome = findPathWithDecision(graph, input.markerHash ?? EMPTY_CONTRACT_HASH, head.hash, { required });
   if (outcome.kind !== "ok" && input.markerHash === head.hash) {
@@ -401,11 +411,13 @@ async function planSpacePath(input: {
     );
   }
 
-  const byHash = new Map(contractSpace.migrations.map((pkg) => [pkg.metadata.migrationHash, pkg]));
+  // Each edge is applied from the package it was built from. Two packages can carry the same stored
+  // hash, for example a copied package whose ops were edited, so a lookup by hash could apply the other one.
+  const byDirName = new Map(contractSpace.migrations.map((pkg) => [pkg.dirName, pkg]));
   const ops: IdbDdlOp[] = [];
   const invariants = new Set(input.markerInvariants);
   for (const edge of outcome.decision.selectedPath) {
-    const pkg = byHash.get(edge.migrationHash);
+    const pkg = byDirName.get(edge.dirName);
     if (!pkg) throw new Error(`Auto-migration for space "${spaceId}" lost the package for edge ${edge.dirName}.`);
     const computedHash = await computeMigrationHash(pkg.metadata, pkg.ops);
     if (computedHash !== pkg.metadata.migrationHash) {

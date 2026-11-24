@@ -79,6 +79,26 @@ describe("auto-migrate invariants", () => {
     expect(await readMarker(dbName)).toMatchObject({ storageHash: v2.storage.storageHash, invariants: ["seeded"] });
   });
 
+  it("applies the package of the edge it selected, even when another package has the same stored hash", async () => {
+    const dbName = `auto-migrate-invariants-${++dbCounter}`;
+    // A copy of `seeding` whose stored hash was replaced with `plain`'s. The route takes it for
+    // `seeded`; applying `plain`, which a lookup by hash finds, would skip the integrity check.
+    const forged = { ...seeding, metadata: { ...seeding.metadata, migrationHash: plain.metadata.migrationHash } };
+    await expect(
+      createAutoMigratingIdbClient({ contractSpace: space([baseline, forged, plain], ["seeded"]), dbName })
+    ).rejects.toThrow(/Migration package "0001_v2_seeded" failed integrity check/);
+  });
+
+  it("refuses a bundle with two packages of the same name", async () => {
+    const dbName = `auto-migrate-invariants-${++dbCounter}`;
+    await expect(
+      createAutoMigratingIdbClient({
+        contractSpace: space([baseline, plain, { ...seeding, dirName: plain.dirName }], []),
+        dbName,
+      })
+    ).rejects.toThrow(new RegExp(`two migration packages named "${plain.dirName}"`));
+  });
+
   it("refuses a head whose required invariant no migration provides, without applying anything", async () => {
     const dbName = `auto-migrate-invariants-${++dbCounter}`;
     await expect(
