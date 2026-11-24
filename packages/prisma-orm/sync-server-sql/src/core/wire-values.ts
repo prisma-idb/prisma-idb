@@ -22,6 +22,11 @@ const nativeJsonCodecs: Record<string, string> = {
   "pg/bytea@1": "idb/bytes@1",
   "pg/json@1": "idb/json@1",
   "pg/jsonb@1": "idb/json@1",
+  // NaN and ±Infinity have no JSON number, so both sides write them as text.
+  "pg/float4@1": "idb/double@1",
+  "pg/float8@1": "idb/double@1",
+  "pg/float@1": "idb/double@1",
+  "sql/float@1": "idb/double@1",
 };
 
 function fieldsForModel(contract: SyncServerContract, model: string) {
@@ -90,9 +95,11 @@ export function reviveWireValues(
       const codec = codecId ? idbCodecLookup.get(codecId) : undefined;
       if (!codec) return [name, value];
       const revive = (input: unknown): unknown => {
-        if (typeof input !== "string") return input;
         try {
-          return codecValueFromJson(codec, input);
+          if (codecId === "idb/double@1" && typeof input === "number" && !Number.isFinite(input)) {
+            throw new TypeError("A non-finite Float must use its exact wire text");
+          }
+          return typeof input === "string" ? codecValueFromJson(codec, input) : input;
         } catch {
           throw new WireValidationError(
             name === keyField ? "KEYPATH_VALIDATION_FAILURE" : "RECORD_VALIDATION_FAILURE",
