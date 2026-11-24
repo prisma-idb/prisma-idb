@@ -53,6 +53,8 @@ Numeric key checks run inside the write transaction. Mutations on models with De
 
 If older data contains several primary or unique keys for the same numeric value, identity operations throw `IdbDecimalIdentityConflictError` with code `DECIMAL_IDENTITY_CONFLICT`. Resolve those conflicting records before retrying. The client never selects or deletes a conflicting row automatically. Sync uses the same numeric identity for pending changes, staleness checks and rejected-write reconciliation. It preserves existing local key spellings and metadata references without changing the storage schema or wire format. This does not add compound-key support to the SQL sync server.
 
+A `Json` value must be something JSON can represent: `null`, strings, booleans, finite numbers, and arrays and plain objects of those. Writes reject a `Map`, a `Date`, a `bigint` or a class instance anywhere inside it, since sync and SQL would lose it. As in Prisma, an object property set to `undefined` is allowed, because JSON leaves the key out when the value is synced or sent to a SQL server. An `undefined` array element is rejected, since JSON would turn it into `null`. A value nested more than 1000 levels deep is rejected, because sync could not serialize it reliably.
+
 ## Models and stores
 
 Each model becomes an IndexedDB object store. The store is named after the model with its first letter lowercased, so `model TodoItem` is stored in `todoItem`. The same name is the model's key on the client: `db.orm.todoItem`.

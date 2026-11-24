@@ -86,6 +86,10 @@ The framework already uses arktype for codec schemas. Runtime derivation avoids 
 - Record validation checks shape, not relational integrity or permission. Ownership checks and database constraints remain necessary after validation.
 - Adding codecs with a new native application representation requires extending the scalar mapping. Built-in mapping coverage and push/pull integration are tested.
 
+## Dated note (2026-11-24): Json values
+
+A `Json` field accepts only values JSON can represent: `null`, strings, booleans, finite numbers, and arrays and plain objects of those. Native IndexedDB storage could hold a `Map`, a `Date` or a class instance, but sync and SQL would lose or change it. This follows Prisma, whose `InputJsonValue` has no such types. Prisma also types object properties as optional, so an `undefined` property is accepted here; JSON drops the key. Prisma's array type excludes `undefined`, and JSON would turn an element into `null`, so an `undefined` array element is rejected. Nesting deeper than 1000 levels is rejected as a validation issue; the check is iterative so a hostile value can't overflow the stack. This narrows what writes accept and does not change the decision above.
+
 ## Related
 
 - [ADR 014](ADR%20014%20-%20Sync%20Ownership%20DAG.md): push authorization follows shape validation.
