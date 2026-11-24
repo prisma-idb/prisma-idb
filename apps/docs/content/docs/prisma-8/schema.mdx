@@ -47,6 +47,8 @@ Decimal values stay as the strings you supply. Accepted forms include `"-12.50"`
 
 Decimal equality, membership, range filters and `orderBy` compare exact numeric values without converting them to JavaScript numbers. For example, `"10"`, `"10.00"` and `"1e1"` compare equal. Primary-key lookups, unique constraints, relation includes and `groupBy` use the same numeric equality, including in compound keys. A child whose foreign key is `"1.00"` is included with the parent whose key is `"1"`, and `groupBy` puts `"1"` and `"1.0"` in one group.
 
+For a Decimal list, `groupBy` compares the elements by numeric value in list order. Lists of different lengths form separate groups. The group key keeps the first matching row's stored spellings.
+
 For a Decimal primary key stored as `"10"`, `findUnique("10.00")` returns that row. Creating another row with key `"1e1"` fails with a unique constraint error. Updates, deletes and upserts also resolve equivalent Decimal key spellings. Updating a primary key from `"10"` to `"10.00"` keeps the stored spelling `"10"`.
 
 Numeric key checks run inside the write transaction. Mutations on models with Decimal primary or unique keys require a transaction-capable executor, such as the standard IndexedDB runtime. Decimal primary-key lookups read the physical key first, then scan for numeric aliases. The scan also detects conflicting rows from older databases, even after an exact hit. Decimal unique checks scan rows too; native string indexes cannot enforce numeric equality. Keys without Decimal fields retain their native lookup and uniqueness paths.

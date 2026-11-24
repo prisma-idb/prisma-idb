@@ -74,11 +74,14 @@ function groupKeyOf(
   row: Record<string, unknown>,
   fields: Readonly<Record<string, CatalogField>>
 ): string {
-  // Decimal spellings of one value, such as "1" and "1.0", form one group.
   return JSON.stringify(
-    by.map((field) =>
-      groupToken(fields[field]?.codecId === "idb/decimal@1" ? decimalIdentityToken(row[field]) : row[field])
-    )
+    by.map((field) => {
+      const metadata = fields[field];
+      const value = row[field];
+      if (metadata?.codecId !== "idb/decimal@1") return groupToken(value);
+      if (metadata.collection && Array.isArray(value)) return groupToken(value.map(decimalIdentityToken));
+      return groupToken(decimalIdentityToken(value));
+    })
   );
 }
 

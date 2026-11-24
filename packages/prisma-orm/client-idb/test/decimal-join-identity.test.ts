@@ -24,7 +24,7 @@ const contract = defineContract({
     Entry: {
       store: "entries",
       key: "id",
-      fields: { id: "String", accountId: "Decimal", amount: "Decimal" },
+      fields: { id: "String", accountId: "Decimal", amount: "Decimal", amounts: "Decimal[]" },
       relations: { account: { to: "Account", cardinality: "N:1", on: { local: ["accountId"], target: ["id"] } } },
     },
   },
@@ -46,7 +46,7 @@ describe("Decimal join and group identity", () => {
         ["e2", "1e0", "1.0"],
         ["e3", "1", "1e0"],
       ]) {
-        await orm["entries"]!.create({ id, accountId, amount } as never);
+        await orm["entries"]!.create({ id, accountId, amount, amounts: [] } as never);
       }
 
       const entries = await orm["entries"]!.include("account" as never)
@@ -70,6 +70,35 @@ describe("Decimal join and group identity", () => {
       );
       expect(groups).toHaveLength(1);
       expect(groups[0]).toMatchObject({ count: 3 });
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("groups Decimal lists by element value while preserving order, length and the first spelling", async () => {
+    const client = await createAutoMigratingIdbClient({
+      contractSpace: buildContractSpaceFixture([contract]),
+      dbName: `decimal-list-group-${crypto.randomUUID()}`,
+    });
+    try {
+      const orm = client.orm as unknown as Record<string, Accessor>;
+      await orm["accounts"]!.create({ id: "1", name: "Cash" } as never);
+      const lists = [["1.00", "2"], ["1e0", "2.0"], ["2", "1"], ["1"]];
+      for (const [index, amounts] of lists.entries()) {
+        await orm["entries"]!.create({ id: `e${index}`, accountId: "1", amount: "1", amounts } as never);
+      }
+
+      const groups = await orm["entries"]!.groupBy("amounts" as never).aggregate(
+        (agg) =>
+          ({
+            count: (agg as unknown as { count(): unknown }).count(),
+          }) as never
+      );
+      expect(groups).toEqual([
+        { amounts: ["1.00", "2"], count: 2 },
+        { amounts: ["2", "1"], count: 1 },
+        { amounts: ["1"], count: 1 },
+      ]);
     } finally {
       await client.close();
     }
