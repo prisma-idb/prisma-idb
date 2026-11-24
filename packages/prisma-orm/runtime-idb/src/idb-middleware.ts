@@ -37,16 +37,21 @@ import type { IdbLoweredPlan } from "@prisma-idb/adapter-idb/runtime";
  * - Each statement's `activityStarted`, `beforeEncode`, `onRow` and
  *   `activityEnded` hooks are called but not awaited, because IndexedDB commits
  *   a transaction that waits. Only their synchronous part runs before the next
- *   request. An async `beforeEncode` is warned about once.
+ *   request. An async `beforeEncode` is warned about once per client.
+ * - A synchronous throw from `activityStarted` or `beforeEncode` blocks the
+ *   statement: it fails with that error before reaching IndexedDB, and the
+ *   caller's rollback aborts the transaction.
+ * - `onRow` runs only for statements that return rows, not for writes.
  * - `intercept` hooks are not consulted, so a cache never serves a read inside
  *   a transaction.
  * - When the transaction completes or aborts, every statement and then the
  *   transaction get `activityFinalized` with `committed`, `rolled-back`, or
  *   `unknown`. `commit()` resolves after those hooks.
- * - A hook's error, thrown or rejected, is logged to `ctx.log` and never fails
- *   the statement or the transaction. This includes the transaction's
- *   `activityEnded`, which upstream would rethrow. Only an error from the
- *   transaction's `activityStarted` rejects, before IndexedDB opens it.
+ * - Any other hook error, and any rejected hook promise, is logged to `ctx.log`
+ *   as `{ event, middleware, error }` and never fails the statement or the
+ *   transaction. This includes the transaction's `activityEnded`, which
+ *   upstream would rethrow. An error from the transaction's `activityStarted`
+ *   rejects, before IndexedDB opens it.
  */
 export interface IdbMiddleware extends RuntimeMiddleware<IdbLoweredPlan> {
   readonly familyId?: "idb";

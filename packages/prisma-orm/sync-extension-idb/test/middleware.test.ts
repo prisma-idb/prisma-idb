@@ -81,7 +81,7 @@ describe("sync client middleware", () => {
       });
       expect(emitted).toEqual([1]);
       expect(await asAccessors(client.orm)["users"]!.count()).toBe(1);
-      expect(error).toHaveBeenCalledWith(failure);
+      expect(error).toHaveBeenCalledWith({ event: "activityEnded", error: failure });
     } finally {
       error.mockRestore();
       await client.close();

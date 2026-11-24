@@ -7,7 +7,17 @@ import type { ActivityContextFields } from "@prisma/orm-framework/components/run
 import type { IdbAtomicPlan, IdbTransactionScope } from "@prisma-idb/driver-idb/runtime";
 import { describe, expect, it, vi } from "vitest";
 import type { IdbMiddleware } from "../src/idb-middleware";
-import { observeTransaction } from "../src/transaction-observer";
+import { observeTransaction as observeWith, withoutMiddleware } from "../src/transaction-observer";
+
+/** Observes with a fresh set of warned middleware, as a new runtime would. */
+function observeTransaction(
+  open: () => Promise<IdbTransactionScope>,
+  middleware: readonly IdbMiddleware[],
+  fields: ActivityContextFields,
+  warnedAsync = new WeakSet<IdbMiddleware>()
+) {
+  return observeWith(open, middleware, fields, warnedAsync);
+}
 
 const plan = { kind: "get-all", storeName: "users" } as unknown as IdbAtomicPlan;
 
@@ -74,7 +84,7 @@ describe("observeTransaction", () => {
     const committed = tx.commit();
     complete();
     await expect(committed).resolves.toBeUndefined();
-    expect(log.error).toHaveBeenCalledWith(failure);
+    expect(log.error).toHaveBeenCalledWith({ event: "activityEnded", error: failure });
     // The framework still finalizes the statement and the transaction before rethrowing.
     expect(finalized).toEqual(["statement:committed", "transaction:committed"]);
   });
@@ -119,33 +129,33 @@ describe("observeTransaction", () => {
     const committed = tx.commit();
     complete();
     await expect(committed).resolves.toBeUndefined();
-    expect(log.error).toHaveBeenCalledWith(failure);
+    expect(log.error).toHaveBeenCalledWith({ event: "activityFinalized", middleware: "test", error: failure });
   });
 
-  it("logs the error of a statement hook that throws or rejects and still runs the statement", async () => {
+  it("logs a hook's rejection or a throwing onRow or activityEnded, with its event and middleware, and still runs the statement", async () => {
     const { fields, log } = makeFields();
     const { scope } = makeScope();
     const errors = {
-      started: new Error("started"),
-      before: new Error("before"),
-      row: new Error("row"),
-      ended: new Error("ended"),
+      activityStarted: new Error("started"),
+      beforeEncode: new Error("before"),
+      onRow: new Error("row"),
+      activityEnded: new Error("ended"),
     };
     const tx = await observeTransaction(
       async () => scope,
       [
         mw({
           activityStarted(activity) {
-            if (activity.kind === "statement") throw errors.started;
+            return activity.kind === "statement" ? Promise.reject(errors.activityStarted) : undefined;
           },
           beforeEncode() {
-            return Promise.reject(errors.before);
+            return Promise.reject(errors.beforeEncode);
           },
           onRow() {
-            throw errors.row;
+            throw errors.onRow;
           },
           activityEnded(activity) {
-            return activity.kind === "statement" ? Promise.reject(errors.ended) : undefined;
+            if (activity.kind === "statement") throw errors.activityEnded;
           },
         }),
       ],
@@ -153,7 +163,9 @@ describe("observeTransaction", () => {
     );
     await expect(tx.execute(plan)).resolves.toEqual([{ id: "1" }]);
     await vi.waitFor(() => {
-      for (const error of Object.values(errors)) expect(log.error).toHaveBeenCalledWith(error);
+      for (const [event, error] of Object.entries(errors)) {
+        expect(log.error).toHaveBeenCalledWith({ event, middleware: "test", error });
+      }
     });
     expect(scope.execute).toHaveBeenCalledTimes(1);
   });
@@ -187,6 +199,123 @@ describe("observeTransaction", () => {
     expect(log.warn).toHaveBeenCalledTimes(1);
     expect(log.warn).toHaveBeenCalledWith(expect.objectContaining({ code: "IDB.MIDDLEWARE_ASYNC_IN_TRANSACTION" }));
   });
+
+  it("warns once per runtime: a second transaction of the same runtime stays quiet, another runtime warns again", async () => {
+    const { fields, log } = makeFields();
+    const slow = mw({ name: "slow", beforeEncode: async () => undefined });
+    const runtimeWarnings = new WeakSet<IdbMiddleware>();
+    for (const warned of [runtimeWarnings, runtimeWarnings, new WeakSet<IdbMiddleware>()]) {
+      const tx = await observeTransaction(async () => makeScope().scope, [slow], fields, warned);
+      await tx.execute(plan);
+    }
+    expect(log.warn).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(["beforeEncode", "activityStarted"] as const)(
+    "blocks the statement when %s throws synchronously, and reports it as failed",
+    async (hook) => {
+      const { fields, log } = makeFields();
+      const { scope } = makeScope();
+      const refused = new Error("refused");
+      const ended: string[] = [];
+      const tx = await observeTransaction(
+        async () => scope,
+        [
+          mw({
+            [hook]: (first: { kind?: string }) => {
+              if (hook === "beforeEncode" || first.kind === "statement") throw refused;
+            },
+            activityEnded(activity: { kind: string }, result: { outcome: string }) {
+              if (activity.kind === "statement") ended.push(result.outcome);
+            },
+          }),
+        ],
+        fields
+      );
+      await expect(tx.execute(plan)).rejects.toBe(refused);
+      expect(scope.execute).not.toHaveBeenCalled();
+      expect(ended).toEqual(["failed"]);
+      expect(log.error).not.toHaveBeenCalled();
+    }
+  );
+
+  it("calls onRow for statements that return rows, not for writes", async () => {
+    const { fields } = makeFields();
+    const { scope } = makeScope();
+    const rows: unknown[] = [];
+    const tx = await observeTransaction(async () => scope, [mw({ onRow: (row) => void rows.push(row) })], fields);
+    await tx.execute({ kind: "put", storeName: "users", record: { id: "1" } } as unknown as IdbAtomicPlan);
+    expect(rows).toEqual([]);
+    await tx.execute(plan);
+    expect(rows).toEqual([{ id: "1" }]);
+  });
+
+  it("runs a plan marked withoutMiddleware with no hook", async () => {
+    const { fields } = makeFields();
+    const { scope, complete } = makeScope();
+    const events: string[] = [];
+    const tx = await observeTransaction(
+      async () => scope,
+      [
+        mw({
+          activityStarted: (activity) => void events.push(`started:${activity.kind}`),
+          beforeEncode: () => void events.push("beforeEncode"),
+          onRow: () => void events.push("onRow"),
+          activityFinalized: (activity) => void events.push(`finalized:${activity.kind}`),
+        }),
+      ],
+      fields
+    );
+    await expect(tx.execute(withoutMiddleware({ ...plan }))).resolves.toEqual([{ id: "1" }]);
+    expect(scope.execute).toHaveBeenCalledTimes(1);
+    const committed = tx.commit();
+    complete();
+    await committed;
+    expect(events).toEqual(["started:transaction", "finalized:transaction"]);
+  });
+
+  it("finalizes as rolled back when commit() follows rollback() only to wait for the outcome", async () => {
+    const { fields } = makeFields();
+    const { scope } = makeScope();
+    const finalized: string[] = [];
+    const tx = await observeTransaction(
+      async () => scope,
+      [mw({ activityFinalized: (activity, result) => void finalized.push(`${activity.kind}:${result.outcome}`) })],
+      fields
+    );
+    await tx.execute(plan);
+    tx.rollback();
+    await expect(tx.commit()).rejects.toThrow("aborted");
+    expect(finalized).toEqual(["statement:rolled-back", "transaction:rolled-back"]);
+  });
+
+  it.each(["rollback()", "an abort"] as const)(
+    "finalizes with the outcome unknown before commit() rejects, when commit() is followed by %s",
+    async (then) => {
+      const { fields } = makeFields();
+      const { scope, abort } = makeScope();
+      const finalized: string[] = [];
+      const tx = await observeTransaction(
+        async () => scope,
+        [
+          mw({
+            async activityFinalized(activity, result) {
+              // Takes a task, so a commit() that did not wait for finalization would settle first.
+              await new Promise((resolve) => setTimeout(resolve, 5));
+              finalized.push(`${activity.kind}:${result.outcome}`);
+            },
+          }),
+        ],
+        fields
+      );
+      await tx.execute(plan);
+      const committed = tx.commit();
+      if (then === "rollback()") tx.rollback();
+      else abort(new Error("aborted"));
+      await expect(committed).rejects.toThrow("aborted");
+      expect(finalized).toEqual(["statement:unknown", "transaction:unknown"]);
+    }
+  );
 
   it("rejects without opening the transaction when a transaction activityStarted hook throws", async () => {
     const { fields } = makeFields();

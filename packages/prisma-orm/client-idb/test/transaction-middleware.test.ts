@@ -188,7 +188,9 @@ describe("middleware inside transactions", () => {
       await client.transaction(["users"], async (tx) => {
         await (tx["users"] as unknown as Accessor).create({ id: "u1" });
       });
-      await vi.waitFor(() => expect(error).toHaveBeenCalledWith(failure));
+      await vi.waitFor(() =>
+        expect(error).toHaveBeenCalledWith({ event: "activityEnded", middleware: "recorder", error: failure })
+      );
       expect(await client.orm["users"]!.all().toArray()).toHaveLength(1);
     } finally {
       error.mockRestore();
@@ -216,7 +218,7 @@ describe("middleware inside transactions", () => {
         })
       ).resolves.toBeUndefined();
       expect(await client.orm["users"]!.all().toArray()).toHaveLength(1);
-      expect(error).toHaveBeenCalledWith(ended);
+      expect(error).toHaveBeenCalledWith({ event: "activityEnded", error: ended });
       expect(error).toHaveBeenCalledWith(expect.objectContaining({ error: finalized }));
     } finally {
       error.mockRestore();
@@ -235,6 +237,41 @@ describe("middleware inside transactions", () => {
     const body = vi.fn();
     await expect(client.transaction(["users"], body)).rejects.toBe(failure);
     expect(body).not.toHaveBeenCalled();
+  });
+
+  it("does not show middleware the client's own check that the transaction is still active", async () => {
+    const planned: { kind: string; key?: unknown }[] = [];
+    const client = await open([
+      recorder([], {
+        beforeEncode(plan, ctx) {
+          if (ctx.scope === "transaction") planned.push(plan as never);
+          return plan;
+        },
+      } as Partial<IdbMiddleware>),
+    ]);
+    await client.transaction(["users"], async (tx) => {
+      await (tx["users"] as unknown as Accessor).create({ id: "u1" });
+    });
+    expect(planned).not.toHaveLength(0);
+    expect(planned.filter((plan) => plan.kind === "key-get" && plan.key === "")).toEqual([]);
+  });
+
+  it("blocks a statement whose beforeEncode throws, and rolls the transaction back", async () => {
+    const refused = new Error("writes to users are refused");
+    const client = await open([
+      recorder([], {
+        beforeEncode(plan, ctx) {
+          if (ctx.scope === "transaction" && (plan as { kind: string }).kind === "add") throw refused;
+          return plan;
+        },
+      } as Partial<IdbMiddleware>),
+    ]);
+    await expect(
+      client.transaction(["users"], async (tx) => {
+        await (tx["users"] as unknown as Accessor).create({ id: "u1" });
+      })
+    ).rejects.toBe(refused);
+    expect(await client.orm["users"]!.all().toArray()).toEqual([]);
   });
 
   describe("a transaction IndexedDB committed while the callback waited", () => {

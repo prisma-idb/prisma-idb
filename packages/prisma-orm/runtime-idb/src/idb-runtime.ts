@@ -239,6 +239,8 @@ class IdbRuntimeImpl extends RuntimeCore<IdbQueryPlan, IdbPlanBody, IdbMiddlewar
   }
 
   readonly #verifyMarkerOption: "onFirstUse" | false;
+  // Middleware already warned about an async `beforeEncode` inside one of this runtime's transactions.
+  readonly #warnedAsyncBeforeEncode = new WeakSet<IdbMiddleware>();
   // Shared by concurrent first uses, so they read the marker and warn once. `#checkMarker` reports every
   // failure as a warning and never throws, so a failed read is not retried on the same connection.
   #markerCheck: Promise<void> | null = null;
@@ -351,7 +353,12 @@ class IdbRuntimeImpl extends RuntimeCore<IdbQueryPlan, IdbPlanBody, IdbMiddlewar
   async transaction(storeNames: string[], mode: IDBTransactionMode = "readwrite"): Promise<IdbTransactionScope> {
     await this.#ensureMarkerChecked();
     if (this.#middleware.length === 0) return this.#driver.transaction(storeNames, mode);
-    return observeTransaction(() => this.#driver.transaction(storeNames, mode), this.#middleware, this.#ctxFields);
+    return observeTransaction(
+      () => this.#driver.transaction(storeNames, mode),
+      this.#middleware,
+      this.#ctxFields,
+      this.#warnedAsyncBeforeEncode
+    );
   }
 
   override async close(): Promise<void> {
