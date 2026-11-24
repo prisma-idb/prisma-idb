@@ -231,6 +231,80 @@ describe("ORM nested update", () => {
     expect(result).toBeNull();
   });
 
+  it.each(["connect", "disconnect"] as const)(
+    "rejects an unknown %s field even when the parent is missing",
+    async (action) => {
+      await expect(
+        orm_()
+          ["users"]!.where({ id: "missing" })
+          .update({
+            posts: (rel: RelMutator) => rel[action]([{ typo: null }]),
+          } as never)
+      ).rejects.toThrow('Model "Post" has no field "typo"');
+    }
+  );
+
+  it.each(["connect", "disconnect"] as const)(
+    "rejects an empty explicit %s criterion without changing rows",
+    async (action) => {
+      const orm = orm_();
+      await orm["users"]!.create({ id: "u1", name: "Alice" } as never);
+      await orm["users"]!.create({ id: "u2", name: "Bob" } as never);
+      const posts = [
+        { id: "p1", authorId: "u1", title: "First" },
+        { id: "p2", authorId: "u2", title: "Second" },
+      ];
+      await orm["posts"]!.createAll(posts as never).toArray();
+
+      const users = orm["users"]!.where({ id: "u1" });
+      const firstMatch = { id: action === "connect" ? "p2" : "p1" };
+      for (const criterion of [{}, { title: undefined }]) {
+        await expect(
+          users.update({ name: "Changed", posts: (rel: RelMutator) => rel[action]([firstMatch, criterion]) } as never)
+        ).rejects.toThrow(`${action}() nested mutation for relation "posts" requires a non-empty criterion`);
+      }
+      expect(await getAllRows(db, "posts")).toEqual(posts);
+      expect(await orm["users"]!.findUnique("u1")).toEqual({ id: "u1", name: "Alice" });
+    }
+  );
+
+  it("rejects an empty child connect criterion on create before inserting the parent", async () => {
+    const orm = orm_();
+    const post = { id: "p1", authorId: null, title: "First" };
+    await orm["posts"]!.create(post as never);
+
+    await expect(
+      orm["users"]!.create({ id: "u1", name: "Alice", posts: (rel: RelMutator) => rel.connect({}) } as never)
+    ).rejects.toThrow('connect() nested mutation for relation "posts" requires a non-empty criterion');
+    expect(await getAllRows(db, "users")).toEqual([]);
+    expect(await getAllRows(db, "posts")).toEqual([post]);
+  });
+
+  it.each([
+    {
+      operation: "connect uses the first criterion",
+      mutate: (rel: RelMutator) => rel.connect([{ id: "u2" }, { id: "u1" }, { typo: null }]),
+      authorId: "u2",
+    },
+    {
+      operation: "disconnect clears the FK regardless of criteria",
+      mutate: (rel: RelMutator) => rel.disconnect([{ id: "u2" }, { typo: null }]),
+      authorId: null,
+    },
+  ])("N:1 $operation", async ({ mutate, authorId }) => {
+    const orm = orm_();
+    await orm["users"]!.create({ id: "u1", name: "Alice" } as never);
+    await orm["users"]!.create({ id: "u2", name: "Bob" } as never);
+    const post = { id: "p1", authorId: "u1", title: "First" };
+    await orm["posts"]!.create(post as never);
+
+    await expect(orm["posts"]!.where({ id: "p1" }).update({ author: mutate } as never)).resolves.toEqual({
+      ...post,
+      authorId,
+    });
+    expect(await getAllRows(db, "posts")).toEqual([{ ...post, authorId }]);
+  });
+
   it("N:1 connect in update re-links the post to a new user", async () => {
     await orm_()["users"]!.create({ id: "u1", name: "Alice" } as never);
     await orm_()["users"]!.create({ id: "u2", name: "Bob" } as never);
@@ -244,6 +318,19 @@ describe("ORM nested update", () => {
     expect(row).toMatchObject({ id: "p1", authorId: "u2" });
     const posts = await getAllRows(db, "posts");
     expect(posts[0]?.["authorId"]).toBe("u2");
+  });
+
+  it("rejects a connect or disconnect criterion on a field the related model doesn't have", async () => {
+    await orm_()["users"]!.create({ id: "u1", name: "Alice" } as never);
+    await orm_()["posts"]!.create({ id: "p1", authorId: "u1", title: "Post" } as never);
+    const users = idbOrm({ contract, executor })["users"]!.where({ id: "u1" });
+    for (const mutate of [
+      (rel: RelMutator) => rel.connect([{ typo: "x" }]),
+      (rel: RelMutator) => rel.disconnect([{ typo: "x" }]),
+    ]) {
+      await expect(users.update({ posts: mutate } as never)).rejects.toThrow('Model "Post" has no field "typo"');
+    }
+    expect((await getAllRows(db, "posts"))[0]?.["authorId"]).toBe("u1");
   });
 
   it("N:1 disconnect in update sets FK to null", async () => {

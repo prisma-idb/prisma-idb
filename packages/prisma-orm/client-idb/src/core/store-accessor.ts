@@ -14,6 +14,7 @@ import type {
   IdbQueryAst,
 } from "@prisma-idb/adapter-idb/runtime";
 import { shorthandToFilterExpr } from "@prisma-idb/adapter-idb/runtime";
+import { assertKnownFilterFields, snapshotFilterExpr } from "./filter-fields";
 import {
   type CreateInput,
   type DefaultModelRow,
@@ -400,6 +401,17 @@ export interface IdbStoreAccessor<
 // ── Implementation ────────────────────────────────────────────────────────────
 
 /**
+ * Rejects a page size or offset that isn't an integer from 0 to
+ * `Number.MAX_SAFE_INTEGER`, as Prisma 8 does. IndexedDB access paths would
+ * otherwise read a negative or fractional value differently from each other.
+ */
+function assertPageArgument(argument: "take" | "skip", value: unknown): void {
+  if (typeof value === "number" && Number.isSafeInteger(value) && value >= 0) return;
+  const received = typeof value === "number" ? `, got ${value}` : "";
+  throw new RangeError(`${argument} must be an integer from 0 to ${Number.MAX_SAFE_INTEGER}${received}`);
+}
+
+/**
  * Concrete immutable query builder.
  *
  * Internal details:
@@ -453,12 +465,13 @@ export class IdbStoreAccessorImpl<
   ): IdbStoreAccessor<TContract, ModelName, TIncludes, TSelected, true> {
     const expr =
       typeof filter === "function"
-        ? filter(createModelAccessor<TContract, ModelName>())
+        ? snapshotFilterExpr(filter(createModelAccessor<TContract, ModelName>()))
         : shorthandToFilterExpr(filter as Record<string, unknown>);
     // An empty shorthand object (or one with only undefined values) lifts
     // to `undefined` — keep the existing filter list untouched so chained
     // `.where({})` calls don't produce noisy AND nodes.
     if (expr === undefined) return this.#clone<true>({});
+    assertKnownFilterFields(this.#contract, this.#modelName, expr);
     return this.#clone<true>({ filters: [...this.#state.filters, expr] });
   }
 
@@ -469,10 +482,12 @@ export class IdbStoreAccessorImpl<
   }
 
   take(n: number): IdbStoreAccessor<TContract, ModelName, TIncludes, TSelected, TFiltered> {
+    assertPageArgument("take", n);
     return this.#clone({ take: n });
   }
 
   skip(n: number): IdbStoreAccessor<TContract, ModelName, TIncludes, TSelected, TFiltered> {
+    assertPageArgument("skip", n);
     return this.#clone({ skip: n });
   }
 
@@ -796,6 +811,7 @@ export class IdbStoreAccessorImpl<
     assertUniqueLookup(buildCatalog(this.#contract, this.#storeName, this.#modelName), where);
     const keyPath = getKeyPath(this.#contract, this.#modelName);
     const whereExpr = shorthandToFilterExpr(where);
+    assertKnownFilterFields(this.#contract, this.#modelName, whereExpr);
     const meta = this.#planMeta(this.#newGroupingKey());
     const createRecord = args.create as Record<string, unknown>;
     const resolvedUpdates = resolveFieldUpdates(this.#contract, this.#modelName, args.update);

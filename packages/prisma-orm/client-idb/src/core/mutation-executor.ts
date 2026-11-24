@@ -30,6 +30,7 @@ import type { ContractReferenceRelation } from "@prisma/orm-framework/contract/t
 import { domainModelsAtDefaultNamespace } from "@prisma/orm-framework/contract/types";
 import type { IdbAtomicPlan, IdbPlanBody, IdbRowFilter } from "@prisma-idb/driver-idb/runtime";
 import { andExpr, fieldFilter, shorthandToFilterExpr } from "@prisma-idb/adapter-idb/runtime";
+import { assertKnownFilterFields } from "./filter-fields";
 import type { IdbFilterExpr } from "@prisma-idb/adapter-idb/runtime";
 import type { IdbReferentialAction } from "@prisma-idb/target-idb/pack";
 import type { IdbQueryExecutor } from "./executor";
@@ -78,10 +79,14 @@ interface RelationDefinition {
   readonly targetFields: readonly string[];
 }
 
-/** A relation paired with the descriptor returned by its mutation callback. */
+type ParsedRelationOperation =
+  | Extract<IdbRelationMutation<IdbContract, string>, { kind: "create" }>
+  | { readonly kind: "connect" | "disconnect"; readonly criteria: readonly IdbFilterExpr[] };
+
+/** A relation paired with the operation and filters prepared from its callback. */
 interface ParsedRelationMutation {
   readonly relation: RelationDefinition;
-  readonly mutation: IdbRelationMutation<IdbContract, string>;
+  readonly mutation: ParsedRelationOperation;
 }
 
 /** Scalar write data separated from relation mutation descriptors. */
@@ -190,11 +195,11 @@ export async function executeNestedCreateMutation(options: {
   data: MutationCreateInput<IdbContract, string>;
 }): Promise<Record<string, unknown>> {
   const { executor, contract, modelName, data } = options;
-  const record = data as Record<string, unknown>;
-  const storeNames = collectStoreNames(contract, modelName, record, "create");
+  const parsed = parseMutationInput(contract, modelName, data as Record<string, unknown>, "create");
+  const storeNames = collectStoreNames(contract, modelName, parsed, "create");
   const defaultsCache = createMutationDefaultsCache();
   return withMutationScope(executor, storeNames, (scope) =>
-    createGraph(scope, contract, modelName, record, defaultsCache)
+    createGraph(scope, contract, modelName, parsed, defaultsCache)
   );
 }
 
@@ -207,11 +212,11 @@ export async function executeNestedUpdateMutation(options: {
   data: MutationUpdateInput<IdbContract, string>;
 }): Promise<Record<string, unknown> | null> {
   const { executor, contract, modelName, filters, data } = options;
-  const record = data as Record<string, unknown>;
-  const storeNames = collectStoreNames(contract, modelName, record, "update");
+  const parsed = parseMutationInput(contract, modelName, data as Record<string, unknown>, "update");
+  const storeNames = collectStoreNames(contract, modelName, parsed, "update");
   const defaultsCache = createMutationDefaultsCache();
   return withMutationScope(executor, storeNames, (scope) =>
-    updateFirstGraph(scope, contract, modelName, filters, record, defaultsCache)
+    updateFirstGraph(scope, contract, modelName, filters, parsed, defaultsCache)
   );
 }
 
@@ -230,39 +235,31 @@ export async function executeNestedUpdateMutation(options: {
 function collectStoreNames(
   contract: IdbContract,
   modelName: string,
-  data: Record<string, unknown>,
+  parsed: ParsedMutationInput,
   kind: "create" | "update"
 ): string[] {
   const stores = new Set([getStoreName(contract, modelName), ...fkParentStoreNames(contract, modelName)]);
-  const scalarData: Record<string, unknown> = {};
-  const relationNames = new Set<string>();
-  for (const def of getRelationDefinitions(contract, modelName)) {
-    relationNames.add(def.relationName);
-    if (def.relationName in data && isRelationMutationCallback(data[def.relationName])) {
-      stores.add(def.relatedStoreName);
-      for (const store of fkParentStoreNames(contract, def.relatedModelName)) stores.add(store);
-      // A connect or disconnect of children writes their foreign key and their
-      // `onUpdate` defaults, whose referential actions may reach further stores.
-      if (!isChildEnforcementRelation(contract, modelName, def)) continue;
-      const childPatch = applyUpdateDefaults(
-        contract.execution?.mutations.defaults,
-        def.relatedStoreName,
-        Object.fromEntries(def.targetFields.map((field) => [field, null])),
-        createMutationDefaultsCache()
-      );
-      for (const store of collectOnUpdateEnforcementStoreNames(contract, def.relatedModelName, childPatch).storeNames) {
-        stores.add(store);
-      }
+  for (const { relation } of parsed.relationMutations) {
+    stores.add(relation.relatedStoreName);
+    for (const store of fkParentStoreNames(contract, relation.relatedModelName)) stores.add(store);
+    // Connect and disconnect can also write onUpdate defaults on the children.
+    if (!isChildEnforcementRelation(contract, modelName, relation)) continue;
+    const childPatch = applyUpdateDefaults(
+      contract.execution?.mutations.defaults,
+      relation.relatedStoreName,
+      Object.fromEntries(relation.targetFields.map((field) => [field, null])),
+      createMutationDefaultsCache()
+    );
+    for (const store of collectOnUpdateEnforcementStoreNames(contract, relation.relatedModelName, childPatch)
+      .storeNames) {
+      stores.add(store);
     }
   }
   if (kind === "update") {
-    for (const [field, value] of Object.entries(data)) {
-      if (!relationNames.has(field)) scalarData[field] = value;
-    }
     const patch = applyUpdateDefaults(
       contract.execution?.mutations.defaults,
       getStoreName(contract, modelName),
-      scalarData,
+      parsed.scalarData,
       createMutationDefaultsCache()
     );
     for (const store of collectOnUpdateEnforcementStoreNames(contract, modelName, patch).storeNames) stores.add(store);
@@ -284,27 +281,20 @@ async function createGraph(
   scope: IdbTransactionScope,
   contract: IdbContract,
   modelName: string,
-  input: Record<string, unknown>,
+  parsed: ParsedMutationInput,
   defaultsCache: MutationDefaultsCache
 ): Promise<Record<string, unknown>> {
-  const parsed = parseMutationInput(contract, modelName, input);
   const { parentOwned, childOwned } = partitionByOwnership(parsed.relationMutations);
 
   const scalarData = { ...parsed.scalarData };
 
   for (const item of parentOwned) {
-    if (item.mutation.kind === "disconnect") {
-      throw new Error("disconnect() is only supported in update() nested mutations");
-    }
     await applyParentOwnedMutation(scope, contract, scalarData, item.relation, item.mutation, defaultsCache);
   }
 
   const parentRow = await insertSingleRow(scope, contract, modelName, scalarData, defaultsCache);
 
   for (const item of childOwned) {
-    if (item.mutation.kind === "disconnect") {
-      throw new Error("disconnect() is only supported in update() nested mutations");
-    }
     await applyChildOwnedMutation(scope, contract, modelName, parentRow, item.relation, item.mutation, defaultsCache);
   }
 
@@ -317,13 +307,12 @@ async function updateFirstGraph(
   contract: IdbContract,
   modelName: string,
   filters: readonly IdbFilterExpr[],
-  input: Record<string, unknown>,
+  parsed: ParsedMutationInput,
   defaultsCache: MutationDefaultsCache
 ): Promise<Record<string, unknown> | null> {
   const existingRow = await findFirstByFilters(scope, contract, modelName, filters);
   if (!existingRow) return null;
 
-  const parsed = parseMutationInput(contract, modelName, input);
   const { parentOwned, childOwned } = partitionByOwnership(parsed.relationMutations);
 
   const scalarData = { ...parsed.scalarData };
@@ -362,7 +351,8 @@ async function updateFirstGraph(
 function parseMutationInput(
   contract: IdbContract,
   modelName: string,
-  input: Record<string, unknown>
+  input: Record<string, unknown>,
+  kind: "create" | "update"
 ): ParsedMutationInput {
   const scalarData: Record<string, unknown> = {};
   const relationDefs = new Map(getRelationDefinitions(contract, modelName).map((r) => [r.relationName, r]));
@@ -385,10 +375,43 @@ function parseMutationInput(
       throw new Error(`Relation field "${fieldName}" on model "${modelName}" returned an invalid mutation descriptor`);
     }
 
-    relationMutations.push({ relation, mutation });
+    if (kind === "create" && mutation.kind === "disconnect") {
+      throw new Error("disconnect() is only supported in update() nested mutations");
+    }
+    if (relation.cardinality === "M:N") throw new Error("M:N nested mutations are not supported");
+    relationMutations.push({ relation, mutation: prepareRelationOperation(contract, relation, mutation) });
   }
 
   return { scalarData, relationMutations };
+}
+
+/** Prepare and validate the filters used by the relation write. */
+function prepareRelationOperation(
+  contract: IdbContract,
+  relation: RelationDefinition,
+  mutation: IdbRelationMutation<IdbContract, string>
+): ParsedRelationOperation {
+  if (mutation.kind === "create") return mutation;
+  const { kind } = mutation;
+  const parentOwned = relation.cardinality === "N:1";
+  if (parentOwned && kind === "disconnect") return { kind, criteria: [] };
+
+  let criteria = kind === "disconnect" ? (mutation.criteria ?? []) : mutation.criteria;
+  const operation = `${kind}() nested mutation for relation "${relation.relationName}"`;
+  if (parentOwned) {
+    const first = criteria[0];
+    if (first === undefined) throw new Error(`${operation} requires a criterion`);
+    criteria = [first];
+  }
+
+  const filters: IdbFilterExpr[] = [];
+  for (const criterion of criteria) {
+    const filter = shorthandToFilterExpr(criterion);
+    if (filter === undefined) throw new Error(`${operation} requires a non-empty criterion`);
+    assertKnownFilterFields(contract, relation.relatedModelName, filter);
+    filters.push(filter);
+  }
+  return { kind, criteria: filters };
 }
 
 // ── Ownership partitioning ────────────────────────────────────────────────────
@@ -406,9 +429,6 @@ function partitionByOwnership(mutations: readonly ParsedRelationMutation[]): {
       parentOwned.push(item);
       continue;
     }
-    if (item.relation.cardinality === "M:N") {
-      throw new Error("M:N nested mutations are not supported");
-    }
     childOwned.push(item);
   }
 
@@ -423,7 +443,7 @@ async function applyParentOwnedMutation(
   contract: IdbContract,
   scalarData: Record<string, unknown>,
   relation: RelationDefinition,
-  mutation: IdbRelationMutation<IdbContract, string>,
+  mutation: ParsedRelationOperation,
   defaultsCache: MutationDefaultsCache
 ): Promise<void> {
   if (mutation.kind === "disconnect") {
@@ -445,12 +465,8 @@ async function applyParentOwnedMutation(
     return;
   }
 
-  // connect()
-  const criterion = mutation.criteria[0] as Record<string, unknown> | undefined;
-  if (!criterion) {
-    throw new Error(`connect() nested mutation for relation "${relation.relationName}" requires a criterion`);
-  }
-  const relatedRow = await findRowByCriterion(scope, contract, relation.relatedModelName, criterion);
+  // Preparation keeps the first criterion for a parent-owned connect.
+  const [relatedRow] = await readMutationRows(scope, contract, relation.relatedModelName, mutation.criteria[0]!, 1);
   if (!relatedRow) {
     throw new Error(`connect() nested mutation for relation "${relation.relationName}" did not find a matching row`);
   }
@@ -481,7 +497,7 @@ async function applyChildOwnedMutation(
   parentModelName: string,
   parentRow: Record<string, unknown>,
   relation: RelationDefinition,
-  mutation: IdbRelationMutation<IdbContract, string>,
+  mutation: ParsedRelationOperation,
   defaultsCache: MutationDefaultsCache
 ): Promise<void> {
   // parentValues: childFkField → parentPkValue (e.g. "authorId" → "u1")
@@ -499,39 +515,22 @@ async function applyChildOwnedMutation(
   }
 
   if (mutation.kind === "connect") {
-    for (const criterion of mutation.criteria) {
-      const setValues: Record<string, unknown> = {};
-      for (const [childField, parentValue] of parentValues.entries()) {
-        setValues[childField] = parentValue;
-      }
-      const where = shorthandToFilterExpr(criterion as Record<string, unknown>);
-      // Set the FK fields on every child row matching the criterion. No `take`
-      // cap — the vendor's relational connect (`executeUpdateCount`) connects
-      // all matching rows; for the normal unique-key criterion that is exactly
-      // one row anyway.
+    const setValues = Object.fromEntries(parentValues);
+    for (const where of mutation.criteria) {
       await writeChildRows(scope, contract, relation, setValues, where, defaultsCache);
     }
     return;
   }
 
-  // disconnect()
-  const setValues: Record<string, unknown> = {};
-  for (const childField of parentValues.keys()) {
-    setValues[childField] = null;
-  }
-
-  if (!mutation.criteria || mutation.criteria.length === 0) {
-    // Disconnect all children of this parent.
-    await writeChildRows(scope, contract, relation, setValues, buildParentJoinWhere(parentValues), defaultsCache);
+  const setValues = Object.fromEntries(Array.from(parentValues.keys(), (field) => [field, null] as const));
+  const parentJoinWhere = buildParentJoinWhere(parentValues);
+  if (mutation.criteria.length === 0) {
+    await writeChildRows(scope, contract, relation, setValues, parentJoinWhere, defaultsCache);
     return;
   }
 
-  // Disconnect specific children matching each criterion AND the parent join.
   for (const criterion of mutation.criteria) {
-    const criterionWhere = shorthandToFilterExpr(criterion as Record<string, unknown>);
-    const parentJoinWhere = buildParentJoinWhere(parentValues);
-    const where = criterionWhere === undefined ? parentJoinWhere : andExpr([parentJoinWhere, criterionWhere]);
-    await writeChildRows(scope, contract, relation, setValues, where, defaultsCache);
+    await writeChildRows(scope, contract, relation, setValues, andExpr([parentJoinWhere, criterion]), defaultsCache);
   }
 }
 
@@ -597,20 +596,6 @@ function assertNoNestedCallbacks(modelName: string, data: Record<string, unknown
       );
     }
   }
-}
-
-/** Require a non-empty connect criterion and return its first matching row. */
-async function findRowByCriterion(
-  scope: IdbTransactionScope,
-  contract: IdbContract,
-  modelName: string,
-  criterion: Record<string, unknown>
-): Promise<Record<string, unknown> | null> {
-  const expr = shorthandToFilterExpr(criterion);
-  if (!expr) {
-    throw new Error(`Nested connect for model "${modelName}" requires a non-empty criterion`);
-  }
-  return (await readMutationRows(scope, contract, modelName, expr, 1))[0] ?? null;
 }
 
 /** Find the first parent selected by the nested-update filters. */
@@ -692,7 +677,7 @@ async function writeChildRows(
   contract: IdbContract,
   relation: RelationDefinition,
   setValues: Record<string, unknown>,
-  where: IdbFilterExpr | undefined,
+  where: IdbFilterExpr,
   defaultsCache: MutationDefaultsCache
 ): Promise<void> {
   const defaults = contract.execution?.mutations.defaults;
@@ -710,7 +695,7 @@ async function writeChildRows(
     await writeMutationRows(scope, contract, modelName, {
       write: "put-merged",
       patch: sharedPatch,
-      ...(where === undefined ? {} : { where }),
+      where,
     });
     return;
   }
