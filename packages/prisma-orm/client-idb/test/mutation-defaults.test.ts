@@ -8,7 +8,12 @@
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ExecutionMutationDefault } from "@prisma/orm-framework/contract/types";
-import { applyCreateDefaults, applyUpdateDefaults, createMutationDefaultsCache } from "../src/core/mutation-defaults";
+import {
+  applyCreateDefaults,
+  applyUpdateDefaults,
+  createMutationDefaultsCache,
+  updateDefaultsVaryByRow,
+} from "../src/core/mutation-defaults";
 
 afterEach(() => vi.useRealTimers());
 
@@ -184,5 +189,37 @@ describe("applyUpdateDefaults", () => {
   it("ignores defaults for other stores", () => {
     const result = applyUpdateDefaults([updatedAtDefault], "user", { name: "x" }, createMutationDefaultsCache());
     expect(result).not.toHaveProperty("updatedAt");
+  });
+});
+
+describe("fields named like inherited members", () => {
+  // Without an own-property check, `data.toString` reads Object.prototype's function and the default is skipped.
+  const at = (field: string, value: NonNullable<ExecutionMutationDefault["onCreate"]>): ExecutionMutationDefault => ({
+    ref: { namespace: "__unbound__", entry: "post", field },
+    onCreate: value,
+    onUpdate: { kind: "generator", id: "uuidv4" },
+  });
+  const literal = (value: unknown) => ({ kind: "generator" as const, id: "literal", params: { value } });
+
+  it.each([
+    ["toString", ["new"]],
+    ["valueOf", []],
+    ["constructor", "x"],
+  ])("applies the create default of %s", (field, value) => {
+    const result = applyCreateDefaults(
+      [at(field, literal(value))],
+      "post",
+      { id: "p1" },
+      createMutationDefaultsCache()
+    );
+    expect(Object.hasOwn(result, field)).toBe(true);
+    expect(result[field]).toEqual(value);
+  });
+
+  it("applies the update default of toString and generates it per row", () => {
+    const defaults = [at("toString", literal("x"))];
+    const result = applyUpdateDefaults(defaults, "post", { title: "new" }, createMutationDefaultsCache());
+    expect(typeof result["toString"]).toBe("string");
+    expect(updateDefaultsVaryByRow(defaults, "post", { title: "new" })).toBe(true);
   });
 });

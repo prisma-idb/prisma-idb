@@ -330,3 +330,32 @@ describe("nonempty list defaults on every create path", () => {
     expectOwnArrays([...rows, single]);
   });
 });
+
+describe("defaults on fields named like inherited members", () => {
+  it("fills toString, valueOf and constructor on create", async () => {
+    const schema = `
+      model Item {
+        id          String   @id
+        toString    String[] @default(["new"])
+        valueOf     String[] @default([])
+        constructor String   @default("x")
+      }
+    `;
+    const { document, sources } = parse(schema, "schema.prisma");
+    const { symbolTable } = buildSymbolTable({ documents: [document], sources, defaultNamespaceId: "__unbound__" });
+    const result = interpretPslDocumentToIdbContract(symbolTable, "schema.prisma");
+    if (!result.ok) throw new Error(JSON.stringify(result.failure.diagnostics));
+    const client = await createAutoMigratingIdbClient({
+      contractSpace: buildContractSpaceFixture([result.value as never]),
+      dbName: `inherited-names-${crypto.randomUUID()}`,
+    });
+    opened.push(client);
+    const items = client.orm["item"] as unknown as {
+      create(data: object): Promise<Record<string, unknown>>;
+      findUnique(key: string): Promise<Record<string, unknown> | null>;
+    };
+    const expected = { id: "a", toString: ["new"], valueOf: [], constructor: "x" };
+    expect(await items.create({ id: "a" })).toEqual(expected);
+    expect(await items.findUnique("a")).toEqual(expected);
+  });
+});

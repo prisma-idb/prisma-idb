@@ -78,6 +78,15 @@ function resolveGeneratedValue(spec: ExecutionMutationDefaultValue, cache: Mutat
 }
 
 /**
+ * Whether `data` gives `field` a value. Only an own property counts: a field
+ * named like an inherited member, such as `toString`, would otherwise read the
+ * prototype's function and skip the default.
+ */
+function setsField(data: Record<string, unknown>, field: string): boolean {
+  return Object.hasOwn(data, field) && data[field] !== undefined;
+}
+
+/**
  * Fills in every column with an `onCreate` default that `data` doesn't
  * already set. Returns `data` unchanged (same reference) if there's nothing
  * to apply.
@@ -92,7 +101,7 @@ export function applyCreateDefaults(
   let result = data;
   for (const d of defaults) {
     if (d.ref.entry !== storeName || !d.onCreate) continue;
-    if (result[d.ref.field] !== undefined) continue;
+    if (setsField(result, d.ref.field)) continue;
     if (result === data) result = { ...data };
     result[d.ref.field] = resolveGeneratedValue(d.onCreate, cache);
   }
@@ -136,7 +145,7 @@ export function updateDefaultsVaryByRow(
     (d) =>
       d.ref.entry === storeName &&
       d.onUpdate !== undefined &&
-      patch[d.ref.field] === undefined &&
+      !setsField(patch, d.ref.field) &&
       !CACHEABLE_GENERATOR_IDS.has(d.onUpdate.id as IdbMutationDefaultGeneratorId)
   );
 }
@@ -159,7 +168,7 @@ export function applyUpdateDefaults(
   let result = patch;
   for (const d of defaults) {
     if (d.ref.entry !== storeName || !d.onUpdate) continue;
-    if (result[d.ref.field] !== undefined) continue;
+    if (setsField(result, d.ref.field)) continue;
     if (result === patch) result = { ...patch };
     result[d.ref.field] = resolveGeneratedValue(d.onUpdate, cache);
   }
