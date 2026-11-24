@@ -1,4 +1,4 @@
-import { keyPathFields, sameJoinPairs } from "@prisma-idb/target-idb/pack";
+import { keyPathFields, sameFieldSet, sameJoinPairs } from "@prisma-idb/target-idb/pack";
 import type { IdbKeyPath } from "@prisma-idb/target-idb/pack";
 import { foreignKeyIndexes } from "./foreign-key-indexes";
 import { toOneSide } from "./relation-ownership";
@@ -381,11 +381,9 @@ function excludedInverse(model: IdbModelNode, relation: IdbRelationNode, definit
 
 /** `true` when the primary key or a unique index covers exactly `fields`, in any order. */
 function isUniqueTuple(model: IdbModelNode, fields: readonly string[]): boolean {
-  const wanted = new Set(fields);
-  const covers = (names: readonly string[]) => names.length === wanted.size && names.every((name) => wanted.has(name));
   return (
-    covers(keyPathFields(model.key)) ||
-    model.indexes.some((index) => index.unique && covers(keyPathFields(index.keyPath)))
+    sameFieldSet(keyPathFields(model.key), fields) ||
+    model.indexes.some((index) => index.unique && sameFieldSet(keyPathFields(index.keyPath), fields))
   );
 }
 
@@ -417,6 +415,13 @@ function validateRelationNullability(
   const side = relation.cardinality === "1:N" ? undefined : toOneSide(model, relation, target);
 
   if (side === "owner") {
+    if (relation.cardinality === "1:1" && !isUniqueTuple(model, relation.localFields)) {
+      report(
+        "IDB_INVALID_RELATION",
+        `${label} is one-to-one, but its foreign key isn't unique. Add a unique index on the foreign-key fields, or declare it as N:1.`,
+        at
+      );
+    }
     const local = nullableIn(model, relation.localFields);
     if (relation.nullable === false && local.some((nullable) => nullable === true)) {
       report(

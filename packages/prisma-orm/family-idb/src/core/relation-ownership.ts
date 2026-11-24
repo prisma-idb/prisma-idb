@@ -1,4 +1,4 @@
-import { keyPathFields } from "@prisma-idb/target-idb/pack";
+import { keyPathFields, sameFieldSet, sameJoinPairs } from "@prisma-idb/target-idb/pack";
 import type { IdbContractDefinition, IdbModelNode, IdbRelationNode } from "./contract-definition";
 
 /**
@@ -12,11 +12,6 @@ import type { IdbContractDefinition, IdbModelNode, IdbRelationNode } from "./con
  */
 export type ToOneSide = "owner" | "inverse" | "undetermined";
 
-/** Compare join fields in order, as the runtime matches reciprocal relations. */
-export function sameFields(a: readonly string[], b: readonly string[]): boolean {
-  return a.length === b.length && a.every((name, index) => name === b[index]);
-}
-
 /** The relations on `target` that join back to `model` on the same fields, in reverse. */
 function reciprocalRelations(
   model: IdbModelNode,
@@ -26,8 +21,7 @@ function reciprocalRelations(
   return (target?.relations ?? []).filter(
     (inverse) =>
       inverse.to === model.modelName &&
-      sameFields(inverse.localFields, relation.targetFields) &&
-      sameFields(inverse.targetFields, relation.localFields)
+      sameJoinPairs(inverse.localFields, inverse.targetFields, relation.targetFields, relation.localFields)
   );
 }
 
@@ -37,12 +31,12 @@ export function toOneSide(model: IdbModelNode, relation: IdbRelationNode, target
   const reciprocal = reciprocalRelations(model, relation, target);
   if (
     reciprocal.some((inverse) => inverse.cardinality === "N:1") ||
-    sameFields(relation.localFields, keyPathFields(model.key))
+    sameFieldSet(relation.localFields, keyPathFields(model.key))
   ) {
     return "inverse";
   }
   if (
-    (target !== undefined && sameFields(relation.targetFields, keyPathFields(target.key))) ||
+    (target !== undefined && sameFieldSet(relation.targetFields, keyPathFields(target.key))) ||
     reciprocal.some((inverse) => inverse.cardinality === "1:N")
   ) {
     return "owner";

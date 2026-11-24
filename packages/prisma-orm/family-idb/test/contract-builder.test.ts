@@ -1059,6 +1059,7 @@ describe("defineContract — conflicting reciprocal relation actions", () => {
               store: "profiles",
               key: "id",
               fields: { id: "String", userId },
+              indexes: { userId: { keyPath: "userId", unique: true } },
               relations: {
                 user: { to: "User", cardinality: "1:1", on: { local: ["userId"], target: ["id"] }, nullable },
               },
@@ -1199,6 +1200,41 @@ describe("defineContract — SetNull on a 1:1 relation", () => {
     expect(() => defineOnEmail("String?", false)).toThrow(
       'IDB_INVALID_RELATION: Relation "User.profile" declares onUpdate, but its 1:1 join doesn\'t identify the model that holds the foreign key, so the action would never run.'
     );
+  });
+});
+
+describe("defineContract — the owning side of a one-to-one", () => {
+  function define(unique: boolean) {
+    return defineContract({
+      family: idbFamilyPack,
+      target: idbTargetPack,
+      models: {
+        User: { store: "users", key: ["tenant", "id"], fields: { tenant: "String", id: "String" } },
+        Profile: {
+          store: "profiles",
+          key: "id",
+          fields: { id: "String", userTenant: "String", userId: "String" },
+          indexes: { user: { keyPath: ["userTenant", "userId"], unique } },
+          relations: {
+            user: {
+              to: "User",
+              cardinality: "1:1",
+              nullable: false,
+              onDelete: "cascade",
+              on: { local: ["userId", "userTenant"], target: ["id", "tenant"] },
+            },
+          },
+        },
+      },
+    });
+  }
+
+  it("recognizes a compound primary key referenced in a different field order", () => {
+    expect(() => define(true)).not.toThrow();
+  });
+
+  it("requires the owning foreign key to be unique even if no inverse is declared", () => {
+    expect(() => define(false)).toThrow(/Relation "Profile.user".*foreign key.*isn't unique/);
   });
 });
 
@@ -1364,8 +1400,9 @@ describe("defineContract — foreign-key indexes", () => {
     expect(users).toBeUndefined();
   });
 
-  it("indexes the foreign key of a 1:1 relation", () => {
-    expect(postStoreIndexes({}, {}, "1:1").posts).toEqual({ authorId: { keyPath: "authorId", unique: false } });
+  it("keeps the explicit unique index for the foreign key of a 1:1 relation", () => {
+    const uniqueIndex = { authorId: { keyPath: "authorId", unique: true } } as const;
+    expect(postStoreIndexes({}, uniqueIndex, "1:1").posts).toEqual(uniqueIndex);
   });
 
   it("skips the index when the relation sets index: false, and changes the storage hash back", () => {

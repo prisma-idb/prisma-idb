@@ -51,6 +51,8 @@ TypeScript uses `"1:N"` for a backrelation and `"1:1"` or `"N:1"` for a to-one r
 
 For a one-to-one relation on a non-primary unique key, declare `"N:1"` on the model that holds the foreign key and `"1:1"` on the referenced model, with reversed join fields. Put a unique index on the foreign key to enforce one-to-one cardinality. You can put each referential action on either side of the pair. `setNull` requires every foreign-key field to be optional.
 
+If you declare only the foreign-key side as `"1:1"`, it must also have a unique index or primary key covering its foreign-key fields. The order of corresponding field pairs in a compound join does not affect ownership.
+
 Scalar and enum fields can be lists. Lists cannot be optional. An empty-list default makes the field optional on create. See the [scalar-list reference](/docs/prisma-8/scalar-list-reference). The [Schema & Config reference](/docs/prisma-8/schema) lists scalar types and IndexedDB key restrictions.
 
 ## Equivalent contracts
