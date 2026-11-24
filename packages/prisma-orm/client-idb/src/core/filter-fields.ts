@@ -1,4 +1,11 @@
-import type { IdbFilterExpr } from "@prisma-idb/adapter-idb/runtime";
+import {
+  andExpr,
+  fieldFilter,
+  notExpr,
+  nullCheckExpr,
+  orExpr,
+  type IdbFilterExpr,
+} from "@prisma-idb/adapter-idb/runtime";
 import { domainModelsAtDefaultNamespace } from "@prisma/orm-framework/contract/types";
 import type { IdbContract } from "./types";
 
@@ -33,4 +40,22 @@ export function assertKnownFilterFields(
     }
   };
   visit(expr);
+}
+
+/** Copy callback-owned nodes so field names cannot change between validation and execution. */
+export function snapshotFilterExpr(expr: IdbFilterExpr): IdbFilterExpr {
+  switch (expr.kind) {
+    case "field":
+      return fieldFilter(expr.field, expr.op, expr.value);
+    case "null-check":
+      return nullCheckExpr(expr.field, expr.isNull);
+    case "and":
+      return andExpr(Array.from(expr.exprs, snapshotFilterExpr));
+    case "or":
+      return orExpr(Array.from(expr.exprs, snapshotFilterExpr));
+    case "not":
+      return notExpr(snapshotFilterExpr(expr.expr));
+    default:
+      throw new TypeError("where() callback must return a filter expression");
+  }
 }

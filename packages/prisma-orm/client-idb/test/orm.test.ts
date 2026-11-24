@@ -16,7 +16,7 @@ import idbTargetPack from "@prisma-idb/target-idb/pack";
 import { createIDBRuntimeDriver } from "@prisma-idb/driver-idb/runtime";
 import type { IdbRuntimeDriverInstance } from "@prisma-idb/driver-idb/runtime";
 import type { IdbQueryPlan } from "@prisma-idb/adapter-idb/runtime";
-import { idbOrm, IdbBulkWriteError } from "../src/exports/orm";
+import { and, idbOrm, IdbBulkWriteError } from "../src/exports/orm";
 import { PrismaClientKnownRequestError } from "@prisma/client-runtime-utils";
 import type {
   IdbQueryExecutor,
@@ -953,6 +953,20 @@ describe("IdbStoreAccessor — updateAll / updateCount", () => {
     const client = makeClient();
     const n = await client["users"]!.where({}).updateCount({ name: "X" });
     expect(n).toBe(3);
+  });
+
+  it("keeps callback filter fields stable after the builder is created", async () => {
+    const users = makeClient()["users"]!;
+    const filter = { kind: "null-check" as const, field: "email", isNull: true };
+    const query = users.where(() => and(filter));
+    filter.field = "typo";
+
+    expect(await query.updateCount({ name: "Changed" })).toBe(0);
+    expect((await users.orderBy({ id: "asc" }).all().toArray()).map((row) => row["name"])).toEqual([
+      "Alice",
+      "Bob",
+      "Carol",
+    ]);
   });
 
   it("updateCount returns 0 when no matches", async () => {

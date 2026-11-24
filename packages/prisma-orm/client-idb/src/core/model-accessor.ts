@@ -91,11 +91,8 @@ function createFieldAccessor(field: string): IdbFieldAccessor<unknown> {
  * `m.name.eq(...)` and `m.name.startsWith(...)` reuse the same per-field
  * accessor object across the same `where()` invocation.
  *
- * The type parameter is structural — no contract is consulted at
- * runtime, because TS already gates the visible field set at compile
- * time. (Misspelled fields surface as accessor calls on names that
- * don't exist in stored rows, which is consistent with how the
- * shorthand form behaves today.)
+ * The type parameter limits field access in TypeScript. The query builder
+ * checks field names against the contract when it takes the filter.
  */
 export function createModelAccessor<TContract extends IdbContract, ModelName extends string>(): IdbModelAccessor<
   TContract,

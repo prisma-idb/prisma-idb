@@ -14,7 +14,7 @@ import type {
   IdbQueryAst,
 } from "@prisma-idb/adapter-idb/runtime";
 import { shorthandToFilterExpr } from "@prisma-idb/adapter-idb/runtime";
-import { assertKnownFilterFields } from "./filter-fields";
+import { assertKnownFilterFields, snapshotFilterExpr } from "./filter-fields";
 import {
   type CreateInput,
   type DefaultModelRow,
@@ -464,7 +464,7 @@ export class IdbStoreAccessorImpl<
   ): IdbStoreAccessor<TContract, ModelName, TIncludes, TSelected, true> {
     const expr =
       typeof filter === "function"
-        ? filter(createModelAccessor<TContract, ModelName>())
+        ? snapshotFilterExpr(filter(createModelAccessor<TContract, ModelName>()))
         : shorthandToFilterExpr(filter as Record<string, unknown>);
     // An empty shorthand object (or one with only undefined values) lifts
     // to `undefined` — keep the existing filter list untouched so chained
