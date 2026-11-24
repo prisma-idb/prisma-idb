@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+import { canonicalStringify } from "@prisma/orm-framework/utils/canonical-stringify";
 import { domainModelsAtDefaultNamespace } from "@prisma/orm-framework/contract/types";
 import type { GetKeyField, PushCheck, SyncPushEvent, SyncServerContract } from "@prisma-idb/sync-server";
 import { ormRootFor } from "./orm-root";
@@ -100,6 +102,11 @@ export function toSyncPushPayload(operation: string, payload: unknown, keyField:
   return { [keyField]: (payload as { key: unknown }).key };
 }
 
+/** A validated write carries the hash of its original payload shape. */
+export interface DecodedSqlPushEvent extends SyncPushEvent {
+  readonly payloadHash: string;
+}
+
 /**
  * Decodes one wire event into the `SyncPushEvent` shape `validatePush` takes:
  * the wire form, plus its payload revived to native values. Revival happens
@@ -115,19 +122,29 @@ export function decodeWireEvent(
   getKeyField: GetKeyField,
   model: string,
   event: SqlPushEvent
-): SyncPushEvent {
+): DecodedSqlPushEvent {
   let keyField: string | undefined;
   try {
     keyField = getKeyField(contract, model);
   } catch {
     keyField = undefined;
   }
-  const wirePayload = keyField === undefined ? {} : toSyncPushPayload(event.operation, event.payload, keyField);
+  const payload = event.payload;
+  const wirePayload = keyField === undefined ? {} : toSyncPushPayload(event.operation, payload, keyField);
+  let payloadHash: string;
+  try {
+    payloadHash = createHash("sha256")
+      .update(canonicalStringify(keyField === undefined ? {} : payload))
+      .digest("hex");
+  } catch {
+    throw new WireValidationError("RECORD_VALIDATION_FAILURE", "Unable to fingerprint sync payload");
+  }
   return {
     id: event.id,
     model,
     operation: event.operation,
     payload: reviveWireValues(contract, model, wirePayload, keyField),
+    payloadHash,
     wireKey: keyField === undefined ? undefined : wirePayload[keyField],
   };
 }
@@ -170,7 +187,7 @@ export async function applyPushEvent(
   scopeKey: string
 ): Promise<SqlPushResult> {
   if (isRejected(check)) return rejectedResult(event.id, check);
-  let decoded: SyncPushEvent;
+  let decoded: DecodedSqlPushEvent;
   try {
     decoded = decodeWireEvent(contract, getKeyField, model, event);
   } catch (err) {
@@ -197,7 +214,7 @@ export async function applyPushEventDecoded(
   db: unknown,
   contract: SyncServerContract,
   getKeyField: GetKeyField,
-  event: SyncPushEvent,
+  event: DecodedSqlPushEvent,
   check: PushCheck,
   scopeKey: string
 ): Promise<SqlPushResult> {
@@ -212,7 +229,13 @@ export async function applyPushEventDecoded(
       ? prepareParentReferenceChecks(contract, getKeyField, model, check)
       : [];
 
-  const identity: PushEventIdentity = { scopeKey, model, keyPath: check.key, operation: event.operation };
+  const identity: PushEventIdentity = {
+    scopeKey,
+    model,
+    keyPath: check.key,
+    operation: event.operation,
+    payloadHash: event.payloadHash,
+  };
   // Another write already used this event id. Retrying can't apply this one.
   const reusedEventId: SqlPushResult = {
     id: event.id,
@@ -243,7 +266,12 @@ export async function applyPushEventDecoded(
 
       // Lock the target before walking either its stored or candidate parents.
       // Authorization decides how to handle a missing target on both dialects.
-      if (event.operation !== "create") await lockRow(db, tx, contract, model, nativeKey, "update");
+      if (event.operation !== "create" && !(await lockRow(db, tx, contract, model, nativeKey, "update"))) {
+        // A concurrent delete can commit while this lock is waiting.
+        const replay = await appliedEvent(tx, event.id, identity);
+        if (replay === "same") return { id: event.id, success: true };
+        if (replay === "other") return reusedEventId;
+      }
       const startRow = event.operation === "create" ? event.payload : await plainReadRow(model, nativeKey);
       if (!(await isAuthorized(startRow))) return scopeViolation;
 
@@ -277,6 +305,7 @@ export async function applyPushEventDecoded(
         keyPath: check.key,
         operation: event.operation,
         outboxEventId: event.id,
+        payloadHash: event.payloadHash,
       });
 
       return { id: event.id, success: true };

@@ -26,6 +26,7 @@ export interface NewChangelogRow {
   readonly keyPath: unknown;
   readonly operation: "create" | "update" | "delete";
   readonly outboxEventId: string;
+  readonly payloadHash: string;
 }
 
 /** The SQL query operations needed to read a scoped changelog page or its greatest id. */
@@ -45,26 +46,37 @@ export interface PushEventIdentity {
   /** The wire-form key, as the changelog row stores it. */
   readonly keyPath: unknown;
   readonly operation: string;
+  readonly payloadHash: string;
+}
+
+/**
+ * `keyPath` is a text column, so a numeric wire key (`7`) comes back as its
+ * text (`"7"`). Compare keys by their text.
+ */
+function sameStoredKey(stored: unknown, key: unknown): boolean {
+  return String(stored) === String(key);
 }
 
 /**
  * Whether the push event with this outbox id already wrote its changelog row.
  * Pushes are idempotent on the id, but only for the same write: `"other"`
- * means a row with this id records another scope, model, key or operation,
- * so this event was never applied and must not be acknowledged.
+ * means the row records a different write. Historical rows have no payload
+ * hash and match if the other identity fields agree.
  */
 export async function appliedEvent(
   tx: unknown,
   outboxEventId: string,
   identity: PushEventIdentity
 ): Promise<"none" | "same" | "other"> {
-  const row = (await ormRootFor(tx, "Changelog").first({ outboxEventId })) as Partial<PushEventIdentity> | null;
+  const row = (await ormRootFor(tx, "Changelog").first({ outboxEventId })) as
+    (Omit<PushEventIdentity, "payloadHash"> & { payloadHash: string | null }) | null;
   if (!row) return "none";
   const same =
     row.scopeKey === identity.scopeKey &&
     row.model === identity.model &&
     row.operation === identity.operation &&
-    JSON.stringify(row.keyPath) === JSON.stringify(identity.keyPath);
+    sameStoredKey(row.keyPath, identity.keyPath) &&
+    (row.payloadHash == null || row.payloadHash === identity.payloadHash);
   return same ? "same" : "other";
 }
 

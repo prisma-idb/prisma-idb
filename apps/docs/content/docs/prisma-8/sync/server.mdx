@@ -215,7 +215,13 @@ Push results include the first retryable failure and omit all later events. The 
 
 When a database write fails, `applyPushEvent` logs the real error on the server and returns a generic failure. Database details such as constraint names do not reach the browser. The failure is non-retryable when the database reports SQLSTATE class 22 (data exception) or class 23 (integrity constraint violation), such as a unique violation. Retrying the same write cannot succeed. Every other failure stays retryable, including lost connections, timeouts, deadlocks and errors with no SQLSTATE.
 
-Pushes are idempotent on the event id. An event whose id is already in the changelog for the same scope, model, key and operation returns `success: true` without writing again. This includes a retry that hits a unique key of its own first request, which timed out but still committed. If the changelog records that id for a different write, the event fails as non-retryable and is never acknowledged.
+A repeated push returns `success: true` without writing again when its scope, model, key, operation and payload match the changelog entry for its event id. The SQL adapter hashes the payload with SHA-256 after sorting object keys. A reused id for a different write fails as non-retryable. Concurrent retries can also find the original write after waiting for it to commit.
+
+Before deploying an upgrade that adds payload hashes, regenerate the PostgreSQL contract and apply a migration that adds the nullable text column `Changelog.payloadHash`. Existing rows keep a null hash and replay based on scope, model, key and operation. The migration for the default changelog table adds this column:
+
+```sql
+ALTER TABLE "public"."Changelog" ADD COLUMN "payloadHash" text;
+```
 
 ### Rejected events carry the server's row
 

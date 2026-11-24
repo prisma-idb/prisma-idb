@@ -208,6 +208,59 @@ describe("concurrent pushes on one scope", () => {
     }
   );
 
+  it("acknowledges a scoped delete redelivered before the first commit", async () => {
+    const db = await testDb();
+    await seed(db, { User: [{ id: "u1", name: "Ann" }], Board: [{ id: "ba", ownerId: "u1" }] });
+
+    const input = {
+      scopeKey: "u1",
+      events: [{ id: "ea", entityType: "Board", operation: "delete" as const, payload: { key: "ba" } }],
+    };
+    const first = pausedAfterChangelogInsert(db);
+    const pushFirst = adapter.applyPush(first.db, input);
+    let lockStarted!: () => void;
+    const locking = new Promise<void>((resolve) => (lockStarted = resolve));
+    const retryDb = {
+      orm: db.orm,
+      raw: db.raw,
+      transaction: <T>(fn: (tx: unknown) => Promise<T>) =>
+        db.transaction((tx) =>
+          fn({
+            orm: tx.orm,
+            execute: tx.execute.bind(tx),
+            query: (plan: Parameters<typeof tx.query>[0]) => {
+              const result = tx.query(plan);
+              lockStarted();
+              return result;
+            },
+          })
+        ),
+    };
+    let retry: ReturnType<typeof adapter.applyPush>;
+    try {
+      await Promise.race([
+        first.inserted,
+        pushFirst.then(() => {
+          throw new Error("The first delete finished before inserting its changelog row");
+        }),
+      ]);
+      retry = adapter.applyPush(retryDb, input);
+      await Promise.race([
+        locking,
+        retry.then(() => {
+          throw new Error("Retry finished before locking the deleted row");
+        }),
+      ]);
+    } finally {
+      first.release();
+    }
+
+    const expected = { ok: true, results: [{ id: "ea", success: true }] };
+    expect(await Promise.all([pushFirst, retry])).toEqual([expected, expected]);
+    expect(await db.orm.public.Board.all().toArray()).toEqual([]);
+    expect(await db.orm.public.Changelog.where({ outboxEventId: "ea" }).all().toArray()).toHaveLength(1);
+  });
+
   it("does not block pushes on a different scope", async () => {
     const db = await testDb();
     await seed(db, {
