@@ -35,6 +35,39 @@ export function keyPathFields(keyPath: IdbKeyPath): readonly string[] {
   return typeof keyPath === "string" ? [keyPath] : keyPath;
 }
 
+/** Whether two tuples contain the same distinct fields, regardless of their order. */
+export function sameFieldSet(a: readonly string[], b: readonly string[]): boolean {
+  const fields = new Set(a);
+  return (
+    a.length === b.length &&
+    fields.size === a.length &&
+    new Set(b).size === b.length &&
+    b.every((field) => fields.has(field))
+  );
+}
+
+/** Compare relation joins by their corresponding field pairs, ignoring pair order. */
+export function sameJoinPairs(
+  leftLocal: readonly string[],
+  leftTarget: readonly string[],
+  rightLocal: readonly string[],
+  rightTarget: readonly string[]
+): boolean {
+  if (
+    leftLocal.length !== rightLocal.length ||
+    leftLocal.length !== leftTarget.length ||
+    rightLocal.length !== rightTarget.length
+  ) {
+    return false;
+  }
+  const pairs = new Map(leftLocal.map((field, index) => [field, leftTarget[index]!]));
+  return (
+    pairs.size === leftLocal.length &&
+    new Set(rightLocal).size === rightLocal.length &&
+    rightLocal.every((field, index) => pairs.get(field) === rightTarget[index])
+  );
+}
+
 /**
  * Structural equality between two {@link IdbKeyPath} values — plain `!==`
  * is wrong for the array case (reference inequality, not content equality).

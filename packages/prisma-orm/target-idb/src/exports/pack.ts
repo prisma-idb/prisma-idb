@@ -20,4 +20,4 @@ export type {
   ExtractIdbFieldOutputTypes,
   ExtractIdbFieldInputTypes,
 } from "../core/idb-contract-types";
-export { keyPathEquals, keyPathFields } from "../core/idb-contract-types";
+export { keyPathEquals, keyPathFields, sameFieldSet, sameJoinPairs } from "../core/idb-contract-types";
