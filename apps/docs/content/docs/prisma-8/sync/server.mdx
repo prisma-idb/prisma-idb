@@ -67,6 +67,8 @@ On the wire, `BigInt` is a decimal string, `Bytes` is base64 and `DateTime` is a
 
 A finite `Float` travels as a JSON number. The exact strings `"Infinity"`, `"-Infinity"` and `"NaN"` carry non-finite values through the codec. The server refuses numeric strings such as `"5"` and JSON number literals that overflow during parsing. Decoded values still pass through record and key validation.
 
+Deploy the Float-infinity wire support on the SQL server and upgrade every pulling client to a version that accepts Float infinities before writing them to synced fields. Older clients reject these rows and advance their pull cursor past them. The storage hash stays the same, so contract checking does not block those clients.
+
 ## `buildPullQueries(logs, { scopeKey })`
 
 Takes changelog rows, each `{ changelogId, model, key }`, and returns one `{ changelogId, model, check }` per row, with `"unknown-model"`, `"root"` or `"scoped"` ownership checks. The SQL adapter validates each key when it resolves the record.

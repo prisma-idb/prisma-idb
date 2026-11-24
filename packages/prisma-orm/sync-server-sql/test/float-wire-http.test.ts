@@ -24,7 +24,7 @@ it("refuses an overflowing JSON Float key without writing a row or changelog ent
   );
 
   expect(response.status).toBe(200);
-  expect(await response.json()).toMatchObject([
+  expect(await response.json()).toStrictEqual([
     { id: "overflow", success: false, error: "KEYPATH_VALIDATION_FAILURE", retryable: false },
   ]);
   expect(await ormRootFor(db, "FloatItem").first({ ownerId: "u1" })).toBeNull();
