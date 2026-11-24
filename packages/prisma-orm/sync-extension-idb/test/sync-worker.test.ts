@@ -667,6 +667,41 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
     await client.close();
   });
 
+  it("reports the transport failure when recording the failed attempt also fails", async () => {
+    const { client } = await createTestSyncClient();
+    await asAccessors(client.orm)["users"]!.create({ id: "u1", name: "Alice" });
+    const transportFailure = new TypeError("Network request failed");
+    const bookkeepingFailure = new Error("QuotaExceededError");
+    const withTransaction = client.withTransaction.bind(client);
+    // The transaction that records the failed attempt spans the outbox and the version metadata.
+    vi.spyOn(client, "withTransaction").mockImplementation(((stores, fn) =>
+      stores.includes("_idb_sync_version_meta") && stores.length === 2
+        ? Promise.reject(bookkeepingFailure)
+        : withTransaction(stores, fn)) as typeof client.withTransaction);
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const worker = trackedWorker({
+      syncClient: client,
+      pushHandler: async () => {
+        throw transportFailure;
+      },
+      pullHandler: async () => lastPage(),
+    });
+    const errors: Error[] = [];
+    worker.on("error", (error) => errors.push(error));
+
+    try {
+      await expect(worker.forceSync()).rejects.toBe(transportFailure);
+      expect(errors).toEqual([transportFailure]);
+      expect(consoleError).toHaveBeenCalledWith(
+        "[prisma-idb] Could not record a failed push attempt",
+        bookkeepingFailure
+      );
+    } finally {
+      vi.restoreAllMocks();
+      await client.close();
+    }
+  });
+
   it.each(["push", "pull"] as const)("emits one error for overlapping forced cycles when %s fails", async (during) => {
     const { client } = await createTestSyncClient();
     await asAccessors(client.orm)["users"]!.create({ id: "u1", name: "Alice" });
@@ -1353,6 +1388,28 @@ describe("SyncWorker — push/pull correctness (real client)", () => {
         "u5",
       ]);
       expect(await client.outbox.hasPending()).toBe(false);
+    });
+
+    it("moves past a page whose rows all belong to a removed model", async () => {
+      const { client } = await createTestSyncClient();
+      const cursors: (string | null)[] = [];
+      const worker = trackedWorker({
+        syncClient: client,
+        pushHandler: async () => [],
+        pullHandler: async (from) => {
+          cursors.push(from);
+          if (from === null) {
+            const removed = [1, 2].map((n) => ({ ...userLog(changelogId(n), `gone${n}`), model: "Removed" }));
+            return { logs: removed, hasMore: true };
+          }
+          return lastPage(from === changelogId(2) ? [userLog(changelogId(3), "kept")] : []);
+        },
+      });
+
+      await worker.forceSync();
+
+      expect(cursors).toEqual([null, changelogId(2)]);
+      expect(await scanAll(client, "users")).toEqual([{ id: "kept", name: "kept" }]);
     });
 
     it("ends the cycle when a page that reports more leaves the cursor in place", async () => {

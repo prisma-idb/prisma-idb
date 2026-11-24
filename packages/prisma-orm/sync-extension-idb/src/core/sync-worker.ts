@@ -258,7 +258,8 @@ export function createSyncWorker<TContract extends IdbContract>(options: SyncWor
     setStatus("pushing");
     const totals = { synced: 0, failed: 0, unreconciled: 0 };
     let sentAny = false;
-    let pullBlocked: boolean;
+    let pullBlocked = false;
+    let failure: { readonly error: unknown } | undefined;
     try {
       while (!stopped) {
         const events = await getNextBatch(syncClient.rawClient, {
@@ -276,10 +277,18 @@ export function createSyncWorker<TContract extends IdbContract>(options: SyncWor
         // A handler that answers for none of the events would otherwise resend the same batch forever.
         if (counts.retryableFailure || counts.matched === 0) break;
       }
-    } finally {
-      // Also runs when a request throws, so a failing transport still reports `stalled`.
-      pullBlocked = await reportPush(totals, sentAny);
+    } catch (error) {
+      failure = { error };
     }
+    // Also runs when a request throws, so a failing transport still reports `stalled`.
+    try {
+      pullBlocked = await reportPush(totals, sentAny);
+    } catch (reportError) {
+      if (!failure) throw reportError;
+      // The push failure is the one to report; a failed status read must not replace it.
+      console.error("[prisma-idb] Could not read the outbox to report a failed push", reportError);
+    }
+    if (failure) throw failure.error;
     return pullBlocked;
   }
 
@@ -303,9 +312,14 @@ export function createSyncWorker<TContract extends IdbContract>(options: SyncWor
     } catch (error) {
       reportContractMismatch(error, "push");
       const message = toSyncError(error).message;
-      await syncClient.withTransaction([OUTBOX_STORE, VERSION_META_STORE], async (scope) => {
-        for (const { id } of events) await markFailed(scope, id, message);
-      });
+      try {
+        await syncClient.withTransaction([OUTBOX_STORE, VERSION_META_STORE], async (scope) => {
+          for (const { id } of events) await markFailed(scope, id, message);
+        });
+      } catch (bookkeepingError) {
+        // The transport failure is the one to report; failing to record it must not replace it.
+        console.error("[prisma-idb] Could not record a failed push attempt", bookkeepingError);
+      }
       throw error;
     }
   }

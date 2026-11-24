@@ -71,7 +71,7 @@ import type { LogWithRecord, ApplyPullResult, PullChange, VersionMetaRecord } fr
  * A committed change, an already-consumed entry, or a halt. The cursor can
  * move past everything except `halt`, which stops the page for a retry.
  */
-type LogOutcome = PullChange | "already-applied" | "invalid" | "halt";
+type LogOutcome = PullChange | "already-applied" | "invalid" | "unknown-model" | "halt";
 
 /** Applies a changelog page in order and returns the cursor position safe to persist. */
 export async function applyPull<TContract extends IdbContract>(
@@ -94,12 +94,13 @@ export async function applyPull<TContract extends IdbContract>(
     // to `"users"` before it's a valid lookup key here. Comparing against
     // `log.model` directly always missed (store name almost never equals
     // model name), so every log was silently treated as "unknown model".
-    if (!rawOrm[getStoreName(contract, log.model)]) {
-      skipped++;
-      continue;
-    }
-
-    const outcome = await applyLog(syncClient, contract, log);
+    //
+    // A model the client contract doesn't have, such as one a migration removed,
+    // can never be applied, so its log is consumed like an already-applied one.
+    // Leaving the cursor behind it would request the same page forever.
+    const outcome = rawOrm[getStoreName(contract, log.model)]
+      ? await applyLog(syncClient, contract, log)
+      : "unknown-model";
 
     if (outcome === "halt") {
       skipped++;

@@ -258,7 +258,10 @@ export function createSyncIdbClient<TContract extends IdbContract>(
       const written: OutboxWriteEntry[] = [];
       const executor = new SyncInterceptorExecutor(runtime, {
         ...syncConfig,
-        onOutboxWrite: (entries) => written.push(...entries),
+        // A loop, not `push(...entries)`: a large write would exceed the engine's argument limit after commit.
+        onOutboxWrite: (entries) => {
+          for (const entry of entries) written.push(entry);
+        },
       });
       try {
         return await runOrmTransaction({ contract: options.contract, executor }, rootKeys, fn);
