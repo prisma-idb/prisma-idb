@@ -33,6 +33,7 @@ Prisma clients for IndexedDB, with optional sync to a server. This is a pnpm wor
 - Write comments, error messages and docs as plain, direct prose. State the behavior and the reason inline. Don't refer to plans, phases or ADR numbers in code comments or error messages.
 - Commit messages use Conventional Commits with a package scope, for example `fix(family-idb): keep the cause on contract emit failures`. Don't add a `Co-Authored-By` trailer.
 - Commit, push or open a PR only when asked.
+- Keep each PR small and about one thing, so a person can review it in one sitting. Put unrelated fixes in separate PRs. When a change needs several PRs that build on each other, open them as a stack. The `open-pr` skill explains how.
 
 ## Commands
 

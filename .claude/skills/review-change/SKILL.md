@@ -22,6 +22,8 @@ git status --short   # uncommitted work is part of the review too
 
 Read each changed function in full, not only the diff hunks. Read each untracked file that `git status --short` lists in full. For every new rule, option, check or behavior in the diff, write down one sentence: "This change makes X true for Y."
 
+If the change mixes unrelated fixes or is too large for a person to review in one sitting, report that first and propose how to split it into separate PRs or a stack, as the `open-pr` skill describes.
+
 ## 2. Find every place it should apply
 
 This is the most common finding. A change lands on the main path and misses a sibling path.
