@@ -31,6 +31,7 @@ import { domainModelsAtDefaultNamespace } from "@prisma/orm-framework/contract/t
 import type { IdbAtomicPlan, IdbPlanBody, IdbRowFilter } from "@prisma-idb/driver-idb/runtime";
 import { andExpr, fieldFilter, shorthandToFilterExpr } from "@prisma-idb/adapter-idb/runtime";
 import { assertKnownFilterFields } from "./filter-fields";
+import { hasOrderBy } from "./store-state";
 import type { IdbFilterExpr } from "@prisma-idb/adapter-idb/runtime";
 import type { IdbReferentialAction } from "@prisma-idb/target-idb/pack";
 import type { IdbQueryExecutor } from "./executor";
@@ -597,15 +598,15 @@ function assertNoNestedCallbacks(modelName: string, data: Record<string, unknown
   }
 }
 
-/** Find the first parent selected by the nested-update filters. */
+/** Find the first parent selected by the nested-update filters. No filter selects the first row, as a scalar update does. */
 async function findFirstByFilters(
   scope: IdbTransactionScope,
   contract: IdbContract,
   modelName: string,
   filters: readonly IdbFilterExpr[]
 ): Promise<Record<string, unknown> | null> {
-  if (filters.length === 0) return null;
-  return (await readMutationRows(scope, contract, modelName, andExpr(filters), 1))[0] ?? null;
+  const where = filters.length === 0 ? undefined : andExpr(filters);
+  return (await readMutationRows(scope, contract, modelName, where, 1))[0] ?? null;
 }
 
 /** Execute lowered atomic operations without leaving the transaction's microtask chain. */
@@ -1384,7 +1385,8 @@ async function executeScalarUpdates(
   assertValidRecord(contract, modelName, "update", patch);
   const { storeNames, enforcesOnUpdate } = collectUpdateStoreNames(contract, modelName, patch);
   const needsRowForFks = fkCheckNeedsExistingRow(contract, modelName, patch);
-  const windowed = window.orderBy !== undefined || window.skip !== undefined;
+  // The same rule as the relation-update guard, so `orderBy({})` picks no row either way.
+  const windowed = hasOrderBy(window.orderBy) || window.skip !== undefined;
   const updatedRows = await withMutationScope(executor, storeNames, async (scope) => {
     // With defaults resolved per row, the first resolution is never written; each
     // row's own patch is checked in the loop below.

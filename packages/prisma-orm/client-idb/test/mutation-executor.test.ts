@@ -325,6 +325,25 @@ describe("ORM nested update", () => {
     expect((await getAllRows(db, "posts"))[0]?.["authorId"]).toBe("u1");
   });
 
+  it.each([
+    ["the unfiltered collection", (q: IdbStoreAccessor<never, never>) => q],
+    ["where({})", (q: IdbStoreAccessor<never, never>) => q.where({} as never)],
+    ["orderBy({})", (q: IdbStoreAccessor<never, never>) => q.orderBy({} as never)],
+  ])("updates the first row in key order through %s, as a scalar update does", async (_, chain) => {
+    await orm_()["users"]!.create({ id: "u1", name: "Alice" } as never);
+    await orm_()["users"]!.create({ id: "u2", name: "Bob" } as never);
+    await orm_()["posts"]!.create({ id: "p2", authorId: "u1", title: "Second" } as never);
+    await orm_()["posts"]!.create({ id: "p1", authorId: "u1", title: "First" } as never);
+    const posts = chain(idbOrm({ contract, executor })["posts"]! as never);
+    await expect(
+      posts.update({ title: "Moved", author: (rel: RelMutator) => rel.connect({ id: "u2" }) } as never)
+    ).resolves.toEqual({ id: "p1", authorId: "u2", title: "Moved" });
+    expect(await getAllRows(db, "posts")).toEqual([
+      { id: "p1", authorId: "u2", title: "Moved" },
+      { id: "p2", authorId: "u1", title: "Second" },
+    ]);
+  });
+
   it("N:1 connect in update re-links the post to a new user", async () => {
     await orm_()["users"]!.create({ id: "u1", name: "Alice" } as never);
     await orm_()["users"]!.create({ id: "u2", name: "Bob" } as never);

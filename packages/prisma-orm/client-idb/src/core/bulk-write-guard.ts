@@ -1,4 +1,4 @@
-import type { IdbAccessorState } from "./store-state";
+import { hasOrderBy, type IdbAccessorState } from "./store-state";
 
 /** The bulk writes that change every row matching the filter. */
 export type IdbBulkWriteMethod = "updateAll" | "updateCount" | "deleteAll" | "deleteCount";
@@ -72,7 +72,7 @@ export class IdbRelationUpdateError extends Error {
 
 /** Reject a relation-mutating update on a collection whose order or window it would ignore. */
 export function assertRelationUpdateIgnoresNothing(state: IdbAccessorState, modelName: string): void {
-  const ordered = state.orderBy !== undefined && Object.keys(state.orderBy).length > 0;
+  const ordered = hasOrderBy(state.orderBy);
   if (!ordered && state.skip === undefined && state.take === undefined) return;
   throw new IdbRelationUpdateError(modelName, ordered, state.skip, state.take);
 }
