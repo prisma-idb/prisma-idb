@@ -24,7 +24,13 @@ Separate calls are separate transactions. To group several ORM calls, use `db.tr
 
 ## Group several ORM calls in one transaction
 
-`db.transaction()` takes the root keys of the models you will use and a callback. The callback receives `tx`, which has the ORM accessors of those models only:
+`db.transaction()` takes the root keys of the models you will use and a callback. The callback receives `tx`, which has the ORM accessors of those models only.
+
+<Callout type="warn" title="Await only tx calls inside the callback">
+
+Do other async work, such as fetching data or waiting on a timer, before or after the transaction. Once IndexedDB has no pending requests, it can commit while your callback is still waiting. Any writes already committed stay saved.
+
+</Callout>
 
 ```ts
 const user = await db.transaction(["user", "todo"], async (tx) => {
@@ -40,22 +46,20 @@ You can also return an ORM query result directly. An `async` wrapper is optional
 const users = await db.transaction(["user"], (tx) => tx.user.all());
 ```
 
-The transaction commits when the callback returns. It rolls back, and `transaction()` rethrows the error, when the callback throws.
+`db.transaction()` waits for IndexedDB to confirm the commit before returning the result. If your callback throws while the transaction is still open, `db.transaction()` aborts it and rethrows the error.
 
 Every ORM method works on `tx`, with the same foreign-key checks and `onDelete`/`onUpdate` actions as on `db.orm`. Reads see the writes made earlier in the same transaction.
 
 Keep these rules in mind:
 
 - **List the models you use.** `tx` has no accessor for a model you leave out. The transaction also opens the stores those models need for foreign-key checks, cascades and `include`, so you don't list them.
-- **A failed call aborts the transaction.** This holds even if your callback catches the error. The transaction then rejects when the callback returns.
+- **A failed call aborts an open transaction.** `db.transaction()` rejects even if your callback catches the error and returns normally.
 - **Don't use `tx` after the callback returns.** Calls fail with an error.
 - **Don't nest.** A `db.transaction()` call inside the callback is a separate transaction. Awaiting it counts as awaiting other work, so the outer transaction commits early (see below).
 
 With the sync client, `syncDb.transaction()` also records an outbox event for each tracked write, in the same transaction. Listeners of `outboxwrite` run once, after the commit. `syncDb.withTransaction()` records no outbox events.
 
-### Don't await other work inside the callback
-
-IndexedDB commits a transaction as soon as it has no pending requests at the end of a task. Await only `tx` calls inside the callback. Do other work, such as `fetch()` or a timer, before or after the transaction.
+### Fetch data before opening the transaction
 
 ```ts
 // Wrong: the fetch lets the transaction commit before the second write.
@@ -73,7 +77,7 @@ await db.transaction(["user", "todo"], async (tx) => {
 });
 ```
 
-If the transaction commits early, the next `tx` call, or a later throw from your callback, fails with `IdbTransactionCommittedEarlyError`. This includes a call that fails validation before it reaches IndexedDB. The writes made before that point are saved and not rolled back. The error's `cause` holds the original error. A sync client still reports those saved writes through `outboxwrite`.
+If IndexedDB commits before your callback finishes, `db.transaction()` rejects with `IdbTransactionCommittedEarlyError`. If a later `tx` call fails validation or your callback throws, the error preserves the original failure as its `cause`. A sync client still reports the saved writes through `outboxwrite`.
 
 ## Low-level transaction scope
 
