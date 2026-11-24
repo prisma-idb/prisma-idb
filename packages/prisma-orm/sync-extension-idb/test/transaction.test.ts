@@ -186,6 +186,27 @@ describe("SyncIdbClient.transaction()", () => {
     expect(emitted).toEqual([1]);
   });
 
+  it("notifies about persisted outbox rows when a validation failure follows the early commit", async () => {
+    const { client } = await createTestSyncClient();
+    const emitted: number[] = [];
+    client.on("outboxwrite", (entries) => emitted.push(entries.length));
+    const finished = untilNextTransactionFinishes();
+
+    const failure = await transactionOf(client)(["users"], async (tx) => {
+      await tx["users"]!.create({ id: "u1", name: "Alice" });
+      await finished();
+      // Rejected before it reaches IndexedDB, so the rollback it requests finds a finished transaction.
+      await tx["users"]!.create({ id: "u2", name: 42 });
+    }).catch((error: unknown) => error);
+    vi.restoreAllMocks();
+
+    expect(failure).toBeInstanceOf(IdbTransactionCommittedEarlyError);
+    expect((failure as IdbTransactionCommittedEarlyError).cause).toBeInstanceOf(IdbRecordValidationError);
+    expect(await scanAll(client, "users")).toHaveLength(1);
+    expect(await scanAll(client, "_idb_sync_outbox")).toHaveLength(1);
+    expect(emitted).toEqual([1]);
+  });
+
   it("records updates and deletes of existing rows", async () => {
     const { client } = await createTestSyncClient();
     await asAccessors(client.orm)["users"]!.create({ id: "u1", name: "Alice" });

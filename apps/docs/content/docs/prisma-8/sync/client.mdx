@@ -40,7 +40,7 @@ The managed handle exposes `managedDb.enums` synchronously with the same type an
 
 Every tracked write through `db.orm` also writes an event to the outbox store, in the same transaction. The two commit together or not at all, so no change is ever lost or sent without being saved.
 
-`"outboxwrite"` fires after commit, once per tracked IndexedDB write call. A single call can report several entries, such as the rows from a bulk scan-write. Nested writes, foreign-key-aware creates and cascading deletes can use several driver calls, so one ORM method can produce several notifications. A rolled-back transaction produces none.
+`"outboxwrite"` fires after commit, once per tracked IndexedDB write call. A single call can report several entries, such as the rows from a bulk scan-write. Nested writes, foreign-key-aware creates and cascading deletes can use several driver calls, so one ORM method can produce several notifications. A rolled-back transaction produces none. If IndexedDB commits a `db.transaction()` early and a later operation then fails, the writes that were saved are still reported.
 
 ```ts
 const unsubscribe = db.on("outboxwrite", (entries) => {

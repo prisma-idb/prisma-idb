@@ -73,7 +73,7 @@ await db.transaction(["user", "todo"], async (tx) => {
 });
 ```
 
-If the transaction commits early, the next `tx` call, or a later throw from your callback, fails with `IdbTransactionCommittedEarlyError`. The writes made before that point are saved and not rolled back. The error's `cause` holds the original error.
+If the transaction commits early, the next `tx` call, or a later throw from your callback, fails with `IdbTransactionCommittedEarlyError`. This includes a call that fails validation before it reaches IndexedDB. The writes made before that point are saved and not rolled back. The error's `cause` holds the original error. A sync client still reports those saved writes through `outboxwrite`.
 
 ## Low-level transaction scope
 

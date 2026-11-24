@@ -88,6 +88,10 @@ A single API would either make every nested write list its stores by hand, which
   - The public docs and the TSDoc on `transaction()` state the rule.
 - Calling `db.transaction()` from inside a callback opens a second, separate transaction. Awaiting it is awaiting other work, so the outer transaction commits early and its next operation fails as above. The docs tell users not to nest.
 
+## Notes
+
+- 2026-11-24: A failure that happens before an operation reaches IndexedDB, such as validation, also requests a rollback. If IndexedDB had already committed, that rollback does nothing, so `db.transaction()` checks the scope's commit outcome and throws `IdbTransactionCommittedEarlyError` with the failure as `cause`. The sync scope keeps its buffered `outboxwrite` notifications on rollback and drops them only when the commit fails, so writes that persisted are still announced.
+
 ## Related
 
 - `client-idb/src/core/mutation-scope.ts`: `withMutationScope()`.
