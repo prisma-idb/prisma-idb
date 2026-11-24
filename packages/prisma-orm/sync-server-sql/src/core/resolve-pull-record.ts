@@ -1,5 +1,5 @@
 import type { GetKeyField, OwnershipCheck, SyncServer, SyncServerContract } from "@prisma-idb/sync-server";
-import { decodeStoredNumericKey, reviveWireKey } from "./wire-values";
+import { canonicalFloat4Key, decodeStoredNumericKey, reviveWireKey } from "./wire-values";
 import { ormRootFor } from "./orm-root";
 import { checkAuthorization, plainRowReader } from "./authorization";
 
@@ -47,5 +47,9 @@ export async function resolvePullRecord(
     startRow && check.key === keyPath
       ? startRow
       : await ormRootFor(db, model).first({ [keyField]: nativeKey(keyPath) });
-  return row === null ? null : syncServer.projectRecord(model, row);
+  if (row === null) return null;
+  const projected = syncServer.projectRecord(model, row);
+  const projectedKey = projected[keyField];
+  const key = canonicalFloat4Key(contract, model, keyField, projectedKey);
+  return Object.is(projectedKey, key) ? projected : { ...projected, [keyField]: key };
 }

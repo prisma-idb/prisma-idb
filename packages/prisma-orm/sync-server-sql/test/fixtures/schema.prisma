@@ -9,6 +9,7 @@ model User {
   listItems        ListItem[]
   privateNotes     PrivateNote[]
   boards           Board[]
+  floatItems       FloatItem[]
   jsonItems        JsonItem[]
   meals            Meal[]
   recipes          Recipe[]
@@ -185,5 +186,12 @@ model NumericItem {
   id      Int @id
   ownerId Int
   owner   NumericTenant @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  name    String
+}
+
+model FloatItem {
+  id      Float(storage: float4) @id
+  ownerId String
+  owner   User @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   name    String
 }

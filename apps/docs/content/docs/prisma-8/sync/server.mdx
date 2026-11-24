@@ -65,7 +65,7 @@ The request body has a different shape from these events: the client sends `enti
 
 On the wire, `BigInt` is a decimal string, `Bytes` is base64 and `DateTime` is an ISO string. `createSqlSync` uses this format on push, pull and rejected push records, including scalar list elements and PostgreSQL timestamps represented as JavaScript dates. If a rejected push's record can't be encoded or serialized, the response still reports every applied result, leaves that record out and logs the error with `console.error`. A pull page with a record that can't be encoded fails with HTTP 500 and names the changelog entry. `Json` columns follow the same rules as client `Json` writes, so a row whose `json` or `jsonb` value JSON can't represent, such as a number beyond the double range, fails every pull page that includes it until you fix the row. The server refuses a delete whose key is a client range (`{ lower, upper, ... }`) with a non-retryable `KEYPATH_VALIDATION_FAILURE`.
 
-For a numeric root key, use its string representation as the scope key. For example, key `7` matches scope `"7"`. The adapter restores numeric keys from changelog text and returns them as numbers on pull.
+For a numeric root key, use its string representation as the scope key. For example, key `7` matches scope `"7"`. The adapter restores numeric keys from changelog text and returns them as numbers on pull. A push with a PostgreSQL `float4` primary key must supply a number exactly representable at that precision. When deriving a scope key from a `float4` database value, use `String(Math.fround(value))`.
 
 ## `buildPullQueries(logs, { scopeKey })`
 

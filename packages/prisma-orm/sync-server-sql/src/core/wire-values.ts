@@ -34,7 +34,7 @@ export function encodeWireKey(contract: SyncServerContract, model: string, keyFi
   const field = fields && Object.hasOwn(fields, keyField) ? fields[keyField] : undefined;
   const codecId = field?.type.kind === "scalar" ? nativeJsonCodecs[field.type.codecId] : undefined;
   const codec = codecId ? idbCodecLookup.get(codecId) : undefined;
-  return codec && key != null ? codecValueToJson(codec, key) : key;
+  return codec && key != null ? codecValueToJson(codec, key) : canonicalFloat4Key(contract, model, keyField, key);
 }
 
 /**
@@ -111,6 +111,28 @@ export function reviveWireKey(contract: SyncServerContract, model: string, keyFi
   return reviveWireValues(contract, model, { [keyField]: key }, keyField)[keyField];
 }
 
+/** PostgreSQL can return a shorter decimal spelling of a float4 key. */
+export function canonicalFloat4Key(
+  contract: SyncServerContract,
+  model: string,
+  keyField: string,
+  key: unknown
+): unknown {
+  const field = fieldsForModel(contract, model)?.[keyField];
+  return typeof key === "number" && field?.type.kind === "scalar" && field.type.codecId === "pg/float4@1"
+    ? Math.fround(key)
+    : key;
+}
+
+export function assertFloat4KeyFits(contract: SyncServerContract, model: string, keyField: string, key: unknown): void {
+  if (!Object.is(canonicalFloat4Key(contract, model, keyField, key), key)) {
+    throw new WireValidationError(
+      "KEYPATH_VALIDATION_FAILURE",
+      "The key must be exactly representable as PostgreSQL float4"
+    );
+  }
+}
+
 // Integer codecs have a signed range. Float codecs accept finite wire numbers.
 const numericKeyLimits = new Map<string, number | null>([
   ["sql/int@1", 2 ** 31],
@@ -131,8 +153,11 @@ export function decodeStoredNumericKey(
   keyField: string,
   key: unknown
 ): unknown {
-  if (typeof key !== "string") return key;
-  const field = domainModelsAtDefaultNamespace(contract.domain)[model]?.fields[keyField];
+  if (typeof key !== "string") {
+    assertFloat4KeyFits(contract, model, keyField, key);
+    return key;
+  }
+  const field = fieldsForModel(contract, model)?.[keyField];
   const limit = field?.type.kind === "scalar" ? numericKeyLimits.get(field.type.codecId) : undefined;
   if (limit === undefined) return key;
 
@@ -142,5 +167,6 @@ export function decodeStoredNumericKey(
   if (!Number.isFinite(value) || String(value) !== key || outsideRange) {
     throw new WireValidationError("KEYPATH_VALIDATION_FAILURE", "Invalid numeric changelog key");
   }
+  assertFloat4KeyFits(contract, model, keyField, value);
   return value;
 }

@@ -9,7 +9,7 @@ import { logWithRecordSchema } from "@prisma-idb/sync-extension-idb/schemas";
 import { createSqlSyncAdapter } from "../src/core/create-adapter";
 import { createSqlSync } from "../src/core/http-handlers";
 import { ormRootFor } from "../src/core/orm-root";
-import { testBigSyncServer, testContract, testDb, seed } from "./helpers";
+import { testBigSyncServer, testContract, testDb, seed, testSyncServer } from "./helpers";
 
 async function browserClient() {
   // IndexedDB has no bigint key type. The client projection retains digit strings.
@@ -364,4 +364,45 @@ it("round-trips numeric keys from PostgreSQL to IndexedDB through create, update
   } finally {
     await client.close();
   }
+});
+
+it("rejects float4 keys that would identify a different row after PostgreSQL rounds them", async () => {
+  const db = await testDb();
+  await seed(db, { User: [{ id: "u1", name: "Ann" }] });
+  const adapter = createSqlSyncAdapter({ contract: testContract, syncServer: testSyncServer, contractCheck: "off" });
+  const apply = (id: string, operation: "create" | "update" | "delete", payload: unknown) =>
+    adapter.applyPush(db, { scopeKey: "u1", events: [{ id, entityType: "FloatItem", operation, payload }] });
+  const invalidKey = 16777217;
+  expect(await apply("invalid-create", "create", { id: invalidKey, ownerId: "u1", name: "wrong" })).toMatchObject({
+    ok: true,
+    results: [{ id: "invalid-create", success: false, error: "KEYPATH_VALIDATION_FAILURE", retryable: false }],
+  });
+  expect(await db.orm.public.FloatItem.all().toArray()).toEqual([]);
+  expect(await db.orm.public.Changelog.all().toArray()).toEqual([]);
+
+  const exact = { id: 16777216, ownerId: "u1", name: "exact" };
+  const fraction = { ...exact, id: Math.fround(0.1) };
+  expect(await apply("valid-integer", "create", exact)).toEqual({
+    ok: true,
+    results: [{ id: "valid-integer", success: true }],
+  });
+  expect(await apply("valid-fraction", "create", fraction)).toEqual({
+    ok: true,
+    results: [{ id: "valid-fraction", success: true }],
+  });
+  expect(await apply("invalid-update", "update", { key: invalidKey, patch: { name: "wrong" } })).toEqual({
+    ok: true,
+    results: [{ id: "invalid-update", success: false, error: "KEYPATH_VALIDATION_FAILURE", retryable: false }],
+  });
+  expect(await apply("invalid-delete", "delete", { key: invalidKey })).toEqual({
+    ok: true,
+    results: [{ id: "invalid-delete", success: false, error: "KEYPATH_VALIDATION_FAILURE", retryable: false }],
+  });
+  expect(await adapter.pull(db, { scopeKey: "u1" })).toMatchObject({
+    ok: true,
+    logs: [
+      { keyPath: exact.id, record: exact },
+      { keyPath: fraction.id, record: fraction },
+    ],
+  });
 });
