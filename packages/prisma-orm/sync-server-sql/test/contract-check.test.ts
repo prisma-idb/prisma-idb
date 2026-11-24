@@ -78,6 +78,17 @@ describe("contract check gate", () => {
     expect(pulled).toMatchObject({ ok: true, logs: [{ model: "User", operation: "create" }] });
   });
 
+  it("serves no rows to a client on an older contract, so it never receives a model it lacks", async () => {
+    const db = await testDb();
+    await ungated.applyPush(db, { scopeKey: "u1", events });
+    expect(await ungated.pull(db, { scopeKey: "u1" })).toMatchObject({ ok: true, logs: [{ model: "User" }] });
+
+    const refused = await gated.pull(db, { scopeKey: "u1", clientStorageHash: "older-client" });
+
+    expect(refused).toEqual({ ok: false, reason: "contract-mismatch", expected: testSyncServer.clientStorageHash });
+    expect(refused).not.toHaveProperty("logs");
+  });
+
   it("accepts the same emitted client JSON and refuses an enum-value change", async () => {
     const emitted = clientContract();
     // Model the server and browser loading separate copies of one contract.json.
