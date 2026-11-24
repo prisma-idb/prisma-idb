@@ -7,6 +7,7 @@
  * - instance.db resolves to an IDBDatabase
  * - Multiple awaits of instance.db return the same object (shared Promise)
  * - close() resolves without error
+ * - A connection closed by a newer version reopens on the next use
  * - Two descriptors for different db names each open their own database
  *
  * IdbPlanBody structural checks are type-level only (compile-time); they
@@ -104,6 +105,68 @@ describe("IdbRuntimeDriverInstance.db", () => {
     const db = await versioned.db;
     expect(db.version).toBe(3);
     await versioned.close();
+  });
+});
+
+// ── A newer version closing the connection ───────────────────────────────────
+
+/** Opens `name` at `version`, creating `store`, as another client's upgrade would. */
+function upgradeTo(name: string, version: number, store: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(name, version);
+    request.onupgradeneeded = () => request.result.createObjectStore(store, { keyPath: "id" });
+    request.onsuccess = () => {
+      request.result.close();
+      resolve();
+    };
+    request.onerror = () => reject(request.error);
+    request.onblocked = () => reject(new Error("upgrade blocked"));
+  });
+}
+
+function rowsOf(instance: IdbRuntimeDriverInstance, plan: IdbPlanBody): Promise<unknown[]> {
+  return (async () => {
+    const rows: unknown[] = [];
+    for await (const row of instance.execute(plan)) rows.push(row);
+    return rows;
+  })();
+}
+
+describe("a connection closed by a newer version", () => {
+  const meta = { target: "idb", storageHash: "test", lane: "test" } as const;
+
+  it("lets the upgrade run, then opens a new connection on the next use", async () => {
+    const name = dbName();
+    const instance = createIDBRuntimeDriver(name).create();
+    const first = await instance.db;
+
+    await upgradeTo(name, 2, "users");
+
+    await rowsOf(instance, { meta, kind: "put", storeName: "users", record: { id: "u1" } } as IdbPutPlan);
+    expect(await rowsOf(instance, { meta, kind: "get-all", storeName: "users" } as IdbGetAllPlan)).toEqual([
+      { id: "u1" },
+    ]);
+    const second = await instance.db;
+    expect(second).not.toBe(first);
+    expect(second.version).toBe(2);
+
+    const scope = await instance.transaction(["users"], "readonly");
+    expect(scope).toBeDefined();
+    await instance.close();
+  });
+
+  it("does not reopen after the database is deleted", async () => {
+    const name = dbName();
+    const instance = createIDBRuntimeDriver(name).create();
+    const first = await instance.db;
+    await new Promise<void>((resolve, reject) => {
+      const request = indexedDB.deleteDatabase(name);
+      request.onsuccess = () => resolve();
+      request.onerror = () => reject(request.error);
+    });
+    expect(await instance.db).toBe(first);
+    const names = (await indexedDB.databases()).map((info) => info.name);
+    expect(names).not.toContain(name);
   });
 });
 

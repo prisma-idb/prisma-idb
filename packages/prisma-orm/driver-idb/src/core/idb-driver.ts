@@ -4,25 +4,56 @@ import { registerEnvironment } from "./execute/environment";
 import { MARKER_STORE_NAME, type IdbMarkerRecord, type IdbPlanBody } from "./plan-body";
 import { createTransactionScope, type IdbTransactionScope } from "./transaction-scope";
 
+/** The connection a driver instance holds. Kept off the class so its type stays structural. */
+interface ConnectionState {
+  db: Promise<IDBDatabase> | undefined;
+  closed: boolean;
+  readonly open: () => Promise<IDBDatabase>;
+}
+
+const connections = new WeakMap<IdbRuntimeDriverInstance, ConnectionState>();
+
 /** Own the database connection and execute driver plans after it opens. */
 export class IdbRuntimeDriverInstance implements RuntimeDriverInstance<"idb", "idb"> {
   readonly familyId = "idb" as const;
   readonly targetId = "idb" as const;
-  /**
-   * The live IDBDatabase connection. Resolves once `upgradeneeded` (if any)
-   * completes and the database is ready for use.
-   *
-   * `execute()` and `transaction()` await this before opening a transaction.
-   * The Promise is shared — all concurrent callers get the same database object.
-   */
-  readonly db: Promise<IDBDatabase>;
 
   constructor(dbName: string, version?: number, factory?: IDBFactory, keyRange?: typeof IDBKeyRange) {
-    this.db = openIdbDatabase(dbName, version, factory, keyRange);
+    const state: ConnectionState = {
+      db: undefined,
+      closed: false,
+      open: () => {
+        const opened = openIdbDatabase(dbName, version, factory, keyRange, () => {
+          // Only forget the connection that closed, not one opened after it.
+          if (state.db === opened && !state.closed) state.db = undefined;
+        });
+        return opened;
+      },
+    };
+    state.db = state.open();
+    connections.set(this, state);
+  }
+
+  /**
+   * The live IDBDatabase connection. Resolves once the database is open and
+   * ready for use.
+   *
+   * `execute()` and `transaction()` await this before opening a transaction.
+   * The Promise is shared, so concurrent callers get the same database object.
+   * When another connection upgrades the database, this connection closes so
+   * the upgrade can run, and the next read of `db` opens a new connection at
+   * the upgraded version.
+   */
+  get db(): Promise<IDBDatabase> {
+    const state = connections.get(this)!;
+    state.db ??= state.open();
+    return state.db;
   }
 
   async close(): Promise<void> {
-    (await this.db).close();
+    const state = connections.get(this)!;
+    state.closed = true;
+    if (state.db !== undefined) (await state.db).close();
   }
 
   /**
@@ -77,12 +108,12 @@ export class IdbRuntimeDriverInstance implements RuntimeDriverInstance<"idb", "i
    * Called by `IdbRuntimeImpl.runDriver()` in `@prisma-idb/runtime-idb`.
    */
   execute(plan: IdbPlanBody): AsyncIterable<Record<string, unknown>> {
-    const dbPromise = this.db;
+    const connection = () => this.db;
     return {
       /** Wait for commit before exposing materialized rows to the runtime. */
       [Symbol.asyncIterator]() {
         return (async function* () {
-          const db = await dbPromise;
+          const db = await connection();
           const rows = await executeIdbPlan(db, plan);
           yield* rows;
         })();
@@ -106,9 +137,10 @@ export class IdbRuntimeDriverInstance implements RuntimeDriverInstance<"idb", "i
  */
 function openIdbDatabase(
   dbName: string,
-  version?: number,
+  version: number | undefined,
   factory: IDBFactory = indexedDB,
-  keyRange: typeof IDBKeyRange | undefined = globalThis.IDBKeyRange
+  keyRange: typeof IDBKeyRange | undefined = globalThis.IDBKeyRange,
+  onVersionChangeClose: () => void
 ): Promise<IDBDatabase> {
   return new Promise<IDBDatabase>((resolve, reject) => {
     const req = factory.open(dbName, version);
@@ -125,14 +157,16 @@ function openIdbDatabase(
       const db = req.result;
       // Ops on this connection compare keys and build ranges with the factory it came from.
       registerEnvironment(db, { cmp: (a, b) => factory.cmp(a, b), keyRange });
-      // Multi-tab safety: when another tab opens this database at a higher
-      // version, the IDB spec fires `versionchange` on every other open
-      // connection. If we don't close, the new tab's open request hangs
-      // indefinitely on `blocked`. Closing here releases the lock; the
-      // application layer can listen for `db.onclose` to surface a
-      // "please reload" toast if it cares.
-      db.onversionchange = () => {
+      // Multi-tab safety: when another connection, in this tab or another one,
+      // opens this database at a higher version, the IDB spec fires
+      // `versionchange` on every other open connection. If we don't close, that
+      // open request waits on `blocked` until we do. Closing here releases the
+      // lock. After an upgrade, the driver opens a new connection on its next
+      // use. After a deletion (`newVersion` is null) it doesn't, so it never
+      // recreates an empty database.
+      db.onversionchange = (event) => {
         db.close();
+        if (event.newVersion !== null) onVersionChangeClose();
       };
       resolve(db);
     };

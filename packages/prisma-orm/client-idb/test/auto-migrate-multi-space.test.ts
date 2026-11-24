@@ -394,6 +394,12 @@ describe("concurrent auto-migrating opens", () => {
       createAutoMigratingIdbClient({ contractSpace: appSpace, dbName: name }),
       createAutoMigratingIdbClient({ contractSpace: appSpace, dbName: name, extensions: [syncExtension()] }),
     ]);
+    // The second upgrade closes the first client's connection with a versionchange; both clients still work.
+    await asRecord(plain.orm)["users"]!.create({ id: "u1", email: "plain@example.com" });
+    await asRecord(withSync.orm)["users"]!.create({ id: "u2", email: "sync@example.com" });
+    for (const client of [plain, withSync]) {
+      expect(await asRecord(client.orm)["users"]!.all().toArray()).toHaveLength(2);
+    }
     await Promise.all([plain.close(), withSync.close()]);
 
     const db = await openRawDb(name);
