@@ -118,6 +118,8 @@ describe("scalar lists", () => {
     ["String", '["a", 1]', ["a", 1], "IDB_INVALID_DEFAULT_VALUE"],
     ["Int", "[2147483648]", [2147483648], "IDB_INVALID_DEFAULT_VALUE"],
     ["Boolean", '["true"]', ["true"], "IDB_INVALID_DEFAULT_VALUE"],
+    ["Int", "[1.5]", [1.5], "IDB_INVALID_DEFAULT_VALUE"],
+    ["Decimal", '["abc"]', ["abc"], "IDB_INVALID_DEFAULT_VALUE"],
     ["Role", "[USER, GUEST]", ["USER", "GUEST"], "IDB_INVALID_ENUM_DEFAULT"],
   ] as const;
 
@@ -127,6 +129,17 @@ describe("scalar lists", () => {
     if (!result.ok)
       expect(result.failure.diagnostics).toEqual(expect.arrayContaining([expect.objectContaining({ code })]));
     expect(() => contract(`${scalar}[]`, { values: value })).toThrow(new RegExp(code));
+  });
+
+  // Upstream also reads tagged and null elements. Elements here are plain
+  // literals or enum members, and list elements are never null.
+  it.each([
+    ["DateTime[]", "[date`2024-01-01T00:00:00Z`]"],
+    ["Int[]", "[null]"],
+    ["String[]", '["a", null]'],
+    ["Role[]", "[null]"],
+  ])("rejects the %s default %s in PSL", (spec, source) => {
+    expect(psl(spec, `@default(${source})`).ok).toBe(false);
   });
 
   it.each([NaN, Infinity, -Infinity])("rejects the TypeScript Float[] default element %s", (element) => {

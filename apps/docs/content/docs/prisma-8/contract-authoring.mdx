@@ -197,7 +197,7 @@ export function buildContract(input: DefineContractInput) {
 | `IDB_ENUM_VALUE_NOT_STRING`             | A PSL enum member maps to a non-string value.                                                                                     |
 | `IDB_INVALID_ENUM_DEFAULT`              | An enum default is not a declared value.                                                                                          |
 | `IDB_LIST_DEFAULT_UNSUPPORTED`          | A TypeScript model lists a list field in `fieldDefaults`, which holds only scalar values. Declare the list default in `defaults`. |
-| `IDB_INVALID_DEFAULT_VALUE`             | A default does not match its field, or a TypeScript default declaration is invalid.                                               |
+| `IDB_INVALID_DEFAULT_VALUE`             | A default, or an element of a list default, does not match its field, or a TypeScript default declaration is invalid.             |
 | `IDB_UNKNOWN_DEFAULT_FUNCTION`          | A PSL default calls an unsupported function.                                                                                      |
 | `PSL_GENERATOR_IN_DEFAULT`              | A PSL default calls a generator function, such as `uuid()`. Use `@onCreate(...)`.                                                 |
 | `PSL_UNSUPPORTED_FIELD_ATTRIBUTE`       | A PSL field uses `@updatedAt`. Use `@onCreate(now()) @onUpdate(now())`.                                                           |

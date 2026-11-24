@@ -1,5 +1,8 @@
 import "fake-indexeddb/auto";
 import { afterEach, describe, expect, it } from "vitest";
+import { buildSymbolTable } from "@prisma/orm-framework/psl-parser";
+import { parse } from "@prisma/orm-framework/psl-parser/syntax";
+import { interpretPslDocumentToIdbContract } from "@prisma-idb/family-idb/contract-psl";
 import { defineContract, type FieldSpec } from "@prisma-idb/family-idb/contract-ts";
 import idbFamily from "@prisma-idb/family-idb/pack";
 import idbTarget from "@prisma-idb/target-idb/pack";
@@ -192,7 +195,7 @@ it("clones declared defaults and rolls back a bulk operation if a later stored l
   expect((await samples.findUnique("a"))?.["values"]).toEqual([]);
 });
 
-it("fills a nonempty list default on every create path, with its own array per row", async () => {
+it("fills a nonempty list default on create and createAll, with its own array per row", async () => {
   const contract = defineContract({
     family: idbFamily,
     target: idbTarget,
@@ -224,5 +227,106 @@ it("fills a nonempty list default on every create path, with its own array per r
     tags: ["new", "unverified"],
     roles: ["USER"],
     prices: ["1.5"],
+  });
+});
+
+describe("nonempty list defaults on every create path", () => {
+  const SCHEMA = `
+    enum Role {
+      ADMIN
+      USER
+    }
+
+    model Author {
+      id    String @id
+      tags  String[] @default(["a", "b"])
+      roles Role[]   @default([USER])
+      notes Note[]
+    }
+
+    model Note {
+      id       String   @id
+      tags     String[] @default(["a", "b"])
+      roles    Role[]   @default([USER])
+      authorId String?
+      author   Author?  @relation(fields: [authorId], references: [id])
+    }
+  `;
+  const DEFAULTS = { tags: ["a", "b"], roles: ["USER"] };
+  // The contract is built at run time, so the stores are untyped.
+  type Row = Record<string, unknown>;
+  interface Store {
+    create(data: object): Promise<Row>;
+    createAll(data: object[]): { toArray(): Promise<Row[]> };
+    createCount(data: object[]): Promise<number>;
+    findUnique(key: string): Promise<Row | null>;
+    upsert(args: object): Promise<Row>;
+  }
+  type Rel = { create(rows: Record<string, unknown> | Record<string, unknown>[]): unknown };
+
+  async function open() {
+    const { document, sources } = parse(SCHEMA, "schema.prisma");
+    const { symbolTable } = buildSymbolTable({ documents: [document], sources, defaultNamespaceId: "__unbound__" });
+    const result = interpretPslDocumentToIdbContract(symbolTable, "schema.prisma");
+    if (!result.ok) throw new Error(JSON.stringify(result.failure.diagnostics));
+    const client = await createAutoMigratingIdbClient({
+      contractSpace: buildContractSpaceFixture([result.value as never]),
+      dbName: `scalar-list-defaults-${crypto.randomUUID()}`,
+    });
+    opened.push(client);
+    return client.orm as unknown as { author: Store; note: Store };
+  }
+
+  /**
+   * The rows a write returns are the arrays it stored, so each row must own
+   * its arrays: a shared default would show up as one array in two rows.
+   */
+  function expectOwnArrays(rows: Record<string, unknown>[]) {
+    for (const row of rows) expect(row).toMatchObject(DEFAULTS);
+    const arrays = rows.flatMap((row) => [row["tags"], row["roles"]]);
+    expect(new Set(arrays).size).toBe(arrays.length);
+  }
+
+  it("clones the default into a child created through a parent", async () => {
+    const orm = await open();
+    await orm.author.create({
+      id: "a1",
+      notes: (rel: Rel) => rel.create([{ id: "n1", tags: [] }, { id: "n2" }, { id: "n3" }]),
+    });
+    expect(await orm.note.findUnique("n1")).toMatchObject({ tags: [], roles: ["USER"] });
+    expect(await orm.author.findUnique("a1")).toMatchObject(DEFAULTS);
+    expect(await orm.note.findUnique("n2")).toMatchObject(DEFAULTS);
+    expect(await orm.note.findUnique("n3")).toMatchObject(DEFAULTS);
+  });
+
+  it("clones the default into a parent created through a child", async () => {
+    const orm = await open();
+    await orm.note.create({ id: "n1", author: (rel: Rel) => rel.create({ id: "a1" }) });
+    expect(await orm.author.findUnique("a1")).toMatchObject(DEFAULTS);
+    expect(await orm.note.findUnique("n1")).toMatchObject({ ...DEFAULTS, authorId: "a1" });
+  });
+
+  it("fills the create arm of upsert, with its own arrays per row", async () => {
+    const orm = await open();
+    const first = await orm.author.upsert({ where: { id: "a1" }, create: { id: "a1" }, update: {} });
+    const second = await orm.author.upsert({ where: { id: "a2" }, create: { id: "a2" }, update: {} });
+    expectOwnArrays([first, second]);
+    expect(await orm.author.findUnique("a2")).toMatchObject(DEFAULTS);
+  });
+
+  it("fills createCount rows and createAll rows that set a foreign key", async () => {
+    const orm = await open();
+    await orm.author.create({ id: "a1", tags: [] });
+    expect(await orm.author.createCount([{ id: "a2" }, { id: "a3" }])).toBe(2);
+    expect(await orm.author.findUnique("a2")).toMatchObject(DEFAULTS);
+    expect(await orm.author.findUnique("a3")).toMatchObject(DEFAULTS);
+    const rows = await orm.note
+      .createAll([
+        { id: "n1", authorId: "a1" },
+        { id: "n2", authorId: "a1" },
+      ])
+      .toArray();
+    const single = await orm.note.create({ id: "n3", authorId: "a1" });
+    expectOwnArrays([...rows, single]);
   });
 });
