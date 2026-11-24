@@ -20,31 +20,44 @@ git diff --stat "origin/$BASE...HEAD"
 - Call out uncommitted changes. They won't be in the PR unless committed, and unrelated ones must stay out.
 - Read the full diff before writing anything about it.
 
-## 2. Add a changeset
+## 2. Keep the PR small
+
+A person has to review every PR, so each one covers one fix or feature and stays small enough to read in one sitting. As a guide, aim for under about 400 changed lines of hand-written source and tests. Generated snapshots, emitted fixtures and lockfiles don't count, but call them out in the description.
+
+Split the change when it mixes unrelated fixes, touches packages for unrelated reasons, or is too large to read in one sitting:
+
+- **Independent changes** go in separate PRs, each based on `main`, so they can be reviewed and merged in any order. Before opening them, check that each merges cleanly with the others: `git merge-tree --write-tree <branch-a> <branch-b>`. Move code or tests that only collide by position, such as two tests inserted at the same line.
+- **Changes that depend on each other** go in a stack. Each PR is based on the branch below it, and its title and diff cover only its own step. List the whole stack, in merge order, near the top of every description, for example `**Stack:** #10 → #11 → #12. Merge them in that order.`
+- Every PR in a stack must pass its own checks and tests, without the PRs above it. Changesets, docs and tests move with the code they describe.
+- Build the branches by topic rather than by commit when commits mix topics, and confirm that the top of the stack has the same tree as the change you verified.
+
+The review hook checks the commit you have checked out. To open each PR in a stack, check out that PR's branch first.
+
+## 3. Add a changeset
 
 - For each published package the diff changes, add a changeset with `pnpm changeset` and pick the semver bump. Write the summary for users of the package: what changed and what they need to do.
 - The six core Prisma 8 packages (`target`, `driver`, `adapter`, `runtime`, `client`, `family`) share one version, so one changeset naming the packages you touched is enough.
 - For docs-only, CI-only, app-only or test-only changes, add an empty changeset: `pnpm changeset --empty`.
 
-## 3. Review
+## 4. Review
 
 If the diff changes source code in more than one file, review it before you verify. In Claude Code, run the `change-reviewer` subagent; other agents follow the `review-change` skill directly. Fix each confirmed finding, and apply the same fix wherever the same mistake occurs. Ask the user about findings that depend on intent. Mention in the PR body what the review found and fixed.
 
-A hook blocks `gh pr create` until the branch has a recorded review. You record the review after you commit, in step 5. Never record a review that didn't run. If the user wants to skip it, they can open the PR themselves with `! gh pr create ...`.
+A hook blocks `gh pr create` until the branch has a recorded review. You record the review after you commit, in step 6. Never record a review that didn't run. If the user wants to skip it, they can open the PR themselves with `! gh pr create ...`.
 
 Skip this step for docs-only, dependency-only and one-file changes, unless the change touches a write path, migrations or sync.
 
-## 4. Verify
+## 5. Verify
 
 Use the `verify-change` skill. At minimum, the relevant tests and `pnpm check` pass. Verify after the review, so the fixes are checked too.
 
-## 5. Commit
+## 6. Commit
 
 Conventional Commits with a scope: `type(scope): lowercase summary`. Types: `feat`, `fix`, `docs`, `test`, `refactor`, `chore`, `ci`, `build`, `perf`. The scope is the package or app directory name, for example `client-idb` or `prisma-orm-kanban-example`. Stage files by name, not with `git add -A`. No `Co-Authored-By` trailer.
 
-If you reviewed the change in step 3, record the review after the reviewed changes are committed: `node .claude/hooks/require-review.mjs --mark`. It records `HEAD`, so a mark made before the commit doesn't cover it. Later commits that only fix the reviewed files, tests, docs or changesets keep the review valid; a new source file needs another review.
+If you reviewed the change in step 4, record the review after the reviewed changes are committed: `node .claude/hooks/require-review.mjs --mark`. It records `HEAD`, so a mark made before the commit doesn't cover it. Later commits that only fix the reviewed files, tests, docs or changesets keep the review valid; a new source file needs another review.
 
-## 6. Write the PR
+## 7. Write the PR
 
 Title: the same format as a commit, under 70 characters, naming the concrete change.
 
