@@ -21,6 +21,8 @@ import {
   idbJson,
   idbString,
 } from "./data-types";
+import { binaryBytes } from "./key-compare";
+import { isJsonCompatible } from "./json-value";
 import type { ValidationCodecLookup } from "./validate-record";
 
 /**
@@ -153,7 +155,10 @@ export const codecDescriptors: readonly AnyCodecDescriptor[] = [
     codecId: "idb/json@1",
     dataType: idbJson,
     traits: ["equality"],
-    toJson: asJson,
+    toJson: (value) => {
+      if (!isJsonCompatible(value)) throw new TypeError("Json contains a value that cannot be represented as JSON");
+      return value;
+    },
     fromJson: asJson,
   }),
   descriptor<Uint8Array>({
@@ -174,7 +179,10 @@ const BASE64_VALUES = new Uint8Array(128);
 for (let i = 0; i < BASE64_ALPHABET.length; i++) BASE64_VALUES[BASE64_ALPHABET.charCodeAt(i)] = i;
 
 /** Standard padded base64 (RFC 4648). */
-function bytesToBase64(bytes: Uint8Array): string {
+function bytesToBase64(value: Uint8Array): string {
+  // IndexedDB returns binary key range bounds as ArrayBuffers.
+  const bytes = binaryBytes(value);
+  if (bytes === null) throw new TypeError("Expected binary data");
   let result = "";
   for (let i = 0; i < bytes.length; i += 3) {
     const a = bytes[i]!;

@@ -12,11 +12,26 @@ import {
   testSyncServer,
 } from "./helpers";
 
-// Wraps the real encoder so a test can make it throw once.
+// Wraps the real encoder so a test can supply a record that fails to encode or serialize.
 vi.mock("../src/core/wire-values", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/core/wire-values")>();
   return { ...actual, encodeWireValues: vi.fn(actual.encodeWireValues) };
 });
+
+const encodingFailures = [
+  {
+    stage: "encoding",
+    encode: () => {
+      throw new RangeError("Invalid time value");
+    },
+    message: "Invalid time value",
+  },
+  {
+    stage: "serialization",
+    encode: () => ({ json: { nested: 1n } }),
+    message: "BigInt",
+  },
+];
 
 const handlers = createSqlSync({
   contract: testContract,
@@ -186,36 +201,37 @@ describe("sync HTTP handlers", () => {
     ]);
   });
 
-  it("returns the applied push results without the record when a rejected event's record can't be encoded", async () => {
-    const big = createSqlSync({
-      contract: testContract,
-      clientContract: testBigClientContract,
-      rootModel: "BigUser",
-      db: testDb,
-      scopeKey: "1",
-    });
-    const storageHash = testBigSyncServer.clientStorageHash;
-    const push = async (events: unknown[]) =>
-      big.push(
-        new Request("https://sync.test/push", { method: "POST", body: JSON.stringify({ storageHash, events }) })
-      );
-    await push([
-      { id: "root", entityType: "BigUser", operation: "create", payload: { id: "1", name: "Ann" } },
-      { id: "item", entityType: "BigItem", operation: "create", payload: { id: "11", ownerId: "1", name: "first" } },
-    ]);
-    vi.mocked(encodeWireValues).mockImplementationOnce(() => {
-      throw new RangeError("Invalid time value");
-    });
-    const response = await push([
-      { id: "ok", entityType: "BigItem", operation: "create", payload: { id: "12", ownerId: "1", name: "second" } },
-      { id: "move", entityType: "BigItem", operation: "update", payload: { key: "11", patch: { ownerId: "2" } } },
-    ]);
-    expect(response.status).toBe(200);
-    expect(await response.json()).toEqual([
-      { id: "ok", success: true },
-      { id: "move", success: false, error: "SCOPE_VIOLATION", retryable: false },
-    ]);
-  });
+  it.each(encodingFailures)(
+    "returns the applied push results when a rejected record fails during $stage",
+    async ({ encode }) => {
+      const big = createSqlSync({
+        contract: testContract,
+        clientContract: testBigClientContract,
+        rootModel: "BigUser",
+        db: testDb,
+        scopeKey: "1",
+      });
+      const storageHash = testBigSyncServer.clientStorageHash;
+      const push = async (events: unknown[]) =>
+        big.push(
+          new Request("https://sync.test/push", { method: "POST", body: JSON.stringify({ storageHash, events }) })
+        );
+      await push([
+        { id: "root", entityType: "BigUser", operation: "create", payload: { id: "1", name: "Ann" } },
+        { id: "item", entityType: "BigItem", operation: "create", payload: { id: "11", ownerId: "1", name: "first" } },
+      ]);
+      vi.mocked(encodeWireValues).mockImplementationOnce(encode);
+      const response = await push([
+        { id: "ok", entityType: "BigItem", operation: "create", payload: { id: "12", ownerId: "1", name: "second" } },
+        { id: "move", entityType: "BigItem", operation: "update", payload: { key: "11", patch: { ownerId: "2" } } },
+      ]);
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual([
+        { id: "ok", success: true },
+        { id: "move", success: false, error: "SCOPE_VIOLATION", retryable: false },
+      ]);
+    }
+  );
 
   it("refuses a delete whose key is a client range, as a non-retryable key failure", async () => {
     const response = await handlers.push(
@@ -235,33 +251,34 @@ describe("sync HTTP handlers", () => {
     ]);
   });
 
-  it("fails a pull page clearly, naming the log, when a record can't be encoded", async () => {
-    const big = createSqlSync({
-      contract: testContract,
-      clientContract: testBigClientContract,
-      rootModel: "BigUser",
-      db: testDb,
-      scopeKey: "1",
-    });
-    const storageHash = testBigSyncServer.clientStorageHash;
-    await big.push(
-      new Request("https://sync.test/push", {
-        method: "POST",
-        body: JSON.stringify({
-          storageHash,
-          events: [{ id: "root", entityType: "BigUser", operation: "create", payload: { id: "1", name: "Ann" } }],
-        }),
-      })
-    );
-    vi.mocked(encodeWireValues).mockImplementationOnce(() => {
-      throw new RangeError("Invalid time value");
-    });
-    const response = await big.pull(new Request(`https://sync.test/pull?storageHash=${storageHash}`));
-    expect(response.status).toBe(500);
-    expect(await response.json()).toEqual({
-      error: expect.stringMatching(/changelog entry \S+ \(BigUser\): Invalid time value/),
-    });
-  });
+  it.each(encodingFailures)(
+    "names the changelog entry when a pull record fails during $stage",
+    async ({ encode, message }) => {
+      const big = createSqlSync({
+        contract: testContract,
+        clientContract: testBigClientContract,
+        rootModel: "BigUser",
+        db: testDb,
+        scopeKey: "1",
+      });
+      const storageHash = testBigSyncServer.clientStorageHash;
+      await big.push(
+        new Request("https://sync.test/push", {
+          method: "POST",
+          body: JSON.stringify({
+            storageHash,
+            events: [{ id: "root", entityType: "BigUser", operation: "create", payload: { id: "1", name: "Ann" } }],
+          }),
+        })
+      );
+      vi.mocked(encodeWireValues).mockImplementationOnce(encode);
+      const response = await big.pull(new Request(`https://sync.test/pull?storageHash=${storageHash}`));
+      expect(response.status).toBe(500);
+      expect(await response.json()).toEqual({
+        error: expect.stringMatching(new RegExp(`changelog entry \\S+ \\(BigUser\\): .*${message}`)),
+      });
+    }
+  );
 
   it("maps malformed JSON, malformed events, duplicate ids, oversized batches and invalid cursors to 400", async () => {
     const invalidJson = await handlers.push(new Request("https://sync.test/push", { method: "POST", body: "{" }));

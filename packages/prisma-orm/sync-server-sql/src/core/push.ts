@@ -92,7 +92,7 @@ export function toSyncPushPayload(operation: string, payload: unknown, keyField:
     if (typeof patch !== "object" || patch === null || Array.isArray(patch)) {
       throw new WireValidationError("RECORD_VALIDATION_FAILURE", "Invalid update payload: expected an object patch");
     }
-    if (keyField in patch && !Object.is((patch as Record<string, unknown>)[keyField], key)) {
+    if (Object.hasOwn(patch, keyField) && !Object.is((patch as Record<string, unknown>)[keyField], key)) {
       throw new WireValidationError("KEYPATH_VALIDATION_FAILURE", "Updates cannot change the primary key");
     }
     return { ...(patch as Record<string, unknown>), [keyField]: key };

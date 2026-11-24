@@ -115,8 +115,6 @@ function buildField(
   if (field.many) {
     const elementNullable = field.many.elementNullable;
     if (elementNullable) validator = validator.or("null");
-    // A JSON codec's `unknown` type needs an explicit predicate: excluding a union
-    // member cannot narrow unknown and would still accept null list elements.
     validator = validator.narrow((value) => value !== undefined && (elementNullable || value !== null)).array();
   }
   if (field.dict) validator = type({ "[string]": validator });
@@ -144,7 +142,14 @@ function buildShape(
     const optional = options.partial || options.optionalFields?.includes(name);
     shape[optional ? `${name}?` : name] = buildField(contract, field, lookup, `${owner} field "${name}"`);
   }
-  return type(shape);
+  const validator = type(shape);
+  const hasPrototypeField = Object.keys(fields).some((name) => Object.hasOwn(Object.prototype, name));
+  // ArkType also reads inherited properties. Only the record itself supplies fields to validate.
+  return type("object").pipe((record) => {
+    const prototype: unknown = Object.getPrototypeOf(record);
+    if (prototype === null || (prototype === Object.prototype && !hasPrototypeField)) return record;
+    return Object.assign(Object.create(null) as Record<string, unknown>, record);
+  }, validator);
 }
 
 /** Reuses validators and converts construction errors into fail-closed validation issues. */

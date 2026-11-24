@@ -30,6 +30,8 @@ worker.start();
 
 Custom handlers also receive `context.storageHash`. Send it to the server, which refuses a client on a different contract; throw `ContractMismatchError` from the handler on HTTP 409. See [Contract check](https://prisma-idb.dev/docs/prisma-8/sync/server#contract-check).
 
+A custom transport that sends JSON must call `toWireEvent(context.contract, event)` for each event before serializing it. Handle encoding and serialization failures per event. Return a permanent failure for that event and send the rest of the batch.
+
 `trackedModels` defaults to `"*"`; pass model names to keep other writes local. Tracked models need keys that are unique across devices, such as `uuid()` or `cuid()`. Auto-incremented keys are rejected for tracked stores.
 
 `db.on("outboxwrite", callback)` fires after commit, once per tracked IndexedDB write call. Bulk calls can report several entries. Nested or cascading ORM writes can produce several notifications. Rolled-back writes produce none.

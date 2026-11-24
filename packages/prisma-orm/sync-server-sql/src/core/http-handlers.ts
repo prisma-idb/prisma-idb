@@ -71,18 +71,17 @@ async function handlePush(
     // already committed, so a record that can't be encoded is dropped from its result rather
     // than failing the response, which would make the client retry events that were applied.
     const models = new Map(parsed.data.events.map((event) => [event.id, event.entityType]));
-    return Response.json(
-      outcome.results.map((result) => {
-        const model = models.get(result.id);
-        if (!result.record || model === undefined) return result;
-        try {
-          return { ...result, record: encodeWireValues(contract, model, result.record) };
-        } catch {
-          const { record: _unencodable, ...withoutRecord } = result;
-          return withoutRecord;
-        }
-      })
-    );
+    const results = outcome.results.map((result) => {
+      const model = models.get(result.id);
+      if (!result.record || model === undefined) return JSON.stringify(result);
+      try {
+        return JSON.stringify({ ...result, record: encodeWireValues(contract, model, result.record) });
+      } catch {
+        const { record: _unencodable, ...withoutRecord } = result;
+        return JSON.stringify(withoutRecord);
+      }
+    });
+    return new Response(`[${results.join(",")}]`, { headers: { "Content-Type": "application/json" } });
   }
   switch (outcome.reason) {
     case "write-policy-violation":
@@ -115,23 +114,23 @@ async function handlePull(
   if (outcome.ok) {
     // A missing record means the row was deleted or revoked, so a log whose record can't be
     // encoded can't be sent without it. Fail the page and name the log instead.
-    const logs = [];
+    const logs: string[] = [];
     for (const log of outcome.logs) {
-      if (!log.record) {
-        logs.push(log);
-        continue;
-      }
       try {
-        logs.push({ ...log, record: encodeWireValues(contract, log.model, log.record) });
+        logs.push(
+          JSON.stringify(log.record ? { ...log, record: encodeWireValues(contract, log.model, log.record) } : log)
+        );
       } catch (error) {
         const reason = error instanceof Error ? error.message : String(error);
         return Response.json(
-          { error: `Could not encode the record of changelog entry ${log.changelogId} (${log.model}): ${reason}` },
+          { error: `Could not encode changelog entry ${log.changelogId} (${log.model}): ${reason}` },
           { status: 500 }
         );
       }
     }
-    return Response.json({ logs, hasMore: outcome.hasMore });
+    return new Response(`{"logs":[${logs.join(",")}],"hasMore":${outcome.hasMore}}`, {
+      headers: { "Content-Type": "application/json" },
+    });
   }
   switch (outcome.reason) {
     case "contract-mismatch":

@@ -48,8 +48,8 @@ function encodeEvent(contract: IdbContract, event: OutboxEvent): OutboxEvent {
   const payload = event.payload;
   if (event.operation === "create") return { ...event, payload: encodeJsonRecord(contract, model, payload) };
   const encoded: Record<string, unknown> = { ...payload };
-  if ("key" in payload) encoded["key"] = encodeKey(contract, model, payload["key"]);
-  if (event.operation === "update" && isRecord(payload["patch"])) {
+  if (Object.hasOwn(payload, "key")) encoded["key"] = encodeKey(contract, model, payload["key"]);
+  if (event.operation === "update" && Object.hasOwn(payload, "patch") && isRecord(payload["patch"])) {
     encoded["patch"] = encodeJsonRecord(contract, model, payload["patch"]);
   }
   return { ...event, payload: encoded };
@@ -65,7 +65,8 @@ function encodeKey(contract: IdbContract, model: string, key: unknown): unknown 
     const range = key as Record<string, unknown>;
     const encoded = { ...range };
     for (const bound of ["lower", "upper"]) {
-      if (range[bound] !== undefined) encoded[bound] = encodeKey(contract, model, range[bound]);
+      if (Object.hasOwn(range, bound) && range[bound] !== undefined)
+        encoded[bound] = encodeKey(contract, model, range[bound]);
     }
     return encoded;
   }

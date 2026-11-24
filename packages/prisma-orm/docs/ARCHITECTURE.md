@@ -179,6 +179,8 @@ Sync is an extension. It adds its own stores and its own migration chain, and wr
 
 One `schema.prisma` serves both sides. The browser's contract leaves out fields and models marked `@idb.exclude` or `@@idb.exclude`. The server's config strips those attributes and adds a `Changelog` model ([ADR 012](adrs/ADR%20012%20-%20Client%20Contract%20Subsetting.md)).
 
+The HTTP transport encodes fields and scalar list elements with the contract's codecs. It sends dates as ISO strings, bigint values as decimal text and binary values as base64. JSON fields must contain JSON-compatible values throughout. The client fetch handler reports a permanent failure for each event that fails to encode or serialize and sends the remaining events. The server omits an unencodable rejected record from the push result and fails a pull page when a log cannot be serialized.
+
 ## Package reference
 
 ### `target-idb`

@@ -66,7 +66,7 @@ export function keyEquals(a: IDBValidKey, b: IDBValidKey): boolean {
 }
 
 /** Views an entire buffer or the exact byte range of a typed view. */
-function binaryBytes(key: unknown): Uint8Array | null {
+export function binaryBytes(key: unknown): Uint8Array | null {
   if (key instanceof ArrayBuffer) return new Uint8Array(key);
   if (ArrayBuffer.isView(key)) return new Uint8Array(key.buffer, key.byteOffset, key.byteLength);
   return null;

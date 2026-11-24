@@ -6,6 +6,7 @@ import type {
 } from "@prisma/orm-framework/contract/types";
 import { domainModelsAtDefaultNamespace, valueObjectAt } from "@prisma/orm-framework/contract/types";
 import { codecValueFromJson, codecValueToJson, idbCodecLookup } from "./codecs";
+import { isJsonCodec } from "./json-value";
 
 /**
  * Decode a plain JS record that arrived as wire JSON (e.g. an HTTP pull
@@ -22,7 +23,8 @@ export function decodeJsonRecord(
   modelName: string,
   record: Record<string, unknown>
 ): Record<string, unknown> {
-  const model = domainModelsAtDefaultNamespace(contract.domain)[modelName];
+  const models = domainModelsAtDefaultNamespace(contract.domain);
+  const model = Object.hasOwn(models, modelName) ? models[modelName] : undefined;
   if (!model) return record;
   return decodeFields(record, model.fields, contract, `Model "${modelName}"`);
 }
@@ -39,7 +41,8 @@ export function encodeJsonRecord(
   modelName: string,
   record: Record<string, unknown>
 ): Record<string, unknown> {
-  const model = domainModelsAtDefaultNamespace(contract.domain)[modelName];
+  const models = domainModelsAtDefaultNamespace(contract.domain);
+  const model = Object.hasOwn(models, modelName) ? models[modelName] : undefined;
   if (!model) return record;
   return mapFields(record, model.fields, contract, `Model "${modelName}"`, encodeScalar);
 }
@@ -51,7 +54,9 @@ export function encodeJsonFieldValue(
   fieldName: string,
   value: unknown
 ): unknown {
-  const field = domainModelsAtDefaultNamespace(contract.domain)[modelName]?.fields[fieldName];
+  const models = domainModelsAtDefaultNamespace(contract.domain);
+  const fields = Object.hasOwn(models, modelName) ? models[modelName]?.fields : undefined;
+  const field = fields && Object.hasOwn(fields, fieldName) ? fields[fieldName] : undefined;
   if (!field) return value;
   return mapFields({ [fieldName]: value }, { [fieldName]: field }, contract, `Model "${modelName}"`, encodeScalar)[
     fieldName
@@ -78,7 +83,13 @@ function mapFields(
     if (field.type.kind === "union") {
       throw new Error(`${owner} field "${key}" uses a union type, which prisma-idb does not support`);
     }
-    if (!(key in record)) continue;
+    if (!Object.hasOwn(record, key)) continue;
+    const value = record[key];
+    if (field.type.kind === "scalar" && isJsonCodec(field.type.codecId)) {
+      // Check the whole value so a sparse Json list or a non-JSON element can't silently change.
+      out[key] = mapScalar(value, "idb/json@1");
+      continue;
+    }
     const mapOne = (value: unknown): unknown => {
       if (value === null || value === undefined) return value;
       if (field.type.kind === "scalar") return mapScalar(value, field.type.codecId);
@@ -90,7 +101,6 @@ function mapFields(
       }
       return value;
     };
-    const value = record[key];
     if (value === null || value === undefined) continue;
     if (field.many) out[key] = Array.isArray(value) ? value.map(mapOne) : value;
     else if (field.dict)
@@ -114,7 +124,7 @@ function decodeFields(
     if (field.type.kind === "union") {
       throw new Error(`${owner} field "${key}" uses a union type, which prisma-idb does not support`);
     }
-    if (key in record) {
+    if (Object.hasOwn(record, key)) {
       out[key] = decodeFieldValue(record[key], field, contract, `${owner} field "${key}"`);
     }
   }

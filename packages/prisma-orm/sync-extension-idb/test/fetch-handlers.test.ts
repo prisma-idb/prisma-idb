@@ -201,7 +201,7 @@ describe("fetch sync handlers", () => {
   });
 
   it("fails an event whose payload JSON.stringify rejects without rejecting the whole push", async () => {
-    const circular: Record<string, unknown> = { id: "a" };
+    const circular: Record<string, unknown> = {};
     circular["self"] = circular;
     const client = createSyncFetchHandlers({
       pushUrl: "https://sync.test/push",

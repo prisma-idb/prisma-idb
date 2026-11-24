@@ -1,5 +1,6 @@
 import type { ContractField, ContractWithDomain } from "@prisma/orm-framework/contract/types";
 import { describe, expect, it } from "vitest";
+import { validateRecord } from "../src/core/validate-record";
 import { decodeJsonRecord, encodeJsonRecord } from "../src/core/decode-json-record";
 
 const union: ContractField = {
@@ -84,6 +85,8 @@ describe("encodeJsonRecord", () => {
                 id: scalar("idb/bytes@1"),
                 size: scalar("idb/bigint@1"),
                 at: scalar("idb/date@1"),
+                toString: scalar("idb/string@1"),
+                name: scalar("idb/string@1"),
                 sizes: { ...scalar("idb/bigint@1"), many: { elementNullable: true } },
               },
               relations: {},
@@ -94,6 +97,16 @@ describe("encodeJsonRecord", () => {
       },
     },
   };
+
+  it("leaves inherited fields out and still processes fields explicitly supplied in a patch", () => {
+    const sparse = { name: "new" };
+    expect(validateRecord(typed, "Asset", sparse, { partial: true })).toEqual({ ok: true });
+    expect(Object.hasOwn(encodeJsonRecord(typed, "Asset", sparse), "toString")).toBe(false);
+    expect(Object.hasOwn(decodeJsonRecord(typed, "Asset", sparse), "toString")).toBe(false);
+    const present = { toString: "title" };
+    expect(encodeJsonRecord(typed, "Asset", present)).toEqual(present);
+    expect(decodeJsonRecord(typed, "Asset", present)).toEqual(present);
+  });
 
   it("round-trips bigint, bytes, dates and list elements through JSON", () => {
     const record = {

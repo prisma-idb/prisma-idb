@@ -13,17 +13,26 @@ import type { SyncServerContract } from "@prisma-idb/sync-server";
 const nativeJsonCodecs: Record<string, string> = {
   "pg/date@1": "idb/date@1",
   "pg/timestamp@1": "idb/date@1",
+  "pg/timestamp-date@1": "idb/date@1",
   "pg/timestamptz@1": "idb/date@1",
   "pg/timestamptz-date@1": "idb/date@1",
   "sql/timestamp@1": "idb/date@1",
   "pg/int8@1": "idb/bigint@1",
   "pg/unboundedint@1": "idb/bigint@1",
   "pg/bytea@1": "idb/bytes@1",
+  "pg/json@1": "idb/json@1",
+  "pg/jsonb@1": "idb/json@1",
 };
+
+function fieldsForModel(contract: SyncServerContract, model: string) {
+  const models = domainModelsAtDefaultNamespace(contract.domain);
+  return Object.hasOwn(models, model) ? models[model]?.fields : undefined;
+}
 
 /** Encode a native SQL key for comparison with a wire-form scope key. */
 export function encodeWireKey(contract: SyncServerContract, model: string, keyField: string, key: unknown): unknown {
-  const field = domainModelsAtDefaultNamespace(contract.domain)[model]?.fields[keyField];
+  const fields = fieldsForModel(contract, model);
+  const field = fields && Object.hasOwn(fields, keyField) ? fields[keyField] : undefined;
   const codecId = field?.type.kind === "scalar" ? nativeJsonCodecs[field.type.codecId] : undefined;
   const codec = codecId ? idbCodecLookup.get(codecId) : undefined;
   return codec && key != null ? codecValueToJson(codec, key) : key;
@@ -40,14 +49,15 @@ export function encodeWireValues(
   model: string,
   record: Record<string, unknown>
 ): Record<string, unknown> {
-  const fields = domainModelsAtDefaultNamespace(contract.domain)[model]?.fields;
+  const fields = fieldsForModel(contract, model);
   if (!fields) return record;
   return Object.fromEntries(
     Object.entries(record).map(([name, value]) => {
-      const field = fields[name];
+      const field = Object.hasOwn(fields, name) ? fields[name] : undefined;
       const codecId = field?.type.kind === "scalar" ? nativeJsonCodecs[field.type.codecId] : undefined;
       const codec = codecId ? idbCodecLookup.get(codecId) : undefined;
       if (!codec || value === null || value === undefined) return [name, value];
+      if (codecId === "idb/json@1") return [name, codecValueToJson(codec, value)];
       const encode = (input: unknown): unknown => (input === null ? input : codecValueToJson(codec, input));
       if (field?.many && Array.isArray(value)) return [name, value.map(encode)];
       return [name, encode(value)];
@@ -72,11 +82,11 @@ export function reviveWireValues(
   data: Record<string, unknown>,
   keyField?: string
 ): Record<string, unknown> {
-  const fields = domainModelsAtDefaultNamespace(contract.domain)[model]?.fields;
+  const fields = fieldsForModel(contract, model);
   if (!fields) return data;
   return Object.fromEntries(
     Object.entries(data).map(([name, value]) => {
-      const field = fields[name];
+      const field = Object.hasOwn(fields, name) ? fields[name] : undefined;
       const codecId = field?.type.kind === "scalar" ? nativeJsonCodecs[field.type.codecId] : undefined;
       const codec = codecId ? idbCodecLookup.get(codecId) : undefined;
       if (!codec) return [name, value];
