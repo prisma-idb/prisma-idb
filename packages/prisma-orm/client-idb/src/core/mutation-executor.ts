@@ -385,7 +385,7 @@ function parseMutationInput(
   return { scalarData, relationMutations };
 }
 
-/** Validate each supplied criterion before it can select rows or widen the write. */
+/** Prepare and validate the filters used by the relation write. */
 function prepareRelationOperation(
   contract: IdbContract,
   relation: RelationDefinition,
@@ -393,12 +393,15 @@ function prepareRelationOperation(
 ): ParsedRelationOperation {
   if (mutation.kind === "create") return mutation;
   const { kind } = mutation;
-  const criteria = kind === "disconnect" ? (mutation.criteria ?? []) : mutation.criteria;
-  const operation = `${kind}() nested mutation for relation "${relation.relationName}"`;
+  const parentOwned = relation.cardinality === "N:1";
+  if (parentOwned && kind === "disconnect") return { kind, criteria: [] };
 
-  if (relation.cardinality === "N:1") {
-    if (kind === "connect" && criteria.length !== 1) throw new Error(`${operation} requires exactly one criterion`);
-    if (kind === "disconnect" && criteria.length > 0) throw new Error(`${operation} does not accept criteria`);
+  let criteria = kind === "disconnect" ? (mutation.criteria ?? []) : mutation.criteria;
+  const operation = `${kind}() nested mutation for relation "${relation.relationName}"`;
+  if (parentOwned) {
+    const first = criteria[0];
+    if (first === undefined) throw new Error(`${operation} requires a criterion`);
+    criteria = [first];
   }
 
   const filters: IdbFilterExpr[] = [];
@@ -462,7 +465,7 @@ async function applyParentOwnedMutation(
     return;
   }
 
-  // Preparation requires exactly one criterion for a parent-owned connect.
+  // Preparation keeps the first criterion for a parent-owned connect.
   const [relatedRow] = await readMutationRows(scope, contract, relation.relatedModelName, mutation.criteria[0]!, 1);
   if (!relatedRow) {
     throw new Error(`connect() nested mutation for relation "${relation.relationName}" did not find a matching row`);

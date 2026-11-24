@@ -137,9 +137,9 @@ await db.orm.user.where({ id: userId }).update({
 | `connect(criteria)`     | Yes           | Yes           | On a to-one relation, points this row at an existing row, and fails if none matches. On a to-many relation, points every matching row at this one. |
 | `disconnect(criteria?)` | No            | Yes           | Sets the foreign key to `null`. With no criteria, disconnects every related row.                                                                   |
 
-Each supplied criterion needs at least one field with a value other than `undefined`. The client validates criteria before looking up the parent row. Use `disconnect()` or `disconnect([])` to detach all related rows.
+Each criterion the mutation uses needs at least one field with a value other than `undefined`. The client validates those criteria before looking up the parent row.
 
-When this row holds the foreign key, `connect()` requires exactly one criterion. Call `disconnect()` with no criteria to clear that foreign key.
+When this row holds the foreign key, `connect()` uses the first criterion and `disconnect()` clears the key regardless of criteria. When the related rows hold the foreign key, use `disconnect()` or `disconnect([])` to detach them all.
 
 Related rows can't have relation functions of their own: nesting is one level deep.
 

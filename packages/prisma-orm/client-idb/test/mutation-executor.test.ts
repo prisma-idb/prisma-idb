@@ -281,23 +281,28 @@ describe("ORM nested update", () => {
   });
 
   it.each([
-    [
-      (rel: RelMutator) => rel.connect([{ id: "u2" }, { id: "u1" }]),
-      'connect() nested mutation for relation "author" requires exactly one criterion',
-    ],
-    [
-      (rel: RelMutator) => rel.disconnect([{ id: "u2" }]),
-      'disconnect() nested mutation for relation "author" does not accept criteria',
-    ],
-  ])("rejects criteria a parent-owned mutation would discard (%#)", async (mutate, message) => {
+    {
+      operation: "connect uses the first criterion",
+      mutate: (rel: RelMutator) => rel.connect([{ id: "u2" }, { id: "u1" }, { typo: null }]),
+      authorId: "u2",
+    },
+    {
+      operation: "disconnect clears the FK regardless of criteria",
+      mutate: (rel: RelMutator) => rel.disconnect([{ id: "u2" }, { typo: null }]),
+      authorId: null,
+    },
+  ])("N:1 $operation", async ({ mutate, authorId }) => {
     const orm = orm_();
     await orm["users"]!.create({ id: "u1", name: "Alice" } as never);
     await orm["users"]!.create({ id: "u2", name: "Bob" } as never);
     const post = { id: "p1", authorId: "u1", title: "First" };
     await orm["posts"]!.create(post as never);
 
-    await expect(orm["posts"]!.where({ id: "p1" }).update({ author: mutate } as never)).rejects.toThrow(message);
-    expect(await getAllRows(db, "posts")).toEqual([post]);
+    await expect(orm["posts"]!.where({ id: "p1" }).update({ author: mutate } as never)).resolves.toEqual({
+      ...post,
+      authorId,
+    });
+    expect(await getAllRows(db, "posts")).toEqual([{ ...post, authorId }]);
   });
 
   it("N:1 connect in update re-links the post to a new user", async () => {
