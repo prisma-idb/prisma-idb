@@ -10,7 +10,7 @@ interface SqlModelStorage {
 
 interface SqlForeignKey {
   readonly source: { readonly columns: readonly string[] };
-  readonly target: { readonly namespaceId?: string; readonly tableName: string; readonly columns: readonly string[] };
+  readonly target: { readonly namespaceId: string; readonly tableName: string; readonly columns: readonly string[] };
 }
 
 /** A to-one relation as the contract stores it. */
@@ -33,7 +33,7 @@ export function ownsForeignKey(contract: SyncServerContract, modelName: string, 
   const models = domainModelsAtDefaultNamespace(contract.domain);
   const storage = models[modelName]?.storage as SqlModelStorage | undefined;
   const targetStorage = models[relation.to.model]?.storage as SqlModelStorage | undefined;
-  if (!storage?.table || !storage.namespaceId || !targetStorage?.table) return false;
+  if (!storage?.table || !storage.namespaceId || !targetStorage?.table || !targetStorage.namespaceId) return false;
   const namespaces = (
     contract.storage as {
       namespaces?: Record<string, { entries?: { table?: Record<string, { foreignKeys?: readonly SqlForeignKey[] }> } }>;
@@ -48,7 +48,7 @@ export function ownsForeignKey(contract: SyncServerContract, modelName: string, 
     (foreignKey) =>
       sameColumns(foreignKey.source.columns, local) &&
       foreignKey.target.tableName === targetStorage.table &&
-      (foreignKey.target.namespaceId === undefined || foreignKey.target.namespaceId === targetStorage.namespaceId) &&
+      foreignKey.target.namespaceId === targetStorage.namespaceId &&
       sameColumns(foreignKey.target.columns, target)
   );
 }

@@ -22,6 +22,7 @@ const profileClientContract = {
         models: {
           User: publicNamespace.models["User"]!,
           Profile: publicNamespace.models["Profile"]!,
+          ProfileTask: publicNamespace.models["ProfileTask"]!,
         },
       },
     },
@@ -59,6 +60,31 @@ describe("a one-to-one foreign key in an emitted SQL contract", () => {
     expect(resolveAuthorizationPaths(testContract, "Profile", "User")).toEqual([]);
   });
 
+  it("follows a many-to-one relation through the owning one-to-one relation", async () => {
+    expect(resolveAuthorizationPaths(testContract, "User", "ProfileTask")).toEqual([["profile", "user"]]);
+    const db = await testDb();
+    const syncServer = createSyncServer({
+      contract: testContract,
+      clientContract: profileClientContract,
+      rootModel: "User",
+      getKeyField: sqlGetKeyField,
+    });
+    const adapter = createSqlSyncAdapter({ contract: testContract, syncServer, contractCheck: "off" });
+    const events = [
+      { id: "user", entityType: "User", operation: "create", payload: { id: "u1", name: "Ann" } },
+      { id: "profile", entityType: "Profile", operation: "create", payload: { id: "p1", userId: "u1" } },
+      { id: "task", entityType: "ProfileTask", operation: "create", payload: { id: "t1", profileId: "p1" } },
+    ] as const;
+    expect(await adapter.applyPush(db, { scopeKey: "u1", events })).toEqual({
+      ok: true,
+      results: events.map(({ id }) => ({ id, success: true })),
+    });
+    expect(await adapter.pull(db, { scopeKey: "u1" })).toMatchObject({
+      ok: true,
+      logs: events.map(({ entityType, payload }) => ({ model: entityType, record: payload })),
+    });
+  });
+
   it("pushes and pulls a Profile only for the user who owns it", async () => {
     const db = await testDb();
     const syncServer = createSyncServer({
@@ -85,6 +111,13 @@ describe("a one-to-one foreign key in an emitted SQL contract", () => {
       ok: true,
       results: [{ id: "p2", success: false, error: "SCOPE_VIOLATION" }],
     });
+
+    const unowned = { ...mine, id: "unowned", payload: { id: "unowned", userId: null } };
+    expect(await adapter.applyPush(db, { scopeKey: "u1", events: [unowned] })).toMatchObject({
+      ok: true,
+      results: [{ id: "unowned", success: false, error: "SCOPE_VIOLATION", retryable: false }],
+    });
+    expect(await db.orm.public.Profile.first({ id: "unowned" })).toBeNull();
 
     const pulled = await adapter.pull(db, { scopeKey: "u1" });
     expect(pulled).toMatchObject({

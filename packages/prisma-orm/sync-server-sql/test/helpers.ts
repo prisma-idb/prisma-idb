@@ -52,6 +52,7 @@ export const testClientContract = (() => {
                   "BytesItem",
                   "PrivateNote",
                   "Profile",
+                  "ProfileTask",
                 ].includes(name)
             )
           ),

@@ -10,7 +10,7 @@ Creates and updates must keep every populated tenant parent in the caller's scop
 Existing-row access, pull and delete require only one matching path to that scope.
 
 The sync server follows relations from each record to a root model, such as `User`.
-These paths form the ownership graph. The server builds it from the contract at startup. A many-to-one relation carries ownership. A SQL one-to-one carries ownership from the table that declares the foreign key. Prisma derives the owning side from the SQL contract's foreign keys. [Prisma SQL relation storage](https://github.com/prisma/orm/blob/17385f2d86eefa3783e86d94534168a224806c0a/packages/2-sql-family/1-core/contract/src/relation-storage.ts)
+These paths form the ownership graph. The server builds it from the contract at startup. A many-to-one relation carries ownership. A SQL one-to-one carries ownership from the table that declares the foreign key. See how Prisma derives the owning side from the SQL contract's foreign keys in [Prisma SQL relation storage](https://github.com/prisma/orm/blob/17385f2d86eefa3783e86d94534168a224806c0a/packages/2-sql-family/1-core/contract/src/relation-storage.ts).
 
 `@prisma-idb/sync-server` describes the checks and queries. The app executes them against its database.
 The package runs only on the server.
