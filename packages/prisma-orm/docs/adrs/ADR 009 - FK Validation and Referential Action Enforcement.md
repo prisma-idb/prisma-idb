@@ -70,7 +70,7 @@ When a record is deleted, the client finds every relation whose children point a
 | `restrict` (default) | The delete fails if any children exist.                                   |
 | `noAction`           | Same as `restrict`.                                                       |
 
-A one-to-one relation on a non-primary key uses `N:1` on the foreign-key holder and a reciprocal `1:1` on the referenced model, which is the parent side. A `1:1` declared on a referenced model's primary key also identifies the parent side. A `1:1` declared on the foreign-key side, pointing at the referenced model's primary key or pairing with a `1:N` there, holds a foreign key like an `N:1`: the client checks it on writes and runs its actions whether or not the referenced model declares the inverse. Prisma 8 SQL also uses `N:1` to identify the foreign-key holder. [Prisma relation lowering](https://github.com/prisma/orm/blob/17385f2d86eefa3783e86d94534168a224806c0a/packages/2-sql-family/2-authoring/contract-ts/src/model-relations.ts)
+A one-to-one relation on a non-primary key uses `N:1` on the foreign-key holder and a reciprocal `1:1` on the referenced model, which is the parent side. The reciprocal relation identifies which fields the action changes and which fields authoring checks for `SetNull`. A unique index on the foreign key enforces one-to-one cardinality. A `1:1` declared on a referenced model's primary key also identifies the parent side. A `1:1` declared on the foreign-key side, pointing at the referenced model's primary key or pairing with a `1:N` there, holds a foreign key like an `N:1`: the client checks it on writes and runs its actions whether or not the referenced model declares the inverse. A `1:1` that neither pairs with an `N:1` nor points at a primary key has no foreign key behind it, so authoring refuses referential actions on it. Prisma 8 SQL also uses `N:1` to identify the foreign-key holder. [Prisma relation lowering](https://github.com/prisma/orm/blob/17385f2d86eefa3783e86d94534168a224806c0a/packages/2-sql-family/2-authoring/contract-ts/src/model-relations.ts)
 
 The same happens on `update()`, including a nested update, using `onUpdate`, when the update changes a value that children refer to. The client compares the old and new values, so including an unchanged field in the patch doesn't trigger anything. The default `onUpdate` is `restrict`. Declare `onUpdate: Cascade` to copy the new value to the children instead.
 
@@ -101,6 +101,12 @@ Each action runs inside one `withMutationScope` transaction that covers the pare
 - **`setDefault` checks the default too.** Before writing it, the client checks that a parent with that value exists, matching every field of a compound relation. Without this, `setDefault` could itself create a dangling reference, for example setting `authorId` to `"system"` when no `"system"` user exists. A real database gets this for free, because its foreign-key constraint re-checks the new value.
 - **`upsert()` needs a transaction-capable executor**, like `update()`, `updateAll()` and `deleteAll()`. `create()` and `delete()` only need one when the write actually involves relations or foreign keys.
 - **`createAll()` with foreign keys runs in one transaction**, checking and inserting each row in turn. If one row fails, none are written.
+
+## Note, 2026-11-24: Contradicting relation declarations are refused
+
+The side holding a foreign key declares its to-one relation optional exactly when one or more foreign-key fields are optional. Both authoring paths report `IDB_INVALID_RELATION` when the declaration disagrees with the fields. Prisma 8 checks both directions and reports `PSL_RELATION_NULLABILITY_MISMATCH` in PSL. Any other to-one side, such as the referenced side of a one-to-one, is always optional, because a parent can have no child even when its key is required. TypeScript defaults it to optional and refuses a required declaration, as Prisma 8 does. [Prisma relation nullability](https://github.com/prisma/orm/blob/17385f2d86eefa3783e86d94534168a224806c0a/packages/1-framework/2-authoring/contract/src/relation-nullability.ts#L16)
+
+Authoring also refuses `SetNull` on a foreign key with a required field because the action writes `null` into every field of that key. The client keeps the runtime check for older emitted contracts.
 
 ## Related
 

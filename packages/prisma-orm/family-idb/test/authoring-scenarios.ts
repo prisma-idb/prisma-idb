@@ -18,6 +18,52 @@ export type AuthoringScenario = {
 // Casts below deliberately exercise declarations outside the TS type system.
 export const authoringScenarios: AuthoringScenario[] = [
   {
+    name: "relation nullability contradictions",
+    psl: `
+      model User {
+        id String @id
+      }
+      model Post {
+        id       String  @id
+        authorId   String?
+        author     User    @relation(fields: [authorId], references: [id])
+        editorId   String
+        editor     User    @relation(fields: [editorId], references: [id], onDelete: SetNull)
+        reviewerId String
+        reviewer   User?   @relation(fields: [reviewerId], references: [id])
+      }
+    `,
+    ts: {
+      models: {
+        User: {
+          store: "user",
+          key: "id",
+          fields: { id: "String" },
+        },
+        Post: {
+          store: "post",
+          key: "id",
+          fields: { id: "String", authorId: "String?", editorId: "String", reviewerId: "String" },
+          relations: {
+            author: { to: "User", cardinality: "N:1", on: { local: ["authorId"], target: ["id"] }, nullable: false },
+            editor: {
+              to: "User",
+              cardinality: "N:1",
+              on: { local: ["editorId"], target: ["id"] },
+              onDelete: "setNull",
+            },
+            reviewer: {
+              to: "User",
+              cardinality: "N:1",
+              on: { local: ["reviewerId"], target: ["id"] },
+              nullable: true,
+            },
+          },
+        },
+      },
+    },
+  },
+  {
     name: "feature-complete (no defaults)",
     clientProjection: true,
     psl: `

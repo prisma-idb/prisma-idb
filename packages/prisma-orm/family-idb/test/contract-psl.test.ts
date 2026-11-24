@@ -755,8 +755,8 @@ describe("interpretPslDocumentToIdbContract", () => {
         }
         model Post {
           id     String @id
-          userId String
-          user   User   @relation(fields: [userId], references: [id], onUpdate: SetNull)
+          userId String?
+          user   User?  @relation(fields: [userId], references: [id], onUpdate: SetNull)
         }
       `);
       expect(result.ok).toBe(true);
@@ -849,6 +849,33 @@ describe("interpretPslDocumentToIdbContract", () => {
       expect(result.ok).toBe(false);
       if (result.ok) return;
       expect(result.failure.diagnostics[0]!.code).toBe("IDB_UNRESOLVED_BACKRELATION");
+    });
+
+    it("errors on a required one-to-one relation over a nullable field and on SetNull over a required one", () => {
+      const result = interpret(`
+        model User {
+          id String @id
+        }
+        model Profile {
+          id     String  @id
+          userId String? @unique
+          user   User    @relation(fields: [userId], references: [id])
+        }
+        model Note {
+          id     String @id
+          userId String
+          user   User   @relation(fields: [userId], references: [id], onUpdate: SetNull)
+        }
+      `);
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.failure.diagnostics.map((d) => [d.code, d.message])).toEqual([
+        [
+          "IDB_INVALID_RELATION",
+          expect.stringContaining('"Profile.user" is required but a foreign-key field it joins on is optional'),
+        ],
+        ["IDB_INVALID_RELATION", expect.stringContaining('"Note.user" declares onUpdate: SetNull')],
+      ]);
     });
   });
 

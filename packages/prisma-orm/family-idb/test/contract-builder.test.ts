@@ -306,7 +306,7 @@ describe("defineContract — @idb.exclude projection (ADR 012)", () => {
 });
 
 describe("defineContract — to-one relation nullability", () => {
-  it("derives nullable from the local FK fields and honors an explicit override", () => {
+  it("derives nullable from the local FK fields and accepts an agreeing declaration", () => {
     const contract = defineContract({
       family: idbFamilyPack,
       target: idbTargetPack,
@@ -322,7 +322,7 @@ describe("defineContract — to-one relation nullability", () => {
         Post: {
           store: "posts",
           key: "id",
-          fields: { id: "String", authorId: "String", editorId: "String?", reviewerId: "String" },
+          fields: { id: "String", authorId: "String", editorId: "String?", reviewerId: "String?" },
           relations: {
             author: { to: "User", cardinality: "N:1", on: { local: ["authorId"], target: ["id"] } },
             editor: { to: "User", cardinality: "N:1", on: { local: ["editorId"], target: ["id"] } },
@@ -1038,6 +1038,37 @@ describe("defineContract — conflicting reciprocal relation actions", () => {
     ).not.toThrow();
   });
 
+  it.each([
+    [
+      "required",
+      "String?",
+      false,
+      "is required but a foreign-key field it joins on is optional. Make the relation optional or make every foreign-key field required",
+    ],
+    ["optional", "String", true, "is optional but every foreign-key field is required"],
+  ] as const)(
+    "rejects %s nullability on an owning one-to-one relation when its foreign key disagrees",
+    (_, userId, nullable, message) => {
+      expect(() =>
+        defineContract({
+          family: idbFamilyPack,
+          target: idbTargetPack,
+          models: {
+            User: { store: "users", key: "id", fields: { id: "String" } },
+            Profile: {
+              store: "profiles",
+              key: "id",
+              fields: { id: "String", userId },
+              relations: {
+                user: { to: "User", cardinality: "1:1", on: { local: ["userId"], target: ["id"] }, nullable },
+              },
+            },
+          },
+        })
+      ).toThrow(`IDB_INVALID_RELATION: Relation "Profile.user" ${message}.`);
+    }
+  );
+
   it("does not false-positive on two distinct relations to the same model", () => {
     // Message.sender and Message.recipient both point at User, but neither is the
     // other's reciprocal (different local fields) — matching on `to` alone would
@@ -1051,7 +1082,7 @@ describe("defineContract — conflicting reciprocal relation actions", () => {
           Message: {
             store: "messages",
             key: "id",
-            fields: { id: "String", senderId: "String", recipientId: "String" },
+            fields: { id: "String", senderId: "String", recipientId: "String?" },
             relations: {
               sender: {
                 to: "User",
@@ -1070,6 +1101,163 @@ describe("defineContract — conflicting reciprocal relation actions", () => {
         },
       })
     ).not.toThrow();
+  });
+});
+
+describe("defineContract — SetNull on a 1:1 relation", () => {
+  const define = (userId: "String" | "String?", owner: "profile" | "user") =>
+    defineContract({
+      family: idbFamilyPack,
+      target: idbTargetPack,
+      models: {
+        User: {
+          store: "users",
+          key: "id",
+          fields: { id: "String" },
+          relations:
+            owner === "user"
+              ? {
+                  profile: {
+                    to: "Profile",
+                    cardinality: "1:1",
+                    on: { local: ["id"], target: ["userId"] },
+                    onDelete: "setNull",
+                  },
+                }
+              : {},
+        },
+        Profile: {
+          store: "profiles",
+          key: "id",
+          fields: { id: "String", userId },
+          indexes: { userId: { keyPath: "userId", unique: true } },
+          relations:
+            owner === "profile"
+              ? {
+                  user: {
+                    to: "User",
+                    cardinality: "1:1",
+                    on: { local: ["userId"], target: ["id"] },
+                    onDelete: "setNull",
+                    ...(userId === "String?" ? {} : { nullable: false }),
+                  },
+                }
+              : {},
+        },
+      },
+    });
+
+  it.each(["profile", "user"] as const)("rejects a required foreign key declared from the %s side", (owner) => {
+    expect(() => define("String", owner)).toThrow(/SetNull, but its foreign key has a required field/);
+  });
+
+  it.each(["profile", "user"] as const)("accepts an optional foreign key declared from the %s side", (owner) => {
+    expect(() => define("String?", owner)).not.toThrow();
+  });
+
+  const defineOnEmail = (userEmail: "String" | "String?", declareOwner = true) =>
+    defineContract({
+      family: idbFamilyPack,
+      target: idbTargetPack,
+      models: {
+        User: {
+          store: "users",
+          key: "id",
+          fields: { id: "String", email: "String" },
+          indexes: { email: { keyPath: "email", unique: true } },
+          relations: {
+            profile: {
+              to: "Profile",
+              cardinality: "1:1",
+              on: { local: ["email"], target: ["userEmail"] },
+              nullable: true,
+              onUpdate: "setNull",
+            },
+          },
+        },
+        Profile: {
+          store: "profiles",
+          key: "id",
+          fields: { id: "String", userEmail },
+          indexes: { userEmail: { keyPath: "userEmail", unique: true } },
+          relations: declareOwner
+            ? { user: { to: "User", cardinality: "N:1", on: { local: ["userEmail"], target: ["email"] } } }
+            : {},
+        },
+      },
+    });
+
+  it("accepts SetNull on the inverse when the actual foreign key is optional", () => {
+    expect(() => defineOnEmail("String?")).not.toThrow();
+  });
+
+  it("rejects SetNull on the inverse when the actual foreign key is required", () => {
+    expect(() => defineOnEmail("String")).toThrow(/SetNull, but its foreign key has a required field/);
+  });
+
+  it("asks for an owning relation when the foreign-key side is ambiguous", () => {
+    expect(() => defineOnEmail("String?", false)).toThrow(
+      'IDB_INVALID_RELATION: Relation "User.profile" declares onUpdate, but its 1:1 join doesn\'t identify the model that holds the foreign key, so the action would never run.'
+    );
+  });
+});
+
+describe("defineContract — the referenced side of a one-to-one", () => {
+  const define = (profile: Partial<RelationDef> = {}, declareOwner = true) =>
+    defineContract({
+      family: idbFamilyPack,
+      target: idbTargetPack,
+      models: {
+        User: {
+          store: "users",
+          key: "id",
+          fields: { id: "String", email: "String" },
+          indexes: { email: { keyPath: "email", unique: true } },
+          relations: {
+            profile: { to: "Profile", cardinality: "1:1", on: { local: ["email"], target: ["userEmail"] }, ...profile },
+          },
+        },
+        Profile: {
+          store: "profiles",
+          key: "id",
+          fields: { id: "String", userEmail: "String" },
+          indexes: { userEmail: { keyPath: "userEmail", unique: true } },
+          relations: declareOwner
+            ? { user: { to: "User", cardinality: "N:1", on: { local: ["userEmail"], target: ["email"] } } }
+            : {},
+        },
+      },
+    });
+  const relations = (contract: ReturnType<typeof define>, model: string) =>
+    (
+      Object.values(contract.domain.namespaces)[0]!.models as unknown as Record<
+        string,
+        { relations: Record<string, { nullable?: boolean }> }
+      >
+    )[model]!.relations;
+
+  it("defaults to optional even when the joined key is required", () => {
+    const contract = define();
+    expect(relations(contract, "User")["profile"]!.nullable).toBe(true);
+    expect(relations(contract, "Profile")["user"]!.nullable).toBe(false);
+  });
+
+  it("refuses a required declaration", () => {
+    expect(() => define({ nullable: false })).toThrow(
+      'IDB_INVALID_RELATION: Relation "User.profile" is required, but "Profile" holds the foreign key, so nothing in storage guarantees a "Profile" row exists. Make the relation optional.'
+    );
+  });
+
+  it("refuses a required 1:1 that no foreign key backs", () => {
+    expect(() => define({ nullable: false }, false)).toThrow(
+      'IDB_INVALID_RELATION: Relation "User.profile" is required, but no foreign key backs it'
+    );
+  });
+
+  it("refuses any action on a 1:1 that no foreign key backs", () => {
+    expect(() => define({ onDelete: "cascade" }, false)).toThrow(
+      'IDB_INVALID_RELATION: Relation "User.profile" declares onDelete, but its 1:1 join doesn\'t identify the model that holds the foreign key'
+    );
   });
 });
 

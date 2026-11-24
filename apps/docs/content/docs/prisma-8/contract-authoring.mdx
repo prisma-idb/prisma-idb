@@ -47,7 +47,9 @@ PSL uses a model name with its first letter lowercased as the default store name
 
 Both `onDelete` and `onUpdate` default to `Restrict` in PSL and `"restrict"` in TypeScript. The other actions are `SetDefault` / `"setDefault"` and `NoAction` / `"noAction"`. `NoAction` behaves like `Restrict`.
 
-TypeScript uses `"1:N"` for a backrelation and `"1:1"` or `"N:1"` for a to-one relation. For a backrelation, `on.local` names the parent key and `on.target` names the child's foreign key. To-one nullability defaults to whether any local field is nullable. The optional `nullable` property overrides it.
+TypeScript uses `"1:N"` for a backrelation and `"1:1"` or `"N:1"` for a to-one relation. For a backrelation, `on.local` names the parent key and `on.target` names the child's foreign key. On the side that holds the foreign key, a to-one relation is optional exactly when one of its local fields is nullable. `nullable` defaults to that, and an explicit value must agree. Any other `"1:1"`, such as the referenced side of a one-to-one, defaults to optional and can't be required, because nothing in storage guarantees that the related row exists. This matches upstream Prisma.
+
+For a one-to-one relation on a non-primary unique key, declare `"N:1"` on the model that holds the foreign key and `"1:1"` on the referenced model, with reversed join fields. Put a unique index on the foreign key to enforce one-to-one cardinality. You can put each referential action on either side of the pair. `setNull` requires every foreign-key field to be optional.
 
 Scalar and enum fields can be lists. Lists cannot be optional. An empty-list default makes the field optional on create. See the [scalar-list reference](/docs/prisma-8/scalar-list-reference). The [Schema & Config reference](/docs/prisma-8/schema) lists scalar types and IndexedDB key restrictions.
 
@@ -209,14 +211,14 @@ export function buildContract(input: DefineContractInput) {
 
 ### Relations and client projection
 
-| Code                                        | Meaning                                                             |
-| ------------------------------------------- | ------------------------------------------------------------------- |
-| `IDB_INVALID_RELATION`                      | A relation declaration is malformed or references an unknown model. |
-| `IDB_MISSING_RELATION_ATTRIBUTE`            | A PSL to-one relation has no `@relation` declaration.               |
-| `IDB_UNKNOWN_REFERENTIAL_ACTION`            | A PSL relation names an unsupported referential action.             |
-| `IDB_CONFLICTING_RELATION_ACTIONS`          | Reciprocal relations both declare the same referential action.      |
-| `IDB_UNRESOLVED_BACKRELATION`               | A backrelation has no matching owning relation after projection.    |
-| `IDB_CANNOT_EXCLUDE_KEY_FIELD`              | Client projection removes a model's primary-key field.              |
-| `IDB_CANNOT_EXCLUDE_RELATION_FIELD`         | Client projection removes a field needed by a surviving relation.   |
-| `IDB_EXCLUDE_ON_RELATION_FIELD_UNSUPPORTED` | Client projection attempts to exclude a relation field directly.    |
-| `IDB_UNKNOWN_EXCLUDED_FIELD`                | A TypeScript exclusion names an undeclared field.                   |
+| Code                                        | Meaning                                                                                                                                                                                                                                                                     |
+| ------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `IDB_INVALID_RELATION`                      | A relation declaration is malformed or references an unknown model, a to-one relation conflicts with its key nullability, `SetNull` targets a required foreign-key field, or the referenced side of a one-to-one is required or pairs with a foreign key that isn't unique. |
+| `IDB_MISSING_RELATION_ATTRIBUTE`            | A PSL to-one relation has no `@relation` declaration.                                                                                                                                                                                                                       |
+| `IDB_UNKNOWN_REFERENTIAL_ACTION`            | A PSL relation names an unsupported referential action.                                                                                                                                                                                                                     |
+| `IDB_CONFLICTING_RELATION_ACTIONS`          | Reciprocal relations both declare the same referential action.                                                                                                                                                                                                              |
+| `IDB_UNRESOLVED_BACKRELATION`               | A backrelation has no matching owning relation after projection.                                                                                                                                                                                                            |
+| `IDB_CANNOT_EXCLUDE_KEY_FIELD`              | Client projection removes a model's primary-key field.                                                                                                                                                                                                                      |
+| `IDB_CANNOT_EXCLUDE_RELATION_FIELD`         | Client projection removes a field needed by a surviving relation.                                                                                                                                                                                                           |
+| `IDB_EXCLUDE_ON_RELATION_FIELD_UNSUPPORTED` | Client projection attempts to exclude a relation field directly.                                                                                                                                                                                                            |
+| `IDB_UNKNOWN_EXCLUDED_FIELD`                | A TypeScript exclusion names an undeclared field.                                                                                                                                                                                                                           |
