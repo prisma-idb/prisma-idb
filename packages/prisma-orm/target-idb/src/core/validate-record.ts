@@ -144,12 +144,19 @@ function buildShape(
   }
   const validator = type(shape);
   const hasPrototypeField = Object.keys(fields).some((name) => Object.hasOwn(Object.prototype, name));
-  // ArkType also reads inherited properties. Only the record itself supplies fields to validate.
-  return type("object").pipe((record) => {
+  // ArkType reads inherited properties. A predicate can validate a shallow own-property copy
+  // without a morph deep-cloning native field values, such as a Date subclass.
+  return type("object").narrow((record, context) => {
     const prototype: unknown = Object.getPrototypeOf(record);
-    if (prototype === null || (prototype === Object.prototype && !hasPrototypeField)) return record;
-    return Object.assign(Object.create(null) as Record<string, unknown>, record);
-  }, validator);
+    const input =
+      prototype === null || (prototype === Object.prototype && !hasPrototypeField)
+        ? record
+        : Object.assign(Object.create(null) as Record<string, unknown>, record);
+    const result = validator(input);
+    if (!(result instanceof type.errors)) return true;
+    context.errors.merge(result);
+    return false;
+  });
 }
 
 /** Reuses validators and converts construction errors into fail-closed validation issues. */

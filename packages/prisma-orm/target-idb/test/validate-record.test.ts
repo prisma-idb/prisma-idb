@@ -113,6 +113,20 @@ describe("validateRecord", () => {
       expect(validateRecord(schema, "Item", { ...valid, ...patch }).ok).toBe(false);
     }
   });
+  it("validates Date subclasses without cloning their private state", () => {
+    class CalendarDate extends Date {
+      readonly #time = super.getTime();
+
+      override getTime(): number {
+        return this.#time;
+      }
+    }
+
+    const schema = contract({ date: field("idb/date@1"), toString: field("idb/string@1") });
+    const date = new CalendarDate("2026-01-01T00:00:00.000Z");
+    expect(validateRecord(schema, "Item", { date }, { partial: true })).toEqual({ ok: true });
+  });
+
   it.each(["idb/json@1", "pg/json@1", "pg/jsonb@1"])("accepts JSON null in a required %s scalar", (codecId) => {
     const schema = contract({ json: field(codecId) });
     const options = {
