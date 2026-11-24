@@ -43,7 +43,9 @@ export interface IdbRuntimeOptions {
   /**
    * Middleware execution context.
    *
-   * When omitted, a real context is derived from `contract`.
+   * When omitted, a real context is derived from `contract`. Its `log` writes `warn` and `error`
+   * to the console and drops `info`. Supply `ctx.log` to route middleware errors and runtime
+   * warnings elsewhere.
    */
   readonly ctx?: ActivityContextFields;
   /**
@@ -117,10 +119,13 @@ function buildMiddlewareContext(contract: Record<string, unknown>): ActivityCont
     contract,
     mode: "permissive",
     now: () => Date.now(),
+    // Warnings and errors reach the console when the caller supplies no logger, so a middleware
+    // error inside a transaction, which cannot fail the statement, is not lost. Upstream's runtimes
+    // default to no-op loggers, which would hide those errors in a browser app.
     log: {
       info: () => undefined,
-      warn: () => undefined,
-      error: () => undefined,
+      warn: (...args: unknown[]) => console.warn(...args),
+      error: (...args: unknown[]) => console.error(...args),
     },
     // Top-level query()/execute() run in "runtime" scope. Statements inside a
     // transaction get "transaction" from the transaction observer. There is no

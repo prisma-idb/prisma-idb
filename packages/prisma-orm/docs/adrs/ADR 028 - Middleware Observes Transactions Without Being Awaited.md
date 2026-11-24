@@ -25,6 +25,11 @@ Calling hooks without awaiting them keeps the transaction intact and still deliv
 - A hook inside a transaction cannot delay or block the statement, and its errors do not fail it. Middleware that must block a statement can do so only outside transactions.
 - `onRow` inside a transaction runs after the statement's rows were read, as it does outside one ([ADR 006](ADR%20006%20-%20Collect%20then%20Yield%20Full%20Row%20Materialization.md)).
 
+## Update 2026-11-24: errors and logging
+
+- A hook's error never fails the transaction. Upstream rethrows the first error of a transaction's `activityEnded` hooks after finalizing, so a throwing hook fails the call. IndexedDB has already committed or aborted by the time those hooks run, so rejecting would report a failure for saved data and skip the sync client's `outboxwrite` notification. The runtime logs the error instead, after the framework has finalized every statement and the transaction. An error thrown before the transaction opens, from the transaction's `activityStarted`, still rejects, since nothing has run yet.
+- Errors and the async `beforeEncode` warning go to `ctx.log`. When the caller passes no `ctx` to `createIdbRuntime`, which no client factory does, the default logger writes `warn` and `error` to the console and drops `info`. Upstream's default loggers are no-ops. A no-op would discard every error from a hook that cannot fail its statement, so this runtime differs on purpose.
+
 ## Rejected alternatives
 
 - **Keep bypassing middleware:** caches stay stale after transactional writes, and telemetry misses those statements.

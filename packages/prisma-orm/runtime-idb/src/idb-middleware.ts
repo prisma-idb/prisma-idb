@@ -43,6 +43,10 @@ import type { IdbLoweredPlan } from "@prisma-idb/adapter-idb/runtime";
  * - When the transaction completes or aborts, every statement and then the
  *   transaction get `activityFinalized` with `committed`, `rolled-back`, or
  *   `unknown`. `commit()` resolves after those hooks.
+ * - A hook's error, thrown or rejected, is logged to `ctx.log` and never fails
+ *   the statement or the transaction. This includes the transaction's
+ *   `activityEnded`, which upstream would rethrow. Only an error from the
+ *   transaction's `activityStarted` rejects, before IndexedDB opens it.
  */
 export interface IdbMiddleware extends RuntimeMiddleware<IdbLoweredPlan> {
   readonly familyId?: "idb";

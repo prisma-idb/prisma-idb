@@ -65,7 +65,7 @@ When the app calls `db.orm.user.where({ active: true }).all()`:
 4. **`driver-idb` runs the plan.** It opens a transaction, walks a cursor or calls `get`, `getAll`, `count` or `getKey`, and collects every matching row before the transaction ends ([ADR 006](adrs/ADR%20006%20-%20Collect%20then%20Yield%20Full%20Row%20Materialization.md)). Requests are chained through IndexedDB callbacks, never `await`, so the transaction stays active ([ADR 005](adrs/ADR%20005%20-%20Event-Driven%20Execution%20No%20Async%20Await.md)).
 5. **`runtime-idb` yields the rows,** calling each middleware's `onRow` and then `activityEnded`.
 
-Most writes take a different route: they need to read and write several stores in one transaction. `client-idb`'s mutation executor calls `withMutationScope`, which opens one multi-store transaction through the runtime's `transaction()`. It then runs driver plans directly on the returned `IdbTransactionScope` to check foreign keys, apply referential actions and write the rows ([ADR 007](adrs/ADR%20007%20-%20Two%20Transaction%20APIs.md), [ADR 009](adrs/ADR%20009%20-%20FK%20Validation%20and%20Referential%20Action%20Enforcement.md)). Middleware doesn't see these steps.
+Most writes take a different route: they need to read and write several stores in one transaction. `client-idb`'s mutation executor calls `withMutationScope`, which opens one multi-store transaction through the runtime's `transaction()`. It then runs driver plans directly on the returned `IdbTransactionScope` to check foreign keys, apply referential actions and write the rows ([ADR 007](adrs/ADR%20007%20-%20Two%20Transaction%20APIs.md), [ADR 009](adrs/ADR%20009%20-%20FK%20Validation%20and%20Referential%20Action%20Enforcement.md)). Middleware observes these steps as statements beneath a transaction activity, without being awaited and without intercepts ([ADR 028](adrs/ADR%20028%20-%20Middleware%20Observes%20Transactions%20Without%20Being%20Awaited.md)).
 
 | Write                                                 | Route                     |
 | ----------------------------------------------------- | ------------------------- |
@@ -76,7 +76,7 @@ Most writes take a different route: they need to read and write several stores i
 | `update`, `updateAll`, `upsert`, `deleteAll`          | Transaction scope, always |
 | Nested writes (relation callbacks)                    | Transaction scope, always |
 
-Reads with `include()` take the transaction route too. The store accessor opens one read-only transaction over the model's store and every included store, and runs the main scan and each relation load on it, so a write can't commit between them. Inside `db.transaction()`, the read joins the open transaction instead. Middleware doesn't see these reads either. Reads without `include()` go through `query()`.
+Reads with `include()` take the transaction route too. The store accessor opens one read-only transaction over the model's store and every included store, and runs the main scan and each relation load on it, so a write can't commit between them. Inside `db.transaction()`, the read joins the open transaction instead. Middleware observes these reads the same way. Reads without `include()` go through `query()`.
 
 Sync hooks into both routes. It extends single plans into a batch that also writes the outbox, and it wraps the transaction scope so each write in it records an outbox event. A hand-built plan for `update`, `updateAll` or `deleteAll` on a synced model has no known key, so it can't sync. Sync rejects it before any local write.
 

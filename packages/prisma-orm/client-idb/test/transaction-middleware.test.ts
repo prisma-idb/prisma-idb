@@ -132,24 +132,109 @@ describe("middleware inside transactions", () => {
   });
 
   it("does not await an async beforeEncode, so a hook that waits cannot hold the transaction", async () => {
-    const events: string[] = [];
-    let release!: () => void;
-    const blocked = new Promise<void>((resolve) => (release = resolve));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      let resumed = false;
+      const resumedAtEnd: boolean[] = [];
+      // Never settles on its own: a hook that was awaited would hold the statement forever, so the
+      // race below turns that regression into a failure instead of a hang.
+      const blocked = new Promise<void>(() => undefined);
+      const client = await open([
+        recorder([], {
+          // Outside a transaction a hook is awaited, so only block inside one.
+          async beforeEncode(_plan, ctx) {
+            if (ctx.scope !== "transaction") return;
+            await blocked;
+            resumed = true;
+          },
+          async activityEnded(activity, _result, ctx) {
+            if (activity.kind === "statement" && ctx.scope === "transaction") resumedAtEnd.push(resumed);
+          },
+        }),
+      ]);
+      const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error("statement was held")), 2000));
+      await Promise.race([
+        client.transaction(["users"], async (tx) => {
+          await (tx["users"] as unknown as Accessor).create({ id: "u1" });
+          await (tx["users"] as unknown as Accessor).create({ id: "u2" });
+        }),
+        timeout,
+      ]);
+      expect(resumedAtEnd.length).toBeGreaterThan(0);
+      expect(resumedAtEnd.every((value) => !value)).toBe(true);
+      expect(await client.orm["users"]!.all().toArray()).toHaveLength(2);
+      // The default client has no logger of its own, so the warning goes to the console, once.
+      const warnings = warn.mock.calls.filter((call) =>
+        JSON.stringify(call).includes("MIDDLEWARE_ASYNC_IN_TRANSACTION")
+      );
+      expect(warnings).toHaveLength(1);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("logs a statement hook's error to the console and keeps the statement", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const failure = new Error("hook failed");
+      const client = await open([
+        recorder([], {
+          // Outside a transaction a hook's error fails the statement, so only throw inside one.
+          async activityEnded(activity, _result, ctx) {
+            if (activity.kind === "statement" && ctx.scope === "transaction") throw failure;
+          },
+        }),
+      ]);
+      await client.transaction(["users"], async (tx) => {
+        await (tx["users"] as unknown as Accessor).create({ id: "u1" });
+      });
+      await vi.waitFor(() => expect(error).toHaveBeenCalledWith(failure));
+      expect(await client.orm["users"]!.all().toArray()).toHaveLength(1);
+    } finally {
+      error.mockRestore();
+    }
+  });
+
+  it("keeps the committed data and resolves when a transaction's activityEnded or activityFinalized hook throws", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const ended = new Error("ended failed");
+      const finalized = new Error("finalized failed");
+      const client = await open([
+        recorder([], {
+          async activityEnded(activity) {
+            if (activity.kind === "transaction") throw ended;
+          },
+          async activityFinalized(activity) {
+            if (activity.kind === "transaction") throw finalized;
+          },
+        }),
+      ]);
+      await expect(
+        client.transaction(["users"], async (tx) => {
+          await (tx["users"] as unknown as Accessor).create({ id: "u1" });
+        })
+      ).resolves.toBeUndefined();
+      expect(await client.orm["users"]!.all().toArray()).toHaveLength(1);
+      expect(error).toHaveBeenCalledWith(ended);
+      expect(error).toHaveBeenCalledWith(expect.objectContaining({ error: finalized }));
+    } finally {
+      error.mockRestore();
+    }
+  });
+
+  it("fails the transaction before the callback runs when a transaction activityStarted hook throws", async () => {
+    const failure = new Error("start refused");
     const client = await open([
-      recorder(events, {
-        // A hook that waits on something outside IndexedDB would let the transaction commit early if awaited.
-        async beforeEncode() {
-          await blocked;
+      recorder([], {
+        async activityStarted(activity) {
+          if (activity.kind === "transaction") throw failure;
         },
       }),
     ]);
-    await client.transaction(["users"], async (tx) => {
-      await (tx["users"] as unknown as Accessor).create({ id: "u1" });
-      await (tx["users"] as unknown as Accessor).create({ id: "u2" });
-    });
-    release();
-    expect(events).toContain("finalized:transaction:committed");
-    expect(await client.orm["users"]!.all().toArray()).toHaveLength(2);
+    const body = vi.fn();
+    await expect(client.transaction(["users"], body)).rejects.toBe(failure);
+    expect(body).not.toHaveBeenCalled();
   });
 
   describe("a transaction IndexedDB committed while the callback waited", () => {

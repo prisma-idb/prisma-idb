@@ -46,7 +46,9 @@ function observe(ctx: ActivityContext, call: () => unknown): void {
  * When the IndexedDB transaction completes or aborts, the transaction ends: its `activityEnded`
  * hooks, then `activityFinalized` for every statement and for the transaction, with the outcome
  * `committed`, `rolled-back`, or `unknown` when it aborted after `commit()` was called. `commit()`
- * resolves after those hooks, so a cache is invalidated before the caller reads again.
+ * resolves after those hooks, so a cache is invalidated before the caller reads again. A hook that
+ * fails at that point is logged and does not fail `commit()`, because IndexedDB has already
+ * completed the transaction. Errors and warnings go to `ctx.log`.
  */
 export async function observeTransaction(
   open: () => Promise<IdbTransactionScope>,
@@ -76,17 +78,26 @@ export async function observeTransaction(
   let closed = false;
   // `commit()` only waits for completion, so subscribing here also ends a transaction that
   // commits on its own because nothing more was sent.
+  // The framework rethrows the first error of a transaction's `activityEnded` hooks after it has
+  // finalized everything. IndexedDB has already committed or aborted by then, so the error is
+  // logged here instead of failing `commit()` for data that is saved.
+  const end = async (settlement: Parameters<TransactionActivityRun["end"]>[0]): Promise<void> => {
+    try {
+      await run.end(settlement);
+    } catch (error) {
+      run.ctx.log.error(error);
+    }
+  };
   const ended = scope.commit().then(
     () => {
       closed = true;
-      return run.end({ by: "commit", outcome: "succeeded" });
+      return end({ by: "commit", outcome: "succeeded" });
     },
     () => {
       closed = true;
-      return run.end({ by: "rollback", outcome: "succeeded", commitAttempted: commitCalled });
+      return end({ by: "rollback", outcome: "succeeded", commitAttempted: commitCalled });
     }
   );
-  ended.catch((error: unknown) => run.ctx.log.error(error));
 
   return {
     execute(plan: IdbAtomicPlan) {
@@ -177,7 +188,7 @@ export async function observeTransaction(
       for (const mw of middleware) {
         if (mw.activityEnded) observe(ctx, () => mw.activityEnded!(activity, result, ctx));
       }
-      if (outcome === "failed") slot.statementFailed();
+      if (outcome === "failed") observe(ctx, () => slot.statementFailed());
       observe(ctx, () => slot.ended({ outcome: outcome === "failed" ? "rolled-back" : "committed" }));
     };
     return scope.execute(plan).then(
