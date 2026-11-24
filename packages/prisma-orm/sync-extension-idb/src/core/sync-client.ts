@@ -52,6 +52,11 @@ export interface SyncIdbClientOptions<TContract extends IdbContract> {
   /** IDB factory override — primarily for tests. Defaults to `indexedDB`. */
   readonly factory?: IDBFactory;
   /**
+   * The `IDBKeyRange` of the same implementation as `factory`. Needed when the
+   * global scope has no IndexedDB, for example fake-indexeddb outside a browser.
+   */
+  readonly keyRange?: typeof IDBKeyRange;
+  /**
    * Models to write outbox events for.
    *
    * Pass an array of model names to scope tracking to specific models.
@@ -171,11 +176,10 @@ export function createSyncIdbClient<TContract extends IdbContract>(
 
   const { emit, on } = createEmitter<SyncClientEventMap>();
 
-  const driver = createIDBRuntimeDriver(
-    options.dbName,
-    undefined,
-    options.factory !== undefined ? { factory: options.factory } : undefined
-  ).create();
+  const driver = createIDBRuntimeDriver(options.dbName, undefined, {
+    ...(options.factory !== undefined ? { factory: options.factory } : {}),
+    ...(options.keyRange !== undefined ? { keyRange: options.keyRange } : {}),
+  }).create();
   const adapter = new IdbAdapter(idbCodecLookup);
   const runtime = createIdbRuntime({
     adapter,

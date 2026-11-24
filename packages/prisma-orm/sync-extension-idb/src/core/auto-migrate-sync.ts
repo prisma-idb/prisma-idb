@@ -50,6 +50,7 @@ export async function createAutoMigratingSyncIdbClient<TContract extends IdbCont
     contract: options.contractSpace.contractJson,
     dbName: options.dbName,
     ...(options.factory !== undefined ? { factory: options.factory } : {}),
+    ...(options.keyRange !== undefined ? { keyRange: options.keyRange } : {}),
     ...(options.trackedModels !== undefined ? { trackedModels: options.trackedModels } : {}),
   });
 }

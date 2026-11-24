@@ -1,5 +1,6 @@
 import type { RuntimeDriverInstance } from "@prisma/orm-framework/components/execution";
 import { executeIdbPlan } from "./execute";
+import { registerEnvironment } from "./execute/environment";
 import { MARKER_STORE_NAME, type IdbMarkerRecord, type IdbPlanBody } from "./plan-body";
 import { createTransactionScope, type IdbTransactionScope } from "./transaction-scope";
 
@@ -16,8 +17,8 @@ export class IdbRuntimeDriverInstance implements RuntimeDriverInstance<"idb", "i
    */
   readonly db: Promise<IDBDatabase>;
 
-  constructor(dbName: string, version?: number, factory?: IDBFactory) {
-    this.db = openIdbDatabase(dbName, version, factory);
+  constructor(dbName: string, version?: number, factory?: IDBFactory, keyRange?: typeof IDBKeyRange) {
+    this.db = openIdbDatabase(dbName, version, factory, keyRange);
   }
 
   async close(): Promise<void> {
@@ -103,7 +104,12 @@ export class IdbRuntimeDriverInstance implements RuntimeDriverInstance<"idb", "i
  * per ADR 001: the migration runner owns version bumping; the runtime just connects
  * to whatever schema is already in place.
  */
-function openIdbDatabase(dbName: string, version?: number, factory: IDBFactory = indexedDB): Promise<IDBDatabase> {
+function openIdbDatabase(
+  dbName: string,
+  version?: number,
+  factory: IDBFactory = indexedDB,
+  keyRange: typeof IDBKeyRange | undefined = globalThis.IDBKeyRange
+): Promise<IDBDatabase> {
   return new Promise<IDBDatabase>((resolve, reject) => {
     const req = factory.open(dbName, version);
 
@@ -117,6 +123,8 @@ function openIdbDatabase(dbName: string, version?: number, factory: IDBFactory =
 
     req.onsuccess = () => {
       const db = req.result;
+      // Ops on this connection compare keys and build ranges with the factory it came from.
+      registerEnvironment(db, { cmp: (a, b) => factory.cmp(a, b), keyRange });
       // Multi-tab safety: when another tab opens this database at a higher
       // version, the IDB spec fires `versionchange` on every other open
       // connection. If we don't close, the new tab's open request hangs
