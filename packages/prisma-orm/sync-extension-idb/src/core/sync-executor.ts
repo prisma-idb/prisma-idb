@@ -522,17 +522,30 @@ class SyncInterceptingTransactionScope implements IdbTransactionScope {
     return rows;
   }
 
-  /** Commits model and outbox writes before notifying subscribers. */
+  /**
+   * Commits model and outbox writes before notifying subscribers. If the
+   * transaction did not commit (it aborted), the buffered notifications are
+   * dropped because none of those writes persisted.
+   */
   async commit(): Promise<void> {
-    await this.#inner.commit();
+    try {
+      await this.#inner.commit();
+    } catch (error) {
+      this.#pendingBatches = [];
+      throw error;
+    }
     const batches = this.#pendingBatches;
     this.#pendingBatches = [];
     for (const entries of batches) this.#config.onOutboxWrite?.(entries);
   }
 
-  /** Discards buffered notifications before rolling back model and outbox writes. */
+  /**
+   * Aborts the transaction. The buffered notifications stay until `commit()`
+   * reports the outcome: IndexedDB may already have committed the transaction,
+   * in which case the abort does nothing, the writes persisted and subscribers
+   * must hear about them.
+   */
   rollback(): void {
-    this.#pendingBatches = [];
     this.#inner.rollback();
   }
 

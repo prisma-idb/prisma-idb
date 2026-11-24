@@ -8,9 +8,8 @@
  * `commit()` on the view does nothing, so an inner operation cannot commit the
  * outer transaction, and `rollback()` aborts it.
  *
- * The executor also records how the transaction ended, so the runner can tell
- * a rolled-back transaction from one that IndexedDB auto-committed early
- * (ADR 005).
+ * The executor records operation failures and requests a rollback. The runner
+ * waits for IndexedDB to report the transaction's outcome.
  */
 import { AsyncIterableResult } from "@prisma/orm-framework/components/runtime";
 import type { PlanMeta } from "@prisma/orm-framework/contract/types";
@@ -23,20 +22,12 @@ import { executeMutationPlan } from "./mutation-executor";
 /** A record returned by an IDB operation. */
 type Row = Record<string, unknown>;
 
-/** `open` until an operation fails (`aborted`) or finds the transaction already finished (`auto-committed`). */
-type State = "open" | "aborted" | "auto-committed";
-
-function isTransactionInactive(error: unknown): boolean {
-  return error instanceof IdbExecuteError && error.code === "TRANSACTION_INACTIVE";
-}
-
-/** Bind ORM operations to one scope and record aborts or early commits. */
+/** Bind ORM operations to one scope and request a rollback on failure. */
 export class OpenTransaction implements IdbQueryExecutorWithTransaction, IdbTransactionScope {
   readonly #scope: IdbTransactionScope;
   readonly #storeNames: ReadonlySet<string>;
   readonly #meta: PlanMeta;
-  #state: State = "open";
-  #autoCommitCause: unknown;
+  #failure: { cause: unknown } | undefined;
   #ended = false;
 
   constructor(scope: IdbTransactionScope, storeNames: readonly string[], meta: PlanMeta) {
@@ -50,28 +41,21 @@ export class OpenTransaction implements IdbQueryExecutorWithTransaction, IdbTran
     this.#ended = true;
   }
 
-  /** The error of the first operation that found the transaction already finished, if any. */
-  get autoCommitCause(): unknown {
-    return this.#autoCommitCause;
+  /** The operation failure or inactive probe that led to a rollback request. */
+  get failure(): Readonly<{ cause: unknown }> | undefined {
+    return this.#failure;
   }
 
-  /**
-   * Whether IndexedDB has already finished this transaction on its own, so a
-   * rollback can no longer undo its writes. Probes the transaction when no
-   * operation has failed yet, and records the probe error as the cause, so call
-   * it before rolling back or committing.
-   */
-  async hasAutoCommitted(): Promise<boolean> {
-    if (this.#state !== "open") return this.#state === "auto-committed";
+  /** Check whether the scope still accepts requests after the callback returns. */
+  async probeForEarlyCommit(): Promise<void> {
+    if (this.#failure) return;
     const [storeName] = this.#storeNames;
     try {
       await this.#scope.execute({ meta: this.#meta, kind: "key-get", storeName: storeName!, key: "" });
-      return false;
     } catch (error) {
-      if (!isTransactionInactive(error)) return false;
-      this.#state = "auto-committed";
-      this.#autoCommitCause = error;
-      return true;
+      // An inactive scope may still have pending work. The runner confirms
+      // whether IndexedDB committed by waiting for the scope to settle.
+      if (error instanceof IdbExecuteError && error.code === "TRANSACTION_INACTIVE") this.#recordFailure(error);
     }
   }
 
@@ -187,13 +171,12 @@ export class OpenTransaction implements IdbQueryExecutorWithTransaction, IdbTran
 
   /** Any failed operation aborts the whole transaction, even if the callback catches the error. */
   #recordFailure(error: unknown): void {
-    if (this.#state !== "open") return;
-    if (isTransactionInactive(error)) {
-      this.#state = "auto-committed";
-      this.#autoCommitCause = error;
+    if (this.#failure) {
+      // A mutation scope can request rollback before the accessor reports why it failed.
+      if (this.#failure.cause === undefined) this.#failure.cause = error;
       return;
     }
-    this.#state = "aborted";
+    this.#failure = { cause: error };
     this.#scope.rollback();
   }
 }

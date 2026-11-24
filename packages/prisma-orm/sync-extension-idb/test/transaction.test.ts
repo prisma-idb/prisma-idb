@@ -186,6 +186,27 @@ describe("SyncIdbClient.transaction()", () => {
     expect(emitted).toEqual([1]);
   });
 
+  it("notifies about persisted outbox rows when a validation failure follows the early commit", async () => {
+    const { client } = await createTestSyncClient();
+    const emitted: number[] = [];
+    client.on("outboxwrite", (entries) => emitted.push(entries.length));
+    const finished = untilNextTransactionFinishes();
+
+    const failure = await transactionOf(client)(["users"], async (tx) => {
+      await tx["users"]!.create({ id: "u1", name: "Alice" });
+      await finished();
+      // Rejected before it reaches IndexedDB, so the rollback it requests finds a finished transaction.
+      await tx["users"]!.create({ id: "u2", name: 42 });
+    }).catch((error: unknown) => error);
+    vi.restoreAllMocks();
+
+    expect(failure).toBeInstanceOf(IdbTransactionCommittedEarlyError);
+    expect((failure as IdbTransactionCommittedEarlyError).cause).toBeInstanceOf(IdbRecordValidationError);
+    expect(await scanAll(client, "users")).toHaveLength(1);
+    expect(await scanAll(client, "_idb_sync_outbox")).toHaveLength(1);
+    expect(emitted).toEqual([1]);
+  });
+
   it("records updates and deletes of existing rows", async () => {
     const { client } = await createTestSyncClient();
     await asAccessors(client.orm)["users"]!.create({ id: "u1", name: "Alice" });
@@ -228,6 +249,43 @@ describe("SyncIdbClient.rawClient.transaction()", () => {
 
 // A failed batch must not make subscribers display status that never committed.
 describe("outbox status transactions", () => {
+  it.each(["sync client", "raw client"] as const)(
+    "publishes committed status changes after the %s callback throws",
+    async (api) => {
+      const { client } = await createTestSyncClient();
+      try {
+        await asAccessors(client.orm)["users"]!.createAll([
+          { id: "u1", name: "Alice" },
+          { id: "u2", name: "Bob" },
+        ]);
+        const [first, second] = await scanAll(client, "_idb_sync_outbox");
+        const changes: Promise<number>[] = [];
+        const writes = vi.fn();
+        client.on("outboxchange", () => changes.push(client.outbox.pendingCount()));
+        client.on("outboxwrite", writes);
+        const finished = untilNextTransactionFinishes();
+        const original = new Error("after status commit");
+        const db = api === "raw client" ? client.rawClient : client;
+
+        await expect(
+          db.withTransaction(["_idb_sync_outbox", "_idb_sync_version_meta"], async (scope) => {
+            await markSynced(scope, first!["id"] as string);
+            await markFailed(scope, second!["id"] as string, "rejected", false);
+            await finished();
+            throw original;
+          })
+        ).rejects.toBe(original);
+
+        expect(await client.outbox.pendingCount()).toBe(0);
+        expect(await Promise.all(changes)).toEqual([0]);
+        expect(writes).not.toHaveBeenCalled();
+      } finally {
+        vi.restoreAllMocks();
+        await client.close();
+      }
+    }
+  );
+
   it("publishes mark-synced and mark-failed changes after commit, and suppresses aborted or empty batches", async () => {
     const { client } = await createTestSyncClient();
     await asAccessors(client.orm)["users"]!.createAll([
