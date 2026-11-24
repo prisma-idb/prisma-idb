@@ -1630,14 +1630,17 @@ describe("onUpdate — cascade on a self-referential model", () => {
         },
       },
     });
-    const orm = idbOrm({ contract, executor });
-    await orm["employees"]!.create({ id: "root", slug: "old", managerSlug: null } as never);
-    await orm["employees"]!.create({ id: "a", slug: "child", managerSlug: "old" } as never);
-    await orm["employees"]!.where({ id: "root" } as never).update({ slug: "new" } as never);
-    expect(await getAllRows(db, "employees")).toEqual([
-      { id: "a", slug: "child", managerSlug: "new" },
-      { id: "root", slug: "new", managerSlug: null },
-    ]);
+    // The cascaded value is checked against the slug index, so this needs the contract's indexes.
+    const { client, orm } = await open(contract);
+    try {
+      await orm["employees"]!.create({ id: "root", slug: "old", managerSlug: null });
+      await orm["employees"]!.create({ id: "a", slug: "child", managerSlug: "old" });
+      await orm["employees"]!.where({ id: "root" }).update({ slug: "new" });
+      expect(await orm["employees"]!.findUnique("a")).toEqual({ id: "a", slug: "child", managerSlug: "new" });
+      expect(await orm["employees"]!.findUnique("root")).toEqual({ id: "root", slug: "new", managerSlug: null });
+    } finally {
+      await client.close();
+    }
   });
 });
 
@@ -2201,6 +2204,201 @@ async function open(contract: ReturnType<typeof defineContract>) {
   });
   return { client, orm: client.orm as unknown as Record<string, Orm> };
 }
+
+// A field can belong to more than one foreign key, as `tenantId` does here. A
+// cascade that changes it must leave every one of those keys pointing at a real
+// row, as SQL checks each constraint at the end of the statement.
+describe("referential writes — every foreign key they change is checked", () => {
+  const contract = defineContract({
+    family: idbFamilyPack,
+    target: idbTargetPack,
+    models: {
+      User: {
+        store: "users",
+        key: "id",
+        fields: { id: "String", tenantId: "String" },
+        relations: {
+          posts: {
+            to: "Post",
+            cardinality: "1:N",
+            on: { local: ["tenantId", "id"], target: ["tenantId", "authorId"] },
+            onUpdate: "cascade",
+          },
+        },
+      },
+      Category: { store: "categories", key: ["tenantId", "id"], fields: { tenantId: "String", id: "String" } },
+      Post: {
+        store: "posts",
+        key: "id",
+        fields: { id: "String", tenantId: "String", authorId: "String", categoryId: "String" },
+        relations: {
+          author: {
+            to: "User",
+            cardinality: "N:1",
+            on: { local: ["tenantId", "authorId"], target: ["tenantId", "id"] },
+          },
+          category: {
+            to: "Category",
+            cardinality: "N:1",
+            on: { local: ["tenantId", "categoryId"], target: ["tenantId", "id"] },
+          },
+        },
+      },
+    },
+  });
+
+  async function seed() {
+    const { client, orm } = await open(contract);
+    await orm["users"]!.create({ id: "u1", tenantId: "t1" });
+    await orm["categories"]!.create({ id: "c1", tenantId: "t1" });
+    await orm["posts"]!.create({ id: "p1", tenantId: "t1", authorId: "u1", categoryId: "c1" });
+    return { client, orm };
+  }
+
+  it.each([
+    ["update", (orm: Record<string, Orm>) => orm["users"]!.where({ id: "u1" }).update({ tenantId: "t2" })],
+    ["updateAll", (orm: Record<string, Orm>) => orm["users"]!.updateAll({ tenantId: "t2" }).toArray()],
+    [
+      "upsert",
+      (orm: Record<string, Orm>) =>
+        orm["users"]!.upsert({ where: { id: "u1" }, create: { id: "u1", tenantId: "t2" }, update: { tenantId: "t2" } }),
+    ],
+  ])("%s: rolls back a cascade that leaves another foreign key dangling", async (_, write) => {
+    const { client, orm } = await seed();
+    try {
+      await expect(write(orm)).rejects.toThrow(
+        "Cannot update User 'u1': Cascade on relation 'posts' leaves Post 'p1' with tenantId='t2', categoryId='c1', " +
+          "which does not reference a real row: relation 'category' has no Category with tenantId='t2', id='c1'."
+      );
+      expect(await orm["users"]!.findUnique("u1")).toEqual({ id: "u1", tenantId: "t1" });
+      expect(await orm["posts"]!.findUnique("p1")).toEqual({
+        id: "p1",
+        tenantId: "t1",
+        authorId: "u1",
+        categoryId: "c1",
+      });
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("accepts a cascade when every changed foreign key still points at a row", async () => {
+    const { client, orm } = await seed();
+    try {
+      await orm["categories"]!.create({ tenantId: "t2", id: "c1" });
+      await orm["users"]!.where({ id: "u1" }).update({ tenantId: "t2" });
+      expect(await orm["posts"]!.findUnique("p1")).toEqual({
+        id: "p1",
+        tenantId: "t2",
+        authorId: "u1",
+        categoryId: "c1",
+      });
+    } finally {
+      await client.close();
+    }
+  });
+});
+
+// Nested relation writes reach the same checks: a parent update that also
+// carries a relation mutation, and a connect that rewrites a child's foreign
+// key, whose own cascade then changes a grandchild.
+describe("referential writes — nested relation writes", () => {
+  const contract = defineContract({
+    family: idbFamilyPack,
+    target: idbTargetPack,
+    models: {
+      User: {
+        store: "users",
+        key: "id",
+        fields: { id: "String", tenantId: "String" },
+        relations: {
+          posts: {
+            to: "Post",
+            cardinality: "1:N",
+            on: { local: ["tenantId", "id"], target: ["tenantId", "authorId"] },
+            onUpdate: "cascade",
+          },
+        },
+      },
+      Category: { store: "categories", key: ["tenantId", "id"], fields: { tenantId: "String", id: "String" } },
+      Post: {
+        store: "posts",
+        key: "id",
+        fields: { id: "String", tenantId: "String", authorId: "String" },
+        indexes: { tenantPost: { keyPath: ["tenantId", "id"], unique: true } },
+        relations: {
+          author: {
+            to: "User",
+            cardinality: "N:1",
+            on: { local: ["tenantId", "authorId"], target: ["tenantId", "id"] },
+          },
+          comments: {
+            to: "Comment",
+            cardinality: "1:N",
+            on: { local: ["tenantId", "id"], target: ["tenantId", "postId"] },
+            onUpdate: "cascade",
+          },
+        },
+      },
+      Comment: {
+        store: "comments",
+        key: "id",
+        fields: { id: "String", tenantId: "String", postId: "String", categoryId: "String" },
+        relations: {
+          post: { to: "Post", cardinality: "N:1", on: { local: ["tenantId", "postId"], target: ["tenantId", "id"] } },
+          category: {
+            to: "Category",
+            cardinality: "N:1",
+            on: { local: ["tenantId", "categoryId"], target: ["tenantId", "id"] },
+          },
+        },
+      },
+    },
+  });
+  type Rel = { connect(where: unknown): unknown; disconnect(): unknown };
+
+  async function seed() {
+    const { client, orm } = await open(contract);
+    await orm["users"]!.create({ id: "u1", tenantId: "t1" });
+    await orm["users"]!.create({ id: "u2", tenantId: "t2" });
+    await orm["categories"]!.create({ tenantId: "t1", id: "c1" });
+    await orm["posts"]!.create({ id: "p1", tenantId: "t1", authorId: "u1" });
+    await orm["comments"]!.create({ id: "m1", tenantId: "t1", postId: "p1", categoryId: "c1" });
+    return { client, orm };
+  }
+
+  it("checks an update that also carries a relation mutation", async () => {
+    const { client, orm } = await seed();
+    try {
+      await expect(
+        orm["users"]!.where({ id: "u1" }).update({ tenantId: "t3", posts: (rel: Rel) => rel.connect([]) })
+      ).rejects.toThrow("relation 'category' has no Category with tenantId='t3', id='c1'.");
+      expect(await orm["comments"]!.findUnique("m1")).toEqual({
+        id: "m1",
+        tenantId: "t1",
+        postId: "p1",
+        categoryId: "c1",
+      });
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("checks a connect whose child cascades into a grandchild", async () => {
+    const { client, orm } = await seed();
+    try {
+      await expect(
+        orm["users"]!.where({ id: "u2" }).update({ posts: (rel: Rel) => rel.connect({ id: "p1" }) })
+      ).rejects.toThrow(
+        "Cannot update Post 'p1': Cascade on relation 'comments' leaves Comment 'm1' with tenantId='t2', categoryId='c1', " +
+          "which does not reference a real row: relation 'category' has no Category with tenantId='t2', id='c1'."
+      );
+      expect(await orm["posts"]!.findUnique("p1")).toEqual({ id: "p1", tenantId: "t1", authorId: "u1" });
+    } finally {
+      await client.close();
+    }
+  });
+});
 
 // `SetDefault` changes a child's foreign key just like `SetNull` does, so the
 // child's own `onUpdate` actions run, and the default is checked once the

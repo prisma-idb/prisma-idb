@@ -1034,8 +1034,8 @@ function buildSetDefaultPatch(contract: IdbContract, def: RelationDefinition): R
  * pessimistic (checks field *presence*, not whether the resolved value will
  * actually change, since the current row isn't read yet when this runs).
  * A `cascade`, `setNull` or `setDefault` action can change fields another
- * relation references. Include the stores reached from those fields
- * so the transaction can apply those actions too.
+ * relation references, so include the stores reached from those fields too,
+ * and the parents that the changed foreign keys must still point at.
  *
  * Returns `enforces: false` when no `onUpdate` enforcement can apply to this
  * write — callers use that to keep the existing fast blind-write path
@@ -1070,18 +1070,63 @@ interface CheckedReference {
   readonly parentFields: readonly string[];
 }
 
+const childReferences = new WeakMap<IdbContract, Map<string, CheckedReference[]>>();
+
+/** Collect a child's references from both sides of each declared relationship. */
+function getChildReferences(contract: IdbContract, modelName: string): readonly CheckedReference[] {
+  let byChild = childReferences.get(contract);
+  if (!byChild) {
+    const modelNames = Object.keys(domainModelsAtDefaultNamespace(contract.domain));
+    byChild = new Map(
+      modelNames.map((childName) => [
+        childName,
+        getForeignKeyRelations(contract, childName).map((fk) => ({
+          relationName: fk.relationName,
+          fields: fk.localFields,
+          parentModelName: fk.relatedModelName,
+          parentFields: fk.targetFields,
+        })),
+      ])
+    );
+    for (const parentModelName of modelNames) {
+      for (const edge of getChildEnforcementEdges(contract, parentModelName)) {
+        const references = byChild.get(edge.relatedModelName) ?? [];
+        const reference = {
+          relationName: edge.relationName,
+          fields: edge.targetFields,
+          parentModelName,
+          parentFields: edge.localFields,
+        };
+        if (!references.some((checked) => sameReference(checked, reference))) references.push(reference);
+        byChild.set(edge.relatedModelName, references);
+      }
+    }
+    childReferences.set(contract, byChild);
+  }
+  return byChild.get(modelName) ?? [];
+}
+
 /**
- * A row whose foreign key was rewritten by SetDefault. The relation can be
- * declared on the parent only, so use the reference from the action itself.
+ * A row that a referential action rewrote: the fields it wrote, the action
+ * that wrote them, and the relations those actions ran on. A relation can be
+ * declared only on the parent, so its reference is checked even when the
+ * child declares no foreign key.
  */
 interface ReferentialWrite {
   readonly modelName: string;
   readonly key: IDBValidKey;
+  readonly fields: Set<string>;
   readonly cause: string;
   readonly references: CheckedReference[];
 }
 
-/** Rows changed by SetDefault, checked after the triggering writes land. */
+/**
+ * The rows that referential actions rewrote during one delete or update.
+ * {@link verifyReferentialWrites} checks their foreign keys after the
+ * triggering write lands, as SQL checks foreign keys at the end of a
+ * statement. A cascaded value can be part of several foreign keys, and a
+ * default can point at the row being updated, so the check can't run earlier.
+ */
 export interface ReferentialWrites {
   readonly root: ReferentialRoot;
   readonly rows: Map<string, ReferentialWrite>;
@@ -1106,7 +1151,12 @@ function describeRoot(root: ReferentialRoot): string {
   return `Cannot ${root.operation} ${root.modelName} '${keyToken(root.key)}'`;
 }
 
-/** Check that each SetDefault action left a valid foreign key. */
+/**
+ * Checks every foreign key that a referential action changed, after the
+ * writes that triggered the actions have landed. Rows a later action deleted
+ * are skipped. A key with any `null` field isn't checked, like SQL's default
+ * `MATCH SIMPLE`.
+ */
 export async function verifyReferentialWrites(
   scope: IdbTransactionScope,
   contract: IdbContract,
@@ -1120,7 +1170,12 @@ export async function verifyReferentialWrites(
       const storeName = getStoreName(contract, write.modelName);
       const [row] = await scope.execute({ meta, kind: "key-get", storeName, key: write.key });
       if (!row) continue;
-      for (const reference of write.references) {
+      const references = [...write.references];
+      for (const reference of getChildReferences(contract, write.modelName)) {
+        if (!references.some((checked) => sameReference(checked, reference))) references.push(reference);
+      }
+      for (const reference of references) {
+        if (!reference.fields.some((field) => write.fields.has(field))) continue;
         const values = reference.fields.map((field) => row[field]);
         if (values.some((value) => value === null || value === undefined)) continue;
         const { parentModelName, parentFields } = reference;
@@ -1148,8 +1203,8 @@ function sameReference(a: CheckedReference, b: CheckedReference): boolean {
 
 /**
  * Write a referential action's `patch` to every child `where` matches. Each
- * child's own `onUpdate` actions run first. For SetDefault, record the new
- * reference to verify after the triggering write lands.
+ * child's own `onUpdate` actions run first, and the rewritten row is recorded
+ * in `writes` so its foreign keys are checked once the triggering write lands.
  */
 async function writeReferentialUpdate(
   scope: IdbTransactionScope,
@@ -1194,7 +1249,7 @@ async function writeReferentialUpdate(
     }
   }
 
-  if (action !== "setDefault") return;
+  const fields = Object.keys(patch);
   const reference = {
     relationName: def.relationName,
     fields: def.targetFields,
@@ -1205,10 +1260,19 @@ async function writeReferentialUpdate(
     const key = extractKeyFromRow(row, keyPath);
     const rowId = keyToken([def.relatedStoreName, key]);
     const recorded = writes.rows.get(rowId);
-    if (!recorded) {
-      writes.rows.set(rowId, { modelName: def.relatedModelName, key, cause, references: [reference] });
-    } else if (!recorded.references.some((checked) => sameReference(checked, reference))) {
-      recorded.references.push(reference);
+    if (recorded) {
+      for (const field of fields) recorded.fields.add(field);
+      if (!recorded.references.some((checked) => sameReference(checked, reference))) {
+        recorded.references.push(reference);
+      }
+    } else {
+      writes.rows.set(rowId, {
+        modelName: def.relatedModelName,
+        key,
+        fields: new Set(fields),
+        cause,
+        references: [reference],
+      });
     }
   }
 }
@@ -1224,8 +1288,8 @@ async function writeReferentialUpdate(
  * `cascade`, `setNull` and `setDefault` can trigger further `onUpdate`
  * actions on the child. Track active actions by row and relation so cycles
  * terminate and a different relation on the same row can still enforce its
- * own action. The caller uses {@link verifyReferentialWrites} to check
- * defaults after its own write.
+ * own action. Rewritten children are recorded in `writes`; the caller checks
+ * their foreign keys with {@link verifyReferentialWrites} after its own write.
  * `via` describes the action that is changing `oldRow` when this runs for a
  * child, so a refusal names the write the user made.
  *
@@ -1459,6 +1523,27 @@ export async function executeScalarCreateAllWithFkValidation(options: {
   });
 }
 
+/**
+ * The stores a referential write to `def`'s children reaches: the children's
+ * own `onUpdate` actions, and, unless the write only clears fields, the parents
+ * of the foreign keys it changes, which {@link verifyReferentialWrites} reads.
+ */
+function addReferentialWriteStores(
+  contract: IdbContract,
+  def: RelationDefinition,
+  action: "cascade" | "setNull" | "setDefault",
+  stores: Set<string>,
+  visited: Set<RelationDefinition>
+): void {
+  addOnUpdateStores(contract, def.relatedModelName, stores, visited, def.targetFields);
+  if (action === "setNull") return;
+  for (const reference of getChildReferences(contract, def.relatedModelName)) {
+    if (reference.fields.some((field) => def.targetFields.includes(field))) {
+      stores.add(getStoreName(contract, reference.parentModelName));
+    }
+  }
+}
+
 /** Collect the stores reached by updates to the supplied fields, visiting each relation once. */
 function addOnUpdateStores(
   contract: IdbContract,
@@ -1474,8 +1559,7 @@ function addOnUpdateStores(
     if (visited.has(def)) continue;
     visited.add(def);
     stores.add(def.relatedStoreName);
-    if (def.onUpdate !== "restrict")
-      addOnUpdateStores(contract, def.relatedModelName, stores, visited, def.targetFields);
+    if (def.onUpdate !== "restrict") addReferentialWriteStores(contract, def, def.onUpdate, stores, visited);
   }
   return enforces;
 }
@@ -1632,7 +1716,8 @@ export function collectRelatedStoreNames(contract: IdbContract, modelName: strin
 
 /**
  * Collects stores reached by `onDelete` actions, the `onUpdate` actions
- * triggered by `setNull` and `setDefault`. IndexedDB needs the full store list before opening
+ * triggered by `setNull` and `setDefault`, and the parents a `setDefault`
+ * value must point at. IndexedDB needs the full store list before opening
  * the transaction, so the traversal uses the contract and guards against cycles.
  */
 export function collectDeleteStoreNames(contract: IdbContract, modelName: string): string[] {
@@ -1650,7 +1735,7 @@ export function collectDeleteStoreNames(contract: IdbContract, modelName: string
       stores.add(def.relatedStoreName);
       if (action === "cascade") walk(def.relatedModelName);
       if (action === "setNull" || action === "setDefault") {
-        addOnUpdateStores(contract, def.relatedModelName, stores, visitedUpdates, def.targetFields);
+        addReferentialWriteStores(contract, def, action, stores, visitedUpdates);
       }
     }
   }

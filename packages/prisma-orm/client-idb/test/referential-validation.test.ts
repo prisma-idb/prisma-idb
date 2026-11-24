@@ -54,3 +54,60 @@ it("checks both SetDefault writes when store names and keys contain separators",
     await client.close();
   }
 });
+
+it("checks an overlapping foreign key declared only on the referenced model", async () => {
+  const client = await open(
+    defineContract({
+      family,
+      target,
+      models: {
+        User: {
+          store: "users",
+          key: "id",
+          fields: { id: "String", tenant: "String" },
+          relations: {
+            posts: {
+              to: "Post",
+              cardinality: "1:N",
+              onUpdate: "cascade",
+              on: { local: ["tenant", "id"], target: ["tenant", "authorId"] },
+            },
+          },
+        },
+        Category: {
+          store: "categories",
+          key: ["tenant", "id"],
+          fields: { tenant: "String", id: "String" },
+          relations: {
+            posts: {
+              to: "Post",
+              cardinality: "1:N",
+              on: { local: ["tenant", "id"], target: ["tenant", "categoryId"] },
+            },
+          },
+        },
+        Post: {
+          store: "posts",
+          key: "id",
+          fields: { id: "String", tenant: "String", authorId: "String", categoryId: "String" },
+        },
+      },
+    })
+  );
+  try {
+    await client.orm["users"]!.create({ id: "u1", tenant: "old" });
+    await client.orm["categories"]!.create({ tenant: "old", id: "c1" });
+    await client.orm["posts"]!.create({ id: "p1", tenant: "old", authorId: "u1", categoryId: "c1" });
+
+    const user = client.orm["users"]!.where({ id: "u1" });
+    await expect(user.update({ tenant: "new" })).rejects.toThrow(/has no Category/);
+    expect(await client.orm["posts"]!.findUnique("p1")).toMatchObject({ tenant: "old" });
+    expect(await client.orm["users"]!.findUnique("u1")).toMatchObject({ tenant: "old" });
+
+    await client.orm["categories"]!.create({ tenant: "new", id: "c1" });
+    await user.update({ tenant: "new" });
+    expect(await client.orm["posts"]!.findUnique("p1")).toMatchObject({ tenant: "new" });
+  } finally {
+    await client.close();
+  }
+});
