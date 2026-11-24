@@ -154,6 +154,10 @@ contract: prismaIdbContract("src/prisma/schema.prisma", { projection: "client" }
 
 [Client Contracts](/docs/prisma-8/sync/client-contracts) explains the rules, including what happens to a relation that points at an excluded model.
 
+## Attributes in a schema shared with a SQL server
+
+IDB reads the attributes it has a use for and refuses the rest, rather than dropping them and changing what the schema means. These are accepted and ignored so one schema can serve both: `@map`, `@db.*` and `@@schema`. Any other attribute, such as `@@fulltext`, fails to compile with `PSL_UNSUPPORTED_FIELD_ATTRIBUTE` or `PSL_UNSUPPORTED_MODEL_ATTRIBUTE`. Repeating an attribute that takes one value, such as `@default` or `@@map`, fails with `PSL_DUPLICATE_ATTRIBUTE`. These checks apply to excluded fields and models too.
+
 ## Config
 
 `prisma.config.ts` wraps an `orm` section built with `defineConfig` from `@prisma-idb/family-idb/config-types`. The [Quick Start](/docs/prisma-8/getting-started#3-configure-the-clis) shows a complete file.

@@ -201,7 +201,7 @@ export function buildContract(input: DefineContractInput) {
 | `IDB_UNKNOWN_DEFAULT_FUNCTION`          | A PSL default calls an unsupported function.                                                                                                                              |
 | `PSL_GENERATOR_IN_DEFAULT`              | A PSL default calls a generator function, such as `uuid()`. Use `@onCreate(...)`.                                                                                         |
 | `PSL_UNSUPPORTED_FIELD_ATTRIBUTE`       | A PSL field uses `@updatedAt`, for which you write `@onCreate(now()) @onUpdate(now())`, or an attribute IDB doesn't support. `@map` and `@db.*` are accepted and ignored. |
-| `PSL_DUPLICATE_ATTRIBUTE`               | A PSL field or model repeats an attribute such as `@default`, `@id`, `@relation`, `@@map` or `@@id`.                                                                      |
+| `PSL_DUPLICATE_ATTRIBUTE`               | A PSL field or model repeats an attribute such as `@default`, `@id`, `@relation`, `@@map` or `@@id`, including on an excluded field or model.                             |
 | `PSL_UNSUPPORTED_MODEL_ATTRIBUTE`       | A PSL model uses an attribute IDB doesn't support. `@@schema` is accepted and ignored.                                                                                    |
 | `PSL_UNRESOLVED_REFERENCE`              | A PSL field is typed `temporal.updatedAt()`. The message names the rewrite.                                                                                               |
 | `IDB_INVALID_DEFAULT_FUNCTION_ARGUMENT` | A PSL default function has invalid arguments.                                                                                                                             |
@@ -211,14 +211,14 @@ export function buildContract(input: DefineContractInput) {
 
 ### Relations and client projection
 
-| Code                                        | Meaning                                                             |
-| ------------------------------------------- | ------------------------------------------------------------------- |
-| `IDB_INVALID_RELATION`                      | A relation declaration is malformed or references an unknown model. |
-| `IDB_MISSING_RELATION_ATTRIBUTE`            | A PSL to-one relation has no `@relation` declaration.               |
-| `IDB_UNKNOWN_REFERENTIAL_ACTION`            | A PSL relation names an unsupported referential action.             |
-| `IDB_CONFLICTING_RELATION_ACTIONS`          | Reciprocal relations both declare the same referential action.      |
-| `IDB_UNRESOLVED_BACKRELATION`               | A backrelation has no matching owning relation after projection.    |
-| `IDB_CANNOT_EXCLUDE_KEY_FIELD`              | Client projection removes a model's primary-key field.              |
-| `IDB_CANNOT_EXCLUDE_RELATION_FIELD`         | Client projection removes a field needed by a surviving relation.   |
-| `IDB_EXCLUDE_ON_RELATION_FIELD_UNSUPPORTED` | Client projection attempts to exclude a relation field directly.    |
-| `IDB_UNKNOWN_EXCLUDED_FIELD`                | A TypeScript exclusion names an undeclared field.                   |
+| Code                                        | Meaning                                                                                                        |
+| ------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `IDB_INVALID_RELATION`                      | A relation declaration is malformed, references an unknown model, or sits on a field whose type isn't a model. |
+| `IDB_MISSING_RELATION_ATTRIBUTE`            | A PSL to-one relation has no `@relation` declaration.                                                          |
+| `IDB_UNKNOWN_REFERENTIAL_ACTION`            | A PSL relation names an unsupported referential action.                                                        |
+| `IDB_CONFLICTING_RELATION_ACTIONS`          | Reciprocal relations both declare the same referential action.                                                 |
+| `IDB_UNRESOLVED_BACKRELATION`               | A backrelation has no matching owning relation after projection.                                               |
+| `IDB_CANNOT_EXCLUDE_KEY_FIELD`              | Client projection removes a model's primary-key field.                                                         |
+| `IDB_CANNOT_EXCLUDE_RELATION_FIELD`         | Client projection removes a field needed by a surviving relation.                                              |
+| `IDB_EXCLUDE_ON_RELATION_FIELD_UNSUPPORTED` | Client projection attempts to exclude a relation field directly.                                               |
+| `IDB_UNKNOWN_EXCLUDED_FIELD`                | A TypeScript exclusion names an undeclared field.                                                              |

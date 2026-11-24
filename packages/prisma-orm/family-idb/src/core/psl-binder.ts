@@ -481,6 +481,72 @@ export function createIdbAttributeBinder(input: IdbAttributeBinderInput): IdbAtt
 
   const boundModels = new Map<ModelSymbol, BoundModelAttributes>();
 
+  type AttributeSymbol = ModelSymbol["attributes"][number] | FieldSymbol["attributes"][number];
+  const refusedByOwner = new Map<ModelSymbol | FieldSymbol, ReadonlySet<AttributeSymbol>>();
+
+  /**
+   * Reports attributes IDB would otherwise drop: a repeat of a single-use
+   * attribute, which would lose to the first without a word, and an attribute
+   * IDB doesn't support. Excluded fields and models are checked too, so a
+   * schema fails the same way in every projection. Each owner is checked once;
+   * the result is the set of refused attributes, which binding skips.
+   */
+  function refuseAttributes(
+    owner: ModelSymbol | FieldSymbol,
+    attributes: readonly AttributeSymbol[],
+    single: ReadonlySet<string>,
+    isPortable: (name: string) => boolean,
+    describe: { prefix: string; subject: string; unsupportedCode: string; unsupportedMessage: (name: string) => string }
+  ): ReadonlySet<AttributeSymbol> {
+    const cached = refusedByOwner.get(owner);
+    if (cached !== undefined) return cached;
+    const refused = new Set<AttributeSymbol>();
+    const seen = new Set<string>();
+    for (const attribute of attributes) {
+      if (single.has(attribute.name)) {
+        if (!seen.has(attribute.name)) {
+          seen.add(attribute.name);
+          continue;
+        }
+        refused.add(attribute);
+        diagnostics.push({
+          code: "PSL_DUPLICATE_ATTRIBUTE",
+          message: `\`${describe.prefix}${attribute.name}\` declared more than once on ${describe.subject}.`,
+          sourceId,
+          span: attribute.span,
+        });
+      } else if (!isPortable(attribute.name)) {
+        refused.add(attribute);
+        diagnostics.push({
+          code: describe.unsupportedCode,
+          message: describe.unsupportedMessage(attribute.name),
+          sourceId,
+          span: attribute.span,
+        });
+      }
+    }
+    refusedByOwner.set(owner, refused);
+    return refused;
+  }
+
+  function refusedModelAttributes(model: ModelSymbol): ReadonlySet<AttributeSymbol> {
+    return refuseAttributes(model, model.attributes, SINGLE_MODEL_ATTRIBUTES, isPortableModelAttribute, {
+      prefix: "@@",
+      subject: `model "${model.name}"`,
+      unsupportedCode: "PSL_UNSUPPORTED_MODEL_ATTRIBUTE",
+      unsupportedMessage: (name) => `Model "${model.name}" uses unsupported attribute "@@${name}".`,
+    });
+  }
+
+  function refusedFieldAttributes(model: ModelSymbol, field: FieldSymbol): ReadonlySet<AttributeSymbol> {
+    return refuseAttributes(field, field.attributes, SINGLE_FIELD_ATTRIBUTES, isPortableFieldAttribute, {
+      prefix: "@",
+      subject: `field "${model.name}.${field.name}"`,
+      unsupportedCode: "PSL_UNSUPPORTED_FIELD_ATTRIBUTE",
+      unsupportedMessage: (name) => `Field "${model.name}.${field.name}" uses unsupported attribute "@${name}".`,
+    });
+  }
+
   /** Binds one model's attributes. */
   function bindModel(model: ModelSymbol): BoundModelAttributes {
     const cached = boundModels.get(model);
@@ -491,33 +557,12 @@ export function createIdbAttributeBinder(input: IdbAttributeBinderInput): IdbAtt
     let map: BoundModelAttributes["map"];
     let id: BoundModelAttributes["id"];
     const indexes: BoundIndex[] = [];
-    const seen = new Set<string>();
+    const refused = refusedModelAttributes(model);
+    if (refused.size > 0) failed = true;
 
     for (const attribute of model.attributes) {
       const span = attribute.span;
-      // A second `@@map` or `@@id` would otherwise lose to the first without a word.
-      if (SINGLE_MODEL_ATTRIBUTES.has(attribute.name)) {
-        if (seen.has(attribute.name)) {
-          failed = true;
-          diagnostics.push({
-            code: "PSL_DUPLICATE_ATTRIBUTE",
-            message: `\`@@${attribute.name}\` declared more than once on model "${model.name}".`,
-            sourceId,
-            span,
-          });
-          continue;
-        }
-        seen.add(attribute.name);
-      } else if (!isPortableModelAttribute(attribute.name)) {
-        failed = true;
-        diagnostics.push({
-          code: "PSL_UNSUPPORTED_MODEL_ATTRIBUTE",
-          message: `Model "${model.name}" uses unsupported attribute "@@${attribute.name}".`,
-          sourceId,
-          span,
-        });
-        continue;
-      }
+      if (refused.has(attribute)) continue;
       switch (attribute.name) {
         case "map": {
           const value = interpret(mapModelSpec, attribute, ctx);
@@ -595,33 +640,12 @@ export function createIdbAttributeBinder(input: IdbAttributeBinderInput): IdbAtt
     const generators: { onCreate?: BoundAttribute<BoundGeneratorCall>; onUpdate?: BoundAttribute<BoundGeneratorCall> } =
       {};
     let relation: BoundFieldAttributes["relation"];
-    const seen = new Set<string>();
+    const refused = refusedFieldAttributes(model, field);
+    if (refused.size > 0) failed = true;
 
     for (const attribute of field.attributes) {
       const span = attribute.span;
-      // A second `@default` or `@relation` would otherwise lose to the first without a word.
-      if (SINGLE_FIELD_ATTRIBUTES.has(attribute.name)) {
-        if (seen.has(attribute.name)) {
-          failed = true;
-          diagnostics.push({
-            code: "PSL_DUPLICATE_ATTRIBUTE",
-            message: `\`@${attribute.name}\` declared more than once on field "${model.name}.${field.name}".`,
-            sourceId,
-            span,
-          });
-          continue;
-        }
-        seen.add(attribute.name);
-      } else if (!isPortableFieldAttribute(attribute.name)) {
-        failed = true;
-        diagnostics.push({
-          code: "PSL_UNSUPPORTED_FIELD_ATTRIBUTE",
-          message: `Field "${model.name}.${field.name}" uses unsupported attribute "@${attribute.name}".`,
-          sourceId,
-          span,
-        });
-        continue;
-      }
+      if (refused.has(attribute)) continue;
       switch (attribute.name) {
         case "id":
           if (interpret(idFieldSpec, attribute, ctx) === undefined) failed = true;
@@ -693,7 +717,8 @@ export function createIdbAttributeBinder(input: IdbAttributeBinderInput): IdbAtt
     model: bindModel,
     field: bindField,
     excludedField: (model, field) => {
-      for (const marker of field.attributes.filter(({ name }) => name === IDB_EXCLUDE_ATTR)) {
+      const refused = refusedFieldAttributes(model, field);
+      for (const marker of field.attributes.filter((a) => a.name === IDB_EXCLUDE_ATTR && !refused.has(a))) {
         interpret(excludeFieldSpec, marker, { ...base, selfModel: model, field });
       }
       return {
@@ -702,10 +727,15 @@ export function createIdbAttributeBinder(input: IdbAttributeBinderInput): IdbAtt
       };
     },
     isModelExcluded: (model) => {
+      // An excluded model's attributes go unread, but the schema still fails on the ones IDB refuses.
+      const refused = refusedModelAttributes(model);
+      for (const field of Object.values(model.fields)) refusedFieldAttributes(model, field);
       const markers = model.attributes.filter(({ name }) => name === IDB_EXCLUDE_ATTR);
       // Validate every marker, not just the first, so a repeated malformed exclusion cannot hide in either projection.
       // The model stays excluded either way: a malformed exclusion fails the contract through its diagnostic.
-      for (const marker of markers) interpret(excludeModelSpec, marker, { ...base, selfModel: model });
+      for (const marker of markers) {
+        if (!refused.has(marker)) interpret(excludeModelSpec, marker, { ...base, selfModel: model });
+      }
       return markers.length > 0;
     },
     isFieldExcluded: (field) => field.attributes.some((attribute) => attribute.name === IDB_EXCLUDE_ATTR),
