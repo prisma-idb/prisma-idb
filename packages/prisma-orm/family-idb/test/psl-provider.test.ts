@@ -334,3 +334,10 @@ describe("stripIdbExcludeAttributes", () => {
     expect(result.ok).toBe(true);
   });
 });
+
+describe("stripIdbExcludeAttributes and @ignore", () => {
+  it("leaves @ignore and @@ignore for the SQL family to read", () => {
+    const schema = "model A {\n  id String @id\n  s String @ignore\n}\nmodel B {\n  id String @id\n  @@ignore\n}\n";
+    expect(stripIdbExcludeAttributes(schema)).toBe(schema);
+  });
+});

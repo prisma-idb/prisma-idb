@@ -29,11 +29,19 @@ function bind(schema: string, { withSources = true } = {}) {
 
 describe("idbAttributeSpecs", () => {
   it("registers every attribute the interpreter reads, and no others", () => {
-    expect(Object.keys(idbAttributeSpecs.model).sort()).toEqual(["id", "idb.exclude", "index", "map", "unique"]);
+    expect(Object.keys(idbAttributeSpecs.model).sort()).toEqual([
+      "id",
+      "idb.exclude",
+      "ignore",
+      "index",
+      "map",
+      "unique",
+    ]);
     expect(Object.keys(idbAttributeSpecs.field).sort()).toEqual([
       "default",
       "id",
       "idb.exclude",
+      "ignore",
       "onCreate",
       "onUpdate",
       "relation",
