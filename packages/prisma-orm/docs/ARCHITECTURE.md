@@ -336,7 +336,7 @@ Dependencies between packages in this repo:
 | **Plan**              | A query or write described as data. `client-idb` builds `IdbQueryPlan`s; the driver runs `IdbPlanBody`s.                                                |
 | **`upgradeneeded`**   | The IndexedDB event fired when a database opens at a higher version. It's the only place object stores and indexes can be created or dropped.           |
 | **Projection**        | Which parts of the schema a contract includes. `"client"` leaves out everything marked `@idb.exclude`.                                                  |
-| **Ownership graph**   | The graph `sync-server` builds from each synced model, through its N:1 relations, back to the root model. Used to authorize sync.                       |
+| **Ownership graph**   | Ownership paths from each synced model back to the root through relations that own their foreign keys.                                                  |
 
 ## Out of scope
 

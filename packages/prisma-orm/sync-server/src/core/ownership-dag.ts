@@ -3,21 +3,14 @@ import { ownsForeignKey } from "./owning-relation";
 import { domainModelsAtDefaultNamespace } from "@prisma/orm-framework/contract/types";
 
 /**
- * The contract shape `sync-server` operates on — any family's `Contract`
- * (see ADR 014's "Genuinely family-agnostic"). The DAG only ever walks
- * `contract.domain` (relations, model names), which is framework-level and
- * identical in shape across IDB, SQL, Mongo, or any future family — nothing
- * here reads `contract.storage` except through the injectable `getKeyField`
- * resolver in `sync-server.ts`, which is the one place storage shape
- * actually varies by family.
+ * The ownership graph reads every family's contract relations. For a SQL
+ * one-to-one, the declared foreign key identifies the owning side.
  */
 export type SyncServerContract = Contract;
 
 /**
- * The ownership graph: `edges.get(model)` is every model reachable from
- * `model` via one of its own `N:1` relations (the models it could be
- * "owned by"). Built once, at `createSyncServer()` construction — never
- * per-request (ADR 014).
+ * Each edge follows one relation that owns its foreign key. The sync server
+ * builds the graph once during startup.
  */
 export interface OwnershipDag {
   readonly rootModel: string;

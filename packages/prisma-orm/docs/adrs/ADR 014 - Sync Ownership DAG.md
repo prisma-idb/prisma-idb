@@ -10,7 +10,7 @@ Creates and updates must keep every populated tenant parent in the caller's scop
 Existing-row access, pull and delete require only one matching path to that scope.
 
 The sync server follows relations from each record to a root model, such as `User`.
-These paths form the ownership graph. The server builds it from the contract at startup.
+These paths form the ownership graph. The server builds it from the contract at startup. A many-to-one relation carries ownership. A SQL one-to-one carries ownership from the table that declares the foreign key. Prisma derives the owning side from the SQL contract's foreign keys. [Prisma SQL relation storage](https://github.com/prisma/orm/blob/17385f2d86eefa3783e86d94534168a224806c0a/packages/2-sql-family/1-core/contract/src/relation-storage.ts)
 
 `@prisma-idb/sync-server` describes the checks and queries. The app executes them against its database.
 The package runs only on the server.
@@ -68,7 +68,7 @@ Both functions return descriptions, not results. The app runs them against its o
 
 There is no generated file. `buildOwnershipDag` walks every model's relations once, when `createSyncServer` runs. It checks two things, and throws if either fails:
 
-- **Every synced model can reach the root.** Every model in `clientContract` must have a path of required relations to `rootModel`. Server-only models can appear partway along a path, but don't need their own path to the root. For example, the kanban example's `AuditLog` has no relations and is marked `@@idb.exclude`, so it is fine. A synced model with no path is almost always a missing `@@idb.exclude`, so it fails at startup rather than on its first push.
+- **Every synced model can reach the root.** Every model in `clientContract` must have a path of owning relations to `rootModel`. Server-only models can appear partway along a path, but don't need their own path to the root. For example, the kanban example's `AuditLog` has no relations and is marked `@@idb.exclude`, so it is fine. A synced model with no path is almost always a missing `@@idb.exclude`, so it fails at startup rather than on its first push.
 - **The graph has no cycles.**
 
 A broken graph is a configuration error, so it fails when the server starts, not on a request.

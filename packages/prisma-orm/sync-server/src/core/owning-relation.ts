@@ -24,10 +24,8 @@ const sameColumns = (a: readonly string[], b: readonly string[]) =>
   a.length === b.length && a.every((column, index) => column === b[index]);
 
 /**
- * Whether `relation`, declared on `modelName`, holds the foreign key, so that
- * ownership flows through it. Every `N:1` does. A `1:1` does on the side whose
- * table declares a foreign key on exactly its local columns to the target's
- * columns, as Prisma 8 SQL records it. The other side of a `1:1` doesn't.
+ * Ownership follows any many-to-one relation. For a SQL one-to-one, it
+ * follows the side whose table declares the matching foreign key.
  */
 export function ownsForeignKey(contract: SyncServerContract, modelName: string, relation: ToOneRelation): boolean {
   if (relation.cardinality === "N:1") return true;

@@ -4,7 +4,7 @@ import type { GetKeyField } from "./sync-server";
 import type { SyncServerContract } from "./ownership-dag";
 
 /**
- * Every structural path of `N:1` relation names from `modelName` back to
+ * Every path of owning relation names from `modelName` back to
  * `rootModel` — not just the shortest. A record legitimately reachable
  * through relation A *or* relation B is authorized either way (ADR 014's
  * "any one path, not shortest path"), so callers must check all of them.

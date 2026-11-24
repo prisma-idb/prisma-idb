@@ -10,7 +10,7 @@ Reference for `@prisma-idb/sync-server` and `@prisma-idb/sync-server-sql`. For c
 
 ## How authorization works
 
-Every synced record belongs to one user, or to whatever your root model is. The server works out the owner by following many-to-one relations from the record up to the root model. With `Todo → Board → User`, a todo belongs to the user who owns its board.
+Every synced record belongs to one user, or to whatever your root model is. The server works out the owner by following relations that own foreign keys from the record up to the root model. With `Todo → Board → User`, a todo belongs to the user who owns its board.
 
 `sync-server` builds this ownership graph from your schema once, at startup. For each pushed event or pulled changelog row, it returns a description of what to check: which relation paths lead from the record to the root, and which key they must reach. It never runs queries itself, so it works with any database and any HTTP framework. `sync-server-sql` runs those checks against a Prisma 8 SQL client.
 
