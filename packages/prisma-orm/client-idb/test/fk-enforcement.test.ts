@@ -2091,35 +2091,37 @@ describe("restrict — shared-primary-key 1:1 (child's own PK is the FK)", () =>
 // A child row with a null foreign-key field references no parent (SQL's
 // MATCH SIMPLE), so a parent whose referenced field is null has no children,
 // however many unrelated children carry null foreign keys.
-describe("restrict — null in the parent's referenced fields", () => {
-  const contract = defineContract({
-    family: idbFamilyPack,
-    target: idbTargetPack,
-    models: {
-      Org: {
-        store: "orgs",
-        key: "id",
-        fields: { id: "String", orgId: "String?", handle: "String?" },
-        relations: {
-          members: {
-            to: "Member",
-            cardinality: "1:N",
-            on: { local: ["orgId", "handle"], target: ["memberOrgId", "memberHandle"] },
-            onDelete: "restrict",
-            onUpdate: "restrict",
+describe("referential actions — null in the parent's referenced fields", () => {
+  function contractFor(action: "restrict" | "cascade" | "setNull") {
+    return defineContract({
+      family: idbFamilyPack,
+      target: idbTargetPack,
+      models: {
+        Org: {
+          store: "orgs",
+          key: "id",
+          fields: { id: "String", orgId: "String?", handle: "String?" },
+          relations: {
+            members: {
+              to: "Member",
+              cardinality: "1:N",
+              on: { local: ["orgId", "handle"], target: ["memberOrgId", "memberHandle"] },
+              onDelete: action,
+              onUpdate: action,
+            },
           },
         },
+        Member: {
+          store: "members",
+          key: "id",
+          fields: { id: "String", memberOrgId: "String?", memberHandle: "String?" },
+        },
       },
-      Member: {
-        store: "members",
-        key: "id",
-        fields: { id: "String", memberOrgId: "String?", memberHandle: "String?" },
-      },
-    },
-  });
+    });
+  }
 
-  async function seed() {
-    const { db, orm } = await setup(contract, { orgs: "id", members: "id" });
+  async function seed(action: "restrict" | "cascade" | "setNull" = "restrict") {
+    const { db, orm } = await setup(contractFor(action), { orgs: "id", members: "id" });
     // Org rows: one fully set, one with a partly null tuple, one fully null.
     await orm["orgs"]!.create({ id: "full", orgId: "A", handle: "h" });
     await orm["orgs"]!.create({ id: "partial", orgId: "A", handle: null });
@@ -2129,6 +2131,25 @@ describe("restrict — null in the parent's referenced fields", () => {
     await orm["members"]!.create({ id: "m-empty", memberOrgId: null, memberHandle: null });
     return { db, orm, members: await getAllRows(db, "members") };
   }
+
+  it.each([
+    ["cascade", "delete"],
+    ["cascade", "update"],
+    ["setNull", "delete"],
+    ["setNull", "update"],
+  ] as const)("%s on %s leaves rows with a partly null foreign key alone", async (action, operation) => {
+    const { db, orm, members } = await seed(action);
+    try {
+      if (operation === "delete") {
+        await orm["orgs"]!.delete("partial");
+      } else {
+        await orm["orgs"]!.where({ id: "partial" }).update({ handle: "h2" });
+      }
+      expect(await getAllRows(db, "members")).toEqual(members);
+    } finally {
+      db.close();
+    }
+  });
 
   it("delete: removes a parent with a partly null tuple and leaves the children alone", async () => {
     const { db, orm, members } = await seed();
