@@ -48,6 +48,10 @@ const unsubscribe = db.on("outboxwrite", (entries) => {
 });
 ```
 
+The push order lives in `_idb_sync_outbox_order`. Each tracked write adds a row there in the same transaction as the write, and IndexedDB's key generator numbers it, so the sequence holds across reloads, tabs and clock changes. The worker sends events in that sequence. An event with no order row was queued before the store existed. The worker sends those first, ordered by `createdAt`, and then the numbered events. The worker's cleanup removes the order rows of acknowledged events and keeps the rows of unsent, rejected and discarded ones.
+
+An app that opens the database through `createAutoMigratingSyncIdbClient` gets the store from the extension's migration the next time it opens. An app that applies migrations itself must apply that migration before it opens `createSyncIdbClient`, because every tracked write and push uses the store. Without it, those calls fail with an error that names the missing store.
+
 Use `db.outbox.hasPending()` for a sync button and `db.outbox.pendingCount()` for a pending badge. Both include retryable events waiting for backoff. They exclude synced events and permanent rejections (`retryable: false`). Each call reads committed state from IndexedDB.
 
 `db.on("outboxchange", callback)` fires after tracked appends, successful pushes, and failed pushes, including requests that throw or time out. It has no payload; read the pending status again in the callback. A bulk write or push-result transaction emits once after commit, even if it changes several events. A tracked `db.transaction()` also emits once. Rollbacks and reads emit nothing. Low-level `markSynced` and `markFailed` calls participate when used inside this client's `withTransaction` or `rawClient.withTransaction`. If the callback throws after IndexedDB has committed a status change, the client still emits `outboxchange` and rethrows the callback error. Direct raw writes to the outbox store do not emit notifications. Notifications belong to this client instance.

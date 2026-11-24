@@ -73,8 +73,10 @@ function isInBackoff(event: OutboxEvent, backoff: RetryBackoff, now: Date): bool
 }
 
 /**
- * Every unsynced, retryable outbox event, oldest first (`createdAt`
- * ascending → FIFO ordering for push).
+ * Every unsynced, retryable outbox event in push order: the order store's
+ * sequence number ascending, which is the order the writes committed in.
+ * Events with no order row (queued before the order store existed) go first,
+ * and ties break on `createdAt` ascending.
  *
  * Filters `synced`/`retryable` in-memory over a full store scan — `boolean`
  * is not a valid IndexedDB key type (still an open spec proposal:
@@ -103,7 +105,7 @@ async function readPendingEvents(scope: IdbTransactionScope): Promise<OutboxEven
 }
 
 /**
- * Fetch the next batch of events to push: pending events, oldest first.
+ * Fetch the next batch of events to push: pending events in push order (see {@link readPendingEvents}).
  *
  * With `backoff`, the batch stops at the first event still waiting out its
  * retry delay. A later event never overtakes an earlier one, because it may

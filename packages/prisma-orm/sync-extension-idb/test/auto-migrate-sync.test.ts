@@ -4,7 +4,9 @@ import { defineContract } from "@prisma-idb/family-idb/contract-ts";
 import idbFamilyPack from "@prisma-idb/family-idb/pack";
 import idbTargetPack from "@prisma-idb/target-idb/pack";
 import { idbSyncExtension } from "../src/exports/control";
-import { createAutoMigratingSyncIdbClient } from "../src/exports/client";
+import { getNextBatch } from "../src/core/outbox-store";
+import previousSyncContract from "../migrations/snapshots/609932199fd5710d371fa966650a1806c1f587c912ff9d8c40f7b2efd84eed70/contract.json";
+import { createAutoMigratingSyncIdbClient, createSyncIdbClient } from "../src/exports/client";
 import { buildContractSpaceFixture } from "./_contract-space-fixture";
 
 const contract = defineContract({
@@ -18,6 +20,21 @@ const contract = defineContract({
 let dbCounter = 0;
 function dbName(): string {
   return `auto-mig-sync-${++dbCounter}`;
+}
+
+/** The sync extension as it was before the outbox order store existed. */
+function previousSyncExtension() {
+  const syncSpace = idbSyncExtension.contractSpace;
+  const baseline = syncSpace.migrations.find((pkg) => pkg.metadata.from === null)!;
+  return {
+    ...idbSyncExtension,
+    contractSpace: {
+      ...syncSpace,
+      contractJson: previousSyncContract as unknown as typeof syncSpace.contractJson,
+      migrations: [baseline],
+      headRef: { hash: baseline.metadata.to, invariants: [] },
+    },
+  };
 }
 
 describe("createAutoMigratingSyncIdbClient", () => {
@@ -175,6 +192,115 @@ describe("createAutoMigratingSyncIdbClient", () => {
       expect(users).toHaveLength(1); // existing data preserved, not wiped by a re-migration
     } finally {
       await db2.close();
+    }
+  });
+
+  it("upgrades a database at the previous sync head and pushes its queued events first", async () => {
+    const name = dbName();
+    const syncSpace = idbSyncExtension.contractSpace;
+    const orderMigration = syncSpace.migrations.find((pkg) => pkg.dirName === "20261122T1425_outbox_order")!;
+    const previous = previousSyncExtension();
+    expect(orderMigration.metadata.from).toBe(previous.contractSpace.headRef.hash);
+    const old = await createAutoMigratingSyncIdbClient({
+      contractSpace: buildContractSpaceFixture(contract),
+      dbName: name,
+      extensions: [previous],
+    });
+    await old.close();
+
+    const legacy = (id: string, createdAt: string) => ({
+      id,
+      entityType: "User",
+      operation: "create",
+      payload: { id: `u-${id}`, name: id },
+      createdAt: new Date(createdAt),
+      synced: false,
+      syncedAt: null,
+      lastAttemptedAt: null,
+      tries: 0,
+      lastError: null,
+      migrationError: null,
+      retryable: true,
+      versionMetaId: null,
+    });
+    const raw = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open(name);
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    try {
+      expect(raw.objectStoreNames.contains("_idb_sync_outbox_order")).toBe(false);
+      await new Promise<void>((resolve, reject) => {
+        const tx = raw.transaction("_idb_sync_outbox", "readwrite");
+        // Ids sort the other way round from createdAt, so the order cannot come from the ids.
+        tx.objectStore("_idb_sync_outbox").put(legacy("b-legacy-first", "2026-01-01T00:00:00Z"));
+        tx.objectStore("_idb_sync_outbox").put(legacy("a-legacy-second", "2026-01-02T00:00:00Z"));
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+      });
+    } finally {
+      raw.close();
+    }
+
+    const client = await createAutoMigratingSyncIdbClient({
+      contractSpace: buildContractSpaceFixture(contract),
+      dbName: name,
+      extensions: [idbSyncExtension],
+    });
+    try {
+      const orm = client.orm as unknown as { users: { create(data: unknown): Promise<unknown> } };
+      await orm.users.create({ id: "u-new-1", name: "new 1" });
+      await orm.users.create({ id: "u-new-2", name: "new 2" });
+
+      const db = await new Promise<IDBDatabase>((resolve, reject) => {
+        const request = indexedDB.open(name);
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+      try {
+        expect(db.objectStoreNames.contains("_idb_sync_outbox_order")).toBe(true);
+        const order = db.transaction("_idb_sync_outbox_order").objectStore("_idb_sync_outbox_order");
+        expect(order.autoIncrement).toBe(true);
+        expect([...order.indexNames].length).toBeGreaterThan(0);
+        const marker = await new Promise<{ storageHash: string }>((resolve, reject) => {
+          const request = db.transaction("_prisma_next_marker").objectStore("_prisma_next_marker").get("idb-sync");
+          request.onsuccess = () => resolve(request.result as { storageHash: string });
+          request.onerror = () => reject(request.error);
+        });
+        expect(marker.storageHash).toBe(syncSpace.headRef.hash);
+      } finally {
+        db.close();
+      }
+
+      const batch = await getNextBatch(client.rawClient);
+      expect(batch.map((event) => (event.payload as { id: string }).id)).toEqual([
+        "u-b-legacy-first",
+        "u-a-legacy-second",
+        "u-new-1",
+        "u-new-2",
+      ]);
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("names the missing order store when an app skipped the sync extension's migration", async () => {
+    const name = dbName();
+    const contractSpace = buildContractSpaceFixture(contract);
+    const old = await createAutoMigratingSyncIdbClient({
+      contractSpace,
+      dbName: name,
+      extensions: [previousSyncExtension()],
+    });
+    await old.close();
+    const client = createSyncIdbClient({ contract: contractSpace.contractJson, dbName: name });
+    try {
+      const orm = client.orm as unknown as { users: { create(data: unknown): Promise<unknown> } };
+      const missing = /no "_idb_sync_outbox_order" store[\s\S]*createAutoMigratingSyncIdbClient/;
+      await expect(orm.users.create({ id: "u1", name: "A" })).rejects.toThrow(missing);
+      await expect(client.outbox.hasPending()).rejects.toThrow(missing);
+    } finally {
+      await client.close();
     }
   });
 });
