@@ -12,6 +12,7 @@ import { applyPushEvent as applyPushEventImpl, toSyncPushPayload } from "./push"
 import { resolvePullRecord as resolvePullRecordImpl } from "./resolve-pull-record";
 import { applyPush as applyPushImpl } from "./apply-push";
 import { pull as pullImpl } from "./pull";
+import { inReadSnapshot } from "./read-snapshot";
 import type { ModelWritePolicies } from "./write-policy";
 import { violatesWritePolicy } from "./write-policy";
 
@@ -48,7 +49,7 @@ export interface SqlSyncAdapter {
     check: PushCheck,
     scopeKey: string
   ): Promise<SqlPushResult>;
-  /** Returns the authorized row with only client-contract fields. Requires `syncServer`. */
+  /** Reads the authorized row and its ownership in one snapshot. Requires `syncServer`. */
   resolvePullRecord(
     db: unknown,
     model: string,
@@ -109,17 +110,12 @@ export function createSqlSyncAdapter(options: CreateSqlSyncAdapterOptions): SqlS
       }
       return applyPushEventImpl(db, contract, getKeyField, event, model, check, scopeKey);
     },
-    resolvePullRecord: async (db, model, check, keyPath, operation) =>
-      resolvePullRecordImpl(
-        db,
-        requireSyncServer("resolvePullRecord"),
-        contract,
-        getKeyField,
-        model,
-        check,
-        keyPath,
-        operation
-      ),
+    resolvePullRecord: async (db, model, check, keyPath, operation) => {
+      const server = requireSyncServer("resolvePullRecord");
+      return inReadSnapshot(db, contract.target, (tx) =>
+        resolvePullRecordImpl(tx, server, contract, getKeyField, model, check, keyPath, operation)
+      );
+    },
     applyPush: async (db, input) => {
       const server = requireSyncServer("applyPush");
       const mismatch = findContractMismatch(server, contractCheck, input.clientStorageHash);

@@ -227,7 +227,9 @@ For required Postgres `Json` fields (`pg/json@1` and `pg/jsonb@1`), wire `null` 
 
 ### Pull validation
 
-A pull reads its changelog page, each row and each row's ownership in one transaction. On PostgreSQL it runs at `REPEATABLE READ`, so every read sees the same committed state, and a write that commits during the pull can't pair a row with an owner it never had. The record that comes back with a rejected push is read the same way.
+A pull reads the changelog page, records and ownership chains in one transaction. PostgreSQL uses `REPEATABLE READ` so they all see the same committed state. Custom pulls through `resolvePullRecord` and records returned with rejected pushes use the same isolation. These reads take no row locks.
+
+Each page holds one connection while it resolves records and ownership hops in sequence. Lower `pullLimit` if pages are slow or the connection pool is small. Both `pull` and `resolvePullRecord` need a `db` with `.transaction(fn)`.
 
 Ordinary pull logs include `record`, with `null` signaling a delete or revoked ownership. When key decoding throws `KEYPATH_VALIDATION_FAILURE`, `pull` returns `validationError: "KEYPATH_VALIDATION_FAILURE"` and omits `record`. `applyPull` skips those entries, counts them as validation failures and advances the cursor without changing local records or version metadata. This marker does not cover every malformed key: a root-model ownership rejection can return `record: null` before decoding, so the client deletes its local copy.
 

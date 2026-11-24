@@ -120,6 +120,8 @@ Pull has two steps, as in the old generator. `buildPullQueries` is only the seco
 1. **Pre-filter the changelog.** When a push is accepted, the app stores its `scopeKey` on the changelog row. On pull, it first selects only rows with the caller's `scopeKey`. `SyncPullLogEntry` deliberately has no `scopeKey` field. Storing it and filtering on it is the app's job.
 2. **Re-check ownership live.** For each remaining row, run the check from `buildPullQueries` against current data.
 
+PostgreSQL reads the changelog page, records and ownership chains in one `REPEATABLE READ` transaction. The public `resolvePullRecord` method uses the same isolation for custom pulls. Rejected-push reconciliation uses one snapshot too.
+
 The live re-check is needed because ownership can change after the push. For example, Alice creates a todo on her board, and the changelog row is stored with `scopeKey: "alice"`. The board is then given to Bob. Alice's next pull still matches the stored `scopeKey`, but the live check now leads to Bob, so Alice's query finds nothing. Without step 2, Alice would still receive the todo.
 
 When a record fails the live check, the server sends it with `record: null`. On the client, `applyPull` treats a `null` record as a delete, including cascades, rather than skipping it. A record the client may no longer see has to disappear locally.
