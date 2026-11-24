@@ -221,6 +221,8 @@ A failed request during the walk isn't caught separately. As with every other re
 - **Should data operations need explicit approval?** No. Authors review the operations in `migration.ts`, so preflight needs no approval flag.
 - **Should `coerce` skip invalid values?** No. Invalid values abort the upgrade so every record and marker stays consistent.
 
+**2026-11-24 update.** Pass `migration plan --rename Model.old:Model.new` to have the planner generate `renameFields`.
+
 ## Related
 
 - [ADR 002](ADR%20002%20-%20Two-Phase%20Migration.md): the upgrade transaction this operation runs in.

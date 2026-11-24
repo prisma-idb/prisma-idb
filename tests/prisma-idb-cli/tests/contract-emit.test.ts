@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import ts from "typescript";
-import { cli } from "./_helpers";
+import { cli, getMigrationDirs } from "./_helpers";
 
 const packageDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const projects: string[] = [];
@@ -145,6 +145,94 @@ void wrongKey;
     await emit(cwd);
     expect(await readFile(jsonPath)).not.toEqual(previous[2]);
   });
+
+  it("plans repeated --rename flags alongside --backfill and --convert", async () => {
+    const cwd = await project();
+    const schemaPath = join(cwd, "schema.prisma");
+    await writeFile(
+      schemaPath,
+      `model User {
+  id String @id
+  name String
+  email String @unique
+  score Int
+  @@index([name], map: "by_display_name")
+}`
+    );
+    await emit(cwd);
+    const baseline = await cli(["migration", "plan"], { cwd });
+    expect(baseline.exitCode, baseline.stderr).toBe(0);
+
+    await writeFile(
+      schemaPath,
+      `model User {
+  id String @id
+  label String
+  contact String @unique
+  score String
+  state String
+  region String @default("us")
+  @@index([label], map: "by_display_name")
+}`
+    );
+    await emit(cwd);
+    const redundantBackfill = await cli(["migration", "plan", "--name", "redundant", "--backfill", "User.region"], {
+      cwd,
+    });
+    expect(redundantBackfill.exitCode, redundantBackfill.stderr).toBe(2);
+    expect(redundantBackfill.stderr).toContain("Leave out the --backfill statement.");
+
+    const unknownConvert = await cli(["migration", "plan", "--name", "unknown", "--convert", "User.missing"], { cwd });
+    expect(unknownConvert.exitCode, unknownConvert.stderr).toBe(2);
+    expect(unknownConvert.stderr).toContain("User.missing");
+    expect(await getMigrationDirs(cwd)).toHaveLength(1);
+
+    const planned = await cli(
+      [
+        "migration",
+        "plan",
+        "--name",
+        "update_user",
+        "--rename",
+        "User.name:User.label",
+        "--convert",
+        "User.score",
+        "--rename",
+        "User.email:User.contact",
+        "--backfill",
+        "User.state",
+      ],
+      { cwd }
+    );
+    expect(planned.exitCode, planned.stderr).toBe(0);
+    const migration = (await getMigrationDirs(cwd)).find((dir) => dir.endsWith("_update_user"));
+    expect(migration).toBeDefined();
+    const ops = JSON.parse(await readFile(join(cwd, "migrations", "app", migration!, "ops.json"), "utf8"));
+    expect(ops).toContainEqual(
+      expect.objectContaining({
+        kind: "transformRecords",
+        renameFields: { label: "name", contact: "email" },
+        fields: {
+          score: { kind: "placeholder", slot: "User.score" },
+          state: { kind: "placeholder", slot: "User.state" },
+          region: { kind: "defaultIfMissing", value: "us" },
+        },
+      })
+    );
+    expect(ops).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "createIndex",
+          indexName: "by_display_name",
+          def: expect.objectContaining({ keyPath: "label" }),
+        }),
+        expect.objectContaining({
+          kind: "createIndex",
+          def: expect.objectContaining({ keyPath: "contact", unique: true }),
+        }),
+      ])
+    );
+  }, 120_000);
 
   it("supports a directory output override for a SQL config", async () => {
     const cwd = await project();

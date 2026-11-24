@@ -139,6 +139,7 @@ developer edits schema.prisma
   │
   ├── prisma-idb migration plan --name <slug>
   │     diffs the newest migration's contract against the new one
+  │     accepts field --rename, --backfill and --convert statements
   │     writes migrations/app/<timestamp>_<slug>/{migration.ts, migration.json, ops.json}
   │     writes migrations/snapshots/<storageHash>/{contract.json, contract.d.ts}
   │     warns on stderr if the migration drops a store

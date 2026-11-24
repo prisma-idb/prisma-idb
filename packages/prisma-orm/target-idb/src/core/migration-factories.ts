@@ -175,13 +175,13 @@ export function deletedDataWarning(ops: readonly unknown[]): string | undefined 
     (removedFields.length > 0
       ? "These fields are removed from every record:\n" +
         removedFields.map((field) => `  - ${field}\n`).join("") +
-        "For a rename, replace the removal and addition with renameFields to preserve the values.\n"
+        "For a field rename, use --rename Model.old:Model.new when planning to preserve the values.\n"
       : "") +
     "Check that this is intended before shipping it.\n"
   );
 }
 
-/** Create a record rewrite. The planner emits defaults, removals, and unfilled slots; other rewrites are authored by hand. */
+/** Create a record rewrite. The planner emits field renames, defaults, removals, and unfilled slots. */
 export function transformRecordsOp(
   storeName: string,
   options: Pick<TransformRecordsOp, "fields" | "renameFields" | "removeFields">
