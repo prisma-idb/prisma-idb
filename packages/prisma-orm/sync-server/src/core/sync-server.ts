@@ -121,7 +121,7 @@ export const defaultGetKeyField: GetKeyField = (contract, modelName) => {
   if (typeof keyPath !== "string") {
     const hint = Array.isArray(keyPath)
       ? "This model has a compound primary key (an array keyPath) — sync-server does not support compound-key " +
-        "models yet. Pass a getKeyField option to createSyncServer, or keep this model out of the sync scope."
+        "models yet. Exclude this model from the client contract to keep it out of sync."
       : "This contract's storage shape isn't IDB's — pass a getKeyField option to createSyncServer.";
     throw new Error(`Model "${modelName}" has no single string storage.keyPath in the contract. ${hint}`);
   }
@@ -272,7 +272,12 @@ export function createSyncServer(options: CreateSyncServerOptions): SyncServer {
   );
   const getKeyField = options.getKeyField ?? defaultGetKeyField;
   const codecLookup = options.codecLookup ?? defaultValidationCodecs;
+  const models = domainModelsAtDefaultNamespace(options.contract.domain);
   for (const model of dag.clientModels) {
+    const keyField = getKeyField(options.contract, model);
+    if (typeof keyField !== "string" || !Object.hasOwn(models[model]!.fields, keyField)) {
+      throw new Error(`createSyncServer: getKeyField must return a primary-key field on model "${model}".`);
+    }
     try {
       assertRecordValidator(options.clientContract, model, { codecLookup });
     } catch (error) {

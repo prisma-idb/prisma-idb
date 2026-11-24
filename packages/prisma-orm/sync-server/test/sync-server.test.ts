@@ -292,16 +292,7 @@ describe("createSyncServer", () => {
     it("throws with the default resolver when storage isn't IDB-shaped", () => {
       const contract = toNonIdbShapedContract(kanbanContract());
       const clientContract = toNonIdbShapedContract(kanbanClientContract());
-      const syncServer = createSyncServer({ contract, clientContract, rootModel: "User" });
-
-      expect(() =>
-        syncServer.validatePush(
-          [{ id: "e1", model: "User", operation: "update", payload: { id: "user-1" }, wireKey: "user-1" }],
-          {
-            scopeKey: "user-1",
-          }
-        )
-      ).toThrow(/storage.keyPath/);
+      expect(() => createSyncServer({ contract, clientContract, rootModel: "User" })).toThrow(/storage.keyPath/);
     });
 
     it("works against a non-IDB-shaped contract given a custom getKeyField", () => {

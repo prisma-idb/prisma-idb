@@ -4,39 +4,58 @@
  */
 import { describe, expect, it } from "vitest";
 import { sqlGetKeyField } from "../src/core/get-key-field";
-import { decodeWireEvent } from "../src/core/push";
-import { testContract } from "./helpers";
-
-/** The fixture contract with `Board.id` stored in the column `board_key`. */
-function mappedContract() {
-  const contract = structuredClone(testContract);
-  const model = contract.domain.namespaces["public"]!.models["Board"]!.storage as {
-    namespaceId: string;
-    table: string;
-    fields: Record<string, { column: string }>;
-  };
-  model.fields["id"] = { column: "board_key" };
-  const table = (
-    contract.storage as unknown as {
-      namespaces: Record<string, { entries: { table: Record<string, { primaryKey: { columns: string[] } }> } }>;
-    }
-  ).namespaces[model.namespaceId]!.entries.table[model.table]!;
-  table.primaryKey = { columns: ["board_key"] };
-  return contract;
-}
+import { createSyncServer } from "@prisma-idb/sync-server";
+import { createSqlSyncAdapter } from "../src/core/create-adapter";
+import { seed, testClientContract, testContract, testDb, testSyncServer } from "./helpers";
 
 describe("a primary key mapped to another column", () => {
-  it("is resolved to its field name", () => {
-    expect(sqlGetKeyField(mappedContract(), "Board")).toBe("id");
+  it("creates, pulls, updates and deletes a row with a mapped key in PostgreSQL", async () => {
+    const db = await testDb();
+    await seed(db, { User: [{ id: "u1", name: "Ann" }] });
+    const adapter = createSqlSyncAdapter({ contract: testContract, syncServer: testSyncServer, contractCheck: "off" });
+    const scopeKey = "u1";
+    const record = { id: "n1", ownerId: scopeKey, text: "first" };
+    const cases = [
+      { operation: "create", payload: record, expected: record },
+      {
+        operation: "update",
+        payload: { key: record.id, patch: { text: "second" } },
+        expected: { ...record, text: "second" },
+      },
+      { operation: "delete", payload: { key: record.id }, expected: null },
+    ] as const;
+
+    let cursor: string | null = null;
+    for (const { operation, payload, expected } of cases) {
+      const event = { id: operation, entityType: "MappedNote", operation, payload };
+      expect(await adapter.applyPush(db, { scopeKey, events: [event] })).toEqual({
+        ok: true,
+        results: [{ id: event.id, success: true }],
+      });
+      expect(await db.orm.public.MappedNote.first({ id: record.id })).toEqual(expected);
+      const page = await adapter.pull(db, { scopeKey, lastChangelogId: cursor });
+      if (!page.ok) throw new Error(page.reason);
+      expect(page.logs).toMatchObject([{ model: "MappedNote", operation, keyPath: record.id, record: expected }]);
+      cursor = page.logs[0]!.changelogId;
+    }
   });
 
-  it("decodes a pushed event's key from the field, not the column", () => {
-    const event = decodeWireEvent(mappedContract(), sqlGetKeyField, "Board", {
-      id: "e1",
-      operation: "update",
-      payload: { key: "b1", patch: { ownerId: "u1" } },
-    });
-    expect(event.payload).toEqual({ id: "b1", ownerId: "u1" });
-    expect(event.wireKey).toBe("b1");
+  it.each(["User", "MappedNote"])("rejects a compound key on synced %s at startup", (modelName) => {
+    const contract = structuredClone(testContract);
+    const tables = (
+      contract.storage as unknown as {
+        namespaces: { public: { entries: { table: Record<string, { primaryKey: { columns: string[] } }> } } };
+      }
+    ).namespaces.public.entries.table;
+    tables[modelName]!.primaryKey.columns.push(modelName === "User" ? "name" : "text");
+
+    expect(() =>
+      createSyncServer({
+        contract,
+        clientContract: testClientContract,
+        rootModel: "User",
+        getKeyField: sqlGetKeyField,
+      })
+    ).toThrow(new RegExp(`Model "${modelName}" has no single-column primary key`));
   });
 });
