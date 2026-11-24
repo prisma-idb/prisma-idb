@@ -142,8 +142,56 @@ describe("scalar lists", () => {
     expect(psl(spec, `@default(${source})`).ok).toBe(false);
   });
 
-  it.each([NaN, Infinity, -Infinity])("rejects the TypeScript Float[] default element %s", (element) => {
-    expect(() => contract("Float[]", { values: [1, element] })).toThrow(/IDB_INVALID_DEFAULT_VALUE/);
+  it.each([NaN, Infinity, -Infinity])("rejects the TypeScript Float[] default element %s and names it", (element) => {
+    expect(() => contract("Float[]", { values: [1, element] })).toThrow(
+      `Field "Sample.values" has codec "idb/double@1", and its default element 1 (${element}) is not a value of that type.`
+    );
+  });
+
+  // A contract stores defaults as JSON, which has no NaN or infinities, so a Float default must be finite.
+  it.each(["NaN", "Infinity", "-Infinity"])("rejects the PSL Float[] default element %s and names it", (element) => {
+    const result = psl("Float[]", `@default([1, ${element}])`);
+    expect(result.ok ? [] : result.failure.diagnostics.map((d) => [d.code, d.message])).toEqual([
+      [
+        "IDB_INVALID_DEFAULT_VALUE",
+        `Field "Sample.values" has codec "idb/double@1", and its default element 1 (${element}) is not a value of that type.`,
+      ],
+    ]);
+  });
+
+  // Converting first would round the element to a valid Int.
+  it.each(["2147483647.00000001", "1.0"])("rejects the PSL Int[] default element %s as written", (element) => {
+    const result = psl("Int[]", `@default([1, ${element}])`);
+    expect(result.ok ? [] : result.failure.diagnostics.map((d) => [d.code, d.message])).toEqual([
+      [
+        "IDB_INVALID_DEFAULT_VALUE",
+        `Field "Sample.values" default element 1 (${element}) is not an Int. Write a whole number from -2147483648 to 2147483647.`,
+      ],
+    ]);
+  });
+
+  it("reports a TypeScript bigint or cyclic default element as an invalid default, not a TypeError", () => {
+    const cyclic: Record<string, unknown> = {};
+    cyclic["self"] = cyclic;
+    expect(() => contract("BigInt[]", { values: [1n] })).toThrow(
+      'Field "Sample.values" has codec "idb/bigint@1", and its default element 0 (1n) is not a value of that type.'
+    );
+    expect(() => contract("Json[]", { values: [cyclic] })).toThrow(
+      'Field "Sample.values" has codec "idb/json@1", and its default element 0 (an object) is not a value of that type.'
+    );
+  });
+
+  it("reads enum list elements named true and false as members, as a scalar enum default does", () => {
+    const schema = `enum Flag {\n true\n false\n}\nmodel Sample {\n id String @id\n flags Flag[] @default([true, false])\n flag Flag @default(true)\n}`;
+    const { document, sources } = parse(schema, "test.prisma");
+    const { symbolTable } = buildSymbolTable({ documents: [document], sources, defaultNamespaceId: "__unbound__" });
+    const result = interpretPslDocumentToIdbContract(symbolTable, "test.prisma");
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.execution?.mutations?.defaults.map((d) => d.onCreate)).toEqual([
+      { kind: "generator", id: "literal", params: { value: ["true", "false"] } },
+      { kind: "generator", id: "literal", params: { value: "true" } },
+    ]);
   });
 
   it.each(scalars)("rejects %s lists in single and compound primary keys", (scalar) => {

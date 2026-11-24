@@ -180,6 +180,29 @@ function validateLiteralDefault(
 }
 
 /**
+ * Describes a default value for an error message. Defaults come from untyped
+ * callers too, so this never serializes the value: `JSON.stringify` prints
+ * `NaN` and the infinities as `null`, and throws on a bigint or a cycle.
+ */
+function describeDefaultValue(value: unknown): string {
+  switch (typeof value) {
+    case "string":
+      return JSON.stringify(value);
+    case "number":
+    case "boolean":
+      return String(value);
+    case "bigint":
+      return `${value}n`;
+    case "undefined":
+      return "undefined";
+    case "object":
+      return value === null ? "null" : Array.isArray(value) ? "an array" : "an object";
+    default:
+      return `a ${typeof value}`;
+  }
+}
+
+/**
  * Checks a list's create default: an array whose elements each pass the rule a
  * scalar default of the element type passes, so `@default(["a", "b"])` on a
  * `String[]` is accepted and `@default([1])` on it is not.
@@ -218,7 +241,7 @@ function validateListDefault(
     ) {
       report(
         "IDB_INVALID_DEFAULT_VALUE",
-        `${label} has codec "${field.codecId}", and its default element ${index} (${JSON.stringify(element)}) is not a value of that type.`,
+        `${label} has codec "${field.codecId}", and its default element ${index} (${describeDefaultValue(element)}) is not a value of that type.`,
         at
       );
       return;

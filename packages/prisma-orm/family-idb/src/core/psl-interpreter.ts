@@ -521,22 +521,50 @@ function interpretModel(
         // The shared definition check then refuses elements the type can't hold.
         const values: (string | number | boolean)[] = [];
         let invalidElement: string | undefined;
-        for (const element of form.elements) {
+        let invalidInt: { readonly index: number; readonly text: string } | undefined;
+        for (const [index, element] of form.elements.entries()) {
           if (enumType !== undefined) {
-            const member =
-              element.kind === "identifier" ? enumType.members.find((m) => m.name === element.name) : undefined;
+            // A member named `true` or `false` is written like a boolean, as in a scalar enum default.
+            const name =
+              element.kind === "identifier"
+                ? element.name
+                : element.kind === "boolean"
+                  ? String(element.value)
+                  : undefined;
+            const member = name === undefined ? undefined : enumType.members.find((m) => m.name === name);
             if (member === undefined) {
-              invalidElement = element.kind === "identifier" ? element.name : JSON.stringify(element.value);
+              invalidElement =
+                element.kind === "identifier"
+                  ? element.name
+                  : element.kind === "number"
+                    ? element.text
+                    : JSON.stringify(element.value);
               break;
             }
             values.push(member.value);
           } else if (element.kind === "identifier") {
             invalidElement = element.name;
             break;
+          } else if (element.kind === "number" && codecId === INT_CODEC_ID && !isIntNumeralText(element.text)) {
+            // Read the digits as written: converting first would round 2147483647.00000001 to a valid Int.
+            invalidInt = { index, text: element.text };
+            break;
           } else {
             // A Decimal keeps the digits as written; a JS number would round them.
             values.push(element.kind === "number" && codecId === DECIMAL_CODEC_ID ? element.text : element.value);
           }
+        }
+        if (invalidInt !== undefined) {
+          diagnostics.push({
+            code: "IDB_INVALID_DEFAULT_VALUE",
+            message: intDefaultMessage(
+              `Field "${model.name}.${field.name}"`,
+              `element ${invalidInt.index} (${invalidInt.text})`
+            ),
+            sourceId,
+            span: defaultAttr.span,
+          });
+          continue;
         }
         if (invalidElement !== undefined) {
           diagnostics.push({
