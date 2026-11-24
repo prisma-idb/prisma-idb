@@ -234,6 +234,44 @@ void wrongKey;
     );
   }, 120_000);
 
+  it.each(["backfill", "convert"])(
+    "refuses --%s when the model moves to a new store",
+    async (verb) => {
+      const cwd = await project();
+      const schemaPath = join(cwd, "schema.prisma");
+      await writeFile(
+        schemaPath,
+        `model User {
+  id String @id
+  score Int
+  @@map("users")
+}`
+      );
+      await emit(cwd);
+      const baseline = await cli(["migration", "plan"], { cwd });
+      expect(baseline.exitCode, baseline.stderr).toBe(0);
+      const before = await getMigrationDirs(cwd);
+
+      await writeFile(
+        schemaPath,
+        `model User {
+  id String @id
+  score String
+  state String
+  @@map("users_v2")
+}`
+      );
+      await emit(cwd);
+      const field = verb === "backfill" ? "state" : "score";
+      const result = await cli(["migration", "plan", "--name", "move_users", `--${verb}`, `User.${field}`], { cwd });
+      expect(result.exitCode, result.stderr).toBe(2);
+      expect(result.stderr).toContain(`Cannot ${verb} User.${field}`);
+      expect(result.stderr).toContain('the model moves from store "users" to "users_v2"');
+      expect(await getMigrationDirs(cwd)).toEqual(before);
+    },
+    120_000
+  );
+
   it("supports a directory output override for a SQL config", async () => {
     const cwd = await project();
     await emit(cwd, "prisma.config.postgres.ts", ["--output", "custom"]);

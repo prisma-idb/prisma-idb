@@ -41,9 +41,7 @@ function refused(statement: ResolvedMigrationStatement, summary: string, why: st
  * Turns the user's rename, backfill and convert statements into per-store
  * instructions for the record diff, or the conflicts that refuse them.
  *
- * A field rename moves the stored value to the new name. A model rename keeps
- * the store, because IndexedDB cannot rename an object store: the new model
- * must map to the old store name. A backfill or a conversion leaves a
+ * A field rename moves the stored value to the new name. A backfill or a conversion leaves a
  * placeholder the author fills in `migration.ts`, as upstream leaves the code
  * to the user. Statements about namespaces, enum values and value objects
  * have no IndexedDB form and are refused.
@@ -140,15 +138,37 @@ export function planStatements(
       const before = storeOfModel(from, originModel);
       const originField = originalField.get(JSON.stringify([statement.field.model, field])) ?? field;
       const originLabel = `${originModel}.${originField}`;
+      if (after === undefined || !Object.hasOwn(after.store.record.fields, field)) {
+        conflicts.push(
+          refused(
+            statement,
+            `Cannot ${statement.kind} ${label}: the destination contract has no field ${label}.`,
+            "Name a stored field of the destination contract."
+          )
+        );
+        return;
+      }
+      if (before === undefined || before.name !== after.name) {
+        const detail =
+          before === undefined
+            ? `the origin contract has no store for model "${originModel}"`
+            : `the model moves from store "${before.name}" to "${after.name}"`;
+        conflicts.push(
+          refused(
+            statement,
+            `Cannot ${statement.kind} ${label}: ${detail}.`,
+            "The model must keep the same existing store to transform its records."
+          )
+        );
+        return;
+      }
       const problem =
-        after === undefined || !Object.hasOwn(after.store.record.fields, field)
-          ? `the destination contract has no field ${label}`
-          : statement.kind === "convert" && !Object.hasOwn(before?.store.record.fields ?? {}, originField)
-            ? `the origin contract has no field ${originLabel} to convert`
-            : isKeyField(after.store, field)
-              ? `${label} is part of the primary key, which IndexedDB cannot rewrite`
-              : undefined;
-      if (problem !== undefined || after === undefined) {
+        statement.kind === "convert" && !Object.hasOwn(before.store.record.fields, originField)
+          ? `the origin contract has no field ${originLabel} to convert`
+          : isKeyField(after.store, field)
+            ? `${label} is part of the primary key, which IndexedDB cannot rewrite`
+            : undefined;
+      if (problem !== undefined) {
         conflicts.push(
           refused(
             statement,
@@ -160,7 +180,6 @@ export function planStatements(
       }
       if (
         statement.kind === "backfill" &&
-        before !== undefined &&
         !Object.hasOwn(before.store.record.fields, originField) &&
         hasStoredDefault(after.name, field, after.store.record.fields[field]!)
       ) {

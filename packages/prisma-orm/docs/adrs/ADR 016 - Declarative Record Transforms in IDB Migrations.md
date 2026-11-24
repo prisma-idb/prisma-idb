@@ -168,7 +168,7 @@ The planner writes `migration.ts`, `ops.json`, and `migration.json` with unresol
 
 For app migrations, run `npx prisma-idb migration contract-space` after regenerating the package. Commit the scaffold, emitted operations, metadata, snapshot, and bundled contract space together.
 
-The planner never infers renames. To preserve a renamed field, replace its planned removal and addition with `renameFields: { newName: "oldName" }`. Keep unrelated transforms in the same operation. Do not remove or rename a primary-key field.
+To preserve a renamed field, update the schema, emit the contract, and run `pnpm exec prisma-idb migration plan --name rename-field --rename Model.old:Model.new`. The planner generates `renameFields`. If you already have a scaffold, replace its planned removal and addition with `renameFields: { newName: "oldName" }`. Keep unrelated transforms in the same operation. Primary-key fields must keep their names.
 
 See [Author a field change](../../../../apps/docs/content/docs/prisma-8/field-changes.mdx) for the app workflow.
 
@@ -220,8 +220,6 @@ A failed request during the walk isn't caught separately. As with every other re
 
 - **Should data operations need explicit approval?** No. Authors review the operations in `migration.ts`, so preflight needs no approval flag.
 - **Should `coerce` skip invalid values?** No. Invalid values abort the upgrade so every record and marker stays consistent.
-
-**2026-11-24 update.** Pass `migration plan --rename Model.old:Model.new` to have the planner generate `renameFields`.
 
 ## Related
 
