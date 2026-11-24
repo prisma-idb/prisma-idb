@@ -61,14 +61,16 @@ async function withClient(onUpdate: "restrict" | "cascade", run: (orm: Orm) => P
 const entryRates = async (orm: Orm) =>
   (await orm["entries"]!.all().toArray()).map((row) => (row as { accountRate: string }).accountRate);
 
+const accountRates = async (orm: Orm) =>
+  (await orm["accounts"]!.all().toArray()).map((row) => (row as { rate: string }).rate);
+
 describe("referenced Decimal field updated to an equal spelling", () => {
   it.each(["5.0", "5.00", "5e0", "+5", "05", "0.5e1"])(
     "restrict does not refuse a single update to %s",
     async (spelling) => {
       await withClient("restrict", async (orm) => {
         await orm["accounts"]!.where({ id: "a1" } as never).update({ rate: spelling } as never);
-        const [account] = await orm["accounts"]!.all().toArray();
-        expect((account as { rate: string }).rate).toBe(spelling);
+        expect(await accountRates(orm)).toEqual([spelling]);
         expect(await entryRates(orm)).toEqual(["5"]);
       });
     }
@@ -77,6 +79,7 @@ describe("referenced Decimal field updated to an equal spelling", () => {
   it("restrict does not refuse updateAll to an equal spelling", async () => {
     await withClient("restrict", async (orm) => {
       await (orm["accounts"] as unknown as UpdateAll).updateAll({ rate: "5.0" }).toArray();
+      expect(await accountRates(orm)).toEqual(["5.0"]);
       expect(await entryRates(orm)).toEqual(["5"]);
     });
   });
@@ -88,6 +91,7 @@ describe("referenced Decimal field updated to an equal spelling", () => {
         create: { id: "a1", rate: "5.0", name: "Cash" },
         update: { rate: "5.0" },
       } as never);
+      expect(await accountRates(orm)).toEqual(["5.0"]);
       expect(await entryRates(orm)).toEqual(["5"]);
     });
   });
@@ -97,6 +101,7 @@ describe("referenced Decimal field updated to an equal spelling", () => {
       await expect(orm["accounts"]!.where({ id: "a1" } as never).update({ rate: "6" } as never)).rejects.toThrow(
         /would orphan child records/
       );
+      expect(await accountRates(orm)).toEqual(["5"]);
       expect(await entryRates(orm)).toEqual(["5"]);
     });
   });
@@ -104,6 +109,7 @@ describe("referenced Decimal field updated to an equal spelling", () => {
   it("cascade leaves the children's stored spelling alone for an equal spelling", async () => {
     await withClient("cascade", async (orm) => {
       await orm["accounts"]!.where({ id: "a1" } as never).update({ rate: "5.0" } as never);
+      expect(await accountRates(orm)).toEqual(["5.0"]);
       expect(await entryRates(orm)).toEqual(["5"]);
     });
   });
@@ -111,6 +117,7 @@ describe("referenced Decimal field updated to an equal spelling", () => {
   it("cascade still propagates a numerically different value", async () => {
     await withClient("cascade", async (orm) => {
       await orm["accounts"]!.where({ id: "a1" } as never).update({ rate: "6.0" } as never);
+      expect(await accountRates(orm)).toEqual(["6.0"]);
       expect(await entryRates(orm)).toEqual(["6.0"]);
     });
   });
