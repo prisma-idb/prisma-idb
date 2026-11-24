@@ -187,7 +187,6 @@ export async function applyPushEvent(
  * candidate-parent hop under FOR SHARE, from child to root. Locks are held
  * until commit. Each ORM read follows its locking statement so it sees any
  * ownership change committed while waiting. The scope advisory lock is last.
- * SQLite relies on its single writer and rejects stale transactions as busy.
  *
  * `db` must expose `.transaction(fn)`, calling `fn` with a scope whose
  * `.orm.public` works the same way `db.orm.public` does — the same

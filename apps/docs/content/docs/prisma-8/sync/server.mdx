@@ -98,6 +98,8 @@ Returned pull and rejected-push records contain only top-level fields from the c
 
 `db` is your Prisma 8 SQL client. It must have `.transaction(fn)` and `.orm.public.<Model>`. Resolve `scopeKey` from the authenticated session, never the request body or query string.
 
+The SQL adapter requires PostgreSQL. `createSqlSyncAdapter` and `createSqlSync` reject other database targets at startup.
+
 ### Checked foreign keys
 
 Since version 0.7, `@prisma-idb/sync-server-sql` requires these schema shapes for relations checked along ownership paths to `rootModel`:

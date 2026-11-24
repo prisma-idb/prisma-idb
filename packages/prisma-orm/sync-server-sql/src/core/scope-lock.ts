@@ -42,7 +42,7 @@ const SNAPSHOT_ISOLATION_LEVELS = new Set(["repeatable read", "serializable"]);
  * Takes the per-scope lock on `tx`'s connection, waiting if another open
  * transaction holds it. `db` is the client `tx` came from — the raw SQL lane
  * lives on the client, not on the transaction scope. No-op for non-Postgres
- * contracts (SQLite has a single writer, so pushes are already serialized).
+ * contracts, which `createSqlSyncAdapter` refuses before any push runs.
  *
  * Throws if the transaction runs at REPEATABLE READ or SERIALIZABLE (see the
  * file comment). The isolation setting comes back with the lock query to
