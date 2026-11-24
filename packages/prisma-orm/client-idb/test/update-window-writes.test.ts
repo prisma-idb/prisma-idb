@@ -198,9 +198,13 @@ describe("windowed update() with per-row defaults", () => {
     const updated = await client.orm["item"]!.orderBy({ rank: "desc" }).update({ name: "renamed" });
 
     const after = await rowsOf("item");
-    expect(updated).toMatchObject({ id: "i2", name: "renamed" });
+    expect(updated).toMatchObject({ id: "i2", name: "renamed", token: expect.any(String) });
     expect(updated!["token"]).not.toBe(before[1]!["token"]);
     expect(after[0]).toEqual(before[0]);
+    expect(after.find((row) => row["id"] === "i2")).toMatchObject({
+      name: "renamed",
+      token: updated!["token"],
+    });
   });
 
   it("checks the foreign key a per-row default regenerates", async () => {
