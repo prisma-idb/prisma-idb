@@ -13,6 +13,13 @@ interface DecimalParts {
   readonly position: bigint;
 }
 
+/** Drop trailing zeros in one pass; a `/0+$/` regex backtracks quadratically on long zero runs. */
+function trimTrailingZeros(digits: string): string {
+  let end = digits.length;
+  while (end > 0 && digits.charCodeAt(end - 1) === 48) end--;
+  return digits.slice(0, end);
+}
+
 /** Parse finite decimal text without expanding exponents or losing significant digits. */
 function decimalParts(value: unknown): DecimalParts {
   if (!isDecimalString(value)) throw new TypeError("Expected finite Decimal text");
@@ -23,7 +30,7 @@ function decimalParts(value: unknown): DecimalParts {
   const significant = unsigned.replace(".", "").replace(/^0+/, "");
   return {
     negative: value.startsWith("-") && significant.length > 0,
-    digits: significant.replace(/0+$/, ""),
+    digits: trimTrailingZeros(significant),
     position: significant.length === 0 ? 0n : BigInt(exponent) - BigInt(fractionLength) + BigInt(significant.length),
   };
 }
