@@ -115,6 +115,8 @@ function buildField(
   if (field.many) {
     const elementNullable = field.many.elementNullable;
     if (elementNullable) validator = validator.or("null");
+    // A JSON codec's `unknown` type needs an explicit predicate: excluding a union
+    // member cannot narrow unknown and would still accept null list elements.
     validator = validator.narrow((value) => value !== undefined && (elementNullable || value !== null)).array();
   }
   if (field.dict) validator = type({ "[string]": validator });

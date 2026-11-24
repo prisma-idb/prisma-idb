@@ -22,7 +22,7 @@ import {
   idbString,
 } from "./data-types";
 import { binaryBytes } from "./key-compare";
-import { isJsonCompatible } from "./json-value";
+import { encodeJsonValue } from "./json-value";
 import type { ValidationCodecLookup } from "./validate-record";
 
 /**
@@ -155,10 +155,7 @@ export const codecDescriptors: readonly AnyCodecDescriptor[] = [
     codecId: "idb/json@1",
     dataType: idbJson,
     traits: ["equality"],
-    toJson: (value) => {
-      if (!isJsonCompatible(value)) throw new TypeError("Json contains a value that cannot be represented as JSON");
-      return value;
-    },
+    toJson: encodeJsonValue,
     fromJson: asJson,
   }),
   descriptor<Uint8Array>({

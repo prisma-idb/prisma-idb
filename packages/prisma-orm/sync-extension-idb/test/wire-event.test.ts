@@ -142,6 +142,19 @@ describe("toWireEvent", () => {
     }
   });
 
+  it("refuses undefined JSON array elements and writes negative zero as zero", () => {
+    for (const invalid of [{ json: [undefined] }, { jsons: [undefined] }]) {
+      expect(() => toWireEvent(contract, event("Asset", "update", { key: "a", patch: invalid }))).toThrow(
+        /contains a value that cannot be represented as JSON/
+      );
+    }
+    const patch = { json: { score: -0 }, jsons: [[-0]] };
+    expect(toWireEvent(contract, event("Asset", "update", { key: "a", patch })).payload).toStrictEqual({
+      key: "a",
+      patch: { json: { score: 0 }, jsons: [[0]] },
+    });
+  });
+
   it("refuses a bigint or binary value in an unknown model's payload instead of letting JSON.stringify mangle it", () => {
     expect(() => toWireEvent(contract, event("Gone", "create", { id: "a", size: 5n }))).toThrow(WireEncodeError);
     expect(() =>
