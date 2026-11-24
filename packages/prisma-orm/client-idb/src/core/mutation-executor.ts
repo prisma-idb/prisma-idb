@@ -1326,7 +1326,21 @@ interface ScalarUpdateOptions {
 export async function executeScalarUpdateWithFkValidation(
   options: ScalarUpdateOptions & { readonly window?: RowWindow & { readonly take?: number } }
 ): Promise<Record<string, unknown> | null> {
-  if (options.window?.take === 0) return null;
+  if (options.window?.take === 0) {
+    // No row is selected, but the data is still checked, because Prisma rejects
+    // invalid data before it looks for a row. Checks that need a row or the
+    // store (foreign keys, `onUpdate` actions) have nothing to run on.
+    const { contract, modelName, data } = options;
+    const patch = applyUpdateDefaults(
+      contract.execution?.mutations.defaults,
+      getStoreName(contract, modelName),
+      data,
+      createMutationDefaultsCache()
+    );
+    assertEnumValues(contract, modelName, patch);
+    assertValidRecord(contract, modelName, "update", patch);
+    return null;
+  }
   const rows = await executeScalarUpdates(options, 1, options.window);
   return rows[0] ?? null;
 }
