@@ -337,6 +337,21 @@ describe("stripIdbExcludeAttributes", () => {
     `);
   });
 
+  it.each([
+    [
+      "CRLF line endings",
+      "model A {\r\n  id String @id\r\n  s String @idb.exclude\r\n  @@idb.exclude\r\n}\r\n",
+      "model A {\r\n  id String @id\r\n  s String\r\n}\r\n",
+    ],
+    [
+      "an attribute after it",
+      "model A {\n  id String @id\n  s String @idb.exclude @unique\n}\n",
+      "model A {\n  id String @id\n  s String @unique\n}\n",
+    ],
+  ])("strips @idb.exclude with %s and keeps the rest of the line", (_, schema, expected) => {
+    expect(stripIdbExcludeAttributes(schema)).toBe(expected);
+  });
+
   it("round-trips through prismaIdbContract's own parser without error once stripped", async () => {
     const stripped = stripIdbExcludeAttributes(`
       model User {
