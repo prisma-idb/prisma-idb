@@ -42,7 +42,7 @@ Upstream draws the same line. `prisma migrate`, which applies planned migration 
 
 This ADR is about which operations run, not which path is walked. The browser now picks each space's path the way upstream's extension-space apply path does: the shortest path from the marker to the head whose migrations provide every invariant the head requires and the marker doesn't record yet. The marker then records the invariants the path provided, added to those it already had, as upstream's marker update does. The chosen path's operations still run as planned.
 
-Two differences from upstream are deliberate. IndexedDB has no CLI error envelope, so a head whose required invariants no migration provides fails with a plain error naming the space and the missing invariants, where upstream reports `MIGRATION.NO_INVARIANT_PATH`. And the planner in `prisma-idb` currently derives no invariants, so only hand-authored migrations provide any. The refusal happens before the database is opened for upgrade, so nothing is applied.
+Two differences from upstream are deliberate. IndexedDB has no CLI error envelope, so a head whose required invariants no migration provides fails with a plain error naming the space and the missing invariants, where upstream reports `MIGRATION.NO_INVARIANT_PATH`. And the planner in `prisma-idb` currently derives no invariants, so only hand-authored migrations provide any. The refusal happens before the database is opened for upgrade, so nothing is applied. `prisma-idb migration contract-space` still builds only a linear chain and refuses branches and packages from a hash to itself, so routing between paths applies only to contract spaces built in code until the codegen and preflight walk a graph.
 
 ## Related
 

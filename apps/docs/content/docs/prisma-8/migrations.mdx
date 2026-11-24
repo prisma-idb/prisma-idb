@@ -94,8 +94,9 @@ Each package records the contract hash it starts from and the one it ends at, so
 A migration can record that it provided an invariant, such as a data fix, in `providedInvariants` in its `migration.json`. A head can list invariants it requires. When the browser opens the database, it takes the shortest path from the database's marker to the head whose migrations provide every required invariant that the marker doesn't record yet. It stores the invariants the path provided on the marker, next to the ones the marker already had.
 
 - A database already at the head hash still runs a path when the head requires a new invariant, for example a data fix from the head to itself.
-- If no path provides a required invariant, the app refuses to open the database and the error names the space and the missing invariant. Nothing is applied. Add a migration that provides it, then run `migration contract-space` again.
+- If no path provides a required invariant, the app refuses to open the database and the error names the space and the missing invariant. Nothing is applied.
 - `migration plan` currently derives no invariants, so a project that doesn't hand-author them is not affected.
+- `migration contract-space` still accepts only one linear chain. It refuses two packages that start from the same contract hash, and a package from a contract hash back to itself, such as a data fix at the head. The generated head requires the invariants of the newest package, so the generated app space has one path. Alternative paths and same-hash data fixes work only in a contract space you build in code, such as an extension's.
 
 ## Extensions
 

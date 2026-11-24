@@ -392,8 +392,9 @@ async function planSpacePath(input: {
   if (outcome.kind !== "ok" && input.markerHash === head.hash) {
     throw new Error(
       `Contract space "${spaceId}" is at its head ${head.hash}, but its marker does not record the required ` +
-        `invariant(s) ${[...required].join(", ")}, and no migration from the head provides them. Add a migration ` +
-        "from the head that provides them, then re-run `prisma-idb migration contract-space`."
+        `invariant(s) ${[...required].join(", ")}, and no migration from the head provides them. The contract space ` +
+        "needs a migration from the head to itself that provides them. `prisma-idb migration contract-space` " +
+        "accepts only a linear chain, so build that contract space in code."
     );
   }
   if (outcome.kind === "unreachable") {
@@ -406,8 +407,8 @@ async function planSpacePath(input: {
   if (outcome.kind === "unsatisfiable") {
     throw new Error(
       `Auto-migration for space "${spaceId}" found no migrations to its head ${head.hash} that provide ` +
-        `the required invariant(s) ${outcome.missing.join(", ")}. Add a migration that provides them, ` +
-        "then re-run `prisma-idb migration contract-space`."
+        `the required invariant(s) ${outcome.missing.join(", ")}. Add a migration that provides them to the ` +
+        "contract space, or stop requiring them at the head."
     );
   }
 
