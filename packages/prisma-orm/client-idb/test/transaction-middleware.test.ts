@@ -243,11 +243,11 @@ describe("middleware inside transactions", () => {
     const planned: { kind: string; key?: unknown }[] = [];
     const client = await open([
       recorder([], {
-        beforeEncode(plan, ctx) {
+        beforeEncode(plan: unknown, ctx: { scope: string }) {
           if (ctx.scope === "transaction") planned.push(plan as never);
           return plan;
         },
-      } as Partial<IdbMiddleware>),
+      } as unknown as Partial<IdbMiddleware>),
     ]);
     await client.transaction(["users"], async (tx) => {
       await (tx["users"] as unknown as Accessor).create({ id: "u1" });
@@ -260,11 +260,11 @@ describe("middleware inside transactions", () => {
     const refused = new Error("writes to users are refused");
     const client = await open([
       recorder([], {
-        beforeEncode(plan, ctx) {
+        beforeEncode(plan: unknown, ctx: { scope: string }) {
           if (ctx.scope === "transaction" && (plan as { kind: string }).kind === "add") throw refused;
           return plan;
         },
-      } as Partial<IdbMiddleware>),
+      } as unknown as Partial<IdbMiddleware>),
     ]);
     await expect(
       client.transaction(["users"], async (tx) => {
