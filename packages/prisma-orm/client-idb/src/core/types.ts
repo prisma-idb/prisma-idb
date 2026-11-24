@@ -519,52 +519,84 @@ type RelationMutationFields<TContract, ModelName extends string> =
         ) => IdbRelationMutation<TContract, RelatedModelOf<TContract, ModelName, K>>;
       }>;
 
-/**
- * The `localFields` of all N:1 relations on a model — the FK fields that are
- * owned by this model and can be supplied via a relation callback instead of
- * as a scalar value. Resolves to `never` for loosely-typed contracts where
- * cardinality is not preserved as a literal (e.g. `defineContract` in tests).
- *
- * Mirrors `ChildForeignKeyFieldNames` from `sql-orm-client`, simplified: instead
- * of crawling all models for relations pointing *to* this one, we look at this
- * model's own N:1 relations directly — same field set, one model.
- */
-type N1LocalFieldNames<TContract, ModelName extends string> = {
-  [K in keyof ModelRelations<TContract, ModelName>]: ModelRelations<TContract, ModelName>[K] extends {
-    readonly cardinality: "N:1";
-    readonly on: { readonly localFields: infer Fields extends readonly string[] };
+type SameType<A, B> = [A, B] extends [B, A] ? true : false;
+
+type JoinPairs<Local extends readonly string[], Target extends readonly string[]> = {
+  [I in keyof Local]: readonly [Local[I], Target[I & keyof Target]];
+}[number];
+
+type ReciprocalCardinality<
+  TContract,
+  Model extends string,
+  Related extends string,
+  Local extends readonly string[],
+  Target extends readonly string[],
+  Relations = ModelRelations<TContract, Related>,
+> = {
+  [K in keyof Relations]: Relations[K] extends {
+    readonly to: { readonly model: Model };
+    readonly cardinality: infer Cardinality;
+    readonly on: {
+      readonly localFields: infer InverseLocal extends readonly string[];
+      readonly targetFields: infer InverseTarget extends readonly string[];
+    };
   }
-    ? Fields[number]
+    ? SameType<JoinPairs<Local, Target>, JoinPairs<InverseTarget, InverseLocal>> extends true
+      ? Cardinality
+      : never
     : never;
-}[keyof ModelRelations<TContract, ModelName>] &
+}[keyof Relations];
+
+/** Whether a one-to-one declaration holds the FK, as determined by the runtime. */
+type OwnsOneToOne<
+  TContract,
+  Model extends string,
+  Related extends string,
+  Local extends readonly string[],
+  Target extends readonly string[],
+  Reciprocal = ReciprocalCardinality<TContract, Model, Related, Local, Target>,
+> = "N:1" extends Reciprocal
+  ? false
+  : SameType<Local[number], ModelKeyPath<TContract, Model>> extends true
+    ? false
+    : "1:N" extends Reciprocal
+      ? true
+      : SameType<Target[number], ModelKeyPath<TContract, Related>>;
+
+/** FK fields that a relation callback can supply during create. */
+type OwnedForeignKeyFields<TContract, Model extends string, Relations = ModelRelations<TContract, Model>> = {
+  [K in keyof Relations]: Relations[K] extends {
+    readonly cardinality: infer Cardinality;
+    readonly to: { readonly model: infer Related extends string };
+    readonly on: {
+      readonly localFields: infer Local extends readonly string[];
+      readonly targetFields: infer Target extends readonly string[];
+    };
+  }
+    ? Cardinality extends "N:1"
+      ? Local[number]
+      : Cardinality extends "1:1"
+        ? OwnsOneToOne<TContract, Model, Related, Local, Target> extends true
+          ? Local[number]
+          : never
+        : never
+    : never;
+}[keyof Relations] &
   string;
 
-/**
- * Like `CreateInput` but with N:1 FK fields made optional.
- *
- * An N:1 FK field (e.g. `authorId` on `Post`) can be supplied either as a
- * scalar value or via a relation callback (`author: (rel) => rel.connect({id})`).
- * Making it optional here lets callers omit it when using the callback form —
- * the executor populates it from the related record before inserting.
- *
- * Mirrors `NestedCreateInput` from `sql-orm-client`.
- */
+/** A relation callback can populate the same FK fields as scalar create input. */
 type NestedCreateInput<TContract, ModelName extends string> = Omit<
   CreateInput<TContract, ModelName>,
-  N1LocalFieldNames<TContract, ModelName>
+  OwnedForeignKeyFields<TContract, ModelName>
 > &
   Partial<
     Pick<
       CreateInput<TContract, ModelName>,
-      N1LocalFieldNames<TContract, ModelName> & keyof CreateInput<TContract, ModelName>
+      OwnedForeignKeyFields<TContract, ModelName> & keyof CreateInput<TContract, ModelName>
     >
   >;
 
-/**
- * Input shape for `create()` with optional relation callbacks.
- * N:1 FK fields (e.g. `authorId`) are optional when using a relation callback.
- * Relation fields accept a callback `(rel) => rel.create([...])` / `rel.connect(...)`.
- */
+/** Input shape for create with optional relation callbacks supplying their own foreign keys. */
 export type MutationCreateInput<TContract, ModelName extends string> = NestedCreateInput<TContract, ModelName> &
   RelationMutationFields<TContract, ModelName>;
 
