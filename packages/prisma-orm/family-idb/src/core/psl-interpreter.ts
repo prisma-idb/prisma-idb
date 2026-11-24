@@ -25,7 +25,7 @@ import type {
   IdbModelNode,
   IdbRelationNode,
 } from "./contract-definition";
-import { createIdbAttributeBinder, idbDataTypeSupport } from "./psl-binder";
+import { createIdbAttributeBinder, IDB_EXCLUDE_ATTR, idbDataTypeSupport } from "./psl-binder";
 import { idbGeneratorFunctionRegistry, idbGeneratorNode } from "./generator-functions";
 import type { IdbAttributeBinder, IdbDefaultValue } from "./psl-binder";
 import { PslDefinitionSourceMap } from "./psl-definition-source-map";
@@ -177,7 +177,6 @@ function interpretEnums(
 
 /** A relation field that holds a foreign key to another model. */
 interface ForeignKeyRelation {
-  readonly fieldName: string;
   readonly relationName?: string;
   readonly localFields: string[];
   readonly targetFields: string[];
@@ -398,7 +397,6 @@ function interpretModel(
       sourceMap.set(["models", model.name, "relations", field.name], relationAttr.span);
       const targetFks = fksByTarget.get(field.typeName) ?? [];
       targetFks.push({
-        fieldName: field.name,
         // An empty name is no name, as upstream Prisma treats it.
         ...(relationAttr.value.name ? { relationName: relationAttr.value.name } : {}),
         localFields,
@@ -803,19 +801,32 @@ export function lowerPslDocumentToIdbContractDefinition(
   }
 
   // Second pass: pair each backrelation, list or singular, with the foreign key that points back at its model
-  /** The backrelation already paired with each foreign key, keyed by the FK's model and field. */
-  const pairedBackrelations = new Map<string, string>();
   for (const model of allModels) {
     const interp = interpretedByName.get(model.name);
     if (!interp) continue;
 
     for (const field of Object.values(model.fields)) {
       if (!modelNames.has(field.typeName)) continue;
-      const relationAttr = attributes.field(model, field).relation;
+      const fieldAttributes = attributes.field(model, field);
+      if (fieldAttributes.failed || fieldAttributes.updatedAt !== undefined) continue;
+      const relationAttr = fieldAttributes.relation;
       if (relationAttr?.value.fields !== undefined || relationAttr?.value.references !== undefined) continue;
       // Already warned about and dropped by the first pass — don't also
       // report it as an unresolved backrelation.
       if (excludedModelNames.has(field.typeName)) continue;
+
+      const unsupported = field.attributes.filter(({ name }) => name !== "relation" && name !== IDB_EXCLUDE_ATTR);
+      if (unsupported.length > 0) {
+        for (const { name, span } of unsupported) {
+          diagnostics.push({
+            code: "PSL_UNSUPPORTED_FIELD_ATTRIBUTE",
+            message: `Backrelation field "${model.name}.${field.name}" does not support "@${name}".`,
+            sourceId,
+            span,
+          });
+        }
+        continue;
+      }
 
       const targetInterp = interpretedByName.get(field.typeName);
       if (!targetInterp) continue;
@@ -883,19 +894,6 @@ export function lowerPslDocumentToIdbContractDefinition(
         sourceMap.set(["models", model.name, "relations", field.name], field.span);
         continue;
       }
-
-      const fkId = JSON.stringify([field.typeName, fk.fieldName]);
-      const pairedWith = pairedBackrelations.get(fkId);
-      if (pairedWith !== undefined) {
-        diagnostics.push({
-          code: "IDB_AMBIGUOUS_BACKRELATION",
-          message: `Backrelation fields "${pairedWith}" and "${model.name}.${field.name}" both pair with relation "${field.typeName}.${fk.fieldName}". Give each backrelation its own relation with @relation("...") on both sides, or remove one.`,
-          sourceId,
-          span: field.span,
-        });
-        continue;
-      }
-      pairedBackrelations.set(fkId, `${model.name}.${field.name}`);
 
       // localFields are the fields this model is referenced by; targetFields are the FK fields in the target.
       interp.definition.relations.push({

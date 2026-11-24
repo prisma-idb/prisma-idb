@@ -6,4 +6,4 @@ PSL accepts the other side of a one-to-one as a singular backrelation, as upstre
 
 A singular backrelation follows the rules for the referenced side of a one-to-one in TypeScript: it must be optional, and its foreign key must be unique, or it fails with `IDB_INVALID_RELATION`.
 
-Breaking: a backrelation, list or singular, that declares `onDelete` or `onUpdate` now fails with `IDB_INVALID_RELATION`, as upstream refuses actions on the side without the foreign key. Before, the action was dropped and the relation kept `Restrict`. Two backrelations that pair with the same foreign key fail with `IDB_AMBIGUOUS_BACKRELATION`.
+Breaking: a backrelation, list or singular, that declares `onDelete` or `onUpdate` now fails with `IDB_INVALID_RELATION`, as upstream refuses actions on the side without the foreign key. A backrelation also rejects scalar attributes such as `@default` and `@unique`. Several backrelation aliases can point to the same unambiguous foreign key.

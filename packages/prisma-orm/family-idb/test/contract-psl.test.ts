@@ -895,28 +895,48 @@ describe("interpretPslDocumentToIdbContract", () => {
     it.each([
       ["a Profile?", "b Profile?"],
       ["a Profile?", "b Profile[]"],
-    ])("refuses two backrelations that pair with one foreign key: %s, %s", (first, second) => {
+    ])("pairs both aliases with one foreign key: %s, %s", (first, second) => {
       const result = interpret(`
         model User {
           id String @id
-          ${first}
-          ${second}
+          ${first} @relation("Account")
+          ${second} @relation("Account")
         }
         model Profile {
           id     String @id
-          user   User   @relation(fields: [userId], references: [id])
+          user   User   @relation("Account", fields: [userId], references: [id])
           userId String @unique
         }
       `);
-      expect(result.ok).toBe(false);
-      if (result.ok) return;
-      expect(result.failure.diagnostics.map(({ code, message }) => [code, message])).toEqual([
-        [
-          "IDB_AMBIGUOUS_BACKRELATION",
-          'Backrelation fields "User.a" and "User.b" both pair with relation "Profile.user". Give each backrelation its own relation with @relation("...") on both sides, or remove one.',
-        ],
-      ]);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      const models = result.value.domain.namespaces[NS]!.models as unknown as Record<string, TestContractModel>;
+      for (const alias of ["a", "b"]) {
+        expect(models["User"]!.relations[alias]).toMatchObject({
+          on: { localFields: ["id"], targetFields: ["userId"] },
+        });
+      }
     });
+
+    it.each(['@default("unused")', "@unique"])(
+      "rejects scalar attribute %s on a singular backrelation",
+      (attribute) => {
+        const result = interpret(`
+        model User {
+          id String @id
+          profile Profile? ${attribute}
+        }
+        model Profile {
+          id String @id
+          user User @relation(fields: [userId], references: [id])
+          userId String @unique
+        }
+      `);
+        expect(result.ok).toBe(false);
+        if (result.ok) return;
+        expect(result.failure.diagnostics.map(({ code }) => code)).toEqual(["PSL_UNSUPPORTED_FIELD_ATTRIBUTE"]);
+      }
+    );
 
     it("treats an empty relation name as no name", () => {
       const result = interpret(`
