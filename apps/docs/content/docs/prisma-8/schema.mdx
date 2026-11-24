@@ -96,6 +96,8 @@ Every model needs a primary key.
 
 Pass `name:` to choose an index's name, for example `@@index([userId], name: "byUser")`. Without one, the name is the field names joined with `_`, plus `_unique` for a unique index. A field can't appear twice in one index. Two indexes can't share a name, unless they cover the same fields; then they merge into one index, which is unique if either declaration is.
 
+Escape sequences in `@@map` and index names are decoded as in upstream Prisma, so `\n` is a newline rather than a backslash and an `n`, and `\\` is one backslash. An unknown escape such as `\q` stays as written.
+
 Like keys, indexed fields must be `String`, `Int`, `Float`, `DateTime`, `Decimal` or `Bytes`. IndexedDB silently leaves other values out of an index, so `contract emit` rejects an index on a `Boolean`, `BigInt` or `Json` field.
 
 Queries use an index automatically for supported equality filters on an indexed field. Decimal predicates and sorting run in memory because their stored strings have a different order from their numeric values. A query can still use a separate index to narrow candidates safely.

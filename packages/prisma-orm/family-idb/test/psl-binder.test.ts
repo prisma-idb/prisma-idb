@@ -342,6 +342,24 @@ describe("interpretPslDocumentToIdbContract with portable attribute arguments", 
     expect(Object.keys(result.value.storage.stores["a\nb"]!.indexes ?? {})).toContain("uB");
   });
 
+  it.each([
+    [String.raw`a\\b`, "a\\b"],
+    [String.raw`a\"b`, 'a"b'],
+    [String.raw`a\tb`, "a\tb"],
+    [String.raw`a\x41`, "aA"],
+    [String.raw`a\qb`, String.raw`a\qb`],
+    [String.raw`a\u12`, String.raw`a\u12`],
+  ])("names the store %s as %j, decoding escapes like upstream and keeping invalid ones", (written, stored) => {
+    const result = interpret(
+      `model Post {\n  id String @id\n  t String\n  @@map("${written}")\n  @@index([t], name: "i${written}")\n}`
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(Object.keys(result.value.storage.stores)).toEqual([stored]);
+    expect(Object.keys(result.value.storage.stores[stored]!.indexes ?? {})).toContain(`i${stored}`);
+  });
+
   it("reports a list default on a scalar field as an invalid default value", () => {
     const result = interpret("model Post {\n  id String @id\n  tags String @default([])\n}");
 

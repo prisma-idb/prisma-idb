@@ -143,6 +143,8 @@ Both surfaces add a non-unique, single-field index for every foreign-key field o
 
 A declared index with the same name and the same single-field key path replaces the implicit index, including its uniqueness setting. A differently named index or a compound index does not replace it. A conflicting index name produces `IDB_INVALID_INDEX`.
 
+PSL decodes escape sequences in `@@map`, `name:` and `map:` strings, as upstream Prisma does: `@@map("a\nb")` names the store `a`, a newline, then `b`, and `map: "by\u0041"` names the index `byA`. An unknown or incomplete escape, such as `\q` or `\u12`, stays as written. Write `\\` for a literal backslash.
+
 TypeScript relations accept `index: false` to suppress their implicit indexes. This does not remove declared indexes. If several relations share a foreign-key field, each owning relation must opt out to suppress its implicit index. PSL has no opt-out.
 
 An implicit index has the same key-type restrictions as a declared index. A TypeScript relation with a `Boolean`, `BigInt`, or `Json` foreign key needs `index: false` to avoid an invalid index.
