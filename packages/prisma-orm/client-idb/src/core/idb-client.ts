@@ -26,6 +26,13 @@ export interface IdbClientOptions<TContract extends IdbContract> {
    */
   readonly keyRange?: typeof IDBKeyRange;
   readonly middleware?: readonly IdbMiddleware[];
+  /**
+   * `"onFirstUse"`, the default, reads the contract marker before the first query or transaction
+   * and logs a `CONTRACT.MARKER_MISSING` or `CONTRACT.MARKER_MISMATCH` warning when the database
+   * has no marker or one for another contract. `false` skips the check, for a database that
+   * you migrated without prisma-idb.
+   */
+  readonly verifyMarker?: "onFirstUse" | false;
 }
 
 /** A typed ORM and the connection and transaction operations that own its lifetime. */
@@ -111,6 +118,7 @@ export function createIdbClient<TContract extends IdbContract>(
     driver,
     contract: options.contract as Record<string, unknown>,
     ...(options.middleware !== undefined && options.middleware.length > 0 ? { middleware: options.middleware } : {}),
+    ...(options.verifyMarker !== undefined ? { verifyMarker: options.verifyMarker } : {}),
   });
   const orm = idbOrm({ contract: options.contract, executor: runtime });
 

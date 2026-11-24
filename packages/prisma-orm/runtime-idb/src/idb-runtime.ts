@@ -50,7 +50,8 @@ export interface IdbRuntimeOptions {
    * SQL runtime does. `"onFirstUse"`, the default, reads the marker once, before
    * the first query or transaction, and warns with `CONTRACT.MARKER_MISSING` or
    * `CONTRACT.MARKER_MISMATCH`, or `CONTRACT.MARKER_UNREADABLE` when the read fails. The check never
-   * blocks the query. `false` skips it.
+   * blocks the query. `false` skips it. The marker compared is the one for the contract's own
+   * space (`"app"`); the marker rows of extension spaces are not read.
    */
   readonly verifyMarker?: "onFirstUse" | false;
 }
@@ -220,17 +221,14 @@ class IdbRuntimeImpl extends RuntimeCore<IdbQueryPlan, IdbPlanBody, IdbMiddlewar
   }
 
   readonly #verifyMarkerOption: "onFirstUse" | false;
-  // Shared by concurrent first uses, so they read the marker and warn once. A failed read warns and is not
-  // retried; the reset below only runs if the check itself throws unexpectedly.
+  // Shared by concurrent first uses, so they read the marker and warn once. `#checkMarker` reports every
+  // failure as a warning and never throws, so a failed read is not retried.
   #markerCheck: Promise<void> | null = null;
 
   /** Reads the marker on first use and warns when it is missing or names another contract. */
   #ensureMarkerChecked(): Promise<void> {
     if (this.#verifyMarkerOption === false) return Promise.resolve();
-    this.#markerCheck ??= this.#checkMarker().catch((error: unknown) => {
-      this.#markerCheck = null;
-      throw error;
-    });
+    this.#markerCheck ??= this.#checkMarker();
     return this.#markerCheck;
   }
 
@@ -281,10 +279,11 @@ class IdbRuntimeImpl extends RuntimeCore<IdbQueryPlan, IdbPlanBody, IdbMiddlewar
    * output types), it wires up here.
    */
   protected override runDriver(exec: IdbPlanBody): AsyncIterable<Record<string, unknown>> {
-    const markerChecked = this.#ensureMarkerChecked();
     const driver = this.#driver;
+    const ensureMarkerChecked = () => this.#ensureMarkerChecked();
+    // The check starts when the result is first iterated, so a plan that is built and never run reads nothing.
     return (async function* () {
-      await markerChecked;
+      await ensureMarkerChecked();
       yield* driver.execute(exec);
     })();
   }

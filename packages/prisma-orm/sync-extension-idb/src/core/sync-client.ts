@@ -57,6 +57,12 @@ export interface SyncIdbClientOptions<TContract extends IdbContract> {
    */
   readonly keyRange?: typeof IDBKeyRange;
   /**
+   * `"onFirstUse"`, the default, logs a `CONTRACT.MARKER_MISSING` or `CONTRACT.MARKER_MISMATCH`
+   * warning before the first query when the database has no marker for the contract or one for
+   * another contract. `false` skips the check, for a database that you migrated without prisma-idb.
+   */
+  readonly verifyMarker?: "onFirstUse" | false;
+  /**
    * Models to write outbox events for.
    *
    * Pass an array of model names to scope tracking to specific models.
@@ -185,6 +191,7 @@ export function createSyncIdbClient<TContract extends IdbContract>(
     adapter,
     driver,
     contract: options.contract as Record<string, unknown>,
+    ...(options.verifyMarker !== undefined ? { verifyMarker: options.verifyMarker } : {}),
   });
 
   /** Keeps append details and status notifications at the same commit boundary. */

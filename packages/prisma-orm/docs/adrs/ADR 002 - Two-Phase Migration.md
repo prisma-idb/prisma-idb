@@ -57,6 +57,10 @@ When the winning upgrade raises the version, IndexedDB fires `versionchange` on 
 
 When a blocked upgrade times out, `openAndUpgrade` rejects, but the open request stays queued in IndexedDB; there is no way to cancel it. If it is unblocked later, it aborts its upgrade instead of applying a migration its caller has already given up on.
 
+### First-use marker check (added 2026-11-24)
+
+The runtime reads the `"app"` marker once, before its first query or transaction, and logs `CONTRACT.MARKER_MISSING` or `CONTRACT.MARKER_MISMATCH` with `console.warn` when it is absent or names another contract. Queries still run. Prisma 8's SQL runtime does the same check but drops the warning unless the caller passes a `log` sink. This runtime logs by default, because a missing marker in a browser app is usually a setup mistake. `verifyMarker: false` skips the check. Only the `"app"` marker is read: the runtime holds the application contract, and extension spaces such as the sync stores have their own marker rows with their own hashes.
+
 ### Schema operations still skip work that's already done
 
 `applyOneDdlOp` still checks for an existing store or index before creating one, and for a missing one before dropping it. IndexedDB itself would throw `ConstraintError` on an existing target and abort the upgrade. A normal run no longer replays anything, but a database can still have a schema ahead of its marker, for example one left by an older build that wrote the marker separately. The checks let those databases catch up.

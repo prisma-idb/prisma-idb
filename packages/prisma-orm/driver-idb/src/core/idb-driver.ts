@@ -59,6 +59,10 @@ export class IdbRuntimeDriverInstance implements RuntimeDriverInstance<"idb", "i
   /**
    * Read the contract marker from the `_prisma_next_marker` store.
    *
+   * Reads the `"app"` marker, the one for the contract the client was built from.
+   * Extension spaces, such as the sync stores, keep their own marker rows, and
+   * the runtime has no contract for them to compare against, so they are not read.
+   *
    * Returns `null` when the marker store does not exist (fresh database
    * that hasn't been initialised yet) or when no marker record is present.
    *
