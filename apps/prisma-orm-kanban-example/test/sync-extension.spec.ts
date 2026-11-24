@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import { signInAsTestUser } from "./test-utils-signin";
 
 /**
- * `openAndReadMarker`'s bare `factory.open(dbName)` implicitly creates a
+ * `openAndReadMarkers`'s bare `factory.open(dbName)` implicitly creates a
  * fresh IDB database at version 1 before any migration runs. `autoMigrate`'s
  * combined apply (ADR 010) then does exactly ONE `upgradeneeded` bump
  * regardless of how many spaces or migration packages have pending work —

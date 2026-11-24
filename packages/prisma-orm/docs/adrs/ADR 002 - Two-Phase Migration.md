@@ -51,9 +51,11 @@ When IndexedDB aborts an upgrade, the open request fails with a generic `AbortEr
 
 ### Concurrent opens
 
-Two callers, in one page or in two tabs, can read the same version and plan the same next version. Only one `upgradeneeded` runs, and it carries only its own caller's operations. When an open reaches the target version without running its upgrade, `openAndUpgrade` rejects with `IdbUpgradeSupersededError` instead of reporting the operations as applied. The auto-migrating client then reads the markers again and plans the next upgrade from them. It also checks, after its upgrade, that every space it asked for is at its head. It gives up after five attempts.
+Two callers, in one page or in two tabs, can read the same version and plan the same next version. Only one `upgradeneeded` runs, and it carries only its own caller's operations. When an open reaches the target version without running its upgrade, `openAndUpgrade` rejects with `IdbUpgradeSupersededError` instead of reporting the operations as applied. After a lost race, the auto-migrating client reads every space's marker again, in one transaction, and returns if the winning upgrade already brought every space it asked for to its head. Otherwise it plans the next upgrade from those markers. It gives up after five lost races. An attempt whose own upgrade runs needs no second read: that upgrade writes the marker of every space that was behind.
 
-When a blocked upgrade times out, the open request is still live. If it is unblocked later, it aborts its upgrade instead of applying a migration its caller has already given up on.
+When the winning upgrade raises the version, IndexedDB fires `versionchange` on every other open connection, including the runtime connection of a client that opened a moment earlier. That connection closes so the upgrade can run, and the driver opens a new one at the upgraded version on its next query or transaction.
+
+When a blocked upgrade times out, `openAndUpgrade` rejects, but the open request stays queued in IndexedDB; there is no way to cancel it. If it is unblocked later, it aborts its upgrade instead of applying a migration its caller has already given up on.
 
 ### Schema operations still skip work that's already done
 

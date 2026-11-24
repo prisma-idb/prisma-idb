@@ -287,7 +287,7 @@ export function openAndUpgrade(input: {
     // the blocking connection closes. Rejecting here would abandon a request
     // that would have succeeded, so we just warn and let it resolve naturally.
     // A stale connection from a previous same-page navigation (e.g. the
-    // openAndReadMarker call above us) closes within the same microtask flush;
+    // openAndReadMarkers call above us) closes within the same microtask flush;
     // another tab holding an open connection is the only scenario where this
     // would hang indefinitely, so we set a timeout as a last resort.
     let blockedTimer: ReturnType<typeof setTimeout> | undefined;
