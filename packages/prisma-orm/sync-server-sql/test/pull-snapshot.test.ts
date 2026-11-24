@@ -11,29 +11,36 @@ import { testContract, testSyncServer, seed, testDb } from "./helpers";
 import { interleaved } from "./interleave";
 
 describe("pull snapshot", () => {
-  it("checks a pulled row's owner as of the moment it read the row", async () => {
-    const db = await testDb();
-    await seed(db, {
-      User: [
-        { id: "u1", name: "Ann" },
-        { id: "u2", name: "Bo" },
-      ],
-      Board: [{ id: "b1", ownerId: "u1" }],
-      Todo: [{ id: "t1", boardId: "b1" }],
-      Changelog: [{ model: "Todo", keyPath: "t1", operation: "update", scopeKey: "u1", outboxEventId: "e1" }],
-    });
-    const adapter = createSqlSyncAdapter({ contract: testContract, syncServer: testSyncServer, contractCheck: "off" });
-    // The board moves to u2 after the pull read the todo, before it reads the board.
-    const moveBoard = async () => {
-      await ormRootFor(db, "Board").select("id").where({ id: "b1" }).update({ ownerId: "u2" });
-    };
+  it.each(["changelog", "todo"] as const)(
+    "keeps the original owner after a transfer following the %s read",
+    async (after) => {
+      const db = await testDb();
+      await seed(db, {
+        User: [
+          { id: "u1", name: "Ann" },
+          { id: "u2", name: "Bo" },
+        ],
+        Board: [{ id: "b1", ownerId: "u1" }],
+        Todo: [{ id: "t1", boardId: "b1" }],
+        Changelog: [{ model: "Todo", keyPath: "t1", operation: "update", scopeKey: "u1", outboxEventId: "e1" }],
+      });
+      const adapter = createSqlSyncAdapter({
+        contract: testContract,
+        syncServer: testSyncServer,
+        contractCheck: "off",
+      });
+      // PostgreSQL has established the snapshot before the transfer commits.
+      const moveBoard = async () => {
+        await ormRootFor(db, "Board").select("id").where({ id: "b1" }).update({ ownerId: "u2" });
+      };
 
-    const pulled = await adapter.pull(interleaved(db, moveBoard), { scopeKey: "u1" });
+      const pulled = await adapter.pull(interleaved(db, moveBoard, after), { scopeKey: "u1" });
 
-    // The todo and its owner come from one state, in which the todo was u1's.
-    expect(pulled).toMatchObject({ ok: true, logs: [{ keyPath: "t1", record: { id: "t1", boardId: "b1" } }] });
-    expect((await ormRootFor(db, "Board").first({ id: "b1" }))?.["ownerId"]).toBe("u2");
-  });
+      // The todo and its owner come from one state, in which the todo was u1's.
+      expect(pulled).toMatchObject({ ok: true, logs: [{ keyPath: "t1", record: { id: "t1", boardId: "b1" } }] });
+      expect((await ormRootFor(db, "Board").first({ id: "b1" }))?.["ownerId"]).toBe("u2");
+    }
+  );
 });
 
 describe("rejected-record snapshot", () => {

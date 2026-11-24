@@ -49,7 +49,10 @@ export interface SqlSyncAdapter {
     check: PushCheck,
     scopeKey: string
   ): Promise<SqlPushResult>;
-  /** Reads the authorized row and its ownership in one snapshot. Requires `syncServer`. */
+  /**
+   * Reads the authorized row and its ownership in one snapshot. Requires `syncServer`
+   * and a top-level client that accepts `{ isolationLevel: "RepeatableRead" }`.
+   */
   resolvePullRecord(
     db: unknown,
     model: string,
@@ -65,7 +68,8 @@ export interface SqlSyncAdapter {
   /**
    * The whole pull route in one call: the next page of `scopeKey`'s
    * changelog after `lastChangelogId`, each row re-authorized and resolved
-   * to its current record. Requires `syncServer`.
+   * to its current record. Requires `syncServer` and a top-level client that accepts
+   * `{ isolationLevel: "RepeatableRead" }`.
    */
   pull(db: unknown, input: PullInput): Promise<PullOutcome>;
 }
