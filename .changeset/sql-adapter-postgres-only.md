@@ -1,4 +1,5 @@
 ---
+"@prisma-idb/sync-server": patch
 "@prisma-idb/sync-server-sql": minor
 ---
 

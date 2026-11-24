@@ -40,17 +40,14 @@ const SNAPSHOT_ISOLATION_LEVELS = new Set(["repeatable read", "serializable"]);
 
 /**
  * Takes the per-scope lock on `tx`'s connection, waiting if another open
- * transaction holds it. `db` is the client `tx` came from — the raw SQL lane
- * lives on the client, not on the transaction scope. No-op for non-Postgres
- * contracts, which `createSqlSyncAdapter` refuses before any push runs.
+ * transaction holds it. Use the client that opened `tx` to build the raw SQL query.
  *
  * Throws if the transaction runs at REPEATABLE READ or SERIALIZABLE (see the
  * file comment). The isolation setting comes back with the lock query to
  * avoid an extra round trip; an unsupported transaction may wait for the
  * lock before being rejected.
  */
-export async function lockScope(db: unknown, tx: unknown, target: unknown, scopeKey: string): Promise<void> {
-  if (target !== "postgres") return;
+export async function lockScope(db: unknown, tx: unknown, scopeKey: string): Promise<void> {
   const { sql } = (db as { raw: { sql: (strings: TemplateStringsArray, ...values: unknown[]) => RawSqlBuilder } }).raw;
   const scope = tx as SqlScope;
 

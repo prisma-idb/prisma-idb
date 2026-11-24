@@ -263,9 +263,9 @@ model Changelog {
 
 Keep the server's migrations in their own folder, such as `migrations-postgres/`, separate from the browser's `migrations/`. They're separate histories for separate databases.
 
-### Other databases
+### Custom server contract configuration
 
-`defineConfig` from `@prisma-idb/sync-server/postgres` wraps `sqlContractWithSync` from `@prisma-idb/sync-server/schema`, which works with any SQL target. Use it directly for another target, or when you need options the wrapper doesn't expose. It needs the framework's own `defineConfig`, with every descriptor set by hand:
+`defineConfig` from `@prisma-idb/sync-server/postgres` wraps `sqlContractWithSync` from `@prisma-idb/sync-server/schema`. Use the schema helper when you need options the wrapper does not expose. Other SQL targets require your own sync adapter. The example configures the Prisma framework directly for PostgreSQL.
 
 ```ts
 import { definePrismaConfig } from "@prisma/cli-engine";

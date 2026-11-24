@@ -49,9 +49,6 @@ function quoteIdentifier(name: string): string {
  * the row through the ORM afterward: READ COMMITTED gives that statement a
  * fresh snapshot after any lock wait, and the lock keeps the row stable.
  * Returns false if the row disappeared while waiting.
- *
- * `createSqlSyncAdapter` refuses every target but Postgres, so the non-Postgres
- * branch only returns true to let callers read through the ORM.
  */
 export async function lockRow(
   db: unknown,
@@ -61,7 +58,6 @@ export async function lockRow(
   key: unknown,
   strength: LockStrength
 ): Promise<boolean> {
-  if (contract.target !== "postgres") return true;
   const storage = domainModelsAtDefaultNamespace(contract.domain)[model]?.storage as
     { namespaceId: string; table: string } | undefined;
   const sqlStorage = contract.storage as unknown as SqlStorage;

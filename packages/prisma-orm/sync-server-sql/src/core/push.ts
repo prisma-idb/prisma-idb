@@ -230,7 +230,6 @@ export async function applyPushEventDecoded(
       };
 
       // Lock the target before walking either its stored or candidate parents.
-      // Authorization decides how to handle a missing target on both dialects.
       if (event.operation !== "create") await lockRow(db, tx, contract, model, nativeKey, "update");
       const startRow = event.operation === "create" ? event.payload : await plainReadRow(model, nativeKey);
       if (!(await isAuthorized(startRow))) return scopeViolation;
@@ -260,7 +259,7 @@ export async function applyPushEventDecoded(
         throw new Error(`Unsupported operation "${event.operation}"`);
       }
 
-      await appendChangelogRow(db, tx, contract, scopeKey, {
+      await appendChangelogRow(db, tx, scopeKey, {
         model,
         keyPath: check.key,
         operation: event.operation,

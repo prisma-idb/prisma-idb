@@ -7,7 +7,6 @@
  * `readChangelogPage`'s exclusive id cursor depends on it.
  */
 
-import type { SyncServerContract } from "@prisma-idb/sync-server";
 import { ormRootFor } from "./orm-root";
 import { lockScope } from "./scope-lock";
 import { nextChangelogId } from "./changelog-id";
@@ -65,11 +64,10 @@ async function maxChangelogId(tx: unknown, scopeKey: string): Promise<string | n
 export async function appendChangelogRow(
   db: unknown,
   tx: unknown,
-  contract: SyncServerContract,
   scopeKey: string,
   row: NewChangelogRow
 ): Promise<void> {
-  await lockScope(db, tx, contract.target, scopeKey);
+  await lockScope(db, tx, scopeKey);
   await ormRootFor(tx, "Changelog")
     .select("id")
     .create({ id: nextChangelogId(await maxChangelogId(tx, scopeKey), Date.now()), scopeKey, ...row });
