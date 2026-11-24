@@ -8,6 +8,8 @@ seoDescription: "Reference for the browser side of Prisma 8 IDB sync: the Indexe
 
 Reference for `@prisma-idb/sync-extension-idb`. To set it up, follow the [Sync tutorial](/docs/prisma-8/sync).
 
+When upgrading sync to support Float infinities, deploy the SQL wire support and upgrade every pulling client before writing `Infinity` or `-Infinity` to synced fields. An older client skips the row as invalid and advances its cursor past it. Float infinity support leaves the storage hash unchanged, so the contract check still lets older clients pull.
+
 ## Opening a sync client
 
 All three functions come from `@prisma-idb/sync-extension-idb/client`.

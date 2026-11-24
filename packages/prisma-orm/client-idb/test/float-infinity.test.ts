@@ -4,12 +4,14 @@
  * aggregates.
  */
 import "fake-indexeddb/auto";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { IDBIndex } from "fake-indexeddb";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { defineContract } from "@prisma-idb/family-idb/contract-ts";
 import idbFamilyPack from "@prisma-idb/family-idb/pack";
 import idbTargetPack from "@prisma-idb/target-idb/pack";
 import { createAutoMigratingIdbClient } from "../src/exports/client-auto";
-import { IdbRecordValidationError } from "../src/exports/orm";
+import { fieldFilter } from "@prisma-idb/adapter-idb/runtime";
+import { and, IdbRecordValidationError } from "../src/exports/orm";
 import { buildContractSpaceFixture } from "./_contract-space-fixture";
 
 const contract = defineContract({
@@ -34,12 +36,17 @@ const contract = defineContract({
 
 type Row = { id: string; indexed: number; plain: number };
 type Field = { gt(v: number): unknown; lt(v: number): unknown; eq(v: number): unknown };
+type ReadQuery = {
+  all(): { toArray(): Promise<Row[]> };
+  orderBy(order: Record<string, "asc" | "desc">): ReadQuery;
+  take(count: number): ReadQuery;
+};
 type Readings = {
   create(row: Row): Promise<unknown>;
   createAll(rows: Row[]): Promise<unknown>;
   findUnique(id: string): Promise<Row | null>;
-  where(filter: (m: Record<string, Field>) => unknown): { all(): { toArray(): Promise<Row[]> } };
-  orderBy(order: Record<string, "asc" | "desc">): { all(): { toArray(): Promise<Row[]> } };
+  where(filter: (m: Record<string, Field>) => unknown): ReadQuery;
+  orderBy(order: Record<string, "asc" | "desc">): ReadQuery;
   aggregate(spec: (agg: Record<string, (field: string) => unknown>) => unknown): Promise<Record<string, unknown>>;
 };
 
@@ -127,6 +134,37 @@ describe.each(["indexed", "plain"])("a %s Float holding ±Infinity", (field) => 
   });
 });
 
+it.each([
+  { order: "asc", direction: "next", edge: "low", lowerOpen: false, upperOpen: true },
+  { order: "desc", direction: "prev", edge: "high", lowerOpen: true, upperOpen: false },
+] as const)(
+  "applies the Float bounds and take on the index in $order order",
+  async ({ order, direction, edge, lowerOpen, upperOpen }) => {
+    const cursor = vi.spyOn(IDBIndex.prototype, "openCursor");
+    try {
+      const result = await readings
+        .where(() =>
+          and(
+            fieldFilter("indexed", lowerOpen ? "gt" : "gte", -Infinity),
+            fieldFilter("indexed", upperOpen ? "lt" : "lte", Infinity)
+          )
+        )
+        .orderBy({ indexed: order })
+        .take(1)
+        .all()
+        .toArray();
+
+      expect(result.map((row) => row.id)).toEqual([edge]);
+      expect(cursor.mock.contexts).toEqual([expect.objectContaining({ name: "byIndexed" })]);
+      expect(cursor.mock.calls).toEqual([
+        [expect.objectContaining({ lower: -Infinity, upper: Infinity, lowerOpen, upperOpen }), direction],
+      ]);
+    } finally {
+      cursor.mockRestore();
+    }
+  }
+);
+
 it("returns positive infinity from sum and avg and still reports finite overflow", async () => {
   await client.close();
   client = await createAutoMigratingIdbClient({
@@ -136,7 +174,8 @@ it("returns positive infinity from sum and avg and still reports finite overflow
   readings = client.orm["readings"] as unknown as Readings;
   await readings.createAll([
     { id: "a", indexed: Number.MAX_VALUE, plain: Number.MAX_VALUE },
-    { id: "b", indexed: Infinity, plain: Number.MAX_VALUE },
+    { id: "b", indexed: 1, plain: 1 },
+    { id: "c", indexed: Infinity, plain: Number.MAX_VALUE },
   ]);
   expect(
     await readings.aggregate((agg) => ({
