@@ -915,7 +915,9 @@ describe("delete — cascade + restrict interaction across hops", () => {
     await orm["posts"]!.create({ id: "p1", title: "Post", authorId: "u1" } as never);
     await orm["comments"]!.create({ id: "c1", text: "Comment", postId: "p1" } as never);
 
-    await expect(orm["users"]!.delete("u1" as never)).rejects.toThrow(/Cannot delete Post.*comments/i);
+    await expect(orm["users"]!.delete("u1" as never)).rejects.toThrow(
+      /Cannot delete User 'u1': Cascade on relation '\w+' deletes Post '\w+', but child records exist on relation 'comments'/
+    );
 
     expect(await getAllRows(db, "users")).toHaveLength(1);
     expect(await getAllRows(db, "posts")).toHaveLength(1);
@@ -2086,6 +2088,99 @@ describe("restrict — shared-primary-key 1:1 (child's own PK is the FK)", () =>
   });
 });
 
+it("runs downstream update restrictions before SetNull on a one-to-one relation", async () => {
+  const contract = defineContract({
+    family: idbFamilyPack,
+    target: idbTargetPack,
+    models: {
+      User: {
+        store: "users",
+        key: "id",
+        fields: { id: "String", email: "String" },
+        indexes: { email: { keyPath: "email", unique: true } },
+        relations: {
+          profile: {
+            to: "Profile",
+            cardinality: "1:1",
+            on: { local: ["email"], target: ["userEmail"] },
+            nullable: true,
+            onDelete: "setNull",
+          },
+        },
+      },
+      Profile: {
+        store: "profiles",
+        key: "id",
+        fields: { id: "String", userEmail: "String?" },
+        indexes: { userEmail: { keyPath: "userEmail", unique: true } },
+        relations: {
+          user: {
+            to: "User",
+            cardinality: "N:1",
+            on: { local: ["userEmail"], target: ["email"] },
+            onUpdate: "setNull",
+          },
+          badges: {
+            to: "Badge",
+            cardinality: "1:N",
+            on: { local: ["userEmail"], target: ["profileEmail"] },
+            onUpdate: "restrict",
+          },
+        },
+      },
+      Badge: {
+        store: "badges",
+        key: "id",
+        fields: { id: "String", profileEmail: "String" },
+        relations: {
+          profile: { to: "Profile", cardinality: "N:1", on: { local: ["profileEmail"], target: ["userEmail"] } },
+        },
+      },
+    },
+  });
+  const client = await createAutoMigratingIdbClient({
+    contractSpace: buildContractSpaceFixture([contract]),
+    dbName: nextDbName(),
+  });
+  try {
+    const users = client.orm["users"]!;
+    const profiles = client.orm["profiles"]!;
+    const badges = client.orm["badges"]!;
+    await users.create({ id: "updated", email: "updated@example.com" });
+    await users.create({ id: "deleted", email: "deleted@example.com" });
+    await profiles.create({ id: "p1", userEmail: "updated@example.com" });
+    await profiles.create({ id: "p2", userEmail: "deleted@example.com" });
+
+    await badges.create({ id: "b1", profileEmail: "updated@example.com" });
+    await badges.create({ id: "b2", profileEmail: "deleted@example.com" });
+
+    await expect(users.where({ id: "updated" }).update({ email: "new@example.com" })).rejects.toThrow(
+      "Cannot update User 'updated': SetNull on relation 'profile' changes Profile 'p1', and changing its field(s) " +
+        "userEmail would orphan child records on relation 'badges'."
+    );
+    await expect(users.delete("deleted")).rejects.toThrow(
+      "Cannot delete User 'deleted': SetNull on relation 'profile' changes Profile 'p2', and changing its field(s) " +
+        "userEmail would orphan child records on relation 'badges'."
+    );
+    expect(await users.findUnique("updated")).toEqual({ id: "updated", email: "updated@example.com" });
+    expect(await users.findUnique("deleted")).toEqual({ id: "deleted", email: "deleted@example.com" });
+    expect(await profiles.findUnique("p1")).toEqual({ id: "p1", userEmail: "updated@example.com" });
+    expect(await profiles.findUnique("p2")).toEqual({ id: "p2", userEmail: "deleted@example.com" });
+    expect(await badges.findUnique("b1")).toEqual({ id: "b1", profileEmail: "updated@example.com" });
+    expect(await badges.findUnique("b2")).toEqual({ id: "b2", profileEmail: "deleted@example.com" });
+
+    await badges.delete("b1");
+    await badges.delete("b2");
+    await users.where({ id: "updated" }).update({ email: "new@example.com" });
+    await users.delete("deleted");
+
+    expect(await profiles.findUnique("p1")).toEqual({ id: "p1", userEmail: null });
+    expect(await profiles.findUnique("p2")).toEqual({ id: "p2", userEmail: null });
+  } finally {
+    await client.close();
+  }
+});
+
 // ── foreign keys that a referential action changes ────────────────────────────
 
 type Orm = {
@@ -2108,6 +2203,70 @@ async function open(contract: ReturnType<typeof defineContract>) {
   });
   return { client, orm: client.orm as unknown as Record<string, Orm> };
 }
+
+describe("setDefault — downstream actions", () => {
+  function contractFor(trigger: "onDelete" | "onUpdate") {
+    return defineContract({
+      family: idbFamilyPack,
+      target: idbTargetPack,
+      models: {
+        User: {
+          store: "users",
+          key: "id",
+          fields: { id: "String", email: "String" },
+          relations: {
+            profiles: {
+              to: "Profile",
+              cardinality: "1:N",
+              on: { local: ["email"], target: ["userEmail"] },
+              [trigger]: "setDefault",
+            },
+          },
+        },
+        Profile: {
+          store: "profiles",
+          key: "id",
+          fields: { id: "String", userEmail: "String" },
+          fieldDefaults: { userEmail: "system" },
+          relations: {
+            badges: {
+              to: "Badge",
+              cardinality: "1:N",
+              on: { local: ["userEmail"], target: ["profileEmail"] },
+              onUpdate: "restrict",
+            },
+          },
+        },
+        Badge: { store: "badges", key: "id", fields: { id: "String", profileEmail: "String" } },
+      },
+    });
+  }
+
+  it.each(["onDelete", "onUpdate"] as const)(
+    "%s: runs the child's onUpdate restriction before writing the default",
+    async (trigger) => {
+      const { client, orm } = await open(contractFor(trigger));
+      try {
+        await orm["users"]!.create({ id: "system", email: "system" });
+        await orm["users"]!.create({ id: "u1", email: "old" });
+        await orm["profiles"]!.create({ id: "p1", userEmail: "old" });
+        await orm["badges"]!.create({ id: "b1", profileEmail: "old" });
+        const write =
+          trigger === "onDelete"
+            ? orm["users"]!.delete("u1")
+            : orm["users"]!.where({ id: "u1" }).update({ email: "new" });
+        await expect(write).rejects.toThrow(
+          `Cannot ${trigger === "onDelete" ? "delete" : "update"} User 'u1': SetDefault on relation 'profiles' changes ` +
+            "Profile 'p1', and changing its field(s) userEmail would orphan child records on relation 'badges'."
+        );
+        expect(await orm["users"]!.findUnique("u1")).toEqual({ id: "u1", email: "old" });
+        expect(await orm["profiles"]!.findUnique("p1")).toEqual({ id: "p1", userEmail: "old" });
+      } finally {
+        await client.close();
+      }
+    }
+  );
+});
 
 // A one-to-one relation declared on the foreign-key side holds a foreign key,
 // whether or not the referenced model declares the inverse.

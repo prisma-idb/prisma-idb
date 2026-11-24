@@ -173,7 +173,7 @@ When you delete a row, or update a field that other rows refer to, each relation
 | `SetNull`            | Their foreign key is set to `null`. The field must be optional.                          |
 | `SetDefault`         | Their foreign key is set to its `@default` value, which must point at a row that exists. |
 
-A parent with any null field in its referenced key has no referencing children.
+A parent with any null field in its referenced key has no referencing children. When `Cascade`, `SetNull` or `SetDefault` changes a child's foreign key, the client runs that child's own `onUpdate` actions for the fields that changed.
 
 Declare the actions on the relation in your schema:
 
