@@ -8,6 +8,9 @@ import type { IdbContract } from "@prisma-idb/client-idb/orm";
 import { createSyncIdbClient } from "../src/exports/client";
 import {
   OUTBOX_STORE,
+  POSTS_STORE,
+  SYNC_META_STORE,
+  USERS_STORE,
   VERSION_META_STORE,
   changelogId,
   createTestSyncClient,
@@ -596,6 +599,64 @@ describe("applyPull", () => {
       });
       expect(await scanAll(client, "users")).toEqual([{ id: "u1", name: "Alice" }]);
     });
+  });
+});
+
+describe("applyPull with a foreign key whose parent declares no inverse relation", () => {
+  async function createOneSidedClient(onDelete: "cascade" | "restrict") {
+    const name = testDbName();
+    const bootstrapDb = await openTestDb(name, [
+      USERS_STORE,
+      POSTS_STORE,
+      OUTBOX_STORE,
+      VERSION_META_STORE,
+      SYNC_META_STORE,
+    ]);
+    bootstrapDb.close();
+    // `User` has no `posts` relation; only `Post.author` describes the reference.
+    const contract = defineContract({
+      family: idbFamilyPack,
+      target: idbTargetPack,
+      models: {
+        User: { store: "users", key: "id", fields: { id: "String", name: "String" } },
+        Post: {
+          store: "posts",
+          key: "id",
+          fields: { id: "String", title: "String", authorId: "String" },
+          relations: {
+            author: { to: "User", cardinality: "N:1", on: { local: ["authorId"], target: ["id"] }, onDelete },
+          },
+        },
+      },
+    }) as unknown as IdbContract;
+    const client = createSyncIdbClient({ contract, dbName: name, trackedModels: "*" });
+    await applyPull(client, [
+      log({ changelogId: "c1", operation: "create" }),
+      log({
+        changelogId: "c2",
+        model: "Post",
+        keyPath: "p1",
+        operation: "create",
+        record: { id: "p1", title: "Hi", authorId: "u1" },
+      }),
+    ]);
+    return client;
+  }
+
+  it("cascades a pulled delete to the children", async () => {
+    const client = await createOneSidedClient("cascade");
+    const result = await applyPull(client, [log({ changelogId: "c3", operation: "delete", record: null })]);
+    expect(result).toMatchObject({ applied: 1, halted: false, lastChangelogId: "c3" });
+    expect(await scanAll(client, "users")).toEqual([]);
+    expect(await scanAll(client, "posts")).toEqual([]);
+  });
+
+  it("halts at a pulled delete that a restricting foreign key refuses, keeping parent and child", async () => {
+    const client = await createOneSidedClient("restrict");
+    const result = await applyPull(client, [log({ changelogId: "c3", operation: "delete", record: null })]);
+    expect(result).toMatchObject({ applied: 0, halted: true });
+    expect(await scanAll(client, "users")).toHaveLength(1);
+    expect(await scanAll(client, "posts")).toHaveLength(1);
   });
 });
 
