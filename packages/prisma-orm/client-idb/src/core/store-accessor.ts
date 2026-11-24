@@ -405,9 +405,10 @@ export interface IdbStoreAccessor<
  * `Number.MAX_SAFE_INTEGER`, as Prisma 8 does. IndexedDB access paths would
  * otherwise read a negative or fractional value differently from each other.
  */
-function assertPageArgument(argument: "take" | "skip", value: number): void {
-  if (Number.isSafeInteger(value) && value >= 0) return;
-  throw new RangeError(`${argument} must be an integer from 0 to ${Number.MAX_SAFE_INTEGER}, got ${String(value)}`);
+function assertPageArgument(argument: "take" | "skip", value: unknown): void {
+  if (typeof value === "number" && Number.isSafeInteger(value) && value >= 0) return;
+  const received = typeof value === "number" ? `, got ${value}` : "";
+  throw new RangeError(`${argument} must be an integer from 0 to ${Number.MAX_SAFE_INTEGER}${received}`);
 }
 
 /**

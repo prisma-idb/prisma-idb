@@ -254,6 +254,13 @@ describe("count()", () => {
         expect(() => build(items).skip(bad)).toThrow(`skip must be an integer from 0 to ${Number.MAX_SAFE_INTEGER}`);
       }
     });
+    it.each(["take", "skip"] as const)(
+      "reports a RangeError when %s receives an object without string conversion",
+      (method) => {
+        const invalid: unknown = Object.create(null);
+        expect(() => items[method](invalid as number)).toThrow(RangeError);
+      }
+    );
   });
 
   describe("values an index can't count by itself", () => {
