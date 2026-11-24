@@ -352,6 +352,31 @@ describe("stripIdbExcludeAttributes", () => {
     expect(stripIdbExcludeAttributes(schema)).toBe(expected);
   });
 
+  it.each([
+    [
+      "a duplicate model name",
+      "model A {\n  id String @id\n}\nmodel A {\n  id String @id\n  s String @idb.exclude\n  @@idb.exclude\n}\n",
+      "model A {\n  id String @id\n}\nmodel A {\n  id String @id\n  s String\n}\n",
+    ],
+    [
+      "a syntax error in the same model",
+      "model A {\n  id String @id\n  s String @idb.exclude\n  t String @@@@\n}\nmodel B {\n  id String @id @idb.exclude\n}\n",
+      "model A {\n  id String @id\n  s String\n  t String @@@@\n}\nmodel B {\n  id String @id\n}\n",
+    ],
+    [
+      "an unterminated model",
+      "model A {\n  id String @id\n  s String @idb.exclude\n",
+      "model A {\n  id String @id\n  s String\n",
+    ],
+    [
+      "non-ASCII text before the attribute",
+      'model A {\n  id String @id\n  s String @default("😀 é 漢") @idb.exclude\n  // 😀 é\n  @@idb.exclude\n}\n',
+      'model A {\n  id String @id\n  s String @default("😀 é 漢")\n  // 😀 é\n}\n',
+    ],
+  ])("strips @idb.exclude from the text even with %s", (_, schema, expected) => {
+    expect(stripIdbExcludeAttributes(schema)).toBe(expected);
+  });
+
   it("round-trips through prismaIdbContract's own parser without error once stripped", async () => {
     const stripped = stripIdbExcludeAttributes(`
       model User {

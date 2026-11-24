@@ -3,7 +3,7 @@ import type { ContractConfig } from "@prisma/orm-framework/config/config-types";
 import { buildSymbolTable, mapPslDiagnostics } from "@prisma/orm-framework/psl-parser";
 import { withSeedDiagnostics } from "@prisma/orm-framework/psl-parser/interpret";
 import type { PslInterpretCapable, PslInterpretInput } from "@prisma/orm-framework/psl-parser/interpret";
-import { parse } from "@prisma/orm-framework/psl-parser/syntax";
+import { FieldAttributeAst, ModelAttributeAst, parse, SyntaxNode } from "@prisma/orm-framework/psl-parser/syntax";
 import { notOk } from "@prisma/orm-framework/utils/result";
 import { extname, basename } from "pathe";
 import type { ContractProjection } from "./psl-interpreter";
@@ -23,19 +23,19 @@ import { IDB_EXCLUDE_ATTR } from "./psl-binder";
  * from the client.
  */
 export function stripIdbExcludeAttributes(schema: string): string {
-  // The parser locates each attribute, so text that only looks like one, such
-  // as `@idb.exclude` inside a string default or a comment, is left alone.
-  const { document, sources } = parse(schema, "schema.prisma");
-  const { symbolTable } = buildSymbolTable({ documents: [document], sources, defaultNamespaceId: "__unbound__" });
+  // Walk the syntax tree rather than the symbol table: the tree keeps every
+  // attribute, including those on a model the symbol table drops (a duplicate
+  // model name, or a block the parser recovered from). Text that only looks
+  // like an attribute, such as `@idb.exclude` inside a string default or a
+  // comment, is never a node. Node offsets are UTF-16 string indices, so they
+  // slice correctly after non-ASCII text.
+  const { document } = parse(schema, "schema.prisma");
   const spans: { start: number; end: number }[] = [];
-  for (const namespace of Object.values(symbolTable.namespaces)) {
-    for (const model of Object.values(namespace.models)) {
-      const attributes = [...model.attributes, ...Object.values(model.fields).flatMap((field) => field.attributes)];
-      for (const attribute of attributes) {
-        if (attribute.name === IDB_EXCLUDE_ATTR) {
-          spans.push({ start: attribute.span.start.offset, end: attribute.span.end.offset });
-        }
-      }
+  for (const element of document.syntax.descendants()) {
+    if (!(element instanceof SyntaxNode)) continue;
+    const attribute = FieldAttributeAst.cast(element) ?? ModelAttributeAst.cast(element);
+    if (attribute?.name()?.path().join(".") === IDB_EXCLUDE_ATTR) {
+      spans.push({ start: element.offset, end: element.endOffset });
     }
   }
   // Cut from the end, so earlier offsets stay valid.
