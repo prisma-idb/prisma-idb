@@ -163,7 +163,7 @@ You can also write `renameFields` by hand in an existing migration. Run the edit
 
 - `--convert` needs the field's type to change. A field with the same type in both contracts has no values to convert, and planning refuses the statement.
 - `--backfill` needs a required field that is new or was optional. A field that was already required has a value in every row, and planning refuses the statement. Omit `--backfill` for a new field with a supported literal default. The planner already uses that default to fill existing records.
-- Neither works on a primary-key field, which IndexedDB cannot rewrite.
+- Both flags require the model to keep its existing store. Primary-key fields are excluded.
 - A statement that names a model or field missing from the contract is refused, so a typo never plans silently.
 
 ## Remove a field
