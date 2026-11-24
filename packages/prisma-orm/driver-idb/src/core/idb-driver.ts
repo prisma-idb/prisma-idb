@@ -7,6 +7,7 @@ import { createTransactionScope, type IdbTransactionScope } from "./transaction-
 /** The connection a driver instance holds. Kept off the class so its type stays structural. */
 interface ConnectionState {
   db: Promise<IDBDatabase> | undefined;
+  generation: number;
   closed: boolean;
   readonly open: () => Promise<IDBDatabase>;
 }
@@ -21,11 +22,15 @@ export class IdbRuntimeDriverInstance implements RuntimeDriverInstance<"idb", "i
   constructor(dbName: string, version?: number, factory?: IDBFactory, keyRange?: typeof IDBKeyRange) {
     const state: ConnectionState = {
       db: undefined,
+      generation: 0,
       closed: false,
       open: () => {
         const opened = openIdbDatabase(dbName, version, factory, keyRange, () => {
           // Only forget the connection that closed, not one opened after it.
-          if (state.db === opened && !state.closed) state.db = undefined;
+          if (state.db === opened && !state.closed) {
+            state.db = undefined;
+            state.generation++;
+          }
         });
         return opened;
       },
@@ -48,6 +53,15 @@ export class IdbRuntimeDriverInstance implements RuntimeDriverInstance<"idb", "i
     const state = connections.get(this)!;
     state.db ??= state.open();
     return state.db;
+  }
+
+  /**
+   * Changes each time a newer version closes this driver's connection. The
+   * runtime compares it to decide when to check the contract marker again,
+   * since the upgrade may have moved the database to another contract.
+   */
+  get connectionGeneration(): number {
+    return connections.get(this)!.generation;
   }
 
   async close(): Promise<void> {

@@ -83,6 +83,7 @@ function rowsIterable(...rows: Record<string, unknown>[]): AsyncIterable<Record<
 
 interface MockDriverOptions {
   readMarker?: () => Promise<IdbMarkerRecord | null>;
+  connectionGeneration?: () => number;
   execute?: (plan: IdbPlanBody) => AsyncIterable<Record<string, unknown>>;
   close?: () => Promise<void>;
   transaction?: (storeNames: string[], mode?: IDBTransactionMode) => Promise<IdbTransactionScope>;
@@ -99,6 +100,9 @@ function makeMockDriver(options: MockDriverOptions = {}): IdbRuntimeDriverInstan
     familyId: "idb" as const,
     targetId: "idb" as const,
     db: Promise.resolve(stubDb()),
+    get connectionGeneration() {
+      return options.connectionGeneration?.() ?? 0;
+    },
     readMarker: options.readMarker ?? (async () => null),
     execute: options.execute ?? ((_plan: IdbPlanBody) => rowsIterable({ id: 1 })),
     close: options.close ?? (async () => undefined),
@@ -830,6 +834,32 @@ describe("first-use marker check", () => {
       });
       expect(await inTransaction.transaction(["User"])).toBe(scope);
       expect(readMarker).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
+  it("checks again on the first use after a newer version closed the connection", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    let generation = 0;
+    let marker = makeMarker();
+    const readMarker = vi.fn(async () => marker);
+    try {
+      const runtime = createIdbRuntime({
+        adapter: makeMockAdapter(),
+        driver: makeMockDriver({ readMarker, connectionGeneration: () => generation }),
+        contract: TEST_CONTRACT,
+      });
+      await run(runtime);
+      expect(warn).not.toHaveBeenCalled();
+
+      generation = 1;
+      marker = makeMarker({ storageHash: "newer" });
+      await Promise.all([run(runtime), run(runtime)]);
+      await run(runtime);
+      expect(readMarker).toHaveBeenCalledTimes(2);
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(String(warn.mock.calls[0]![0])).toContain("CONTRACT.MARKER_MISMATCH");
     } finally {
       vi.restoreAllMocks();
     }

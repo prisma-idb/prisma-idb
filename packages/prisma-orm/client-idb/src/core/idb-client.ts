@@ -27,8 +27,8 @@ export interface IdbClientOptions<TContract extends IdbContract> {
   readonly keyRange?: typeof IDBKeyRange;
   readonly middleware?: readonly IdbMiddleware[];
   /**
-   * `"onFirstUse"`, the default, reads the contract marker before the first query or transaction
-   * and logs a `CONTRACT.MARKER_MISSING` or `CONTRACT.MARKER_MISMATCH` warning when the database
+   * `"onFirstUse"`, the default, reads the contract marker before the first query or transaction,
+   * and again after a newer version reopens the connection, and logs a `CONTRACT.MARKER_MISSING` or `CONTRACT.MARKER_MISMATCH` warning when the database
    * has no marker or one for another contract. `false` skips the check, for a database that
    * you migrated without prisma-idb.
    */

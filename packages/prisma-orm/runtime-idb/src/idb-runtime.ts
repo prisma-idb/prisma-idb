@@ -47,8 +47,8 @@ export interface IdbRuntimeOptions {
   readonly ctx?: ActivityContextFields;
   /**
    * When to compare the database's contract marker with `contract`, as Prisma 8's
-   * SQL runtime does. `"onFirstUse"`, the default, reads the marker once, before
-   * the first query or transaction, and warns with `CONTRACT.MARKER_MISSING` or
+   * SQL runtime does. `"onFirstUse"`, the default, reads the marker before
+   * the first query or transaction, and again after a newer version reopened the connection, and warns with `CONTRACT.MARKER_MISSING` or
    * `CONTRACT.MARKER_MISMATCH`, or `CONTRACT.MARKER_UNREADABLE` when the read fails. The check never
    * blocks the query. `false` skips it. The marker compared is the one for the contract's own
    * space (`"app"`); the marker rows of extension spaces are not read.
@@ -222,13 +222,20 @@ class IdbRuntimeImpl extends RuntimeCore<IdbQueryPlan, IdbPlanBody, IdbMiddlewar
 
   readonly #verifyMarkerOption: "onFirstUse" | false;
   // Shared by concurrent first uses, so they read the marker and warn once. `#checkMarker` reports every
-  // failure as a warning and never throws, so a failed read is not retried.
+  // failure as a warning and never throws, so a failed read is not retried on the same connection.
   #markerCheck: Promise<void> | null = null;
+  // The driver connection the marker was checked on. A newer version that closes the connection
+  // may have migrated the database to another contract, so the next use checks again.
+  #markerCheckedGeneration = 0;
 
-  /** Reads the marker on first use and warns when it is missing or names another contract. */
+  /** Reads the marker on first use of each connection and warns when it is missing or names another contract. */
   #ensureMarkerChecked(): Promise<void> {
     if (this.#verifyMarkerOption === false) return Promise.resolve();
-    this.#markerCheck ??= this.#checkMarker();
+    const generation = this.#driver.connectionGeneration;
+    if (this.#markerCheck === null || this.#markerCheckedGeneration !== generation) {
+      this.#markerCheckedGeneration = generation;
+      this.#markerCheck = this.#checkMarker();
+    }
     return this.#markerCheck;
   }
 

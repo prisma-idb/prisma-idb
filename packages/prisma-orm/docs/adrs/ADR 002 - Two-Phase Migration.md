@@ -59,7 +59,7 @@ When a blocked upgrade times out, `openAndUpgrade` rejects, but the open request
 
 ### First-use marker check (added 2026-11-24)
 
-The runtime reads the `"app"` marker once, before its first query or transaction, and logs `CONTRACT.MARKER_MISSING` or `CONTRACT.MARKER_MISMATCH` with `console.warn` when it is absent or names another contract. Queries still run. Prisma 8's SQL runtime does the same check but drops the warning unless the caller passes a `log` sink. This runtime logs by default, because a missing marker in a browser app is usually a setup mistake. `verifyMarker: false` skips the check. Only the `"app"` marker is read: the runtime holds the application contract, and extension spaces such as the sync stores have their own marker rows with their own hashes.
+The runtime reads the `"app"` marker once, before its first query or transaction, and again before the first use of each connection the driver opens after a newer version closed the previous one. It logs `CONTRACT.MARKER_MISSING` or `CONTRACT.MARKER_MISMATCH` with `console.warn` when it is absent or names another contract. Queries still run. Prisma 8's SQL runtime does the same check but drops the warning unless the caller passes a `log` sink. This runtime logs by default, because a missing marker in a browser app is usually a setup mistake. `verifyMarker: false` skips the check. Only the `"app"` marker is read: the runtime holds the application contract, and extension spaces such as the sync stores have their own marker rows with their own hashes.
 
 ### Schema operations still skip work that's already done
 
