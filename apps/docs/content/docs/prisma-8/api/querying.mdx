@@ -153,7 +153,7 @@ const stats = await db.orm.task.aggregate((agg) => ({
 
 `sum`, `avg`, `min` and `max` accept scalar `Int` and `Float` fields and return `number | null`. They skip null and absent values. They return `null` when no value remains. Field types are checked at runtime, including contracts without TypeScript type maps. String, DateTime, Decimal, BigInt, collection and unknown fields are rejected, even for an empty set. Numeric strings and dates are never converted to numbers.
 
-Non-null inputs must be finite numbers. `Int` inputs must also be integers in the signed 32-bit range. `sum` and `avg` throw a `RangeError` if an intermediate total becomes nonfinite. For `Int`, they also throw if an intermediate total exceeds the JavaScript safe-integer range, ±(2^53 − 1). This can reject an average even when its final value would fit. `Float` arithmetic uses JavaScript floating-point precision. Exact BigInt and Decimal aggregation is not supported.
+Non-null `Int` inputs must be integers in the signed 32-bit range. A `Float` may hold `Infinity` and `-Infinity`, and a stored `NaN` is rejected with a `TypeError`. `sum` and `avg` throw a `RangeError` if an intermediate total of finite values overflows to infinity. With infinite operands, `sum` and `avg` return an infinity of the same sign or `NaN` when both signs appear, as PostgreSQL does. `min` and `max` order infinities as JavaScript does. For `Int`, `sum` and `avg` also throw if an intermediate total exceeds the JavaScript safe-integer range, ±(2^53 − 1). This can reject an average even when its final value would fit. `Float` arithmetic uses JavaScript floating-point precision. Exact BigInt and Decimal aggregation is not supported.
 
 ## Group by
 

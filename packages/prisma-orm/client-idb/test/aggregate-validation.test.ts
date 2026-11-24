@@ -101,32 +101,26 @@ for (const grouped of [false, true]) {
       }
     );
 
-    it.each(["sum", "avg", "min", "max"] as const)(
-      "%s rejects coerced or nonfinite values in number fields",
-      async (fn) => {
-        for (const n of [
-          "12",
-          "invalid",
-          new Date("2026-01-01"),
-          1n,
-          9007199254740993n,
-          true,
-          [],
-          {},
-          NaN,
-          Infinity,
-          -Infinity,
-        ]) {
-          await seed([{ n }]);
-          await expect(accessor().aggregate((agg) => ({ value: agg[fn]("n") }))).rejects.toThrow(/finite number/);
-        }
+    it.each(["sum", "avg", "min", "max"] as const)("%s rejects coerced values and NaN in Float fields", async (fn) => {
+      for (const n of ["12", "invalid", new Date("2026-01-01"), 1n, 9007199254740993n, true, [], {}, NaN]) {
+        await seed([{ n }]);
+        await expect(accessor().aggregate((agg) => ({ value: agg[fn]("n") }))).rejects.toThrow(
+          /number values other than NaN/
+        );
       }
-    );
+    });
 
     it.each(["sum", "avg", "min", "max"] as const)("%s enforces the declared Int range", async (fn) => {
       for (const integer of [1.5, 2147483648, -2147483649]) {
         await seed([{ integer }]);
         await expect(accessor().aggregate((agg) => ({ value: agg[fn]("integer") }))).rejects.toThrow(/Int values/);
+      }
+      // A Float may hold an infinity; an Int may not.
+      for (const integer of [Infinity, -Infinity]) {
+        await seed([{ integer }]);
+        await expect(accessor().aggregate((agg) => ({ value: agg[fn]("integer") }))).rejects.toThrow(
+          /finite number values/
+        );
       }
     });
 
@@ -200,7 +194,9 @@ for (const grouped of [false, true]) {
         { group: "a", n: 1 },
         { group: "b", n: "2" },
       ]);
-      await expect(accessor().aggregate((agg) => ({ sum: agg.sum("n") }))).rejects.toThrow(/finite number/);
+      await expect(accessor().aggregate((agg) => ({ sum: agg.sum("n") }))).rejects.toThrow(
+        /number values other than NaN/
+      );
     });
   });
 }

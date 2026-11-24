@@ -41,6 +41,7 @@ For an overview of how the packages fit together, see [ARCHITECTURE.md](../ARCHI
 | 025 | [Scalar lists](ADR%20025%20-%20Scalar%20Lists.md)                                                                         | Accepted   | Store native arrays with per-element codecs, explicit backfills, and Prisma 8 operations.                                                                                                          |
 | 026 | [Stale writes are rejected by base version](ADR%20026%20-%20Stale%20Writes%20Are%20Rejected%20by%20Base%20Version.md)     | Proposed   | Each pushed event carries the server version its edit was based on. The server rejects it if another device wrote the row since, and the client takes the server row.                              |
 | 027 | [Changelog retention and full resync](ADR%20027%20-%20Changelog%20Retention%20and%20Full%20Resync.md)                     | Proposed   | Delete changelog rows older than 30 days by default. A client with no cursor, or one older than the rows kept, gets HTTP 410 and downloads a snapshot from a full-sync endpoint instead.           |
+| 029 | [A Float holds ±Infinity but not NaN](ADR%20029%20-%20Float%20Holds%20Infinity%20but%20Not%20NaN.md)                      | Accepted   | Float fields accept `±Infinity` on writes, the sync wire and server validation, and refuse `NaN`, which IndexedDB can't index and JS never equals. Float defaults must be finite.                  |
 
 ## Reading order for sync
 

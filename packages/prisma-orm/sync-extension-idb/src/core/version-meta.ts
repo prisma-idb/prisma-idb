@@ -20,9 +20,18 @@ import { getRecord, scanStore } from "./raw-store";
 
 export const VERSION_META_STORE = "_idb_sync_version_meta";
 
-/** The `_idb_sync_version_meta` id for the record of `modelName` stored under `key`. */
+/**
+ * The `_idb_sync_version_meta` id for the record of `modelName` stored under `key`.
+ * `JSON.stringify` writes `Infinity` and `-Infinity` as `null`, so a Float key
+ * would collide with the other infinity and never match the wire text a pull
+ * carries. Non-finite numbers are written as that text (`"Infinity"`), on both
+ * the local and the pull path. A model's key fields have one type each, so the
+ * text can't collide with a string key.
+ */
 export function versionMetaKey(modelName: string, key: unknown): string {
-  return `${modelName}::${JSON.stringify(key)}`;
+  return `${modelName}::${JSON.stringify(key, (_name, value: unknown) =>
+    typeof value === "number" && !Number.isFinite(value) ? String(value) : value
+  )}`;
 }
 
 /** Find metadata aliases even after a local delete removed the application row. */
