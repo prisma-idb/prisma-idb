@@ -1126,12 +1126,21 @@ async function writeReferentialUpdate(
   patch: Record<string, unknown>,
   root: ReferentialRoot,
   activeUpdates?: Set<string>
-): Promise<void> {
-  assertValidRecord(contract, def.relatedModelName, "update", patch);
+): Promise<Record<string, unknown>[]> {
   const children = await readMutationRows(scope, contract, def.relatedModelName, where);
+  if (children.length === 0) return [];
+  const hasDownstreamActions = getChildEnforcementEdges(contract, def.relatedModelName).some((edge) =>
+    edge.localFields.some((field) => Object.hasOwn(patch, field))
+  );
+  if (!hasDownstreamActions) {
+    return writeMutationRows(scope, contract, def.relatedModelName, { write: "put-merged", where, patch });
+  }
+
+  assertValidRecord(contract, def.relatedModelName, "update", patch);
   const keyPath = getKeyPath(contract, def.relatedModelName);
   const meta = makePlanMeta(contract);
   const cause = `${actionLabel(action)} on relation '${def.relationName}'`;
+  const updated: Record<string, unknown>[] = [];
   for (const child of children) {
     const key = extractKeyFromRow(child, keyPath);
     const via = `${cause} changes ${def.relatedModelName} '${keyToken(key)}'`;
@@ -1145,8 +1154,10 @@ async function writeReferentialUpdate(
       activeUpdates,
       via
     );
-    await scope.execute({ meta, kind: "update", storeName: def.relatedStoreName, key, patch } as IdbAtomicPlan);
+    const [row] = await scope.execute({ meta, kind: "update", storeName: def.relatedStoreName, key, patch });
+    if (row) updated.push(row);
   }
+  return updated;
 }
 
 /**
@@ -1196,7 +1207,13 @@ export async function applyReferentialActionsForRowOnUpdate(
     }
 
     if (action === "restrict") {
-      if (await rowExists(scope, contract, meta, def.relatedModelName, def.targetFields, values)) {
+      const rootKey = root.operation === "delete" && root.modelName === def.relatedModelName ? root.key : undefined;
+      const excludeDeletedRoot =
+        rootKey === undefined
+          ? undefined
+          : (row: Record<string, unknown>) =>
+              !keyEquals(extractKeyFromRow(row, getKeyPath(contract, def.relatedModelName)), rootKey);
+      if (await rowExists(scope, contract, meta, def.relatedModelName, def.targetFields, values, excludeDeletedRoot)) {
         const fields = changedFields.join(", ");
         throw new Error(
           via === undefined
