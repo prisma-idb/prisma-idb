@@ -175,11 +175,19 @@ function interpretEnums(
 
 // ── Per-model interpretation result ───────────────────────────────────────────
 
+/** A relation field that holds a foreign key to another model. */
+interface ForeignKeyRelation {
+  readonly fieldName: string;
+  readonly relationName?: string;
+  readonly localFields: string[];
+  readonly targetFields: string[];
+}
+
 /** A lowered model with mutable relations for the backrelation pass. */
 interface InterpretedModel {
   readonly definition: IdbModelNode & { readonly relations: IdbRelationNode[] };
   /** FK-side declarations keyed by target model for backrelation resolution. */
-  readonly fksByTarget: ReadonlyMap<string, { fieldName: string; localFields: string[]; targetFields: string[] }>;
+  readonly fksByTarget: ReadonlyMap<string, readonly ForeignKeyRelation[]>;
 }
 
 // ── Core interpreter ───────────────────────────────────────────────────────────
@@ -284,7 +292,7 @@ function interpretModel(
   const fields: Record<string, IdbFieldNode> = {};
   const relations: Record<string, IdbRelationNode> = {};
   const fieldDefaults: Record<string, string | number | boolean> = {};
-  const fksByTarget = new Map<string, { fieldName: string; localFields: string[]; targetFields: string[] }>();
+  const fksByTarget = new Map<string, ForeignKeyRelation[]>();
   const fieldExecutionDefaults: FieldExecutionDefault[] = [];
   let autoIncrement = false;
   const autoIncrementFields: string[] = [];
@@ -317,8 +325,13 @@ function interpretModel(
       continue;
     }
 
-    // Relation list field (backrelation) — skip for now, resolved in second pass
-    if (field.list && modelNames.has(field.typeName)) {
+    // A relation field without `fields` or `references` is a backrelation, a
+    // list or a singular one. The second pass pairs it with the foreign key.
+    const relationAttr = fieldAttributes.relation;
+    const holdsForeignKey =
+      relationAttr !== undefined &&
+      (relationAttr.value.fields !== undefined || relationAttr.value.references !== undefined);
+    if (modelNames.has(field.typeName) && !holdsForeignKey) {
       if (excludedModelNames.has(field.typeName)) {
         // The model itself is never excluded because of a relation (ADR
         // 013) — just drop this backrelation and keep the model.
@@ -327,8 +340,7 @@ function interpretModel(
       continue;
     }
 
-    // FK-side relation field: non-list, type is a model, has @relation
-    const relationAttr = fieldAttributes.relation;
+    // FK-side relation field: non-list, type is a model, has @relation with fields or references
     if (!field.list && modelNames.has(field.typeName) && relationAttr) {
       if (excludedModelNames.has(field.typeName)) {
         // Same reasoning as the backrelation case above: drop the relation
@@ -384,11 +396,15 @@ function interpretModel(
         ...(onUpdate !== undefined ? { onUpdate } : {}),
       };
       sourceMap.set(["models", model.name, "relations", field.name], relationAttr.span);
-      fksByTarget.set(field.typeName, {
+      const targetFks = fksByTarget.get(field.typeName) ?? [];
+      targetFks.push({
         fieldName: field.name,
+        // An empty name is no name, as upstream Prisma treats it.
+        ...(relationAttr.value.name ? { relationName: relationAttr.value.name } : {}),
         localFields,
         targetFields,
       });
+      fksByTarget.set(field.typeName, targetFks);
 
       for (const fkField of localFields) {
         if (excludedFieldNames.has(fkField)) continue;
@@ -397,17 +413,6 @@ function interpretModel(
         if (!Object.hasOwn(indexes, fkField))
           sourceMap.set(["models", model.name, "indexes", fkField], relationAttr.span);
       }
-      continue;
-    }
-
-    // Non-model relation field without @relation — not a scalar, skip with error
-    if (!field.list && modelNames.has(field.typeName) && !relationAttr) {
-      diagnostics.push({
-        code: "IDB_MISSING_RELATION_ATTRIBUTE",
-        message: `Field "${model.name}.${field.name}" has model type "${field.typeName}" but no @relation attribute. Add @relation(fields: [...], references: [...]).`,
-        sourceId,
-        span: field.span,
-      });
       continue;
     }
 
@@ -797,13 +802,17 @@ export function lowerPslDocumentToIdbContractDefinition(
     }
   }
 
-  // Second pass: resolve backrelation list fields
+  // Second pass: pair each backrelation, list or singular, with the foreign key that points back at its model
+  /** The backrelation already paired with each foreign key, keyed by the FK's model and field. */
+  const pairedBackrelations = new Map<string, string>();
   for (const model of allModels) {
     const interp = interpretedByName.get(model.name);
     if (!interp) continue;
 
     for (const field of Object.values(model.fields)) {
-      if (!field.list || !modelNames.has(field.typeName)) continue;
+      if (!modelNames.has(field.typeName)) continue;
+      const relationAttr = attributes.field(model, field).relation;
+      if (relationAttr?.value.fields !== undefined || relationAttr?.value.references !== undefined) continue;
       // Already warned about and dropped by the first pass — don't also
       // report it as an unresolved backrelation.
       if (excludedModelNames.has(field.typeName)) continue;
@@ -811,27 +820,91 @@ export function lowerPslDocumentToIdbContractDefinition(
       const targetInterp = interpretedByName.get(field.typeName);
       if (!targetInterp) continue;
 
-      // Find the FK in the target model that points back to this model
-      const fk = targetInterp.fksByTarget.get(model.name);
-      if (!fk) {
-        interp.definition.relations.push({
-          name: field.name,
-          to: field.typeName,
-          cardinality: "1:N",
-          localFields: [],
-          targetFields: [],
-          unresolvedBackrelation: true,
+      // Upstream Prisma refuses referential actions on the side without the foreign key.
+      const actions = (["onDelete", "onUpdate"] as const).filter((kind) => relationAttr?.value[kind] !== undefined);
+      if (actions.length > 0) {
+        diagnostics.push({
+          code: "IDB_INVALID_RELATION",
+          message: `Backrelation field "${model.name}.${field.name}" declares ${actions.join(" and ")}, but it doesn't hold the foreign key. Declare referential actions on the relation field with fields and references in "${field.typeName}".`,
+          sourceId,
+          span: relationAttr!.span,
         });
         continue;
       }
 
-      // The 1:N side: localFields are the PK fields of this model, targetFields are the FK fields in the target
+      // Pair with the FK in the target model that points back to this model,
+      // and has the same relation name when the backrelation names one.
+      const relationName = relationAttr?.value.name || undefined;
+      const pairFks = targetInterp.fksByTarget.get(model.name) ?? [];
+      const matches =
+        relationName === undefined ? pairFks : pairFks.filter((candidate) => candidate.relationName === relationName);
+      if (matches.length > 1) {
+        diagnostics.push({
+          code: "IDB_AMBIGUOUS_BACKRELATION",
+          message: `Backrelation field "${model.name}.${field.name}" matches multiple relations on "${field.typeName}". Add @relation("...") with the same name to the backrelation and to the matching relation.`,
+          sourceId,
+          span: field.span,
+        });
+        continue;
+      }
+      const fk = matches[0];
+      if (!fk && relationName !== undefined && pairFks.length > 0) {
+        const names = pairFks.map((candidate) => (candidate.relationName ? `"${candidate.relationName}"` : "no name"));
+        diagnostics.push({
+          code: "IDB_UNRESOLVED_BACKRELATION",
+          message: `Backrelation field "${model.name}.${field.name}" is named "${relationName}", but no relation on "${field.typeName}" that points at "${model.name}" has that name (found ${names.join(", ")}). Use the same name in @relation("...") on both sides.`,
+          sourceId,
+          span: field.span,
+        });
+        continue;
+      }
+      if (!fk && !field.list && relationAttr === undefined) {
+        diagnostics.push({
+          code: "IDB_MISSING_RELATION_ATTRIBUTE",
+          message: `Field "${model.name}.${field.name}" has model type "${field.typeName}" but no @relation attribute, and no relation on "${field.typeName}" points back at "${model.name}". Add @relation(fields: [...], references: [...]) to the field that holds the foreign key.`,
+          sourceId,
+          span: field.span,
+        });
+        continue;
+      }
+      const cardinality = field.list ? "1:N" : "1:1";
+      // A singular backrelation is optional or required as written; authoring refuses a required one.
+      const nullable = field.list ? {} : { nullable: field.optional };
+      if (!fk) {
+        interp.definition.relations.push({
+          name: field.name,
+          to: field.typeName,
+          cardinality,
+          localFields: [],
+          targetFields: [],
+          ...nullable,
+          unresolvedBackrelation: true,
+        });
+        sourceMap.set(["models", model.name, "relations", field.name], field.span);
+        continue;
+      }
+
+      const fkId = JSON.stringify([field.typeName, fk.fieldName]);
+      const pairedWith = pairedBackrelations.get(fkId);
+      if (pairedWith !== undefined) {
+        diagnostics.push({
+          code: "IDB_AMBIGUOUS_BACKRELATION",
+          message: `Backrelation fields "${pairedWith}" and "${model.name}.${field.name}" both pair with relation "${field.typeName}.${fk.fieldName}". Give each backrelation its own relation with @relation("...") on both sides, or remove one.`,
+          sourceId,
+          span: field.span,
+        });
+        continue;
+      }
+      pairedBackrelations.set(fkId, `${model.name}.${field.name}`);
+
+      // localFields are the fields this model is referenced by; targetFields are the FK fields in the target.
       interp.definition.relations.push({
         name: field.name,
         to: field.typeName,
-        cardinality: "1:N",
+        cardinality,
         localFields: fk.targetFields,
         targetFields: fk.localFields,
+        ...nullable,
       });
       sourceMap.set(["models", model.name, "relations", field.name], field.span);
     }

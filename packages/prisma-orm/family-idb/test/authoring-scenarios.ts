@@ -18,6 +18,105 @@ export type AuthoringScenario = {
 // Casts below deliberately exercise declarations outside the TS type system.
 export const authoringScenarios: AuthoringScenario[] = [
   {
+    name: "singular backrelations",
+    psl: `
+      model User {
+        id      String   @id
+        email   String   @unique
+        profile Profile?
+        avatar  Avatar?  @relation("UserAvatar")
+      }
+      model Profile {
+        id     String @id
+        user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+        userId String @unique
+      }
+      model Avatar {
+        id        String @id
+        user      User   @relation("UserAvatar", fields: [userEmail], references: [email])
+        userEmail String @unique
+      }
+    `,
+    ts: {
+      models: {
+        User: {
+          store: "user",
+          key: "id",
+          fields: { id: "String", email: "String" },
+          indexes: { email_unique: { keyPath: "email", unique: true } },
+          relations: {
+            profile: { to: "Profile", cardinality: "1:1", on: { local: ["id"], target: ["userId"] } },
+            avatar: { to: "Avatar", cardinality: "1:1", on: { local: ["email"], target: ["userEmail"] } },
+          },
+        },
+        Profile: {
+          store: "profile",
+          key: "id",
+          fields: { id: "String", userId: "String" },
+          indexes: { userId: { keyPath: "userId", unique: true } },
+          relations: {
+            user: { to: "User", cardinality: "N:1", on: { local: ["userId"], target: ["id"] }, onDelete: "cascade" },
+          },
+        },
+        Avatar: {
+          store: "avatar",
+          key: "id",
+          fields: { id: "String", userEmail: "String" },
+          indexes: { userEmail: { keyPath: "userEmail", unique: true } },
+          relations: {
+            user: { to: "User", cardinality: "N:1", on: { local: ["userEmail"], target: ["email"] } },
+          },
+        },
+      },
+    },
+  },
+  {
+    name: "singular backrelation refusals",
+    psl: `
+      model User {
+        id      String   @id
+        profile Profile
+        avatar  Avatar?
+      }
+      model Profile {
+        id     String @id
+        userId String @unique
+        user   User   @relation(fields: [userId], references: [id])
+      }
+      model Avatar {
+        id     String @id
+        userId String
+        user   User   @relation(fields: [userId], references: [id])
+      }
+    `,
+    ts: {
+      models: {
+        User: {
+          store: "user",
+          key: "id",
+          fields: { id: "String" },
+          relations: {
+            profile: { to: "Profile", cardinality: "1:1", on: { local: ["id"], target: ["userId"] }, nullable: false },
+            avatar: { to: "Avatar", cardinality: "1:1", on: { local: ["id"], target: ["userId"] } },
+          },
+        },
+        Profile: {
+          store: "profile",
+          key: "id",
+          fields: { id: "String", userId: "String" },
+          indexes: { userId: { keyPath: "userId", unique: true } },
+          relations: { user: { to: "User", cardinality: "N:1", on: { local: ["userId"], target: ["id"] } } },
+        },
+        Avatar: {
+          store: "avatar",
+          key: "id",
+          fields: { id: "String", userId: "String" },
+          relations: { user: { to: "User", cardinality: "N:1", on: { local: ["userId"], target: ["id"] } } },
+        },
+      },
+    },
+  },
+  {
     name: "relation nullability contradictions",
     psl: `
       model User {

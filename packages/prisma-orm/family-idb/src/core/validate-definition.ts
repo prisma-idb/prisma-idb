@@ -544,7 +544,7 @@ function validateBackrelations(model: IdbModelNode, definition: IdbContractDefin
     if (!relation.unresolvedBackrelation && !excludedInverse(model, relation, definition)) continue;
     report(
       "IDB_UNRESOLVED_BACKRELATION",
-      `Backrelation field "${model.modelName}.${relation.name}" (list of ${relation.to}) has no matching @relation in "${relation.to}" pointing to "${model.modelName}". Add @relation(fields: [...], references: [...]) to the FK field in "${relation.to}".`,
+      `Backrelation field "${model.modelName}.${relation.name}" (${relation.cardinality === "1:N" ? "list of " : ""}${relation.to}) has no matching @relation in "${relation.to}" pointing to "${model.modelName}". Add @relation(fields: [...], references: [...]) to the FK field in "${relation.to}".`,
       ["models", model.modelName, "fields", relation.name]
     );
   }
