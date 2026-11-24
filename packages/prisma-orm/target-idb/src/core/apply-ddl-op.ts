@@ -81,6 +81,14 @@ export function applyOneDdlOp(
       break;
     }
     case "transformRecords": {
+      if (
+        op.renameModel !== undefined &&
+        (typeof op.renameModel?.from !== "string" || typeof op.renameModel?.to !== "string")
+      ) {
+        throw new Error(
+          "A model rename must name both the source and destination models. Regenerate the migration package."
+        );
+      }
       const store = tx.objectStore(op.storeName);
       const keys = typeof store.keyPath === "string" ? [store.keyPath] : (store.keyPath ?? []);
       const fields = [
@@ -94,6 +102,8 @@ export function applyOneDdlOp(
           throw new Error(`IDB: transformRecords on store "${op.storeName}" cannot change key field "${field}"`);
         }
       }
+      // A model rename alone changes no stored record, so the store is not walked.
+      if (fields.length === 0) break;
       const request = store.openCursor();
       request.onsuccess = () => {
         try {

@@ -155,6 +155,28 @@ transformRecordsOp("Todo", {
 
 You can also write `renameFields` by hand in an existing migration. Run the edited migration file with `npx tsx`, regenerate the contract space, and run preflight as shown above. Check an old record to confirm that its value survives under the new name.
 
+## Rename a model
+
+The planner supports model renames that keep the existing object store. Keep the old store name with `@@map` (or `store:` in a TypeScript model), then pass `--rename Old:New`.
+
+```prisma
+model Task {
+  id    String @id
+  title String
+  @@map("Todo")
+}
+```
+
+```bash
+pnpm exec prisma-idb migration plan --name rename-todo --rename Todo:Task
+```
+
+The migration carries `renameModel: { from: "Todo", to: "Task" }`. With the sync extension, the upgrade moves edits queued under the old model name and their version metadata to the new name, including when a device skips releases. If the new name has retained outbox or version metadata from an earlier model, the upgrade stops. Use a fresh model name, or recover pending edits and clear the retired model’s sync history before retrying. Rename the model on the server in the same release. The server classifies earlier changelog rows under the old name as `unknown-model` during pulls, so devices behind on pulls can miss those changes.
+
+Planning refuses a model name change on an existing store without `--rename`. If both the model and store names change without a statement, the planner treats that as dropping one store and creating another. The new store starts empty, and queued edits stay under the old model name.
+
+If the new model maps to a different store, planning refuses the rename and names the `@@map` that keeps the old store. To combine a model rename with a field rename, pass the model rename first and use the new model name in the field rename. Use `--rename Todo:Task --rename Task.title:Task.name`.
+
 ## Convert or backfill a field
 
 `--convert Model.field` and `--backfill Model.field` ask the planner for a placeholder you fill in. Name the field as the new contract spells it, even if the field is also renamed. For example, `--convert Todo.name --rename Todo.title:Todo.name` converts the values stored as `Todo.title`. Flag order does not matter.

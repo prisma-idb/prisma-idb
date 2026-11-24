@@ -15,7 +15,7 @@ export const migrationPlanCommand = defineIdbCommand({
     examples: [
       "migration plan",
       "migration plan --name add-posts",
-      "migration plan --name rename-title --rename Todo.title:Todo.name",
+      "migration plan --name rename-todo --rename Todo:Task --rename Task.title:Task.name",
       "migration plan --space idb-sync",
     ],
   },
@@ -46,7 +46,8 @@ export const migrationPlanCommand = defineIdbCommand({
   statements: {
     rename: {
       arity: 1,
-      brief: "Rename a field while keeping its values. Use Model.old:Model.new and repeat for several renames.",
+      brief:
+        "Rename a field or a model that keeps its store. Use Model.old:Model.new or Old:New. Put the model rename before its field renames.",
     },
     convert: {
       arity: 1,

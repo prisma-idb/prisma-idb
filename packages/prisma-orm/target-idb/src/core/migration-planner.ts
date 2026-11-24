@@ -200,6 +200,7 @@ function renderOpCall(op: IdbDdlOp): string {
       }
       if (op.renameFields !== undefined) parts.push(`renameFields: ${JSON.stringify(op.renameFields)}`);
       if (op.removeFields !== undefined) parts.push(`removeFields: ${JSON.stringify(op.removeFields)}`);
+      if (op.renameModel !== undefined) parts.push(`renameModel: ${JSON.stringify(op.renameModel)}`);
       return `transformRecordsOp(${JSON.stringify(op.storeName)}, { ${parts.join(", ")} })`;
     }
     case "createObjectStore": {
@@ -411,13 +412,15 @@ function planStoreRecordTransform(
     }
   }
   const hasRenames = Object.keys(renameFields).length > 0;
-  if (Object.keys(fields).length === 0 && removeFields.length === 0 && !hasRenames) {
+  const renameModel = statements?.renameModel;
+  if (Object.keys(fields).length === 0 && removeFields.length === 0 && !hasRenames && renameModel === undefined) {
     return undefined;
   }
   return transformRecordsOp(storeName, {
     ...(Object.keys(fields).length > 0 ? { fields } : {}),
     ...(hasRenames ? { renameFields: { ...renameFields } } : {}),
     ...(removeFields.length > 0 ? { removeFields } : {}),
+    ...(renameModel !== undefined ? { renameModel } : {}),
   });
 }
 
@@ -437,15 +440,16 @@ function diffRecordShapes(
     const newRecord = store.record;
     // New stores have no rows to backfill. Legacy DDL-only contracts carry no field history.
     if (oldRecord === undefined || newRecord === undefined) continue;
-    const op = planStoreRecordTransform(
-      contract,
-      storeName,
-      store,
-      oldRecord,
-      newRecord,
-      conflicts,
-      statements.get(storeName)
-    );
+    const storeStatements = statements.get(storeName);
+    if (oldRecord.model !== newRecord.model && storeStatements?.renameModel?.from !== oldRecord.model) {
+      conflicts.push({
+        kind: "modelRenameRequired",
+        summary: `The model for store "${storeName}" changed from "${oldRecord.model}" to "${newRecord.model}".`,
+        why: `Plan again with --rename ${oldRecord.model}:${newRecord.model} to preserve queued sync edits.`,
+      });
+      continue;
+    }
+    const op = planStoreRecordTransform(contract, storeName, store, oldRecord, newRecord, conflicts, storeStatements);
     if (op !== undefined) ops.push(op);
   }
   return { ops, conflicts };
@@ -475,7 +479,7 @@ export class IdbMigrationPlanner implements MigrationPlanner<"idb", "idb"> {
     readonly fromContract: Contract | null;
     /** The origin the plan asserts, which the runner checks against the marker; `null` skips the check. */
     readonly origin: PlanOrigin | null;
-    /** Field rename, backfill and conversion statements. */
+    /** Statements the user gave: field and same-store model renames, backfills and conversions. */
     readonly statements: readonly ResolvedMigrationStatement[];
     readonly frameworkComponents: ReadonlyArray<TargetBoundComponentDescriptor<"idb", "idb">>;
     /** Accepted for framework interface conformance; the IDB planner does not use this value. */

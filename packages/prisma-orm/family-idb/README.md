@@ -16,7 +16,7 @@ IndexedDB only exists in the browser, so three migration jobs need their own com
 | `prisma-idb migration contract-space` | Bundles the migrations into a module the browser imports.                                                                      |
 | `prisma-idb migration preflight`      | Replays migrations in memory, verifies the schema against the head snapshot, and checks that the emitted contract is the head. |
 
-Pass `--rename Model.old:Model.new` to preserve a renamed field’s values. Use `--backfill Model.field` and `--convert Model.field` to supply a transform in the migration file.
+Pass `--rename Model.old:Model.new` to preserve a renamed field’s values. Pass `--rename Old:New` for a model rename that keeps its store. Use `--backfill Model.field` and `--convert Model.field` to supply a transform in the migration file.
 
 All three commands read `prisma.config.ts`. See [Migrations](https://prisma-idb.dev/docs/prisma-8/migrations).
 

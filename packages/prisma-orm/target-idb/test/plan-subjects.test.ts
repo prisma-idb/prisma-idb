@@ -96,6 +96,14 @@ describe("plan data loss", () => {
   });
 });
 
+/** A one-store contract with an explicit model and store name. */
+function modelContract(model: string, store: string, fields: Record<string, IdbRecordField>) {
+  const fixture = contract(fields, [store]);
+  fixture.storage.storageHash = `hash-${model}-${fixture.storage.storageHash}`;
+  fixture.storage.stores[store]!.record.model = model;
+  return fixture;
+}
+
 const fieldRename = (
   from: string,
   to: string,
@@ -106,6 +114,13 @@ const fieldRename = (
   entity: "field",
   from: { namespaceId, model: fromModel, field: from },
   to: { namespaceId, model: toModel, field: to },
+});
+
+const modelRename = (from: string, to: string): ResolvedMigrationStatement => ({
+  kind: "rename",
+  entity: "model",
+  from: { namespaceId, model: from },
+  to: { namespaceId, model: to },
 });
 
 describe("plan statements", () => {
@@ -185,6 +200,63 @@ describe("plan statements", () => {
     ]);
   });
 
+  it("keeps the store on a model rename and tells extensions the old model name", () => {
+    const rename = modelRename("Todo", "Task");
+    const result = plan(modelContract("Todo", "todos", {}), modelContract("Task", "todos", {}), [rename]);
+    if (result.kind !== "success") throw new Error("expected a plan");
+    expect(result.plan.operations).toEqual([
+      expect.objectContaining({
+        kind: "transformRecords",
+        storeName: "todos",
+        renameModel: { from: "Todo", to: "Task" },
+      }),
+    ]);
+    expect(result.appliedStatements).toEqual([{ statement: rename, operationIndexes: [0] }]);
+    expect(result.plan.renderTypeScript(keepInternalSpecifiers)).toContain(
+      'transformRecordsOp("todos", { renameModel: {"from":"Todo","to":"Task"} })'
+    );
+  });
+
+  it("refuses a same-store model name change without an explicit rename", () => {
+    const result = plan(modelContract("Todo", "todos", {}), modelContract("Task", "todos", {}));
+    expect(result).toMatchObject({
+      kind: "failure",
+      conflicts: [
+        {
+          summary: expect.stringContaining('from "Todo" to "Task"'),
+          why: expect.stringContaining("--rename Todo:Task"),
+        },
+      ],
+    });
+  });
+
+  it("combines a model rename with a rename of one of its fields", () => {
+    const result = plan(
+      modelContract("Todo", "todos", { title: string }),
+      modelContract("Task", "todos", { name: string }),
+      [modelRename("Todo", "Task"), fieldRename("title", "name", "Todo", "Task")]
+    );
+    if (result.kind !== "success") throw new Error("expected a plan");
+    expect(result.plan.operations).toEqual([
+      expect.objectContaining({ renameModel: { from: "Todo", to: "Task" }, renameFields: { name: "title" } }),
+    ]);
+    expect(result.appliedStatements.map((applied) => applied.operationIndexes)).toEqual([[0], [0]]);
+  });
+
+  it("refuses a model rename that moves the model to another store, and says how to keep the store", () => {
+    const rename = modelRename("Todo", "Task");
+    expect(plan(modelContract("Todo", "todos", {}), modelContract("Task", "tasks", {}), [rename])).toEqual({
+      kind: "failure",
+      conflicts: [
+        expect.objectContaining({
+          kind: "statementRefused",
+          refusedStatement: rename,
+          why: expect.stringContaining('@@map("todos")'),
+        }),
+      ],
+    });
+  });
+
   it("leaves a placeholder for a backfilled or converted field, even when the planner could fill it", () => {
     const backfill: ResolvedMigrationStatement = {
       kind: "backfill",
@@ -213,11 +285,32 @@ describe("plan statements", () => {
     ]);
   });
 
-  describe("a conversion that names a renamed field", () => {
+  describe("a conversion that names a renamed model or field", () => {
     const convert = (model: string, field: string): ResolvedMigrationStatement => ({
       kind: "convert",
       entity: "field",
       field: { namespaceId, model, field },
+    });
+
+    it.each([
+      ["after", false],
+      ["before", true],
+    ])("reads a renamed model's origin when the convert comes %s the rename", (_name, convertFirst) => {
+      const rename = modelRename("Todo", "Task");
+      const conversion = convert("Task", "title");
+      const result = plan(
+        modelContract("Todo", "todos", { title: int }),
+        modelContract("Task", "todos", { title: string }),
+        convertFirst ? [conversion, rename] : [rename, conversion]
+      );
+      if (result.kind !== "success") throw new Error("expected a plan");
+      expect(result.plan.operations).toEqual([
+        expect.objectContaining({
+          renameModel: { from: "Todo", to: "Task" },
+          fields: { title: { kind: "placeholder", slot: "Task.title" } },
+        }),
+      ]);
+      expect(result.appliedStatements.map((applied) => applied.operationIndexes)).toEqual([[0], [0]]);
     });
 
     it.each([
@@ -236,6 +329,22 @@ describe("plan statements", () => {
         expect.objectContaining({
           renameFields: { name: "title" },
           fields: { name: { kind: "placeholder", slot: "User.name" } },
+        }),
+      ]);
+    });
+
+    it("reads both origins when the model and the field are renamed", () => {
+      const result = plan(
+        modelContract("Todo", "todos", { title: int }),
+        modelContract("Task", "todos", { name: string }),
+        [convert("Task", "name"), modelRename("Todo", "Task"), fieldRename("title", "name", "Todo", "Task")]
+      );
+      if (result.kind !== "success") throw new Error("expected a plan");
+      expect(result.plan.operations).toEqual([
+        expect.objectContaining({
+          renameModel: { from: "Todo", to: "Task" },
+          renameFields: { name: "title" },
+          fields: { name: { kind: "placeholder", slot: "Task.name" } },
         }),
       ]);
     });

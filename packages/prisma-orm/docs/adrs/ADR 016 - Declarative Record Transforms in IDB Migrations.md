@@ -64,6 +64,8 @@ export type TransformRecordsOp = MigrationPlanOperation & {
   readonly renameFields?: Readonly<Record<string, string>>;
   /** Fields to delete. */
   readonly removeFields?: readonly string[];
+  /** Model names on both sides of a same-store rename. */
+  readonly renameModel?: { readonly from: string; readonly to: string };
 };
 ```
 
@@ -220,6 +222,8 @@ A failed request during the walk isn't caught separately. As with every other re
 
 - **Should data operations need explicit approval?** No. Authors review the operations in `migration.ts`, so preflight needs no approval flag.
 - **Should `coerce` skip invalid values?** No. Invalid values abort the upgrade so every record and marker stays consistent.
+
+For a model that keeps its store, pass `--rename Old:New`. The planner stores both names in `renameModel` so extensions can move model-keyed data.
 
 ## Related
 

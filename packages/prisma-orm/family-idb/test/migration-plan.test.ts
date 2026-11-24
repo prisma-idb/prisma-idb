@@ -342,9 +342,10 @@ describe("migrationPlan — rename, convert and backfill statements", () => {
     });
   }
 
-  it("plans a field rename without removing the old values", async () => {
-    const code = await planFrom(todo("Todo", "title String"), todo("Todo", "name String"), [
-      "rename Todo.title:Todo.name",
+  it("plans a combined model and field rename", async () => {
+    const code = await planFrom(todo("Todo", "title String"), todo("Task", "name String"), [
+      "rename Todo:Task",
+      "rename Task.title:Task.name",
     ]);
     expect(code).toBe(0);
     const dirName = (await listMigrationDirs(cwd)).find((dir) => dir.endsWith("_rename"))!;
@@ -353,11 +354,12 @@ describe("migrationPlan — rename, convert and backfill statements", () => {
         kind: "transformRecords",
         storeName: "todos",
         renameFields: { name: "title" },
+        renameModel: { from: "Todo", to: "Task" },
       }),
     ]);
     expect((await readOps(cwd, dirName))[0]).not.toHaveProperty("removeFields");
     expect(await readMigrationTs(cwd, dirName)).toContain(
-      'transformRecordsOp("todos", { renameFields: {"name":"title"} })'
+      'transformRecordsOp("todos", { renameFields: {"name":"title"}, renameModel: {"from":"Todo","to":"Task"} })'
     );
   });
 
@@ -398,6 +400,12 @@ describe("migrationPlan — rename, convert and backfill statements", () => {
 
   it.each([
     [
+      "a model rename",
+      todo("Todo", "title Int"),
+      todo("Task", "title String"),
+      ["rename Todo:Task", "convert Task.title"],
+    ],
+    [
       "a field rename",
       todo("Todo", "title Int"),
       todo("Todo", "name String"),
@@ -407,6 +415,12 @@ describe("migrationPlan — rename, convert and backfill statements", () => {
     expect(await planFrom(from, to, texts)).toBe(0);
     const dirName = (await listMigrationDirs(cwd)).find((dir) => dir.endsWith("_rename"))!;
     expect(await readMigrationTs(cwd, dirName)).toContain("placeholder(");
+  });
+
+  it("refuses a model rename that changes the store, and says how to keep it", async () => {
+    const code = await planFrom(todo("Todo", ""), todo("Task", "", ""), ["rename Todo:Task"]);
+    expect(code).toBe(1);
+    expect(capturedStderr).toContain('@@map("todos")');
   });
 
   it("refuses a name that neither contract declares", async () => {
