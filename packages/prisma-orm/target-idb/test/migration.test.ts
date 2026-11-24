@@ -543,6 +543,39 @@ describe("openAndUpgrade", () => {
     db.close();
   });
 
+  it("does not reject with a blocked error once the upgrade is running", async () => {
+    const name = dbName();
+    const blocker = await openRaw(name, 1);
+    blocker.onversionchange = null; // stays open, blocking the upgrade
+    const ops = diffIdbSchema(null, { stores: { users: { keyPath: "id" } } });
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const upgrade = openAndUpgrade({
+        factory: indexedDB,
+        dbName: name,
+        targetVersion: 2,
+        ops,
+        // Runs inside the upgrade: a slow upgrade outlasts the 30 s blocked timeout.
+        onOperationStart: () => vi.advanceTimersByTime(25_000),
+      });
+      const settled = upgrade.then(
+        () => "applied",
+        (error: unknown) => String(error)
+      );
+      await vi.waitUntil(() => vi.getTimerCount() > 0);
+      vi.advanceTimersByTime(10_000);
+      blocker.close();
+      expect(await settled).toBe("applied");
+    } finally {
+      vi.useRealTimers();
+      vi.restoreAllMocks();
+    }
+    const db = await openRaw(name);
+    expect(db.objectStoreNames.contains("users")).toBe(true);
+    db.close();
+  });
+
   it("creates a new object store in a fresh DB", async () => {
     const name = dbName();
     const ops = diffIdbSchema(null, { stores: { users: { keyPath: "id" } } });

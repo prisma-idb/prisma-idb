@@ -318,6 +318,9 @@ export function openAndUpgrade(input: {
         tx.abort();
         return;
       }
+      // The open is no longer blocked. The upgrade may run longer than the blocked timeout, and the
+      // timer must not reject an upgrade that is running and will commit.
+      clearBlocked();
       upgraded = true;
       tx.addEventListener("abort", () => {
         upgradeError ??= tx.error ?? undefined;
