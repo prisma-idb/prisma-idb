@@ -64,7 +64,7 @@ import {
   keyEquals,
   keyToken,
 } from "./types";
-import { keyPathFields } from "@prisma-idb/target-idb/pack";
+import { keyPathFields, sameFieldSet, sameJoinPairs } from "@prisma-idb/target-idb/pack";
 import type { IdbTransactionScope } from "@prisma-idb/driver-idb/runtime";
 
 // ── Internal types ─────────────────────────────────────────────────────────────
@@ -770,8 +770,7 @@ function findDeclaredAction(
 function isInverseOf(inverse: RelationDefinition, modelName: string, def: RelationDefinition): boolean {
   return (
     inverse.relatedModelName === modelName &&
-    sameFields(inverse.localFields, def.targetFields) &&
-    sameFields(inverse.targetFields, def.localFields)
+    sameJoinPairs(inverse.localFields, inverse.targetFields, def.targetFields, def.localFields)
   );
 }
 
@@ -802,6 +801,7 @@ function enforcedAction(declared: IdbReferentialAction | undefined): EnforcedRef
 interface ChildEnforcementEdge extends RelationDefinition {
   readonly onDelete: EnforcedReferentialAction;
   readonly onUpdate: EnforcedReferentialAction;
+  readonly needsUniqueParent: boolean;
 }
 
 const childEdgesCache = new WeakMap<object, Map<string, ChildEnforcementEdge[]>>();
@@ -823,11 +823,21 @@ function getChildEnforcementEdges(contract: IdbContract, modelName: string): Chi
   if (cached) return cached;
 
   const edges: ChildEnforcementEdge[] = [];
+  const catalog = buildCatalog(contract, getStoreName(contract, modelName), modelName);
+  const uniqueSources = [catalog.primaryKey, ...catalog.indexes].filter(
+    (source) => source.unique && !source.multiEntry
+  );
   const withActions = (
     def: RelationDefinition,
-    action: (kind: ReferentialActionKind) => IdbReferentialAction | undefined
+    action: (kind: ReferentialActionKind) => IdbReferentialAction | undefined,
+    oneSided = false
   ) =>
-    edges.push({ ...def, onDelete: enforcedAction(action("onDelete")), onUpdate: enforcedAction(action("onUpdate")) });
+    edges.push({
+      ...def,
+      onDelete: enforcedAction(action("onDelete")),
+      onUpdate: enforcedAction(action("onUpdate")),
+      needsUniqueParent: oneSided && !uniqueSources.some((source) => sameFieldSet(source.fields, def.localFields)),
+    });
 
   for (const childModelName of Object.keys(domainModelsAtDefaultNamespace(contract.domain))) {
     for (const fk of getRelationDefinitions(contract, childModelName)) {
@@ -849,7 +859,8 @@ function getChildEnforcementEdges(contract: IdbContract, modelName: string): Chi
         def,
         (kind) =>
           getStoredAction(contract, childModelName, fk.relationName, kind) ??
-          parentSide.map((inverse) => getStoredAction(contract, modelName, inverse.relationName, kind)).find(Boolean)
+          parentSide.map((inverse) => getStoredAction(contract, modelName, inverse.relationName, kind)).find(Boolean),
+        parentSide.length === 0
       );
     }
   }
@@ -866,8 +877,7 @@ function getChildEnforcementEdges(contract: IdbContract, modelName: string): Chi
 function isSameEdge(edge: RelationDefinition, def: RelationDefinition): boolean {
   return (
     edge.relatedModelName === def.relatedModelName &&
-    sameFields(edge.localFields, def.localFields) &&
-    sameFields(edge.targetFields, def.targetFields)
+    sameJoinPairs(edge.localFields, edge.targetFields, def.localFields, def.targetFields)
   );
 }
 
@@ -896,11 +906,27 @@ async function childExists(
   contract: IdbContract,
   meta: PlanMeta,
   def: RelationDefinition,
-  parentRow: Record<string, unknown>
+  parentRow: Record<string, unknown>,
+  additionalFilter?: IdbRowFilter
 ): Promise<boolean> {
   const values = def.localFields.map((field) => parentRow[field]);
   if (values.some((value) => value === null || value === undefined)) return false;
-  return rowExists(scope, contract, meta, def.relatedModelName, def.targetFields, values);
+  return rowExists(scope, contract, meta, def.relatedModelName, def.targetFields, values, additionalFilter);
+}
+
+/** A one-sided mutating action needs a unique referenced key to identify the parent. */
+async function refuseNonUniqueAction(
+  scope: IdbTransactionScope,
+  contract: IdbContract,
+  meta: PlanMeta,
+  def: RelationDefinition,
+  parentRow: Record<string, unknown>
+): Promise<void> {
+  if (await childExists(scope, contract, meta, def, parentRow)) {
+    throw new Error(
+      `Cannot apply referential action on relation '${def.relationName}': the referenced fields must be unique.`
+    );
+  }
 }
 
 /**
@@ -1094,6 +1120,10 @@ export async function applyReferentialActionsForRowOnUpdate(
     if (changedFields.length === 0) continue;
 
     const action = def.onUpdate;
+    if (def.needsUniqueParent && action !== "restrict") {
+      await refuseNonUniqueAction(scope, contract, meta, def, oldRow);
+      continue;
+    }
 
     const childWhere = buildChildWhereFromRow(def, oldRow);
 
@@ -1528,11 +1558,18 @@ export async function applyReferentialActionsForRow(
   const meta = makePlanMeta(contract);
   for (const def of getChildEnforcementEdges(contract, modelName)) {
     const action = def.onDelete;
+    if (def.needsUniqueParent && action !== "restrict") {
+      await refuseNonUniqueAction(scope, contract, meta, def, row);
+      continue;
+    }
 
     const childWhere = buildChildWhereFromRow(def, row);
 
     if (action === "restrict") {
-      if (await childExists(scope, contract, meta, def, row)) {
+      const key = extractKeyFromRow(row, keyPath);
+      const excludesSelf: IdbRowFilter | undefined =
+        def.relatedModelName === modelName ? (child) => !keyEquals(extractKeyFromRow(child, keyPath), key) : undefined;
+      if (await childExists(scope, contract, meta, def, row, excludesSelf)) {
         throw new Error(
           `Cannot delete ${modelName} '${keyToken(extractKeyFromRow(row, keyPath))}': child records exist on relation '${def.relationName}'. ` +
             "Delete those children first, or declare onDelete: Cascade, SetNull or SetDefault on the relation."

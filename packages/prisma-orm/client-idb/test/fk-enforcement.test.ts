@@ -2182,12 +2182,17 @@ describe("restrict — null in the parent's referenced fields", () => {
 
 describe("referential actions — foreign key without a declared inverse relation", () => {
   /** `Post.author` owns the foreign key; `User` declares no `posts` relation. */
-  function oneSidedContract(author: { onDelete?: "cascade"; onUpdate?: "cascade" }) {
+  function oneSidedContract(author: { onDelete?: "cascade"; onUpdate?: "cascade" }, unique = true) {
     return defineContract({
       family: idbFamilyPack,
       target: idbTargetPack,
       models: {
-        User: { store: "users", key: "id", fields: { id: "String", email: "String" } },
+        User: {
+          store: "users",
+          key: "id",
+          fields: { id: "String", email: "String" },
+          ...(unique ? { indexes: { byEmail: { keyPath: "email", unique: true } } } : {}),
+        },
         Post: {
           store: "posts",
           key: "id",
@@ -2205,7 +2210,7 @@ describe("referential actions — foreign key without a declared inverse relatio
     const name = nextDbName();
     const stores = contract.storage.stores as Record<
       string,
-      { keyPath: string; indexes?: Record<string, { keyPath: string }> }
+      { keyPath: string; indexes?: Record<string, { keyPath: string; unique?: boolean }> }
     >;
     const db = await new Promise<IDBDatabase>((resolve, reject) => {
       const req = indexedDB.open(name, 1);
@@ -2213,7 +2218,7 @@ describe("referential actions — foreign key without a declared inverse relatio
         for (const [storeName, spec] of Object.entries(stores)) {
           const store = req.result.createObjectStore(storeName, { keyPath: spec.keyPath });
           for (const [indexName, index] of Object.entries(spec.indexes ?? {}))
-            store.createIndex(indexName, index.keyPath);
+            store.createIndex(indexName, index.keyPath, { unique: index.unique ?? false });
         }
       };
       req.onsuccess = () => resolve(req.result);
@@ -2256,5 +2261,90 @@ describe("referential actions — foreign key without a declared inverse relatio
     await orm["users"]!.where({ id: "u1" }).update({ email: "b@e.com" });
     expect(await getAllRows(db, "posts")).toEqual([{ id: "p1", authorEmail: "b@e.com" }]);
     db.close();
+  });
+
+  it("preserves both parents and their child when a one-sided action targets a non-unique key", async () => {
+    const { db, orm } = await setupFromStorage(oneSidedContract({ onDelete: "cascade", onUpdate: "cascade" }, false));
+    try {
+      await orm["users"]!.create({ id: "u1", email: "shared" });
+      await orm["users"]!.create({ id: "u2", email: "shared" });
+      await orm["posts"]!.create({ id: "p1", authorEmail: "shared" });
+
+      await expect(orm["users"]!.delete("u1")).rejects.toThrow(/referenced fields must be unique/);
+      await expect(orm["users"]!.where({ id: "u1" }).update({ email: "new" })).rejects.toThrow(
+        /referenced fields must be unique/
+      );
+      expect(await getAllRows(db, "users")).toHaveLength(2);
+      expect(await getAllRows(db, "posts")).toEqual([{ id: "p1", authorEmail: "shared" }]);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("deletes a row whose only child reference is to itself", async () => {
+    const contract = defineContract({
+      family: idbFamilyPack,
+      target: idbTargetPack,
+      models: {
+        User: {
+          store: "users",
+          key: "id",
+          fields: { id: "String", managerId: "String?" },
+          relations: { manager: { to: "User", cardinality: "N:1", on: { local: ["managerId"], target: ["id"] } } },
+        },
+      },
+    });
+    const { db, orm } = await setupFromStorage(contract as unknown as ReturnType<typeof oneSidedContract>);
+    try {
+      await orm["users"]!.create({ id: "u1" });
+      await orm["users"]!.where({ id: "u1" }).update({ managerId: "u1" });
+      await orm["users"]!.delete("u1");
+      expect(await getAllRows(db, "users")).toEqual([]);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("uses the declared action when the compound inverse orders the same field pairs differently", async () => {
+    const contract = defineContract({
+      family: idbFamilyPack,
+      target: idbTargetPack,
+      models: {
+        User: {
+          store: "users",
+          key: ["tenant", "email"],
+          fields: { tenant: "String", email: "String" },
+          relations: {
+            posts: {
+              to: "Post",
+              cardinality: "1:N",
+              on: { local: ["email", "tenant"], target: ["authorEmail", "tenant"] },
+              onDelete: "cascade",
+            },
+          },
+        },
+        Post: {
+          store: "posts",
+          key: "id",
+          fields: { id: "String", tenant: "String", authorEmail: "String" },
+          relations: {
+            author: {
+              to: "User",
+              cardinality: "N:1",
+              on: { local: ["tenant", "authorEmail"], target: ["tenant", "email"] },
+            },
+          },
+        },
+      },
+    });
+    const { db, orm } = await setupFromStorage(contract as unknown as ReturnType<typeof oneSidedContract>);
+    try {
+      await orm["users"]!.create({ tenant: "t1", email: "a" });
+      await orm["posts"]!.create({ id: "p1", tenant: "t1", authorEmail: "a" });
+      await orm["users"]!.delete(["t1", "a"]);
+      expect(await getAllRows(db, "posts")).toEqual([]);
+    } finally {
+      db.close();
+    }
   });
 });
