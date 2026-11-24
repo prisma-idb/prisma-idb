@@ -16,11 +16,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { defineContract } from "@prisma-idb/family-idb/contract-ts";
 import idbFamilyPack from "@prisma-idb/family-idb/pack";
 import idbTargetPack from "@prisma-idb/target-idb/pack";
-import { IdbExecuteError } from "@prisma-idb/driver-idb/runtime";
+import { createIDBRuntimeDriver, IdbExecuteError } from "@prisma-idb/driver-idb/runtime";
 import type { IdbTransactionScope } from "@prisma-idb/driver-idb/runtime";
 import { OpenTransaction } from "../src/core/open-transaction";
 import { createIdbClient, IdbTransactionCommittedEarlyError } from "../src/exports/client";
-import { IdbRecordValidationError } from "../src/exports/orm";
+import { IdbRecordValidationError, runOrmTransaction } from "../src/exports/orm";
 
 const contract = defineContract({
   family: idbFamilyPack,
@@ -93,9 +93,11 @@ function createStores(name: string): Promise<void> {
  */
 function trackTransactions() {
   const finished: Promise<void>[] = [];
+  let latest: IDBTransaction | undefined;
   const open = IDBDatabase.prototype.transaction;
   const spy = vi.spyOn(IDBDatabase.prototype, "transaction").mockImplementation(function (this: IDBDatabase, ...args) {
     const tx = open.apply(this, args);
+    latest = tx;
     finished.push(
       new Promise<void>((resolve) => {
         for (const event of ["complete", "abort", "error"]) tx.addEventListener(event, () => resolve());
@@ -104,20 +106,22 @@ function trackTransactions() {
     return tx;
   });
   return {
-    untilAutoCommitted: () => Promise.all(finished).then(() => undefined),
+    untilFinished: () => Promise.all(finished).then(() => undefined),
+    abort: () => latest!.abort(),
     stop: () => spy.mockRestore(),
   };
 }
 
 describe("db.transaction()", () => {
   let db: LooseClient;
+  let dbName: string;
   let transactions: ReturnType<typeof trackTransactions>;
 
   beforeEach(async () => {
-    const name = `orm-transaction-test-${++dbCounter}`;
-    await createStores(name);
+    dbName = `orm-transaction-test-${++dbCounter}`;
+    await createStores(dbName);
     transactions = trackTransactions();
-    db = createIdbClient({ contract, dbName: name }) as unknown as LooseClient;
+    db = createIdbClient({ contract, dbName }) as unknown as LooseClient;
   });
   afterEach(() => {
     transactions.stop();
@@ -268,7 +272,7 @@ describe("db.transaction()", () => {
       const failure = await db
         .transaction(["users", "tags"], async (tx) => {
           await tx.users.create({ id: "u1", name: "Alice" });
-          await transactions.untilAutoCommitted();
+          await transactions.untilFinished();
           await tx.tags.create({ id: "t1", label: "late" });
         })
         .catch((error: unknown) => error);
@@ -285,7 +289,7 @@ describe("db.transaction()", () => {
       const failure = await db
         .transaction(["users"], async (tx) => {
           await tx.users.create({ id: "u1", name: "Alice" });
-          await transactions.untilAutoCommitted();
+          await transactions.untilFinished();
           // Rejected before it reaches IndexedDB, so no operation finds the transaction finished.
           await tx.users.create({ id: "u2", name: 42 } as never).catch((error: unknown) => {
             validationError = error;
@@ -300,13 +304,76 @@ describe("db.transaction()", () => {
       expect(await userIds()).toEqual(["u1"]);
     });
 
+    it.each(["operation fails", "callback throws", "callback returns"] as const)(
+      "preserves the failure after IndexedDB aborts (%s)",
+      async (path) => {
+        const callbackError = new Error("callback failed after the abort");
+        const failure = await db
+          .transaction(["users"], async (tx) => {
+            await tx.users.create({ id: "u1", name: "Alice" });
+            transactions.abort();
+            await transactions.untilFinished();
+            if (path === "operation fails") await tx.users.create({ id: "u2", name: "Bob" });
+            if (path === "callback throws") throw callbackError;
+          })
+          .catch((error: unknown) => error);
+
+        expect(await userIds()).toEqual([]);
+        if (path === "callback throws") expect(failure).toBe(callbackError);
+        else
+          expect(failure).toMatchObject({
+            code: path === "operation fails" ? "TRANSACTION_INACTIVE" : "TRANSACTION_ABORTED",
+          });
+      }
+    );
+
+    it.each([false, true])("runs custom commit effects once after late validation (caught: %s)", async (caught) => {
+      const driver = createIDBRuntimeDriver(dbName).create();
+      const notify = vi.fn();
+      try {
+        const executor = {
+          query() {
+            throw new Error("Expected the operation to use the transaction scope");
+          },
+          async transaction(storeNames: string[], mode?: IDBTransactionMode): Promise<IdbTransactionScope> {
+            const scope = await driver.transaction(storeNames, mode);
+            return {
+              execute: (plan) => scope.execute(plan),
+              rollback: () => scope.rollback(),
+              async commit() {
+                await scope.commit();
+                notify();
+              },
+            };
+          },
+        };
+        let validationError: unknown;
+        const failure = await runOrmTransaction({ contract, executor }, ["users"], async (tx) => {
+          await tx.users.create({ id: "u1", name: "Alice" });
+          await transactions.untilFinished();
+          await tx.users.create({ id: "u2", name: 42 } as never).catch((error: unknown) => {
+            validationError = error;
+            if (!caught) throw error;
+          });
+        }).catch((error: unknown) => error);
+
+        expect(validationError).toBeInstanceOf(IdbRecordValidationError);
+        expect(failure).toBeInstanceOf(IdbTransactionCommittedEarlyError);
+        expect((failure as IdbTransactionCommittedEarlyError).cause).toBe(validationError);
+        expect(await userIds()).toEqual(["u1"]);
+        expect(notify).toHaveBeenCalledOnce();
+      } finally {
+        await driver.close();
+      }
+    });
+
     it("reports that writes were committed when the callback throws after an awaited timer", async () => {
       const original = new Error("after the timer");
 
       const failure = await db
         .transaction(["users"], async (tx) => {
           await tx.users.create({ id: "u1", name: "Alice" });
-          await transactions.untilAutoCommitted();
+          await transactions.untilFinished();
           throw original;
         })
         .catch((error: unknown) => error);
@@ -320,7 +387,7 @@ describe("db.transaction()", () => {
       const failure = await db
         .transaction(["users"], async (tx) => {
           await tx.users.create({ id: "u1", name: "Alice" });
-          await transactions.untilAutoCommitted();
+          await transactions.untilFinished();
         })
         .catch((error: unknown) => error);
 

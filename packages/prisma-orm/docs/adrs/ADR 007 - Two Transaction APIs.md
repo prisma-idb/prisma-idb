@@ -90,7 +90,7 @@ A single API would either make every nested write list its stores by hand, which
 
 ## Notes
 
-- 2026-11-24: A failure that happens before an operation reaches IndexedDB, such as validation, also requests a rollback. If IndexedDB had already committed, that rollback does nothing, so `db.transaction()` checks the scope's commit outcome and throws `IdbTransactionCommittedEarlyError` with the failure as `cause`. The sync scope keeps its buffered `outboxwrite` notifications on rollback and drops them only when the commit fails, so writes that persisted are still announced.
+- 2026-11-24: The typed transaction waits for IndexedDB to confirm the commit before reporting an early commit. An inactive request can also indicate a rollback or pending work. If a failure such as validation requests a rollback after IndexedDB has already committed, the earlier writes stay saved and the early-commit error retains the failure as its cause. The sync client publishes notifications for committed outbox writes and status changes, including when the callback throws after those changes commit.
 
 ## Related
 

@@ -141,25 +141,6 @@ export interface SyncIdbClient<TContract extends IdbContract> {
   readonly rawClient: IdbClient<TContract>;
 }
 
-// ── withTransaction helper ────────────────────────────────────────────────────
-
-/** Commits a raw transaction after the callback succeeds and rolls it back on failure. */
-async function runInTransaction<T>(
-  runtime: { transaction: (stores: string[], mode?: IDBTransactionMode) => Promise<IdbTransactionScope> },
-  storeNames: string[],
-  fn: (scope: IdbTransactionScope) => Promise<T>
-): Promise<T> {
-  const scope = await runtime.transaction(storeNames);
-  try {
-    const result = await fn(scope);
-    await scope.commit();
-    return result;
-  } catch (err) {
-    scope.rollback();
-    throw err;
-  }
-}
-
 // ── Factory ───────────────────────────────────────────────────────────────────
 
 /**
@@ -217,17 +198,26 @@ export function createSyncIdbClient<TContract extends IdbContract>(
   const syncOrm = idbOrm({ contract: options.contract, executor: syncExecutor });
   const rawOrm = idbOrm({ contract: options.contract, executor: runtime });
 
-  /** Publishes one status notification only after all outbox updates commit. */
+  /** Publishes one status notification after IndexedDB confirms the changes. */
   const withTransaction = async <T>(storeNames: string[], fn: (scope: IdbTransactionScope) => Promise<T>) => {
-    let outboxChanged = false;
-    const result = await runInTransaction(runtime, storeNames, async (scope) => {
-      const scoped = withDecimalIdentityScope(scope, options.contract);
-      const result = await fn(scoped);
-      outboxChanged = hasOutboxChanges(scoped);
+    const scope = withDecimalIdentityScope(await runtime.transaction(storeNames), options.contract);
+    const commit = async () => {
+      await scope.commit();
+      if (hasOutboxChanges(scope)) emit("outboxchange", undefined);
+    };
+    let callbackReturned = false;
+    try {
+      const result = await fn(scope);
+      callbackReturned = true;
+      await commit();
       return result;
-    });
-    if (outboxChanged) emit("outboxchange", undefined);
-    return result;
+    } catch (error) {
+      scope.rollback();
+      // A rollback cannot undo an early commit. Check the outcome before
+      // rethrowing so subscribers hear about any status changes that persisted.
+      if (!callbackReturned && hasOutboxChanges(scope)) await commit().catch(() => {});
+      throw error;
+    }
   };
 
   const rawClient: IdbClient<TContract> = {

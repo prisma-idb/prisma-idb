@@ -33,17 +33,16 @@ export interface IdbClient<TContract extends IdbContract> {
    *
    * `tx` has the ORM accessors of the listed root keys only, and every
    * operation on it takes part in the transaction, including foreign-key
-   * checks, referential actions and `include`. The transaction commits when
-   * `fn` resolves and rolls back when it throws. A failed operation aborts the
-   * whole transaction, even if `fn` catches the error. The callback may return
+   * checks, referential actions and `include`. If the transaction is still
+   * open when the callback throws or a `tx` operation fails, it rolls back
+   * even if the callback catches the operation error. The callback may return
    * an ORM query result directly, without an `async` wrapper.
    *
-   * Await only `tx` operations inside `fn`. IndexedDB commits a transaction
-   * once it has no pending request, so awaiting a timer or a network call ends
-   * the transaction early (ADR 005). The next operation, or a later throw,
-   * then fails with `IdbTransactionCommittedEarlyError`, and the writes made
-   * before that point stay saved. Do not call `transaction()` from inside `fn`;
-   * awaiting the inner call counts as awaiting other work and ends the outer transaction early.
+   * Await only `tx` operations inside `fn`. IndexedDB can commit while a
+   * callback waits on a timer or a network call. If that happens,
+   * `transaction()` rejects with `IdbTransactionCommittedEarlyError` and the
+   * committed writes stay saved. Calling `transaction()` from inside `fn`
+   * opens a separate transaction and can let the outer transaction commit early.
    *
    * @example
    * ```ts
