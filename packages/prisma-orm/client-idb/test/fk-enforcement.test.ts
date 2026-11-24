@@ -2503,3 +2503,55 @@ describe("referential actions — foreign key without a declared inverse relatio
     }
   });
 });
+
+describe("shared-primary-key one-to-one with a compound key", () => {
+  it("cascades a delete when the parent's 1:1 lists its key fields in another order", async () => {
+    const contract = defineContract({
+      family: idbFamilyPack,
+      target: idbTargetPack,
+      models: {
+        User: {
+          store: "users",
+          key: ["tenant", "id"],
+          fields: { tenant: "String", id: "String" },
+          relations: {
+            profile: {
+              to: "Profile",
+              cardinality: "1:1",
+              on: { local: ["id", "tenant"], target: ["userId", "tenant"] },
+              onDelete: "cascade",
+            },
+          },
+        },
+        Profile: {
+          store: "profiles",
+          key: ["tenant", "userId"],
+          fields: { tenant: "String", userId: "String" },
+        },
+      },
+    });
+    const name = nextDbName();
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const req = indexedDB.open(name, 1);
+      req.onupgradeneeded = () => {
+        req.result.createObjectStore("users", { keyPath: ["tenant", "id"] });
+        req.result.createObjectStore("profiles", { keyPath: ["tenant", "userId"] });
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+    const executor = new TestExecutorWithTransaction(createIDBRuntimeDriver(name).create());
+    const orm = idbOrm({ contract, executor }) as unknown as Record<
+      string,
+      { create(d: unknown): Promise<unknown>; delete(k: unknown): Promise<unknown> }
+    >;
+    try {
+      await orm["users"]!.create({ tenant: "t1", id: "u1" });
+      await orm["profiles"]!.create({ tenant: "t1", userId: "u1" });
+      await orm["users"]!.delete(["t1", "u1"]);
+      expect(await getAllRows(db, "profiles")).toEqual([]);
+    } finally {
+      db.close();
+    }
+  });
+});
