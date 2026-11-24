@@ -17,7 +17,9 @@ export class WireEncodeError extends Error {
  * so `JSON.stringify` keeps `bigint`, `Uint8Array` and `Date` values: a create's
  * record, an update's `patch` and `key`, and a delete's `key`. The server
  * revives them through the same codecs. A model the contract no longer has,
- * or a payload of another shape, goes out unchanged for the server to refuse.
+ * or a payload of another shape, goes out unchanged for the server to refuse,
+ * unless it still holds a `bigint` or binary value no codec encoded, which
+ * `JSON.stringify` would throw on or turn into a numeric-keyed object.
  *
  * Throws a `TypeError` when `contract` is missing, since a hand-built request
  * context without one would otherwise send unencoded values, and a
@@ -32,7 +34,9 @@ export function toWireEvent(contract: IdbContract, event: OutboxEvent): OutboxEv
     );
   }
   try {
-    return encodeEvent(contract, event);
+    const encoded = encodeEvent(contract, event);
+    assertJsonSafe(encoded.payload, "payload");
+    return encoded;
   } catch (error) {
     throw new WireEncodeError(event, error);
   }
@@ -53,11 +57,18 @@ function encodeEvent(contract: IdbContract, event: OutboxEvent): OutboxEvent {
 
 /**
  * A single-field key through that field's codec; a compound key element by element.
- * A bulk delete's key range is stored as plain `{ lower, upper, ... }` bounds, which no
- * key codec reads, so it goes out unchanged instead of being encoded as some other key.
+ * A bulk delete's key range is stored as plain `{ lower, upper, ... }` bounds: each
+ * bound is encoded as a key, and the open flags go out as they are.
  */
 function encodeKey(contract: IdbContract, model: string, key: unknown): unknown {
-  if (isPlainObject(key)) return key;
+  if (isPlainObject(key)) {
+    const range = key as Record<string, unknown>;
+    const encoded = { ...range };
+    for (const bound of ["lower", "upper"]) {
+      if (range[bound] !== undefined) encoded[bound] = encodeKey(contract, model, range[bound]);
+    }
+    return encoded;
+  }
   const keyPath = getKeyPath(contract, model);
   if (typeof keyPath === "string") return encodeJsonFieldValue(contract, model, keyPath, key);
   if (!Array.isArray(key)) return key;
@@ -65,6 +76,19 @@ function encodeKey(contract: IdbContract, model: string, key: unknown): unknown 
     const field = keyPath[index];
     return field === undefined ? part : encodeJsonFieldValue(contract, model, field, part);
   });
+}
+
+/** Throws for a value `JSON.stringify` would throw on or silently mangle: a leftover `bigint`, `ArrayBuffer` or typed array. */
+function assertJsonSafe(value: unknown, path: string, seen = new WeakSet<object>()): void {
+  if (typeof value === "bigint") throw new TypeError(`${path} holds a bigint that no codec encoded`);
+  if (typeof value !== "object" || value === null) return;
+  if (value instanceof ArrayBuffer || ArrayBuffer.isView(value)) {
+    throw new TypeError(`${path} holds binary data that no codec encoded`);
+  }
+  if (value instanceof Date || seen.has(value)) return;
+  seen.add(value);
+  const entries = Array.isArray(value) ? value.entries() : Object.entries(value);
+  for (const [key, child] of entries) assertJsonSafe(child, `${path}.${String(key)}`, seen);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -67,14 +67,20 @@ async function handlePush(
     clientStorageHash: parsed.data.storageHash,
   });
   if (outcome.ok) {
-    // A rejected event carries its row's current state, read natively from SQL.
+    // A rejected event carries its row's current state, read natively from SQL. The push has
+    // already committed, so a record that can't be encoded is dropped from its result rather
+    // than failing the response, which would make the client retry events that were applied.
     const models = new Map(parsed.data.events.map((event) => [event.id, event.entityType]));
     return Response.json(
       outcome.results.map((result) => {
         const model = models.get(result.id);
-        return result.record && model !== undefined
-          ? { ...result, record: encodeWireValues(contract, model, result.record) }
-          : result;
+        if (!result.record || model === undefined) return result;
+        try {
+          return { ...result, record: encodeWireValues(contract, model, result.record) };
+        } catch {
+          const { record: _unencodable, ...withoutRecord } = result;
+          return withoutRecord;
+        }
       })
     );
   }
@@ -107,9 +113,24 @@ async function handlePull(
     clientStorageHash: parsed.data.storageHash,
   });
   if (outcome.ok) {
-    const logs = outcome.logs.map((log) =>
-      log.record ? { ...log, record: encodeWireValues(contract, log.model, log.record) } : log
-    );
+    // A missing record means the row was deleted or revoked, so a log whose record can't be
+    // encoded can't be sent without it. Fail the page and name the log instead.
+    const logs = [];
+    for (const log of outcome.logs) {
+      if (!log.record) {
+        logs.push(log);
+        continue;
+      }
+      try {
+        logs.push({ ...log, record: encodeWireValues(contract, log.model, log.record) });
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        return Response.json(
+          { error: `Could not encode the record of changelog entry ${log.changelogId} (${log.model}): ${reason}` },
+          { status: 500 }
+        );
+      }
+    }
     return Response.json({ logs, hasMore: outcome.hasMore });
   }
   switch (outcome.reason) {

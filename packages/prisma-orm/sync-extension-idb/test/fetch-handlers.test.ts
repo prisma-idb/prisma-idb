@@ -173,19 +173,50 @@ describe("fetch sync handlers", () => {
     expect(requests).toBe(0);
   });
 
-  it("sends a bulk delete's key range as it is", async () => {
+  it("encodes a bulk delete's BigInt and Bytes range bounds and fails an unknown model's bigint on its own", async () => {
     let body: unknown;
     const client = createSyncFetchHandlers({
       pushUrl: "https://sync.test/push",
       pullUrl: "https://sync.test/pull",
       fetch: async (input, init) => {
         body = await new Request(input, init).json();
-        return Response.json([]);
+        return Response.json([{ id: "r", success: true }]);
       },
     });
-    const range = { lower: 1, upper: 2, lowerOpen: false, upperOpen: true };
-    await client.pushHandler([outboxEvent("r", "delete", { key: range })], new AbortController().signal, context);
-    expect((body as { events: { payload: unknown }[] }).events[0]?.payload).toEqual({ key: range });
+    const range = { lower: new Uint8Array([1]), upper: new Uint8Array([2]), lowerOpen: false, upperOpen: true };
+    const gone = { ...outboxEvent("g", "create", { id: "a", size: 5n }), entityType: "Gone" };
+    const results = await client.pushHandler(
+      [outboxEvent("r", "delete", { key: range }), gone],
+      new AbortController().signal,
+      context
+    );
+    expect((body as { events: { payload: unknown }[] }).events).toHaveLength(1);
+    expect((body as { events: { payload: unknown }[] }).events[0]?.payload).toEqual({
+      key: { lower: "AQ==", upper: "Ag==", lowerOpen: false, upperOpen: true },
+    });
+    expect(results).toEqual([
+      { id: "g", success: false, retryable: false, error: expect.stringContaining("bigint") },
+      { id: "r", success: true },
+    ]);
+  });
+
+  it("fails an event whose payload JSON.stringify rejects without rejecting the whole push", async () => {
+    const circular: Record<string, unknown> = { id: "a" };
+    circular["self"] = circular;
+    const client = createSyncFetchHandlers({
+      pushUrl: "https://sync.test/push",
+      pullUrl: "https://sync.test/pull",
+      fetch: async () => Response.json([{ id: "d", success: true }]),
+    });
+    const results = await client.pushHandler(
+      [outboxEvent("c", "create", circular), outboxEvent("d", "delete", { key: new Uint8Array([1]) })],
+      new AbortController().signal,
+      context
+    );
+    expect(results).toEqual([
+      { id: "c", success: false, retryable: false, error: expect.stringContaining("circular") },
+      { id: "d", success: true },
+    ]);
   });
 
   it.each([409, 401, 500])("handles HTTP %s before parsing a non-JSON body", async (status) => {

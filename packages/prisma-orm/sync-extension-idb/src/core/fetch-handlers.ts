@@ -26,6 +26,14 @@ async function readResponse(response: Response, operation: string): Promise<unkn
   return response.json();
 }
 
+function serializeEvent(wireEvent: OutboxEvent, original: OutboxEvent): string {
+  try {
+    return JSON.stringify(wireEvent);
+  } catch (error) {
+    throw new WireEncodeError(original, error);
+  }
+}
+
 /**
  * Creates fetch handlers that send the worker's client storage hash and surface
  * HTTP 409 as ContractMismatchError. The worker then emits `contractmismatch`
@@ -36,11 +44,12 @@ export function createSyncFetchHandlers(options: SyncFetchHandlersOptions): Sync
   return {
     async pushHandler(events, signal, context) {
       // An event that can't be encoded fails on its own, without a request, so the rest of the batch still syncs.
-      const wireEvents: OutboxEvent[] = [];
+      const wireEvents: string[] = [];
       const unencodable: PushResult[] = [];
       for (const event of events) {
         try {
-          wireEvents.push(toWireEvent(context.contract, event));
+          // Serialize here too, so a value the encoder let through fails this event and not the whole call.
+          wireEvents.push(serializeEvent(toWireEvent(context.contract, event), event));
         } catch (error) {
           if (!(error instanceof WireEncodeError)) throw error;
           unencodable.push({ id: event.id, success: false, error: error.message, retryable: false });
@@ -54,10 +63,7 @@ export function createSyncFetchHandlers(options: SyncFetchHandlersOptions): Sync
         headers,
         credentials: options.credentials ?? "same-origin",
         redirect: "error",
-        body: JSON.stringify({
-          storageHash: context.storageHash,
-          events: wireEvents,
-        }),
+        body: `{"storageHash":${JSON.stringify(context.storageHash)},"events":[${wireEvents.join(",")}]}`,
         signal,
       });
       const results = pushResultSchema
