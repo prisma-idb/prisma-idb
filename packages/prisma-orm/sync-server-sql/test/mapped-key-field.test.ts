@@ -40,6 +40,38 @@ describe("a primary key mapped to another column", () => {
     }
   });
 
+  it("follows mapped foreign keys through a parent with a mapped primary key", async () => {
+    const db = await testDb();
+    await seed(db, { User: [{ id: "u1", name: "Ann" }] });
+    const adapter = createSqlSyncAdapter({ contract: testContract, syncServer: testSyncServer, contractCheck: "off" });
+    const board = { id: "b1", ownerId: "u1" };
+    const card = { id: "c1", boardId: "b1" };
+
+    expect(
+      await adapter.applyPush(db, {
+        scopeKey: "u1",
+        events: [
+          { id: "board", entityType: "MappedBoard", operation: "create", payload: board },
+          { id: "card", entityType: "MappedCard", operation: "create", payload: card },
+        ],
+      })
+    ).toEqual({
+      ok: true,
+      results: [
+        { id: "board", success: true },
+        { id: "card", success: true },
+      ],
+    });
+    expect(await db.orm.public.MappedCard.first({ id: "c1" })).toEqual(card);
+    expect(await adapter.pull(db, { scopeKey: "u1" })).toMatchObject({
+      ok: true,
+      logs: [
+        { model: "MappedBoard", keyPath: "b1", record: board },
+        { model: "MappedCard", keyPath: "c1", record: card },
+      ],
+    });
+  });
+
   it.each(["User", "MappedNote"])("rejects a compound key on synced %s at startup", (modelName) => {
     const contract = structuredClone(testContract);
     const tables = (

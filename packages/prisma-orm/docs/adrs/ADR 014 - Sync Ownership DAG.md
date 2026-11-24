@@ -170,7 +170,7 @@ export type GetKeyField = (contract: SyncServerContract, modelName: string) => s
 
 `SyncServerContract` is the framework's plain `Contract`. The default `getKeyField` reads `model.storage.keyPath` when it is a string, which matches IndexedDB contracts without importing IndexedDB types. For any other storage shape, it throws and names the `getKeyField` option. `sync-server` has no runtime dependency on `target-idb`.
 
-So `createSyncServer` can take the real server contract directly. The kanban example passes its Postgres contract, with a `getKeyField` that reads the table's primary-key columns. It rejects compound keys explicitly, since nothing in the push and pull path handles them yet.
+So `createSyncServer` can take the real server contract directly. The kanban example passes its Postgres contract, with a `getKeyField` that resolves the table's single primary-key column to its model field name. Compound keys are rejected at startup.
 
 ## Alternatives considered
 

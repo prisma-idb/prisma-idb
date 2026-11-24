@@ -276,7 +276,7 @@ export function createSyncServer(options: CreateSyncServerOptions): SyncServer {
   for (const model of dag.clientModels) {
     const keyField = getKeyField(options.contract, model);
     if (typeof keyField !== "string" || !Object.hasOwn(models[model]!.fields, keyField)) {
-      throw new Error(`createSyncServer: getKeyField must return a primary-key field on model "${model}".`);
+      throw new Error(`createSyncServer: getKeyField must return the name of an existing field on model "${model}".`);
     }
     try {
       assertRecordValidator(options.clientContract, model, { codecLookup });

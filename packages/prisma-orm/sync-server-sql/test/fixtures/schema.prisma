@@ -10,6 +10,7 @@ model User {
   privateNotes     PrivateNote[]
   boards           Board[]
   mappedNotes      MappedNote[]
+  mappedBoards     MappedBoard[]
   jsonItems        JsonItem[]
   meals            Meal[]
   recipes          Recipe[]
@@ -177,7 +178,20 @@ model ListItem {
 
 model MappedNote {
   id      String @id @map("note_key")
-  ownerId String
+  ownerId String @map("owner_id")
   owner   User   @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   text    String
+}
+
+model MappedBoard {
+  id      String @id @map("board_key")
+  ownerId String @map("owner_id")
+  owner   User   @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  cards   MappedCard[]
+}
+
+model MappedCard {
+  id      String      @id @map("card_key")
+  boardId String      @map("board_id")
+  board   MappedBoard @relation(fields: [boardId], references: [id], onDelete: Cascade)
 }
