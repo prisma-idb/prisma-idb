@@ -7,7 +7,7 @@ import { defineContract } from "@prisma-idb/family-idb/contract-ts";
 import idbFamilyPack from "@prisma-idb/family-idb/pack";
 import idbTargetPack from "@prisma-idb/target-idb/pack";
 import { createAutoMigratingIdbClient } from "../src/exports/client-auto";
-import { buildContractSpaceFixture } from "./_contract-space-fixture";
+import { buildContractSpaceFixture, buildExtensionContractSpaceFixture } from "./_contract-space-fixture";
 
 const v1 = defineContract({
   family: idbFamilyPack,
@@ -47,14 +47,17 @@ function space(migrations: MigrationPackage[], invariants: string[]): ContractSp
   return { ...chain, migrations, headRef: { hash: v2.storage.storageHash, invariants } };
 }
 
-/** Reads the app space's marker record straight from IndexedDB. */
-function readMarker(dbName: string): Promise<{ storageHash: string; invariants: string[] } | undefined> {
+/** Reads a space's marker record straight from IndexedDB. */
+function readMarker(
+  dbName: string,
+  spaceId = "app"
+): Promise<{ storageHash: string; invariants: string[] } | undefined> {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(dbName);
     request.onerror = () => reject(request.error);
     request.onsuccess = () => {
       const db = request.result;
-      const get = db.transaction("_prisma_next_marker").objectStore("_prisma_next_marker").get("app");
+      const get = db.transaction("_prisma_next_marker").objectStore("_prisma_next_marker").get(spaceId);
       get.onerror = () => reject(get.error);
       get.onsuccess = () => {
         db.close();
@@ -115,6 +118,85 @@ describe("auto-migrate invariants", () => {
       dbName,
     });
     await second.close();
+    expect(await readMarker(dbName)).toMatchObject({ storageHash: v2.storage.storageHash, invariants: ["fixed"] });
+  });
+
+  it("keeps the invariants a marker already records when a later path provides new ones", async () => {
+    const dbName = `auto-migrate-invariants-${++dbCounter}`;
+    const first = await createAutoMigratingIdbClient({ contractSpace: space([baseline, seeding], ["seeded"]), dbName });
+    await first.close();
+    expect(await readMarker(dbName)).toMatchObject({ invariants: ["seeded"] });
+
+    // The new head requires only `fixed`; `seeded` must survive on the marker.
+    const fix = variant({ ...plain, ops: [] }, "0002_fix", {
+      from: v2.storage.storageHash,
+      providedInvariants: ["fixed"],
+      createdAt: new Date(2026, 0, 3).toISOString(),
+    });
+    const second = await createAutoMigratingIdbClient({
+      contractSpace: space([baseline, seeding, fix], ["fixed"]),
+      dbName,
+    });
+    await second.close();
+    expect(await readMarker(dbName)).toMatchObject({
+      storageHash: v2.storage.storageHash,
+      invariants: ["fixed", "seeded"],
+    });
+  });
+
+  it("records each space's own invariants when an extension space migrates with the app space", async () => {
+    const dbName = `auto-migrate-invariants-${++dbCounter}`;
+    const extV1 = defineContract({
+      family: idbFamilyPack,
+      target: idbTargetPack,
+      models: { Widget: { store: "_ext_widgets", key: "id", fields: { id: "String" } } },
+    });
+    const extChain = buildExtensionContractSpaceFixture("ext", [extV1]);
+    const [extBaseline] = extChain.migrations as [MigrationPackage];
+    const extProviding = variant(extBaseline, "0000_v1_ext", { providedInvariants: ["ext-fixed"] });
+    const extension = {
+      spaceId: "ext",
+      contractSpace: {
+        ...extChain,
+        migrations: [extProviding],
+        headRef: { ...extChain.headRef, invariants: ["ext-fixed"] },
+      },
+    };
+
+    const client = await createAutoMigratingIdbClient({
+      contractSpace: space([baseline, seeding, plain], ["seeded"]),
+      dbName,
+      extensions: [extension],
+    });
+    await client.close();
+    expect(await readMarker(dbName, "app")).toMatchObject({ invariants: ["seeded"] });
+    expect(await readMarker(dbName, "ext")).toMatchObject({ invariants: ["ext-fixed"] });
+
+    // An extension that lacks its invariant is refused, naming its space, before anything is applied.
+    const other = `auto-migrate-invariants-${++dbCounter}`;
+    await expect(
+      createAutoMigratingIdbClient({
+        contractSpace: space([baseline, plain], []),
+        dbName: other,
+        extensions: [{ ...extension, contractSpace: { ...extension.contractSpace, migrations: [extBaseline] } }],
+      })
+    ).rejects.toThrow(/space "ext".*ext-fixed/);
+  });
+
+  it("keeps retrying after a lost race when a space is at its head hash but lacks a required invariant", async () => {
+    const dbName = `auto-migrate-invariants-${++dbCounter}`;
+    const fix = variant({ ...plain, ops: [] }, "0002_fix", {
+      from: v2.storage.storageHash,
+      providedInvariants: ["fixed"],
+      createdAt: new Date(2026, 0, 3).toISOString(),
+    });
+    // Both opens read an empty database and plan version 1. The first one's upgrade wins and leaves the
+    // marker at the head without `fixed`, so the second must plan again from that marker.
+    const [plainClient, fixedClient] = await Promise.all([
+      createAutoMigratingIdbClient({ contractSpace: space([baseline, plain], []), dbName }),
+      createAutoMigratingIdbClient({ contractSpace: space([baseline, plain, fix], ["fixed"]), dbName }),
+    ]);
+    await Promise.all([plainClient.close(), fixedClient.close()]);
     expect(await readMarker(dbName)).toMatchObject({ storageHash: v2.storage.storageHash, invariants: ["fixed"] });
   });
 });

@@ -89,6 +89,14 @@ migrations/
 
 Each package records the contract hash it starts from and the one it ends at, so the packages form one chain from an empty database to your current schema. The next `migration plan` starts from the newest package's snapshot.
 
+## Required invariants
+
+A migration can record that it provided an invariant, such as a data fix, in `providedInvariants` in its `migration.json`. A head can list invariants it requires. When the browser opens the database, it takes the shortest path from the database's marker to the head whose migrations provide every required invariant that the marker doesn't record yet. It stores the invariants the path provided on the marker, next to the ones the marker already had.
+
+- A database already at the head hash still runs a path when the head requires a new invariant, for example a data fix from the head to itself.
+- If no path provides a required invariant, the app refuses to open the database and the error names the space and the missing invariant. Nothing is applied. Add a migration that provides it, then run `migration contract-space` again.
+- `migration plan` currently derives no invariants, so a project that doesn't hand-author them is not affected.
+
 ## Extensions
 
 An extension, such as [sync](/docs/prisma-8/sync), ships its own object stores and its own chain of migrations. You don't plan or edit them. When you pass the extension to `createAutoMigratingIdbClient({ extensions })`, its pending migrations run in the same upgrade as yours, so the database changes once, not once per chain.

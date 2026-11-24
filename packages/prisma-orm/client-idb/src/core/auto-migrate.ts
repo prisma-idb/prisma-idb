@@ -377,8 +377,7 @@ async function planSpacePath(input: {
   const { spaceId, contractSpace } = input;
   const head = contractSpace.headRef;
   const required = new Set(head.invariants.filter((id) => !input.markerInvariants.includes(id)));
-  // Bundled packages have no directory on disk; the graph reads only their metadata and names.
-  const graph = reconstructGraph(contractSpace.migrations.map((pkg) => ({ ...pkg, dirPath: pkg.dirName })));
+  const graph = reconstructGraph(toGraphPackages(contractSpace.migrations));
   const outcome = findPathWithDecision(graph, input.markerHash ?? EMPTY_CONTRACT_HASH, head.hash, { required });
   if (outcome.kind !== "ok" && input.markerHash === head.hash) {
     throw new Error(
@@ -427,6 +426,15 @@ async function planSpacePath(input: {
     for (const invariant of pkg.metadata.providedInvariants) invariants.add(invariant);
   }
   return { ops, invariants: [...invariants].sort() };
+}
+
+/**
+ * Adapts bundled packages to the shape `reconstructGraph` takes. The graph reads each package's
+ * metadata and `dirName` and never its `dirPath`, which only the type requires. Bundled packages
+ * have no directory on disk, so `dirPath` repeats the bundle name instead of inventing a path.
+ */
+function toGraphPackages(migrations: ContractSpace<Contract>["migrations"]) {
+  return migrations.map((pkg) => ({ ...pkg, dirPath: pkg.dirName }));
 }
 
 /** `true` when the marker is at the head and records every invariant the head requires. */
