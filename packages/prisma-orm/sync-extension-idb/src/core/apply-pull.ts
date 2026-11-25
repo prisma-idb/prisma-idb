@@ -54,7 +54,14 @@ import type { IdbTransactionScope } from "@prisma-idb/driver-idb/runtime";
 import type { IdbContract } from "@prisma-idb/client-idb/orm";
 import { getStoreName, getKeyPath, extractKeyFromRow } from "@prisma-idb/client-idb/orm";
 import { collectDeleteStoreNames, applyReferentialActionsForRow } from "@prisma-idb/client-idb/internal";
-import { decodeJsonRecord, validateRecord, validateKeyPath } from "@prisma-idb/target-idb/runtime";
+import {
+  compareDecimalValues,
+  decodeJsonRecord,
+  isValidIdbKey,
+  keyEquals,
+  validateRecord,
+  validateKeyPath,
+} from "@prisma-idb/target-idb/runtime";
 import type { SyncIdbClient } from "./sync-client";
 import { deleteRecord, putRecord, scanStore } from "./raw-store";
 import { OUTBOX_STORE } from "./outbox-store";
@@ -198,7 +205,11 @@ async function applyLog<TContract extends IdbContract>(
           const cascaded = recordDeletes(scope);
           await applyReferentialActionsForRow(cascaded.scope, contract, log.model, identity.row);
           await deleteRecord(scope, storeName, identity.key);
-          await discardPendingEdits(scope, contract, cascaded.deleted, { storeName, key: identity.key });
+          await discardPendingEdits(scope, contract, cascaded.deleted, {
+            storeName,
+            key: identity.key,
+            row: identity.row,
+          });
         }
       } else {
         await putRecord(scope, storeName, identity.record!);
@@ -222,21 +233,28 @@ async function applyLog<TContract extends IdbContract>(
   }
 }
 
-/** A row a pulled delete removed through a cascade. */
+/** A row a pulled delete removed, directly or through a cascade, with the values it had. */
 interface DeletedRow {
   readonly storeName: string;
   readonly key: IDBValidKey;
+  readonly row: Record<string, unknown>;
 }
 
-/** Wrap `scope` so the keyed deletes issued through it, which is how a cascade removes rows, are recorded. */
+/**
+ * Wrap `scope` so the rows removed by keyed deletes issued through it, which is
+ * how a cascade removes rows, are recorded. A delete echoes the rows it removed.
+ */
 function recordDeletes(scope: IdbTransactionScope): { scope: IdbTransactionScope; deleted: DeletedRow[] } {
   const deleted: DeletedRow[] = [];
   const recording: IdbTransactionScope = {
     execute: (plan) => {
-      if (plan.kind === "delete" && !(plan.key instanceof IDBKeyRange)) {
-        deleted.push({ storeName: plan.storeName, key: plan.key });
-      }
-      return scope.execute(plan);
+      const result = scope.execute(plan);
+      if (plan.kind !== "delete" || plan.key instanceof IDBKeyRange) return result;
+      const { storeName, key } = plan;
+      return result.then((rows) => {
+        for (const row of rows) deleted.push({ storeName, key, row: row as Record<string, unknown> });
+        return rows;
+      });
     },
     commit: () => scope.commit(),
     rollback: () => scope.rollback(),
@@ -255,7 +273,8 @@ export const DISCARDED_BY_PULL = "Discarded: a change pulled from the server del
  * transaction, so the local rows and the queue agree.
  *
  * The cascade follows the local foreign keys. An unsent update that moved a row
- * onto a deleted parent changed that key only locally: the server still has the
+ * onto a deleted parent, matched through the relation's referenced fields
+ * against the values the deleted rows had, changed that key only locally: the server still has the
  * row under its old parent and did not delete it. Those events stay retryable and
  * the row stays pending, so the push is rejected and reconciliation restores the
  * row from the server, instead of the client losing it for good.
@@ -266,10 +285,11 @@ async function discardPendingEdits(
   deleted: readonly DeletedRow[],
   root: DeletedRow
 ): Promise<void> {
-  const pending = new Map<string, VersionMetaRecord>();
+  // Each pending row's metadata, with the values the row had when the cascade deleted it.
+  const pending = new Map<string, { meta: VersionMetaRecord; row: Record<string, unknown> }>();
   // A Decimal key is matched numerically against every metadata row, so read them once, not per row.
   let snapshot: Map<string, VersionMetaRecord> | undefined;
-  for (const { storeName, key } of deleted) {
+  for (const { storeName, key, row } of deleted) {
     const model = getModelNameForStore(contract, storeName);
     if (model === undefined) continue;
     if (snapshot === undefined && hasDecimalPrimaryKey(contract, model)) {
@@ -277,55 +297,94 @@ async function discardPendingEdits(
       snapshot = new Map(rows.map((row) => [row.id, row]));
     }
     const meta = await resolveVersionMeta(scope, contract, model, key, key, snapshot);
-    if (meta?.localChangePending) pending.set(meta.id, meta);
+    if (meta?.localChangePending) pending.set(meta.id, { meta, row });
   }
   // Only a delete that cascaded to rows with unsent edits reads the outbox.
   if (pending.size === 0) return;
 
-  const deletedIds = new Set<string>();
-  for (const row of [root, ...deleted]) {
-    const model = getModelNameForStore(contract, row.storeName);
-    if (model !== undefined) deletedIds.add(versionMetaKey(model, row.key));
+  const deletedRows = new Map<string, Record<string, unknown>[]>();
+  for (const { storeName, row } of [root, ...deleted]) {
+    const model = getModelNameForStore(contract, storeName);
+    if (model === undefined) continue;
+    let rows = deletedRows.get(model);
+    if (!rows) deletedRows.set(model, (rows = []));
+    rows.push(row);
   }
   const events = (await scanStore<OutboxEvent>(scope, OUTBOX_STORE)).filter(
     (event) => !event.synced && event.retryable && event.versionMetaId !== null && pending.has(event.versionMetaId)
   );
   const moved = new Set(
-    events.filter((event) => movesOntoDeletedRow(contract, event, deletedIds)).map((event) => event.versionMetaId)
+    events
+      .filter((event) => movesOntoDeletedRow(contract, event, pending.get(event.versionMetaId!)!.row, deletedRows))
+      .map((event) => event.versionMetaId)
   );
   for (const event of events) {
     if (moved.has(event.versionMetaId)) continue;
     await putRecord(scope, OUTBOX_STORE, { ...event, retryable: false, lastError: DISCARDED_BY_PULL });
   }
-  for (const meta of pending.values()) {
+  for (const { meta } of pending.values()) {
     if (moved.has(meta.id)) continue;
     const cleared = { ...meta, localChangePending: false } satisfies VersionMetaRecord;
     await putRecord(scope, VERSION_META_STORE, cleared);
   }
 }
 
-/** Whether an update's patch sets a foreign key to a row in `deletedIds` (version-meta ids). */
-function movesOntoDeletedRow(contract: IdbContract, event: OutboxEvent, deletedIds: ReadonlySet<string>): boolean {
+/**
+ * Whether an update's patch changed a foreign key of `row`, a row the cascade
+ * deleted, so that it points at one of `deletedRows` (by model). The row's
+ * values at deletion are its local values after the update, so a compound key
+ * whose patch changed only some of its fields is matched too. They are compared
+ * with the fields the key references, which can be a unique field rather than
+ * the primary key, in the relation's order.
+ */
+function movesOntoDeletedRow(
+  contract: IdbContract,
+  event: OutboxEvent,
+  row: Record<string, unknown>,
+  deletedRows: ReadonlyMap<string, readonly Record<string, unknown>[]>
+): boolean {
   if (event.operation !== "update") return false;
   const patch = (event.payload as { patch?: Record<string, unknown> } | null)?.patch;
   if (patch === undefined || patch === null) return false;
-  const model = domainModelsAtDefaultNamespace(contract.domain)[event.entityType] as
-    | {
-        relations?: Record<
-          string,
-          { to: string | { model: string }; cardinality: string; on: { localFields: readonly string[] } }
-        >;
-      }
-    | undefined;
-  for (const relation of Object.values(model?.relations ?? {})) {
+  const models = domainModelsAtDefaultNamespace(contract.domain) as Record<string, DomainModel | undefined>;
+  for (const relation of Object.values(models[event.entityType]?.relations ?? {})) {
     if (relation.cardinality !== "N:1") continue;
-    const fields = relation.on.localFields;
-    if (fields.length === 0 || !fields.every((field) => field in patch)) continue;
-    const target = fields.length === 1 ? patch[fields[0]!] : fields.map((field) => patch[field]);
+    const { localFields, targetFields } = relation.on;
+    if (localFields.length === 0 || localFields.length !== targetFields.length) continue;
+    if (!localFields.some((field) => field in patch)) continue;
     const targetModel = typeof relation.to === "string" ? relation.to : relation.to.model;
-    if (target !== null && deletedIds.has(versionMetaKey(targetModel, target))) return true;
+    const fields = models[targetModel]?.fields ?? {};
+    const isTarget = (target: Record<string, unknown>) =>
+      targetFields.every((field, i) => fieldValuesEqual(fields[field], target[field], row[localFields[i]!]));
+    if (deletedRows.get(targetModel)?.some(isTarget)) return true;
   }
   return false;
+}
+
+/** The parts of a domain model that `movesOntoDeletedRow` reads. */
+interface DomainModel {
+  readonly fields?: Record<string, { readonly type?: { readonly codecId?: string } } | undefined>;
+  readonly relations?: Record<
+    string,
+    {
+      readonly to: string | { readonly model: string };
+      readonly cardinality: string;
+      readonly on: { readonly localFields: readonly string[]; readonly targetFields: readonly string[] };
+    }
+  >;
+}
+
+/** Decimal values compare numerically, so `"1.5"` and `"1.50"` are one value; other values compare as IndexedDB keys. */
+function fieldValuesEqual(
+  field: { readonly type?: { readonly codecId?: string } } | undefined,
+  stored: unknown,
+  patched: unknown
+): boolean {
+  if (field?.type?.codecId === "idb/decimal@1") {
+    return typeof stored === "string" && typeof patched === "string" && compareDecimalValues(stored, patched) === 0;
+  }
+  if (isValidIdbKey(stored) && isValidIdbKey(patched)) return keyEquals(stored, patched);
+  return Object.is(stored, patched);
 }
 
 /** Keep application and metadata aliases on their existing spelling after the pending-change guard. */
