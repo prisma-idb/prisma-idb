@@ -1230,7 +1230,9 @@ async function writeReferentialUpdate(
  * field to its existing value, or never touches a locally-referenced field,
  * is a no-op here. Children are matched against `oldRow`'s pre-change values.
  *
- * Every Restrict and uniqueness check runs before the row is written. The row
+ * Every Restrict and uniqueness check runs before the row is written, so a
+ * Restrict sees the children as they were before any of this row's actions
+ * ran, even when a Cascade on another relation would rewrite them. The row
  * is then written before any child, so the writes land in the order a SQL
  * database applies them: a parent's new key exists before a child is pointed
  * at it. A sync outbox records events in write order, and the server applies
