@@ -1,6 +1,7 @@
 import type { ContractField, ContractWithDomain } from "@prisma/orm-framework/contract/types";
 import { describe, expect, it } from "vitest";
-import { decodeJsonRecord } from "../src/core/decode-json-record";
+import { validateRecord } from "../src/core/validate-record";
+import { decodeJsonRecord, encodeJsonFieldValue, encodeJsonRecord } from "../src/core/decode-json-record";
 
 const union: ContractField = {
   nullable: true,
@@ -68,5 +69,69 @@ describe("decodeJsonRecord", () => {
         'Value object "Details" field "choice" uses a union type, which prisma-idb does not support'
       );
     }
+  });
+});
+
+describe("encodeJsonRecord", () => {
+  const scalar = (codecId: string): ContractField => ({ nullable: true, type: { kind: "scalar", codecId } });
+  const typed: ContractWithDomain = {
+    storage: { namespaces: {} },
+    domain: {
+      namespaces: {
+        default: {
+          models: {
+            Asset: {
+              fields: {
+                id: scalar("idb/bytes@1"),
+                size: scalar("idb/bigint@1"),
+                at: scalar("idb/date@1"),
+                toString: scalar("idb/string@1"),
+                name: scalar("idb/string@1"),
+                sizes: { ...scalar("idb/bigint@1"), many: { elementNullable: true } },
+              },
+              relations: {},
+              storage: {},
+            },
+          },
+        },
+      },
+    },
+  };
+
+  it("leaves inherited fields out and still processes fields explicitly supplied in a patch", () => {
+    const sparse = { name: "new" };
+    expect(validateRecord(typed, "Asset", sparse, { partial: true })).toEqual({ ok: true });
+    expect(Object.hasOwn(encodeJsonRecord(typed, "Asset", sparse), "toString")).toBe(false);
+    expect(Object.hasOwn(decodeJsonRecord(typed, "Asset", sparse), "toString")).toBe(false);
+    const present = { toString: "title" };
+    expect(encodeJsonRecord(typed, "Asset", present)).toEqual(present);
+    expect(decodeJsonRecord(typed, "Asset", present)).toEqual(present);
+  });
+
+  it("passes a record through for a model or field name that only Object.prototype has", () => {
+    const record = { id: 1n };
+    expect(encodeJsonRecord(typed, "constructor", record)).toBe(record);
+    expect(decodeJsonRecord(typed, "constructor", record)).toBe(record);
+    expect(encodeJsonFieldValue(typed, "Asset", "constructor", 1n)).toBe(1n);
+    expect(encodeJsonFieldValue(typed, "Asset", "size", 1n)).toBe("1");
+  });
+
+  it("round-trips bigint, bytes, dates and list elements through JSON", () => {
+    const record = {
+      id: new Uint8Array([1, 2, 255]),
+      size: 9007199254740993n,
+      at: new Date("2026-01-01T00:00:00.000Z"),
+      sizes: [1n, null],
+      extra: "kept",
+    };
+    const wire = JSON.parse(JSON.stringify(encodeJsonRecord(typed, "Asset", record))) as Record<string, unknown>;
+    expect(wire).toEqual({
+      id: "AQL/",
+      size: "9007199254740993",
+      at: "2026-01-01T00:00:00.000Z",
+      sizes: ["1", null],
+      extra: "kept",
+    });
+    expect(decodeJsonRecord(typed, "Asset", wire)).toEqual(record);
   });
 });

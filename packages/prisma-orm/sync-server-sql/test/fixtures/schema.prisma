@@ -167,7 +167,8 @@ model ListItem {
   ownerId String
   owner User @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   tags String[]
-  dates DateTime[]
+  stamp DateTime(storage: timestamp)
+  dates DateTime(storage: timestamp)[]
   bigs BigInt[]
   bytes Bytes[]
   decimals Decimal[]

@@ -203,6 +203,28 @@ describe("idb/json@1", () => {
     expect(encoded).toEqual({ x: 1 });
   });
 
+  it("encodes negative zero as zero without changing the input", () => {
+    const input = { meta: { score: -0 }, items: [-0, 1] };
+    expect(toJson(codec, input)).toStrictEqual({ meta: { score: 0 }, items: [0, 1] });
+    expect(input.meta.score).toBe(-0);
+    expect(input.items[0]).toBe(-0);
+  });
+
+  it("refuses undefined object members and array elements", () => {
+    for (const value of [{ note: undefined }, [undefined], { items: [1, undefined] }]) {
+      expect(() => toJson(codec, value)).toThrow(/cannot be represented as JSON/);
+    }
+  });
+
+  it("keeps a shared JSON subtree shared in the encoding", () => {
+    let tree: unknown = { score: -0 };
+    for (let depth = 0; depth < 10; depth++) tree = [tree, tree];
+
+    const encoded = toJson(codec, tree);
+    expect(Array.isArray(encoded)).toBe(true);
+    if (Array.isArray(encoded)) expect(encoded[0]).toBe(encoded[1]);
+  });
+
   it("reading the JSON form is identity", () => {
     const val = [1, 2, 3];
     expect(fromJson(codec, val)).toBe(val);

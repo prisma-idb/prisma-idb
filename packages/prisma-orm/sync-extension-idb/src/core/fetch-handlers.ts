@@ -1,6 +1,8 @@
 import { pullResponseSchema, pushResultSchema } from "../schemas";
 import { ContractMismatchError } from "./contract-mismatch-error";
+import { toWireEvent, WireEncodeError } from "./wire-event";
 import type { SyncWorkerOptions } from "./sync-worker";
+import type { OutboxEvent, PushResult } from "../types";
 import type { IdbContract } from "@prisma-idb/client-idb/orm";
 
 /** HTTP transport configuration for a sync worker. Relative URLs require a browser location. */
@@ -24,6 +26,14 @@ async function readResponse(response: Response, operation: string): Promise<unkn
   return response.json();
 }
 
+function serializeEvent(wireEvent: OutboxEvent, original: OutboxEvent): string {
+  try {
+    return JSON.stringify(wireEvent);
+  } catch (error) {
+    throw new WireEncodeError(original, error);
+  }
+}
+
 /**
  * Creates fetch handlers that send the worker's client storage hash and surface
  * HTTP 409 as ContractMismatchError. The worker then emits `contractmismatch`
@@ -33,6 +43,19 @@ export function createSyncFetchHandlers(options: SyncFetchHandlersOptions): Sync
   const fetchRequest = options.fetch ?? globalThis.fetch.bind(globalThis);
   return {
     async pushHandler(events, signal, context) {
+      // An event that can't be encoded fails on its own, without a request, so the rest of the batch still syncs.
+      const wireEvents: string[] = [];
+      const unencodable: PushResult[] = [];
+      for (const event of events) {
+        try {
+          // Serialize here too, so a value the encoder let through fails this event and not the whole call.
+          wireEvents.push(serializeEvent(toWireEvent(context.contract, event), event));
+        } catch (error) {
+          if (!(error instanceof WireEncodeError)) throw error;
+          unencodable.push({ id: event.id, success: false, error: error.message, retryable: false });
+        }
+      }
+      if (events.length > 0 && wireEvents.length === 0) return unencodable;
       const headers = new Headers(options.headers);
       headers.set("content-type", "application/json");
       const response = await fetchRequest(options.pushUrl, {
@@ -40,10 +63,10 @@ export function createSyncFetchHandlers(options: SyncFetchHandlersOptions): Sync
         headers,
         credentials: options.credentials ?? "same-origin",
         redirect: "error",
-        body: JSON.stringify({ storageHash: context.storageHash, events }),
+        body: `{"storageHash":${JSON.stringify(context.storageHash)},"events":[${wireEvents.join(",")}]}`,
         signal,
       });
-      return pushResultSchema
+      const results = pushResultSchema
         .array()
         .parse(await readResponse(response, "Push"))
         .map(({ id, success, error, retryable, record }) => ({
@@ -53,6 +76,7 @@ export function createSyncFetchHandlers(options: SyncFetchHandlersOptions): Sync
           ...(retryable === undefined ? {} : { retryable }),
           ...(record === undefined ? {} : { record }),
         }));
+      return [...unencodable, ...results];
     },
     async pullHandler(fromChangelogId, signal, context) {
       const url = new URL(options.pullUrl, globalThis.location?.href);

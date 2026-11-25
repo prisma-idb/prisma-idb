@@ -1,7 +1,38 @@
-import { describe, expect, it } from "vitest";
+import pg from "pg";
+import { describe, expect, it, vi } from "vitest";
 import { createSyncFetchHandlers, ContractMismatchError } from "@prisma-idb/sync-extension-idb/client";
+import type { IdbContract } from "@prisma-idb/client-idb/orm";
 import { createSqlSync } from "../src/exports/index";
-import { testClientContract, testContract, testDb, testSyncServer } from "./helpers";
+import { encodeWireValues } from "../src/core/wire-values";
+import {
+  testBigClientContract,
+  testBigSyncServer,
+  testClientContract,
+  testContract,
+  testDb,
+  testSyncServer,
+} from "./helpers";
+
+// Wraps the real encoder so a test can supply a record that fails to encode or serialize.
+vi.mock("../src/core/wire-values", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/core/wire-values")>();
+  return { ...actual, encodeWireValues: vi.fn(actual.encodeWireValues) };
+});
+
+const encodingFailures = [
+  {
+    stage: "encoding",
+    encode: () => {
+      throw new RangeError("Invalid time value");
+    },
+    message: "Invalid time value",
+  },
+  {
+    stage: "serialization",
+    encode: () => ({ json: { nested: 1n } }),
+    message: "BigInt",
+  },
+];
 
 const handlers = createSqlSync({
   contract: testContract,
@@ -12,7 +43,11 @@ const handlers = createSqlSync({
   maxBatchSize: 1,
   pullLimit: 1,
 });
-const context = { storageHash: testSyncServer.clientStorageHash };
+// These tests push no events through the client transport, so it never reads the contract's fields.
+const context = {
+  storageHash: testSyncServer.clientStorageHash,
+  contract: testClientContract as unknown as IdbContract,
+};
 
 /** Builds real HTTP requests with the fixture's client storage hash. */
 async function pushRequest(body: Record<string, unknown>): Promise<Request> {
@@ -113,12 +148,186 @@ describe("sync HTTP handlers", () => {
         pullUrl: "https://sync.test/pull",
         fetch: await transport(),
       });
-      const oldContext = { storageHash };
+      const oldContext = { ...context, storageHash };
       const signal = new AbortController().signal;
       await expect(client.pushHandler([], signal, oldContext)).rejects.toBeInstanceOf(ContractMismatchError);
       await expect(client.pullHandler(null, signal, oldContext)).rejects.toBeInstanceOf(ContractMismatchError);
       const accepted = await client.pullHandler(null, signal, context);
       expect(accepted).toEqual({ logs: [], hasMore: false });
+    }
+  );
+
+  it("sends BigInt values in pulled and rejected records as strings instead of failing to serialize", async () => {
+    const big = createSqlSync({
+      contract: testContract,
+      clientContract: testBigClientContract,
+      rootModel: "BigUser",
+      db: testDb,
+      scopeKey: "1",
+    });
+    const storageHash = testBigSyncServer.clientStorageHash;
+    const push = async (events: unknown[]) =>
+      big.push(
+        new Request("https://sync.test/push", { method: "POST", body: JSON.stringify({ storageHash, events }) })
+      );
+    const created = await push([
+      { id: "root", entityType: "BigUser", operation: "create", payload: { id: "1", name: "Ann" } },
+      { id: "item", entityType: "BigItem", operation: "create", payload: { id: "11", ownerId: "1", name: "first" } },
+    ]);
+    expect(await created.json()).toEqual([
+      { id: "root", success: true },
+      { id: "item", success: true },
+    ]);
+
+    const pulled = await big.pull(new Request(`https://sync.test/pull?storageHash=${storageHash}`));
+    expect(pulled.status).toBe(200);
+    const { logs } = (await pulled.json()) as { logs: { record: unknown }[] };
+    expect(logs.map((log) => log.record)).toEqual([
+      { id: "1", name: "Ann" },
+      { id: "11", ownerId: "1", name: "first" },
+    ]);
+
+    // Moving the item to another owner is refused; the result carries the server's row.
+    const rejected = await push([
+      { id: "move", entityType: "BigItem", operation: "update", payload: { key: "11", patch: { ownerId: "2" } } },
+    ]);
+    expect(await rejected.json()).toEqual([
+      {
+        id: "move",
+        success: false,
+        error: "SCOPE_VIOLATION",
+        retryable: false,
+        record: { id: "11", ownerId: "1", name: "first" },
+      },
+    ]);
+  });
+
+  it.each(encodingFailures)(
+    "returns the applied push results when a rejected record fails during $stage",
+    async ({ encode }) => {
+      const big = createSqlSync({
+        contract: testContract,
+        clientContract: testBigClientContract,
+        rootModel: "BigUser",
+        db: testDb,
+        scopeKey: "1",
+      });
+      const storageHash = testBigSyncServer.clientStorageHash;
+      const push = async (events: unknown[]) =>
+        big.push(
+          new Request("https://sync.test/push", { method: "POST", body: JSON.stringify({ storageHash, events }) })
+        );
+      await push([
+        { id: "root", entityType: "BigUser", operation: "create", payload: { id: "1", name: "Ann" } },
+        { id: "item", entityType: "BigItem", operation: "create", payload: { id: "11", ownerId: "1", name: "first" } },
+      ]);
+      vi.mocked(encodeWireValues).mockImplementationOnce(encode);
+      const response = await push([
+        { id: "ok", entityType: "BigItem", operation: "create", payload: { id: "12", ownerId: "1", name: "second" } },
+        { id: "move", entityType: "BigItem", operation: "update", payload: { key: "11", patch: { ownerId: "2" } } },
+      ]);
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual([
+        { id: "ok", success: true },
+        { id: "move", success: false, error: "SCOPE_VIOLATION", retryable: false },
+      ]);
+    }
+  );
+
+  it("refuses a Json value from PostgreSQL that JSON can't represent in a pulled or rejected record", async () => {
+    const sync = createSqlSync({
+      contract: testContract,
+      clientContract: testClientContract,
+      rootModel: "User",
+      db: testDb,
+      scopeKey: "u1",
+    });
+    const push = async (events: unknown[]) => sync.push(await pushRequest({ events }));
+    await push([
+      { id: "user", entityType: "User", operation: "create", payload: { id: "u1", name: "Ann" } },
+      {
+        id: "item",
+        entityType: "JsonItem",
+        operation: "create",
+        payload: { id: "j1", ownerId: "u1", value: 1, jsonValue: 1, optionalValue: null },
+      },
+    ]);
+    // PostgreSQL stores numbers beyond the double range, which JavaScript reads back as Infinity.
+    const sql = new pg.Client({ connectionString: process.env["DATABASE_URL"] });
+    await sql.connect();
+    try {
+      await sql.query(`UPDATE "JsonItem" SET "value" = '{"n": 1e400}' WHERE "id" = 'j1'`);
+    } finally {
+      await sql.end();
+    }
+
+    const pulled = await sync.pull(new Request(`https://sync.test/pull?storageHash=${context.storageHash}`));
+    expect(pulled.status).toBe(500);
+    expect(await pulled.json()).toEqual({
+      error: expect.stringMatching(/changelog entry \S+ \(JsonItem\): .*cannot be represented as JSON/),
+    });
+
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const rejected = await push([
+        { id: "move", entityType: "JsonItem", operation: "update", payload: { key: "j1", patch: { ownerId: "u2" } } },
+      ]);
+      expect(await rejected.json()).toEqual([
+        { id: "move", success: false, error: "SCOPE_VIOLATION", retryable: false },
+      ]);
+      expect(logged).toHaveBeenCalledWith(
+        "could not encode the rejected record for event move",
+        expect.objectContaining({ message: expect.stringMatching(/cannot be represented as JSON/) })
+      );
+    } finally {
+      logged.mockRestore();
+    }
+  });
+
+  it("refuses a delete whose key is a client range, as a non-retryable key failure", async () => {
+    const response = await handlers.push(
+      await pushRequest({
+        events: [
+          {
+            id: "range",
+            entityType: "Board",
+            operation: "delete",
+            payload: { key: { lower: "a", upper: "b", lowerOpen: false, upperOpen: true } },
+          },
+        ],
+      })
+    );
+    expect(await response.json()).toEqual([
+      { id: "range", success: false, error: "KEYPATH_VALIDATION_FAILURE", retryable: false, record: null },
+    ]);
+  });
+
+  it.each(encodingFailures)(
+    "names the changelog entry when a pull record fails during $stage",
+    async ({ encode, message }) => {
+      const big = createSqlSync({
+        contract: testContract,
+        clientContract: testBigClientContract,
+        rootModel: "BigUser",
+        db: testDb,
+        scopeKey: "1",
+      });
+      const storageHash = testBigSyncServer.clientStorageHash;
+      await big.push(
+        new Request("https://sync.test/push", {
+          method: "POST",
+          body: JSON.stringify({
+            storageHash,
+            events: [{ id: "root", entityType: "BigUser", operation: "create", payload: { id: "1", name: "Ann" } }],
+          }),
+        })
+      );
+      vi.mocked(encodeWireValues).mockImplementationOnce(encode);
+      const response = await big.pull(new Request(`https://sync.test/pull?storageHash=${storageHash}`));
+      expect(response.status).toBe(500);
+      expect(await response.json()).toEqual({
+        error: expect.stringMatching(new RegExp(`changelog entry \\S+ \\(BigUser\\): .*${message}`)),
+      });
     }
   );
 

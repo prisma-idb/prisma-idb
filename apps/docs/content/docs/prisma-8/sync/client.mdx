@@ -152,6 +152,12 @@ A failed push, including a request that throws or times out, stays retryable how
 | `backoffMaxMs`     | `30000`  | The longest wait, for both.                                                                                                                        |
 | `requestTimeoutMs` | `30000`  | Aborts a handler call through its `signal` after this long.                                                                                        |
 
+Before serializing each event, call `toWireEvent(context.contract, event)` from `@prisma-idb/sync-extension-idb/client`. It encodes `BigInt` as decimal text, `Bytes` as base64 and `DateTime` as an ISO string. Binary delete keys and range bounds use the same base64 representation. A missing contract throws `TypeError`. An event the encoder cannot convert throws `WireEncodeError`.
+
+Handle errors from both encoding and JSON serialization for each event. Return a result with that event's ID, `success: false`, `retryable: false` and an error message, then send the remaining events. `createSyncFetchHandlers` does this automatically.
+
+`SyncRequestContext` now has a required `contract` property. A custom `pushHandler` that you call yourself with a hand-built context, for example in a test, must pass the client contract too, or its TypeScript types fail. The worker supplies the contract when it calls the handler.
+
 Custom handlers receive `context.storageHash`, the emitted client contract's `storage.storageHash`. Send it with the request, in the push body or pull query, and forward it to the server's `pull` and `applyPush`. If the server answers 409, throw `ContractMismatchError` (exported from `@prisma-idb/sync-extension-idb/client`) from the handler. The worker keeps the pull cursor, the queued edits and their payloads. It emits `contractmismatch` with `{ during: "push" | "pull" }`, sets status to `"error"`, retries with backoff, and does not emit `error` for that mismatch. Use the event to ask the user to reload. See [Contract check](/docs/prisma-8/sync/server#contract-check).
 
 | Method or property    | Description                                                                                                                               |

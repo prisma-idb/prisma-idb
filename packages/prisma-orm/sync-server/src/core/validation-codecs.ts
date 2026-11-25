@@ -31,9 +31,8 @@ for (const name of ["int", "int2", "int4", "int8number", "float", "float4", "flo
 }
 for (const name of ["int8", "unboundedint"]) sqlApplicationTypes[`pg/${name}@1`] = ["bigint"];
 sqlApplicationTypes["pg/bool@1"] = ["boolean"];
-// rc.5 date/timestamp codecs carry Date; pg/time carries string. rc.6 removed
-// these IDs, but historical contracts still need the same native validation.
-for (const name of ["date", "timestamp", "timestamptz", "timestamptz-date"]) {
+// Include the historical Date codecs alongside the current JS Date representations.
+for (const name of ["date", "timestamp", "timestamp-date", "timestamptz", "timestamptz-date"]) {
   sqlApplicationTypes[`pg/${name}@1`] = ["Date"];
 }
 sqlApplicationTypes["sql/timestamp@1"] = ["Date"];

@@ -105,3 +105,35 @@ function jsonChildren(value: object): { children: unknown[]; work: number } | un
   }
   return { children, work };
 }
+
+/**
+ * Copies a Json value for the sync wire. JSON serialization writes negative zero as zero, so the
+ * copy does the same. Shared subtrees are copied once and stay shared.
+ */
+export function encodeJsonValue(value: unknown): JsonValue {
+  if (!isJsonCompatible(value)) throw new TypeError("Json contains a value that cannot be represented as JSON");
+  return copyWithoutNegativeZero(value, new Map());
+}
+
+// Validation bounds the depth, so recursion stays shallow.
+function copyWithoutNegativeZero(value: JsonValue, copies: Map<object, JsonValue>): JsonValue {
+  if (typeof value === "number") return Object.is(value, -0) ? 0 : value;
+  if (value === null || typeof value !== "object") return value;
+  const known = copies.get(value);
+  if (known !== undefined) return known;
+  let copy: JsonValue;
+  if (isJsonArray(value)) {
+    copy = value.map((entry) => copyWithoutNegativeZero(entry, copies));
+  } else {
+    // fromEntries defines own properties, so a "__proto__" member stays a member.
+    copy = Object.fromEntries(
+      Object.entries(value).map(([key, entry]) => [key, copyWithoutNegativeZero(entry, copies)])
+    );
+  }
+  copies.set(value, copy);
+  return copy;
+}
+
+function isJsonArray(value: JsonValue): value is readonly JsonValue[] {
+  return Array.isArray(value);
+}

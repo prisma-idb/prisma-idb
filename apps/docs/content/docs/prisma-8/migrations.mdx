@@ -97,6 +97,10 @@ Each chain's progress is recorded separately in the `_prisma_next_marker` store,
 
 If you're writing an extension, pass `--space <id>` to `migration plan` to write its packages under `migrations/<id>/` instead of `migrations/app/`.
 
+### Upgrade HTTP sync
+
+The HTTP sync worker permanently fails previously queued outbox events if a `Json` field or `Json[]` element contains a Date, an undefined object member or another non-JSON value. The worker records the error on the event and continues with the rest of the batch. Send pending edits before upgrading or convert their JSON values to the representation your application expects.
+
 ## Command reference
 
 All three commands read `prisma.config.ts`, so the flags below are only needed to override it.
