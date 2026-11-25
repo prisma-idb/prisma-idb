@@ -161,10 +161,23 @@ describe.skipIf(!supportsJsonAttributes)("generateContractSpace", () => {
     await writeFile(join(cwd, "migrations", "app", "0002_addPosts", "migration.json"), "{", "utf-8");
 
     await expect(generateContractSpace(defaultPaths(cwd))).rejects.toThrow(
-      "Migration package 0002_addPosts has a missing or unreadable migration.json or ops.json"
+      "Migration package 0002_addPosts has an invalid migration.json"
     );
     await expect(readFile(defaultPaths(cwd).outPath, "utf-8")).rejects.toThrow(/ENOENT/);
   });
+
+  it.each(["{", '{"operation": "createObjectStore"}'])(
+    "refuses malformed operations file %s before emitting",
+    async (ops) => {
+      await writePackage({ dirName: "0001_baseline", from: null, to: "sha256:A" });
+      await writeFile(join(cwd, "migrations", "app", "0001_baseline", "ops.json"), ops, "utf-8");
+
+      await expect(generateContractSpace(defaultPaths(cwd))).rejects.toThrow(
+        "Migration package 0001_baseline has an invalid ops.json"
+      );
+      await expect(readFile(defaultPaths(cwd).outPath, "utf-8")).rejects.toThrow(/ENOENT/);
+    }
+  );
 
   it("is idempotent", async () => {
     await writePackage({ dirName: "z_baseline", from: null, to: "sha256:A" });

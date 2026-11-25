@@ -11,7 +11,7 @@ export const migrationPreflightCommand = defineIdbCommand({
       "Walks every migration package under <migrationsDir>/app/ in chain order,\n" +
       "applying each package's ops.json against a fresh fake-indexeddb instance.\n" +
       "Verifies the final stores and indexes against the head contract snapshot.\n" +
-      "Fails on replay errors, schema drift, a missing or mismatched head snapshot,\n" +
+      "Fails on an empty migration chain, replay errors, schema drift, a missing or mismatched head snapshot,\n" +
       "or an emitted contract.json that no migration reaches.",
     examples: ["migration preflight"],
   },

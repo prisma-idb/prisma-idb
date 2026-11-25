@@ -99,24 +99,25 @@ async function loadPackages(appDir: string): Promise<LoadedPackage[]> {
   // baselines may use `T120000`). The truth is in metadata.from/to edges.
   const unordered = new Map<string, LoadedPackage>();
   for (const dirName of dirs) {
-    const metaPath = join(appDir, dirName, "migration.json");
-    const opsPath = join(appDir, dirName, "ops.json");
-    try {
-      const metaRaw = await readFile(metaPath, "utf-8");
-      const metadata = JSON.parse(metaRaw) as MigrationMetadata;
-      // existence check for ops.json — we don't parse here because the
-      // generated module JSON-imports the file at build time.
-      await readFile(opsPath, "utf-8");
-      unordered.set(dirName, { dirName, metadata });
-    } catch (loadErr) {
-      throw new Error(
-        `Migration package ${dirName} has a missing or unreadable migration.json or ops.json: ${(loadErr as Error).message}`,
-        { cause: loadErr }
-      );
+    const metadata = (await readPackageJson(appDir, dirName, "migration.json")) as MigrationMetadata;
+    const ops = await readPackageJson(appDir, dirName, "ops.json");
+    if (!Array.isArray(ops)) {
+      throw new Error(`Migration package ${dirName} has an invalid ops.json. Expected an array of operations.`);
     }
+    unordered.set(dirName, { dirName, metadata });
   }
 
   return chainOrderByMetadata(unordered);
+}
+
+async function readPackageJson(appDir: string, dirName: string, fileName: string): Promise<unknown> {
+  try {
+    return JSON.parse(await readFile(join(appDir, dirName, fileName), "utf-8")) as unknown;
+  } catch (error) {
+    throw new Error(`Migration package ${dirName} has an invalid ${fileName}: ${(error as Error).message}`, {
+      cause: error,
+    });
+  }
 }
 
 interface RenderInput {

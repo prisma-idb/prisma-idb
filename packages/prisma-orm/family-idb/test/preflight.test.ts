@@ -213,6 +213,19 @@ describe("runPreflight", () => {
     expect(errors.join("")).toContain('the "_prisma_next_marker" store does not exist after applying the migration');
   });
 
+  it("fails when markers are written under keys the browser cannot read", async () => {
+    const head = await writeSnapshot({ users: { keyPath: "id" } });
+    await writePackage({
+      dirName: "0001_baseline",
+      from: null,
+      to: head,
+      ops: [{ ...createMarker, def: { keyPath: "id", autoIncrement: true } }, createUsers],
+    });
+    const errors: string[] = [];
+    expect(await runPreflight({ migrationsDir: join(cwd, "migrations"), err: (line) => errors.push(line) })).toBe(1);
+    expect(errors.join("")).toContain('the "_prisma_next_marker" store must use the key path "space"');
+  });
+
   it("returns 0 when every package applies cleanly", async () => {
     const head = await writeSnapshot({ users: { keyPath: "id" }, posts: { keyPath: "id" } });
     await writePackage({
