@@ -1790,13 +1790,20 @@ export async function applyReferentialActionsForRow(
   via?: string
 ): Promise<void> {
   const keyPath = getKeyPath(contract, modelName);
-  const rowKey = keyToken([getStoreName(contract, modelName), extractKeyFromRow(row, keyPath)]);
+  const key = extractKeyFromRow(row, keyPath);
+  const storeName = getStoreName(contract, modelName);
+  const rowKey = keyToken([storeName, key]);
   if (visited.has(rowKey)) return;
   visited.add(rowKey);
 
   const meta = makePlanMeta(contract);
-  for (const def of getChildEnforcementEdges(contract, modelName)) {
-    const values = childJoinValues(def, row);
+  const edges = getChildEnforcementEdges(contract, modelName);
+  const rewritesParent = edges.length > 1 && collectDeleteActionScope(contract, modelName).changesRootRows;
+  for (const [index, def] of edges.entries()) {
+    const current =
+      rewritesParent && index > 0 ? (await scope.execute({ meta, kind: "key-get", storeName, key }))[0] : row;
+    if (!current) return;
+    const values = childJoinValues(def, current);
     if (!values) continue;
 
     const action = def.onDelete;
@@ -1807,12 +1814,11 @@ export async function applyReferentialActionsForRow(
     if (
       def.checksDecimalParent &&
       action !== "restrict" &&
-      !(await checkDecimalParent(scope, contract, meta, modelName, def, row, writes.root.decimalParents))
+      !(await checkDecimalParent(scope, contract, meta, modelName, def, current, writes.root.decimalParents))
     )
       continue;
 
     if (action === "restrict") {
-      const key = extractKeyFromRow(row, keyPath);
       const excludesSelf: IdbRowFilter | undefined =
         def.relatedModelName === modelName ? (child) => !keyEquals(extractKeyFromRow(child, keyPath), key) : undefined;
       if (await rowExists(scope, contract, meta, def.relatedModelName, def.targetFields, values, excludesSelf)) {
@@ -1835,6 +1841,8 @@ export async function applyReferentialActionsForRow(
         children.length > 1 && collectDeleteActionScope(contract, def.relatedModelName).changesRootRows;
       for (const [index, candidate] of children.entries()) {
         const childKey = extractKeyFromRow(candidate, childKeyPath);
+        // The ancestor still needs to run its remaining actions before its original caller deletes it.
+        if (visited.has(keyToken([def.relatedStoreName, childKey]))) continue;
         const child =
           rewritesSiblings && index > 0
             ? (await scope.execute({ meta, kind: "key-get", storeName: def.relatedStoreName, key: childKey }))[0]
