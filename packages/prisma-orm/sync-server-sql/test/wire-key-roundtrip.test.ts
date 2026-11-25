@@ -373,9 +373,11 @@ it("rejects float4 keys that would identify a different row after PostgreSQL rou
   const apply = (id: string, operation: "create" | "update" | "delete", payload: unknown) =>
     adapter.applyPush(db, { scopeKey: "u1", events: [{ id, entityType: "FloatItem", operation, payload }] });
   const invalidKey = 16777217;
-  expect(await apply("invalid-create", "create", { id: invalidKey, ownerId: "u1", name: "wrong" })).toMatchObject({
+  expect(await apply("invalid-create", "create", { id: invalidKey, ownerId: "u1", name: "wrong" })).toEqual({
     ok: true,
-    results: [{ id: "invalid-create", success: false, error: "KEYPATH_VALIDATION_FAILURE", retryable: false }],
+    results: [
+      { id: "invalid-create", success: false, error: "KEYPATH_VALIDATION_FAILURE", retryable: false, record: null },
+    ],
   });
   expect(await db.orm.public.FloatItem.all().toArray()).toEqual([]);
   expect(await db.orm.public.Changelog.all().toArray()).toEqual([]);
@@ -392,12 +394,17 @@ it("rejects float4 keys that would identify a different row after PostgreSQL rou
   });
   expect(await apply("invalid-update", "update", { key: invalidKey, patch: { name: "wrong" } })).toEqual({
     ok: true,
-    results: [{ id: "invalid-update", success: false, error: "KEYPATH_VALIDATION_FAILURE", retryable: false }],
+    results: [
+      { id: "invalid-update", success: false, error: "KEYPATH_VALIDATION_FAILURE", retryable: false, record: null },
+    ],
   });
   expect(await apply("invalid-delete", "delete", { key: invalidKey })).toEqual({
     ok: true,
-    results: [{ id: "invalid-delete", success: false, error: "KEYPATH_VALIDATION_FAILURE", retryable: false }],
+    results: [
+      { id: "invalid-delete", success: false, error: "KEYPATH_VALIDATION_FAILURE", retryable: false, record: null },
+    ],
   });
+  expect(await db.orm.public.FloatItem.first({ id: exact.id })).toMatchObject({ name: "exact" });
   await seed(db, {
     Changelog: [
       {

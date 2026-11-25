@@ -2,7 +2,7 @@ import type { GetKeyField, SyncServer, SyncServerContract } from "@prisma-idb/sy
 import type { SqlPushResult } from "./push";
 import type { SqlPushWireEvent } from "./apply-push";
 import { resolvePullRecord } from "./resolve-pull-record";
-import { WireValidationError } from "./wire-values";
+import { canonicalFloat4Key, WireValidationError } from "./wire-values";
 
 /** The wire key an event targets, read straight from its payload (even when the rest of the payload is malformed). */
 function wireKeyOf(event: SqlPushWireEvent, keyField: string): unknown {
@@ -33,6 +33,15 @@ async function readCurrentRecord(
     scopeKey,
   })[0]!;
   if (check.kind === "unknown-model") return undefined;
+  // An inexact float4 identity cannot exist in SQL. Looking it up would
+  // resolve a different IndexedDB key after PostgreSQL rounded the number.
+  if (
+    typeof key === "number" &&
+    Number.isFinite(key) &&
+    !Object.is(key, canonicalFloat4Key(contract, event.entityType, keyField, key))
+  ) {
+    return null;
+  }
   // "update", so a rejected delete reports the row that still exists.
   return resolvePullRecord(db, syncServer, contract, getKeyField, event.entityType, check, key, "update");
 }
