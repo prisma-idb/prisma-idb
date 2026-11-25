@@ -8,6 +8,7 @@ import {
   readForPush,
 } from "../src/core/outbox-store";
 import type { OutboxEvent, VersionMetaRecord } from "../src/types";
+import { DISCARDED_BY_PULL } from "../src/core/apply-pull";
 import { asAccessors, createTestSyncClient, keyGet, scanAll } from "./helpers";
 
 async function getOutboxEvent(
@@ -603,6 +604,28 @@ describe("pruneSyncedEvents", () => {
     expect(retained.filter((e) => !e["synced"])).toEqual([...live].sort((a, b) => a.id.localeCompare(b.id)));
     expect(retained).toHaveLength(104);
     expect(await scanAll(client, "_idb_sync_version_meta")).toEqual(metas);
+  });
+
+  it("keeps events a pull discarded, with their order rows, until the app deletes them", async () => {
+    const { client } = await createTestSyncClient();
+    await asAccessors(client.orm)["users"]!.create({ id: "u1", name: "Edited offline" });
+    const [event] = await scanAll(client, "_idb_sync_outbox");
+    const discarded = { ...event, retryable: false, lastError: DISCARDED_BY_PULL };
+    await client.withTransaction(["_idb_sync_outbox"], (scope) =>
+      scope.execute({ kind: "put", storeName: "_idb_sync_outbox", record: discarded } as never)
+    );
+
+    await client.withTransaction(["_idb_sync_outbox", "_idb_sync_outbox_order"], pruneSyncedEvents);
+    expect(await scanAll(client, "_idb_sync_outbox")).toEqual([discarded]);
+    expect(await scanAll(client, "_idb_sync_outbox_order")).toHaveLength(1);
+    expect(await getNextBatch(client.rawClient)).toEqual([]);
+
+    // Deleting the event is how an app clears it. The next prune then drops the orphaned order row.
+    await client.withTransaction(["_idb_sync_outbox"], (scope) =>
+      scope.execute({ kind: "delete", storeName: "_idb_sync_outbox", key: event!["id"] } as never)
+    );
+    await client.withTransaction(["_idb_sync_outbox", "_idb_sync_outbox_order"], pruneSyncedEvents);
+    expect(await scanAll(client, "_idb_sync_outbox_order")).toEqual([]);
   });
 
   it("is idempotent and bounds the rows scanned by subsequent pending reads", async () => {
