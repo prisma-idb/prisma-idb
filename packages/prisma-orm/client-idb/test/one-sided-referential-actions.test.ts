@@ -10,6 +10,7 @@ import { defineContract } from "@prisma-idb/family-idb/contract-ts";
 import idbFamilyPack from "@prisma-idb/family-idb/pack";
 import idbTargetPack from "@prisma-idb/target-idb/pack";
 import type { IdbReferentialAction } from "@prisma-idb/target-idb/pack";
+import type { IdbTransactionScope } from "@prisma-idb/driver-idb/runtime";
 import { createAutoMigratingIdbClient } from "../src/exports/client-auto";
 import type { IdbContract } from "../src/exports/orm";
 import { buildContractSpaceFixture } from "./_contract-space-fixture";
@@ -28,6 +29,7 @@ type Accessor = {
 type Client = {
   orm: Record<string, Accessor>;
   transaction<T>(rootKeys: string[], fn: (tx: Record<string, Accessor>) => Promise<T>): Promise<T>;
+  withTransaction<T>(stores: string[], fn: (scope: IdbTransactionScope) => Promise<T>): Promise<T>;
   close(): Promise<void>;
 };
 
@@ -87,6 +89,79 @@ async function seed(contract: unknown, users: Row[] = [{ id: "u1", email: "a@e.c
   ]).toArray();
   return db;
 }
+
+it("uses each owning relation's action when reciprocal foreign keys share a join", async () => {
+  const db = await open(
+    defineContract({
+      family: idbFamilyPack,
+      target: idbTargetPack,
+      models: {
+        A: {
+          store: "as",
+          key: "code",
+          fields: { code: "String" },
+          relations: {
+            b: { to: "B", cardinality: "N:1", on: { local: ["code"], target: ["code"] }, onDelete: "cascade" },
+          },
+        },
+        B: {
+          store: "bs",
+          key: "code",
+          fields: { code: "String" },
+          relations: {
+            a: { to: "A", cardinality: "N:1", on: { local: ["code"], target: ["code"] } },
+          },
+        },
+      },
+    })
+  );
+  const row = { code: "same" };
+  await db.withTransaction(["as", "bs"], async (scope) => {
+    await scope.execute({ kind: "put", storeName: "as", record: row } as never);
+    await scope.execute({ kind: "put", storeName: "bs", record: row } as never);
+  });
+  await expect(db.orm["as"]!.delete(row.code)).rejects.toThrow(/child records exist on relation 'B.a'/);
+  expect(await rows("as")).toEqual([row]);
+  expect(await rows("bs")).toEqual([row]);
+});
+
+it("preserves the action on each parent alias of the same join", async () => {
+  const db = await open(
+    defineContract({
+      family: idbFamilyPack,
+      target: idbTargetPack,
+      models: {
+        User: {
+          store: "users",
+          key: "id",
+          fields: { id: "String" },
+          relations: {
+            posts: { to: "Post", cardinality: "1:N", on: { local: ["id"], target: ["authorId"] } },
+            articles: {
+              to: "Post",
+              cardinality: "1:N",
+              on: { local: ["id"], target: ["authorId"] },
+              onDelete: "cascade",
+            },
+          },
+        },
+        Post: {
+          store: "posts",
+          key: "id",
+          fields: { id: "String", authorId: "String" },
+          relations: {
+            author: { to: "User", cardinality: "N:1", on: { local: ["authorId"], target: ["id"] } },
+          },
+        },
+      },
+    })
+  );
+  await db.orm["users"]!.create({ id: "u1" });
+  await db.orm["posts"]!.create({ id: "p1", authorId: "u1" });
+  await expect(db.orm["users"]!.delete("u1")).rejects.toThrow(/child records exist on relation 'posts'/);
+  expect(await rows("users")).toEqual([{ id: "u1" }]);
+  expect(await rows("posts")).toEqual([{ id: "p1", authorId: "u1" }]);
+});
 
 describe("one-sided foreign key: actions that keep the child", () => {
   it.each([

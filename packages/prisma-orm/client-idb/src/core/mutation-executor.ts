@@ -845,46 +845,31 @@ function getChildEnforcementEdges(contract: IdbContract, modelName: string): Chi
       needsUniqueParent: oneSided && !uniqueSources.some((source) => sameFieldSet(source.fields, def.localFields)),
     });
 
+  const declared = getRelationDefinitions(contract, modelName).filter((def) =>
+    isDeclaredChildRelation(contract, modelName, def)
+  );
+  for (const def of declared) {
+    withActions(def, (kind) => findDeclaredAction(contract, modelName, def, kind));
+  }
   for (const childModelName of Object.keys(domainModelsAtDefaultNamespace(contract.domain))) {
     for (const fk of getRelationDefinitions(contract, childModelName)) {
       if (fk.cardinality !== "N:1" || fk.relatedModelName !== modelName) continue;
-      // An action may be stored on either side; validation rejects declaring the same kind on both.
-      const parentSide = getRelationDefinitions(contract, modelName).filter((inverse) =>
-        isInverseOf(inverse, childModelName, fk)
-      );
+      // A declared parent edge already checks this join with its own action.
+      if (declared.some((inverse) => isInverseOf(inverse, childModelName, fk))) continue;
       const def: RelationDefinition = {
-        // Errors name the parent-side relation when there is one, else the child's foreign key.
-        relationName: parentSide[0]?.relationName ?? `${childModelName}.${fk.relationName}`,
+        relationName: `${childModelName}.${fk.relationName}`,
         relatedModelName: childModelName,
         relatedStoreName: getStoreName(contract, childModelName),
         cardinality: "1:N",
         localFields: fk.targetFields,
         targetFields: fk.localFields,
       };
-      withActions(
-        def,
-        (kind) =>
-          getStoredAction(contract, childModelName, fk.relationName, kind) ??
-          parentSide.map((inverse) => getStoredAction(contract, modelName, inverse.relationName, kind)).find(Boolean),
-        parentSide.length === 0
-      );
+      withActions(def, (kind) => getStoredAction(contract, childModelName, fk.relationName, kind), true);
     }
-  }
-  for (const def of getRelationDefinitions(contract, modelName)) {
-    if (!isDeclaredChildRelation(contract, modelName, def)) continue;
-    if (edges.some((edge) => isSameEdge(edge, def))) continue;
-    withActions(def, (kind) => findDeclaredAction(contract, modelName, def, kind));
   }
 
   perContract.set(modelName, edges);
   return edges;
-}
-
-function isSameEdge(edge: RelationDefinition, def: RelationDefinition): boolean {
-  return (
-    edge.relatedModelName === def.relatedModelName &&
-    sameJoinPairs(edge.localFields, edge.targetFields, def.localFields, def.targetFields)
-  );
 }
 
 /** Identify parent-side relations declared on this model that need child checks when it changes. */
