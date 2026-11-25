@@ -542,6 +542,7 @@ function validateRelations(model: IdbModelNode, definition: IdbContractDefinitio
     for (const inverse of target?.relations ?? []) {
       if (
         inverse.to !== model.modelName ||
+        (relation.cardinality === "N:1" && inverse.cardinality === "N:1") ||
         !sameJoinPairs(inverse.localFields, inverse.targetFields, relation.targetFields, relation.localFields)
       )
         continue;

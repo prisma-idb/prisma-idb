@@ -40,6 +40,17 @@ const owner: MutationCreateInput<TestContract, "Profile"> = {
 };
 void owner;
 
+const scalar: MutationCreateInput<TestContract, "Profile"> = { id: "p1", userId: "u1", userTenant: "t1" };
+void scalar;
+
+// @ts-expect-error A required foreign key needs scalar values or an owning relation callback.
+const missingKey: MutationCreateInput<TestContract, "Profile"> = { id: "p1" };
+void missingKey;
+
+// @ts-expect-error Providing just one part of a required composite key is insufficient.
+const partialKey: MutationCreateInput<TestContract, "Profile"> = { id: "p1", userId: "u1" };
+void partialKey;
+
 // @ts-expect-error An inverse callback cannot supply the parent primary key.
 const inverse: MutationCreateInput<TestContract, "User"> = { profile: (rel) => rel.connect({ id: "p1" }) };
 void inverse;

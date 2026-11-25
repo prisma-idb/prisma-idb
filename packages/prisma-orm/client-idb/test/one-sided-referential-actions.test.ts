@@ -10,6 +10,8 @@ import { defineContract } from "@prisma-idb/family-idb/contract-ts";
 import idbFamilyPack from "@prisma-idb/family-idb/pack";
 import idbTargetPack from "@prisma-idb/target-idb/pack";
 import type { IdbReferentialAction } from "@prisma-idb/target-idb/pack";
+import type { IdbTransactionScope } from "@prisma-idb/driver-idb/runtime";
+import type { IdbFilterExpr } from "@prisma-idb/adapter-idb/runtime";
 import { createAutoMigratingIdbClient } from "../src/exports/client-auto";
 import type { IdbContract } from "../src/exports/orm";
 import { buildContractSpaceFixture } from "./_contract-space-fixture";
@@ -20,7 +22,7 @@ type Accessor = {
   createAll(data: Row[]): { toArray(): Promise<Row[]> };
   delete(key: unknown): Promise<Row>;
   deleteAll(): { toArray(): Promise<Row[]> };
-  where(filter: Row): Accessor;
+  where(filter: Row | ((model: { id: { in(values: string[]): IdbFilterExpr } }) => IdbFilterExpr)): Accessor;
   update(patch: Row): Promise<Row | null>;
   updateAll(patch: Row): { toArray(): Promise<Row[]> };
   all(): { toArray(): Promise<Row[]> };
@@ -28,6 +30,7 @@ type Accessor = {
 type Client = {
   orm: Record<string, Accessor>;
   transaction<T>(rootKeys: string[], fn: (tx: Record<string, Accessor>) => Promise<T>): Promise<T>;
+  withTransaction<T>(stores: string[], fn: (scope: IdbTransactionScope) => Promise<T>): Promise<T>;
   close(): Promise<void>;
 };
 
@@ -87,6 +90,275 @@ async function seed(contract: unknown, users: Row[] = [{ id: "u1", email: "a@e.c
   ]).toArray();
   return db;
 }
+
+it("uses each owning relation's action when reciprocal foreign keys share a join", async () => {
+  const db = await open(
+    defineContract({
+      family: idbFamilyPack,
+      target: idbTargetPack,
+      models: {
+        A: {
+          store: "as",
+          key: "code",
+          fields: { code: "String" },
+          relations: {
+            b: { to: "B", cardinality: "N:1", on: { local: ["code"], target: ["code"] }, onDelete: "cascade" },
+          },
+        },
+        B: {
+          store: "bs",
+          key: "code",
+          fields: { code: "String" },
+          relations: {
+            a: { to: "A", cardinality: "N:1", on: { local: ["code"], target: ["code"] } },
+          },
+        },
+      },
+    })
+  );
+  const row = { code: "same" };
+  await db.withTransaction(["as", "bs"], async (scope) => {
+    await scope.execute({ kind: "put", storeName: "as", record: row } as never);
+    await scope.execute({ kind: "put", storeName: "bs", record: row } as never);
+  });
+  await expect(db.orm["as"]!.delete(row.code)).rejects.toThrow(/child records exist on relation 'B.a'/);
+  expect(await rows("as")).toEqual([row]);
+  expect(await rows("bs")).toEqual([row]);
+});
+
+it("preserves the action on each parent alias of the same join", async () => {
+  const db = await open(
+    defineContract({
+      family: idbFamilyPack,
+      target: idbTargetPack,
+      models: {
+        User: {
+          store: "users",
+          key: "id",
+          fields: { id: "String" },
+          relations: {
+            posts: { to: "Post", cardinality: "1:N", on: { local: ["id"], target: ["authorId"] } },
+            articles: {
+              to: "Post",
+              cardinality: "1:N",
+              on: { local: ["id"], target: ["authorId"] },
+              onDelete: "cascade",
+            },
+          },
+        },
+        Post: {
+          store: "posts",
+          key: "id",
+          fields: { id: "String", authorId: "String" },
+          relations: {
+            author: { to: "User", cardinality: "N:1", on: { local: ["authorId"], target: ["id"] } },
+          },
+        },
+      },
+    })
+  );
+  await db.orm["users"]!.create({ id: "u1" });
+  await db.orm["posts"]!.create({ id: "p1", authorId: "u1" });
+  await expect(db.orm["users"]!.delete("u1")).rejects.toThrow(/child records exist on relation 'posts'/);
+  expect(await rows("users")).toEqual([{ id: "u1" }]);
+  expect(await rows("posts")).toEqual([{ id: "p1", authorId: "u1" }]);
+});
+
+it("preserves the rows when a one-sided action targets an ambiguous legacy Decimal key", async () => {
+  const db = await open(
+    defineContract({
+      family: idbFamilyPack,
+      target: idbTargetPack,
+      models: {
+        User: {
+          store: "users",
+          key: "id",
+          fields: { id: "String", code: "Decimal" },
+          indexes: { byCode: { keyPath: "code", unique: true } },
+        },
+        Post: {
+          store: "posts",
+          key: "id",
+          fields: { id: "String", authorCode: "Decimal" },
+          relations: {
+            author: {
+              to: "User",
+              cardinality: "N:1",
+              on: { local: ["authorCode"], target: ["code"] },
+              onDelete: "cascade",
+              onUpdate: "cascade",
+            },
+          },
+        },
+      },
+    })
+  );
+  const users = [
+    { id: "u1", code: "1" },
+    { id: "u2", code: "1.00" },
+  ];
+  const post = { id: "p1", authorCode: "1.00" };
+  await db.withTransaction(["users", "posts"], async (scope) => {
+    for (const record of users) await scope.execute({ kind: "put", storeName: "users", record } as never);
+    await scope.execute({ kind: "put", storeName: "posts", record: post } as never);
+  });
+  await expect(db.orm["users"]!.delete("u1")).rejects.toMatchObject({ code: "DECIMAL_IDENTITY_CONFLICT" });
+  await expect(db.orm["users"]!.where({ id: "u2" }).update({ code: "2" })).rejects.toMatchObject({
+    code: "DECIMAL_IDENTITY_CONFLICT",
+  });
+  expect(await rows("users")).toEqual(users);
+  expect(await rows("posts")).toEqual([post]);
+});
+
+it.each([false, true])(
+  "uses current parent rows for Decimal actions in a bulk delete (earlier cascade: %s)",
+  async (earlierCascade) => {
+    const db = await open(
+      defineContract({
+        family: idbFamilyPack,
+        target: idbTargetPack,
+        models: {
+          Parent: {
+            store: "parents",
+            key: "id",
+            fields: {
+              id: "String",
+              code: "Decimal",
+              status: "String",
+              legacyStatus: "String",
+              cascadeTag: "String",
+              cascadeRef: "String?",
+            },
+            indexes: {
+              codeStatus: { keyPath: ["code", "status"], unique: true },
+              legacyStatus: { keyPath: "legacyStatus", unique: true },
+              cascadeTag: { keyPath: "cascadeTag", unique: true },
+            },
+            relations: {
+              ancestor: {
+                to: "Parent",
+                cardinality: "N:1",
+                on: { local: ["cascadeRef"], target: ["cascadeTag"] },
+                onDelete: "cascade",
+              },
+            },
+          },
+          Child: {
+            store: "children",
+            key: "id",
+            fields: { id: "String", code: "Decimal", status: "String" },
+            fieldDefaults: { status: "on" },
+            relations: {
+              parent: {
+                to: "Parent",
+                cardinality: "N:1",
+                on: { local: ["code", "status"], target: ["code", "status"] },
+                onDelete: "cascade",
+              },
+              legacy: {
+                to: "Parent",
+                cardinality: "N:1",
+                on: { local: ["status"], target: ["legacyStatus"] },
+                onDelete: "setDefault",
+              },
+            },
+          },
+        },
+      })
+    );
+    const parent = (
+      id: string,
+      code: string,
+      status: string,
+      legacyStatus: string,
+      cascadeRef: string | null = null
+    ) => ({
+      id,
+      code,
+      status,
+      legacyStatus,
+      cascadeTag: id + "-tag",
+      cascadeRef,
+    });
+    const records = [
+      earlierCascade ? parent("a", "2", "other-a", "unused-a") : parent("a", "1", "on", "unused-a"),
+      parent("b", "3", "other-b", "previous"),
+      parent("c", "1.00", "on", "unused-c", earlierCascade ? "a-tag" : null),
+      parent("d", "1", "previous", "on"),
+      ...(earlierCascade ? [parent("e", "1", "on", "unused-e")] : []),
+    ];
+    await db.withTransaction(["parents", "children"], async (scope) => {
+      for (const record of records) await scope.execute({ kind: "put", storeName: "parents", record } as never);
+      await scope.execute({
+        kind: "put",
+        storeName: "children",
+        record: { id: "child", code: "1", status: "previous" },
+      } as never);
+    });
+    await db.orm["parents"]!.where((model) => model.id.in(["a", "b", "c"]))
+      .deleteAll()
+      .toArray();
+    expect(await rows("parents")).toEqual(records.slice(3));
+    expect(await rows("children")).toEqual(earlierCascade ? [{ id: "child", code: "1", status: "on" }] : []);
+  }
+);
+
+it("preserves unrelated children when a bulk delete clears a later parent's referenced field", async () => {
+  const db = await open(
+    defineContract({
+      family: idbFamilyPack,
+      target: idbTargetPack,
+      models: {
+        Parent: {
+          store: "parents",
+          key: "id",
+          fields: { id: "String", alias: "String", refCode: "String?" },
+          indexes: {
+            alias: { keyPath: "alias", unique: true },
+            refCode: { keyPath: "refCode", unique: true },
+          },
+          relations: {
+            owner: {
+              to: "Parent",
+              cardinality: "N:1",
+              on: { local: ["refCode"], target: ["alias"] },
+              onDelete: "setNull",
+            },
+          },
+        },
+        Child: {
+          store: "children",
+          key: "id",
+          fields: { id: "String", refCode: "String?" },
+          relations: {
+            parent: {
+              to: "Parent",
+              cardinality: "N:1",
+              on: { local: ["refCode"], target: ["refCode"] },
+              onDelete: "cascade",
+            },
+          },
+        },
+      },
+    })
+  );
+  const child = { id: "child", refCode: null };
+  await db.withTransaction(["parents", "children"], async (scope) => {
+    for (const record of [
+      { id: "a", alias: "target", refCode: "d-alias" },
+      { id: "b", alias: "b-alias", refCode: "target" },
+      { id: "d", alias: "d-alias", refCode: "b-alias" },
+    ]) {
+      await scope.execute({ kind: "put", storeName: "parents", record } as never);
+    }
+    await scope.execute({ kind: "put", storeName: "children", record: child } as never);
+  });
+  await db.orm["parents"]!.where((model) => model.id.in(["a", "b"]))
+    .deleteAll()
+    .toArray();
+  expect(await rows("parents")).toEqual([{ id: "d", alias: "d-alias", refCode: null }]);
+  expect(await rows("children")).toEqual([child]);
+});
 
 describe("one-sided foreign key: actions that keep the child", () => {
   it.each([
