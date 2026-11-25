@@ -1,5 +1,5 @@
 import "fake-indexeddb/auto";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { defineContract } from "@prisma-idb/family-idb/contract-ts";
 import family from "@prisma-idb/family-idb/pack";
 import target from "@prisma-idb/target-idb/pack";
@@ -328,7 +328,7 @@ it.each([false, true])("checks cascades after all nested writes (later invalid w
   }
 });
 
-it.each([false, true])("checks distinct unindexed tuples (missing string target: %s)", async (missing) => {
+it.each([false, true])("checks distinct unindexed tuples in one scan (missing string target: %s)", async (missing) => {
   const client = await open(
     defineContract({
       family,
@@ -385,9 +385,15 @@ it.each([false, true])("checks distinct unindexed tuples (missing string target:
       }))
     ).toArray();
 
-    const write = client.orm["users"]!.where({ id: "u" }).update({ tenant: "new" });
-    if (missing) await expect(write).rejects.toThrow(/has no Category/);
-    else await write;
+    const cursor = vi.spyOn(IDBObjectStore.prototype, "openCursor");
+    try {
+      const write = client.orm["users"]!.where({ id: "u" }).update({ tenant: "new" });
+      if (missing) await expect(write).rejects.toThrow(/has no Category/);
+      else await write;
+      expect((cursor.mock.contexts as IDBObjectStore[]).filter((store) => store.name === "categories")).toHaveLength(1);
+    } finally {
+      cursor.mockRestore();
+    }
     expect(await client.orm["posts"]!.findUnique("01")).toMatchObject({ tenant: missing ? "old" : "new" });
   } finally {
     await client.close();
