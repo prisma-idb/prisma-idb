@@ -1602,6 +1602,9 @@ export function collectRelatedStoreNames(contract: IdbContract, modelName: strin
   for (const def of getRelationDefinitions(contract, modelName)) {
     stores.add(def.relatedStoreName);
     for (const parentStore of fkParentStoreNames(contract, def.relatedModelName)) stores.add(parentStore);
+    if (isDeclaredChildRelation(contract, modelName, def)) {
+      for (const downstream of collectOnUpdateClosureStoreNames(contract, def.relatedModelName)) stores.add(downstream);
+    }
   }
   return [...stores];
 }
