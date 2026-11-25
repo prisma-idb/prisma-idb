@@ -133,6 +133,7 @@ describe("record shape migration planning", () => {
     ["idb/int32@1", -2147483649],
     ["idb/double@1", "1.5"],
     ["idb/decimal@1", false],
+    ["idb/decimal@1", "not a decimal"],
     ["idb/date@1", "2026-01-01T00:00:00Z"],
     ["idb/bigint@1", 1],
     ["idb/bytes@1", "aGVsbG8="],

@@ -1094,6 +1094,15 @@ describe("defineContract — literal defaults range and form", () => {
     expect(() => define(type, value)).toThrow(/IDB_INVALID_DEFAULT_VALUE/);
   });
 
+  it.each([
+    [Number.POSITIVE_INFINITY, "Infinity"],
+    ["abc", '"abc"'],
+  ] as const)("says a Decimal default of %s must be finite decimal text", (value, written) => {
+    expect(() => define("Decimal", value)).toThrow(
+      `Field "Row.v" default ${written} is not a Decimal. Write finite decimal text, such as "12.50".`
+    );
+  });
+
   it("names the Int range when it refuses an Int default", () => {
     expect(() => define("Int", 2_147_483_648)).toThrow(
       'Field "Row.v" default 2147483648 is not an Int. Write a whole number from -2147483648 to 2147483647.'
