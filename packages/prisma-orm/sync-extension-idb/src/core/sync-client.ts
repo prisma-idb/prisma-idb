@@ -284,9 +284,12 @@ export function createSyncIdbClient<TContract extends IdbContract>(
  * bare `NotFoundError` from every tracked write and push. The newest store is the likeliest one missing.
  */
 function explainMissingSyncStores(driver: ReturnType<ReturnType<typeof createIDBRuntimeDriver>["create"]>): void {
-  const explain = (error: unknown): unknown => {
+  const explain = async (error: unknown, needsOrderStore: boolean): Promise<unknown> => {
+    if (!needsOrderStore) return error;
     for (let cause = error; cause instanceof Error; cause = cause.cause) {
-      if (cause.name === "NotFoundError" && cause.message.includes(OUTBOX_ORDER_STORE)) {
+      if (cause.name === "NotFoundError") {
+        const db = await driver.db.catch(() => undefined);
+        if (!db || db.objectStoreNames.contains(OUTBOX_ORDER_STORE)) return error;
         return new Error(
           `IDB: the database has no "${OUTBOX_ORDER_STORE}" store, which tracked writes and pushes use. ` +
             "Apply the sync extension's migrations before you open createSyncIdbClient, or open the database " +
@@ -299,8 +302,8 @@ function explainMissingSyncStores(driver: ReturnType<ReturnType<typeof createIDB
   };
   const transaction = driver.transaction.bind(driver);
   driver.transaction = (storeNames, mode) =>
-    transaction(storeNames, mode).catch((error: unknown) => {
-      throw explain(error);
+    transaction(storeNames, mode).catch(async (error: unknown) => {
+      throw await explain(error, storeNames.includes(OUTBOX_ORDER_STORE));
     });
   const execute = driver.execute.bind(driver);
   driver.execute = (plan) => ({
@@ -308,7 +311,9 @@ function explainMissingSyncStores(driver: ReturnType<ReturnType<typeof createIDB
       try {
         yield* execute(plan);
       } catch (error) {
-        throw explain(error);
+        const needsOrderStore =
+          plan.kind === "batch" ? plan.storeNames.includes(OUTBOX_ORDER_STORE) : plan.storeName === OUTBOX_ORDER_STORE;
+        throw await explain(error, needsOrderStore);
       }
     },
   });

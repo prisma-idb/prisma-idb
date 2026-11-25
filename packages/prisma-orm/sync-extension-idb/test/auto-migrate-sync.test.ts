@@ -1,5 +1,5 @@
 import "fake-indexeddb/auto";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { defineContract } from "@prisma-idb/family-idb/contract-ts";
 import idbFamilyPack from "@prisma-idb/family-idb/pack";
 import idbTargetPack from "@prisma-idb/target-idb/pack";
@@ -294,12 +294,28 @@ describe("createAutoMigratingSyncIdbClient", () => {
     });
     await old.close();
     const client = createSyncIdbClient({ contract: contractSpace.contractJson, dbName: name });
+    const transaction = IDBDatabase.prototype.transaction;
+    const transactions = vi.spyOn(IDBDatabase.prototype, "transaction").mockImplementation(function (
+      this: IDBDatabase,
+      stores,
+      mode,
+      options
+    ) {
+      if (
+        this.name === name &&
+        (typeof stores === "string" ? [stores] : [...stores]).includes("_idb_sync_outbox_order")
+      ) {
+        throw new DOMException("One of the requested stores does not exist", "NotFoundError");
+      }
+      return transaction.call(this, stores, mode, options);
+    });
     try {
       const orm = client.orm as unknown as { users: { create(data: unknown): Promise<unknown> } };
       const missing = /no "_idb_sync_outbox_order" store[\s\S]*createAutoMigratingSyncIdbClient/;
       await expect(orm.users.create({ id: "u1", name: "A" })).rejects.toThrow(missing);
       await expect(client.outbox.hasPending()).rejects.toThrow(missing);
     } finally {
+      transactions.mockRestore();
       await client.close();
     }
   });

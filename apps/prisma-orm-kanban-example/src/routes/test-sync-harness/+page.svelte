@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { idbSyncExtension } from "@prisma-idb/sync-extension-idb/control";
-  import { createAutoMigratingSyncIdbClient } from "@prisma-idb/sync-extension-idb/client";
+  import { createAutoMigratingSyncIdbClient, createSyncIdbClient } from "@prisma-idb/sync-extension-idb/client";
   import { contractSpace } from "$lib/prisma/contract-space.generated";
 
   /**
@@ -13,7 +13,8 @@
    * multiple tabs sharing the same origin/database — the one scenario
    * fake-indexeddb (single JS process) can't exercise, since real multi-tab
    * concurrency depends on the browser's actual cross-connection IDB
-   * transaction serialization.
+   * transaction serialization. `openWithoutMigrating` opens another client
+   * with `createSyncIdbClient`, which applies no migrations.
    */
   let ready = $state(false);
 
@@ -26,7 +27,10 @@
       dbName,
       extensions: [idbSyncExtension],
     });
-    (window as unknown as { __syncHarness: unknown }).__syncHarness = { syncClient };
+    (window as unknown as { __syncHarness: unknown }).__syncHarness = {
+      syncClient,
+      openWithoutMigrating: () => createSyncIdbClient({ contract: contractSpace.contractJson, dbName }),
+    };
     ready = true;
   });
 </script>
