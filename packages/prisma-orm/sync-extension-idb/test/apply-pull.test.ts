@@ -791,3 +791,80 @@ describe("applyPull with a SetDefault relation", () => {
     expect(await scanAll(client, "posts")).toEqual([{ id: "p1", title: "Hi", authorId: "u1" }]);
   });
 });
+
+describe("applyPull with a SetDefault into an overlapping key", () => {
+  // Member's two compound foreign keys share `tenant`. Deleting the org resets
+  // `tenant` and `orgId` to their defaults, which leaves the category key
+  // pointing at a tenant that has no such category.
+  async function createClient() {
+    const contract = defineContract({
+      family: idbFamilyPack,
+      target: idbTargetPack,
+      models: {
+        Org: {
+          store: "orgs",
+          key: "id",
+          fields: { id: "String", tenant: "String" },
+          indexes: { tenantId: { keyPath: ["tenant", "id"], unique: true } },
+        },
+        Category: { store: "categories", key: ["tenant", "id"], fields: { tenant: "String", id: "String" } },
+        Member: {
+          store: "members",
+          key: "id",
+          fields: { id: "String", tenant: "String", orgId: "String", categoryId: "String" },
+          fieldDefaults: { tenant: "t0", orgId: "o0" },
+          relations: {
+            org: {
+              to: "Org",
+              cardinality: "N:1",
+              on: { local: ["tenant", "orgId"], target: ["tenant", "id"] },
+              onDelete: "setDefault",
+            },
+            category: {
+              to: "Category",
+              cardinality: "N:1",
+              on: { local: ["tenant", "categoryId"], target: ["tenant", "id"] },
+            },
+          },
+        },
+      },
+    }) as unknown as IdbContract;
+    const name = testDbName();
+    const stores = Object.entries(contract.storage.stores).map(([storeName, store]) => ({
+      name: storeName,
+      keyPath: store.keyPath as string | string[],
+      indexes: Object.entries(store.indexes ?? {}).map(([indexName, index]) => ({
+        name: indexName,
+        keyPath: index.keyPath as string,
+        unique: index.unique === true,
+      })),
+    }));
+    (await openTestDb(name, [...stores, OUTBOX_STORE, VERSION_META_STORE])).close();
+    return createSyncIdbClient({ contract, dbName: name, trackedModels: "*" });
+  }
+
+  it("halts the pull and leaves the member as it was", async () => {
+    const client = await createClient();
+    const member = { id: "m1", tenant: "t1", orgId: "o1", categoryId: "c1" };
+    await applyPull(client, [
+      log({ changelogId: "c1", model: "Org", keyPath: "o0", operation: "create", record: { id: "o0", tenant: "t0" } }),
+      log({ changelogId: "c2", model: "Org", keyPath: "o1", operation: "create", record: { id: "o1", tenant: "t1" } }),
+      log({
+        changelogId: "c3",
+        model: "Category",
+        keyPath: ["t1", "c1"],
+        operation: "create",
+        record: { tenant: "t1", id: "c1" },
+      }),
+      log({ changelogId: "c4", model: "Member", keyPath: "m1", operation: "create", record: member }),
+    ]);
+
+    const result = await applyPull(client, [
+      log({ changelogId: "c5", model: "Org", keyPath: "o1", operation: "delete", record: null }),
+    ]);
+
+    expect(result).toMatchObject({ applied: 0, halted: true });
+    expect(await scanAll(client, "orgs")).toHaveLength(2);
+    expect(await scanAll(client, "members")).toEqual([member]);
+  });
+});
