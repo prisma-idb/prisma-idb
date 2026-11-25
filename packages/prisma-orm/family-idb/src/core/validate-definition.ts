@@ -1,3 +1,4 @@
+import { INT32_RANGE, isIntegerIn } from "@prisma/orm-framework/components/codec";
 import { keyPathFields } from "@prisma-idb/target-idb/pack";
 import { isDecimalString } from "@prisma-idb/target-idb/runtime";
 import type { IdbKeyPath } from "@prisma-idb/target-idb/pack";
@@ -34,12 +35,15 @@ export function isValidIdbKeyCodec(codecId: string): boolean {
   return !["idb/bool@1", "idb/bigint@1", "idb/json@1"].includes(codecId);
 }
 
-const INT32_MIN = -2_147_483_648;
-const INT32_MAX = 2_147_483_647;
-
 /** Why an `Int` default was refused. */
 export function intDefaultMessage(label: string, written: string): string {
-  return `${label} default ${written} is not an Int. Write a whole number from ${INT32_MIN} to ${INT32_MAX}.`;
+  return `${label} default ${written} is not an Int. Write a whole number from ${INT32_RANGE.min} to ${INT32_RANGE.max}.`;
+}
+
+/** Why a `Decimal` default was refused. A string default is quoted, so `"abc"` reads as text. */
+export function decimalDefaultMessage(label: string, value: string | number | boolean): string {
+  const written = typeof value === "string" ? JSON.stringify(value) : String(value);
+  return `${label} default ${written} is not a Decimal. Write finite decimal text, such as "12.50".`;
 }
 
 /**
@@ -50,7 +54,7 @@ export function intDefaultMessage(label: string, written: string): string {
 export function isIntNumeralText(text: string): boolean {
   if (!/^[+-]?\d+$/.test(text)) return false;
   const value = BigInt(text);
-  return value >= BigInt(INT32_MIN) && value <= BigInt(INT32_MAX);
+  return value >= BigInt(INT32_RANGE.min) && value <= BigInt(INT32_RANGE.max);
 }
 
 /** Literal defaults must match the field's stored scalar type. */
@@ -60,7 +64,7 @@ export function literalValueMatchesCodec(value: string | number | boolean, codec
       return typeof value === "string";
     case "idb/int32@1":
       // An Int default is written as the field's value, so it must pass the int32 check every write applies.
-      return typeof value === "number" && Number.isInteger(value) && value >= INT32_MIN && value <= INT32_MAX;
+      return isIntegerIn(value, INT32_RANGE);
     case "idb/double@1":
       return typeof value === "number";
     case "idb/decimal@1":
@@ -156,6 +160,10 @@ function validateLiteralDefault(
     } else if (field.codecId === "idb/int32@1" && typeof field.literalDefault === "number") {
       if (!literalValueMatchesCodec(field.literalDefault, field.codecId)) {
         report("IDB_INVALID_DEFAULT_VALUE", intDefaultMessage(label, String(field.literalDefault)), defaultAt);
+      }
+    } else if (field.codecId === "idb/decimal@1") {
+      if (!literalValueMatchesCodec(field.literalDefault, field.codecId)) {
+        report("IDB_INVALID_DEFAULT_VALUE", decimalDefaultMessage(label, field.literalDefault), defaultAt);
       }
     } else if (!literalValueMatchesCodec(field.literalDefault, field.codecId)) {
       report(
