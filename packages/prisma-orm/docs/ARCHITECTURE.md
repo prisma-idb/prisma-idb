@@ -218,7 +218,7 @@ Adding a plan kind touches five places ([ADR 017](adrs/ADR%20017%20-%20Native%20
 
 ### `runtime-idb`
 
-One entrypoint, `./runtime`, exporting `createIdbRuntime`, `IdbRuntime` and `IdbMiddleware`. The runtime extends the framework's `RuntimeCore`:
+One entrypoint, `./runtime`, exporting `createIdbRuntime`, `IdbRuntime`, `IdbMiddleware` and `withoutMiddleware`. `withoutMiddleware(plan)` marks a plan so a transaction runs it with no middleware hook. `client-idb` uses it for its own probe that a transaction is still active, which is not a statement of the app's. The runtime extends the framework's `RuntimeCore`:
 
 | Method                      | Does                                                                                                                                                                                                                                                                     |
 | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
