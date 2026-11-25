@@ -525,6 +525,18 @@ type JoinPairs<Local extends readonly string[], Target extends readonly string[]
   [I in keyof Local]: readonly [Local[I], Target[I & keyof Target]];
 }[number];
 
+type HasRepeatedJoinField<
+  Fields extends readonly string[],
+  Seen = never,
+  Index extends unknown[] = [],
+> = number extends Fields["length"]
+  ? false
+  : Index["length"] extends Fields["length"]
+    ? false
+    : Fields[Index["length"]] extends Seen
+      ? true
+      : HasRepeatedJoinField<Fields, Seen | Fields[Index["length"]], [...Index, unknown]>;
+
 type ReciprocalCardinality<
   TContract,
   Model extends string,
@@ -555,34 +567,70 @@ type OwnsOneToOne<
   Local extends readonly string[],
   Target extends readonly string[],
   Reciprocal = ReciprocalCardinality<TContract, Model, Related, Local, Target>,
-> = "N:1" extends Reciprocal
+> = true extends HasRepeatedJoinField<Local> | HasRepeatedJoinField<Target>
   ? false
-  : SameType<Local[number], ModelKeyPath<TContract, Model>> extends true
+  : "N:1" extends Reciprocal
     ? false
     : "1:N" extends Reciprocal
       ? true
-      : SameType<Target[number], ModelKeyPath<TContract, Related>>;
+      : SameType<Local[number], ModelKeyPath<TContract, Model>> extends true
+        ? false
+        : SameType<Target[number], ModelKeyPath<TContract, Related>>;
 
 /** FK fields that a relation callback can supply during create. */
-type OwnedForeignKeyFields<TContract, Model extends string, Relations = ModelRelations<TContract, Model>> = {
+type OwnedForeignKeyFieldsByRelation<
+  TContract,
+  Model extends string,
+  Cardinality extends "N:1" | "1:1",
+  Relations = ModelRelations<TContract, Model>,
+> = {
   [K in keyof Relations]: Relations[K] extends {
-    readonly cardinality: infer Cardinality;
+    readonly cardinality: infer Actual extends Cardinality;
     readonly to: { readonly model: infer Related extends string };
     readonly on: {
       readonly localFields: infer Local extends readonly string[];
       readonly targetFields: infer Target extends readonly string[];
     };
   }
-    ? Cardinality extends "N:1"
+    ? Actual extends "N:1"
       ? Local[number]
-      : Cardinality extends "1:1"
+      : Actual extends "1:1"
         ? OwnsOneToOne<TContract, Model, Related, Local, Target> extends true
           ? Local[number]
           : never
         : never
     : never;
-}[keyof Relations] &
-  string;
+};
+
+type OwnedForeignKeyFields<
+  TContract,
+  Model extends string,
+  Cardinality extends "N:1" | "1:1" = "N:1" | "1:1",
+  Fields = OwnedForeignKeyFieldsByRelation<TContract, Model, Cardinality>,
+> = Fields[keyof Fields] & string;
+
+type CallbackSupplyingField<Field, Callbacks, FieldsByRelation> = {
+  [K in keyof Callbacks & keyof FieldsByRelation]: Field extends FieldsByRelation[K]
+    ? Required<Pick<Callbacks, K>>
+    : never;
+}[keyof Callbacks & keyof FieldsByRelation];
+
+/** Each newly optional FK value still needs a scalar input or an owning callback that supplies it. */
+type OneToOneCreateRequirements<
+  TContract,
+  Model extends string,
+  Scalar = CreateInput<TContract, Model>,
+  Callbacks = RelationMutationFields<TContract, Model>,
+  OwnerFields = OwnedForeignKeyFieldsByRelation<TContract, Model, "1:1">,
+  Fields extends keyof Scalar = Exclude<
+    OwnerFields[keyof OwnerFields],
+    OwnedForeignKeyFields<TContract, Model, "N:1">
+  > &
+    keyof Scalar,
+  Requirements = {
+    [F in Fields]: (input: Pick<Scalar, F> | CallbackSupplyingField<F, Callbacks, OwnerFields>) => void;
+  }[Fields],
+> = [Requirements] extends [never] ? unknown : [Requirements] extends [(input: infer Input) => void] ? Input : unknown;
 
 /** A relation callback can populate the same FK fields as scalar create input. */
 type NestedCreateInput<TContract, ModelName extends string> = Omit<
@@ -598,7 +646,8 @@ type NestedCreateInput<TContract, ModelName extends string> = Omit<
 
 /** Input shape for create with optional relation callbacks supplying their own foreign keys. */
 export type MutationCreateInput<TContract, ModelName extends string> = NestedCreateInput<TContract, ModelName> &
-  RelationMutationFields<TContract, ModelName>;
+  RelationMutationFields<TContract, ModelName> &
+  OneToOneCreateRequirements<TContract, ModelName>;
 
 /**
  * Input shape for `update()` with optional relation callbacks.

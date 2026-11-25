@@ -7,7 +7,14 @@ import {
   type IdbPlanBody,
   type IdbTransactionScope,
 } from "@prisma-idb/driver-idb/runtime";
-import { compareDecimalValues, isValidIdbKey, keyEquals, keyToken } from "@prisma-idb/target-idb/runtime";
+import {
+  compareDecimalValues,
+  fieldValuesEqual,
+  isDecimalString,
+  isValidIdbKey,
+  keyEquals,
+  keyToken,
+} from "@prisma-idb/target-idb/runtime";
 import type { IdbQueryExecutor } from "./executor";
 import type { IdbQueryExecutorWithTransaction } from "./mutation-scope";
 import { buildCatalog, type QueryCatalog, type CatalogSource } from "./planner/catalog";
@@ -44,6 +51,25 @@ export function decimalKeysEqual(contract: IdbContract, modelName: string, left:
   )
     return false;
   return catalog.primaryKey.fields.every((field, i) => valuesEqual(catalog, field, leftParts[i], rightParts[i]));
+}
+
+/**
+ * Whether a patch sets a model field to a different value than the stored row has.
+ * Decimal fields compare numerically, so rewriting `"5"` as `"5.0"` is no change;
+ * other fields compare as IndexedDB matches relation values.
+ */
+export function fieldValueChanged(
+  contract: IdbContract,
+  modelName: string,
+  field: string,
+  next: unknown,
+  stored: unknown
+): boolean {
+  const catalog = buildCatalog(contract, getStoreName(contract, modelName), modelName);
+  const metadata = catalog.fields[field];
+  if (metadata?.codecId === "idb/decimal@1" && !metadata.collection && isDecimalString(next) && isDecimalString(stored))
+    return compareDecimalValues(next, stored) !== 0;
+  return !fieldValuesEqual(next, stored);
 }
 
 /** Keep an existing Decimal primary-key spelling when the supplied value identifies the same row. */

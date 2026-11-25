@@ -29,18 +29,10 @@ function reciprocalRelations(
 export function toOneSide(model: IdbModelNode, relation: IdbRelationNode, target: IdbModelNode | undefined): ToOneSide {
   if (relation.cardinality === "N:1") return "owner";
   const reciprocal = reciprocalRelations(model, relation, target);
-  if (
-    reciprocal.some((inverse) => inverse.cardinality === "N:1") ||
-    sameFieldSet(relation.localFields, keyPathFields(model.key))
-  ) {
-    return "inverse";
-  }
-  if (
-    (target !== undefined && sameFieldSet(relation.targetFields, keyPathFields(target.key))) ||
-    reciprocal.some((inverse) => inverse.cardinality === "1:N")
-  ) {
-    return "owner";
-  }
+  if (reciprocal.some((inverse) => inverse.cardinality === "N:1")) return "inverse";
+  if (reciprocal.some((inverse) => inverse.cardinality === "1:N")) return "owner";
+  if (sameFieldSet(relation.localFields, keyPathFields(model.key))) return "inverse";
+  if (target !== undefined && sameFieldSet(relation.targetFields, keyPathFields(target.key))) return "owner";
   return "undetermined";
 }
 

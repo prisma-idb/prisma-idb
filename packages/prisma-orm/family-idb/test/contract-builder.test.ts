@@ -1236,6 +1236,63 @@ describe("defineContract — the owning side of a one-to-one", () => {
   it("requires the owning foreign key to be unique even if no inverse is declared", () => {
     expect(() => define(false)).toThrow(/Relation "Profile.user".*foreign key.*isn't unique/);
   });
+
+  it("uses the explicit backrelation to resolve a shared primary key", () => {
+    const contract = defineContract({
+      family: idbFamilyPack,
+      target: idbTargetPack,
+      models: {
+        User: {
+          store: "users",
+          key: "id",
+          fields: { id: "String" },
+          relations: { profiles: { to: "Profile", cardinality: "1:N", on: { local: ["id"], target: ["id"] } } },
+        },
+        Profile: {
+          store: "profiles",
+          key: "id",
+          fields: { id: "String" },
+          relations: {
+            user: { to: "User", cardinality: "1:1", nullable: false, on: { local: ["id"], target: ["id"] } },
+          },
+        },
+      },
+    });
+    const profile = Object.values(contract.domain.namespaces)[0]!.models["Profile"]!;
+    expect(profile.relations["user"]).toMatchObject({ nullable: false });
+  });
+
+  it.each(["1:1", "N:1"] as const)("requires a unique referenced tuple for a reciprocal %s", (owner) => {
+    expect(() =>
+      defineContract({
+        family: idbFamilyPack,
+        target: idbTargetPack,
+        models: {
+          User: {
+            store: "users",
+            key: "id",
+            fields: { id: "String", email: "String" },
+            relations: {
+              profile: {
+                to: "Profile",
+                cardinality: owner === "1:1" ? "1:N" : "1:1",
+                on: { local: ["email"], target: ["userEmail"] },
+              },
+            },
+          },
+          Profile: {
+            store: "profiles",
+            key: "id",
+            fields: { id: "String", userEmail: "String" },
+            indexes: { userEmail: { keyPath: "userEmail", unique: true } },
+            relations: {
+              user: { to: "User", cardinality: owner, on: { local: ["userEmail"], target: ["email"] } },
+            },
+          },
+        },
+      })
+    ).toThrow(/referenced fields.*aren't unique/);
+  });
 });
 
 describe("defineContract — the referenced side of a one-to-one", () => {
