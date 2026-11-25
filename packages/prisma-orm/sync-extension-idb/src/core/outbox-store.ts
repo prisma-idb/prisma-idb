@@ -189,16 +189,53 @@ export async function pruneSyncedEvents(scope: IdbTransactionScope): Promise<voi
 }
 
 /**
- * True if some OTHER outbox event still references `versionMetaId` and could
- * still succeed (unsynced, retryable) — a full store scan, same as
- * `getNextBatch` (no queryable index; see that function's doc comment). The
- * event whose own write just triggered this check has already had its
- * `synced`/`retryable` field updated by the caller before this runs, so it
- * naturally doesn't match here — no need to also exclude it by id.
+ * Whether `versionMetaId` still has a pending outbox event other than
+ * `completedId`, the event just marked synced or failed. A fresh read ignores
+ * `completedId`, since that event is already stored as no longer pending.
  */
-async function hasOtherPendingOutboxEvents(scope: IdbTransactionScope, versionMetaId: string): Promise<boolean> {
-  const events = await scanStore<OutboxEvent>(scope, OUTBOX_STORE);
-  return events.some((e) => e.versionMetaId === versionMetaId && isPending(e));
+type HasPendingEvent = (scope: IdbTransactionScope, versionMetaId: string, completedId: string) => Promise<boolean>;
+
+/**
+ * The ids of every pending outbox event, by `versionMetaId`. A batch removes
+ * each `completedId` from it as it goes, instead of reading the outbox again.
+ */
+async function pendingIndex(scope: IdbTransactionScope): Promise<Map<string, Set<string>>> {
+  const index = new Map<string, Set<string>>();
+  for (const event of await scanStore<OutboxEvent>(scope, OUTBOX_STORE)) {
+    if (!isPending(event) || event.versionMetaId == null) continue;
+    let ids = index.get(event.versionMetaId);
+    if (!ids) index.set(event.versionMetaId, (ids = new Set()));
+    ids.add(event.id);
+  }
+  return index;
+}
+
+/** Reads the outbox afresh; `completedId` is ignored, as the store already shows that event as finished. */
+const hasPendingEvent: HasPendingEvent = async (scope, versionMetaId) =>
+  (await scanStore<OutboxEvent>(scope, OUTBOX_STORE)).some(
+    (event) => event.versionMetaId === versionMetaId && isPending(event)
+  );
+
+/**
+ * Records a batch of push results with one outbox scan. The first result reads
+ * every pending event; later results update that index instead of scanning
+ * again. The index only stays correct while nothing else adds or changes
+ * outbox events in `scope`, which holds for the worker's result batch. Other
+ * callers use `markSynced` and `markFailed`, which read the outbox afresh.
+ */
+export function createOutboxBookkeeping(scope: IdbTransactionScope) {
+  let index: Map<string, Set<string>> | undefined;
+  const hasPending: HasPendingEvent = async (_, versionMetaId, completedId) => {
+    index ??= await pendingIndex(scope);
+    const remaining = index.get(versionMetaId);
+    remaining?.delete(completedId);
+    return (remaining?.size ?? 0) > 0;
+  };
+  return {
+    markSynced: (id: string) => recordSynced(scope, id, hasPending),
+    markFailed: (id: string, error: string, retryable?: boolean) =>
+      recordFailed(scope, id, error, retryable, hasPending),
+  };
 }
 
 /**
@@ -216,23 +253,32 @@ async function hasOtherPendingOutboxEvents(scope: IdbTransactionScope, versionMe
  * clearing it here would let a pull land in between and clobber that
  * still-pending local change.
  */
-async function clearLocalChangePending(scope: IdbTransactionScope, versionMetaId: string | null): Promise<void> {
-  if (versionMetaId === null) return;
+async function clearLocalChangePending(
+  scope: IdbTransactionScope,
+  event: OutboxEvent,
+  hasPending: HasPendingEvent
+): Promise<void> {
+  const { versionMetaId } = event;
+  if (versionMetaId == null) return;
   // Another unsynced, retryable event for the same record still needs this
   // flag set — clearing it now would let a pull land in between and clobber
   // that still-pending local change.
-  if (await hasOtherPendingOutboxEvents(scope, versionMetaId)) return;
+  if (await hasPending(scope, versionMetaId, event.id)) return;
   const meta = await getRecord(scope, VERSION_META_STORE, versionMetaId);
   if (!meta) return;
   await putRecord(scope, VERSION_META_STORE, { ...meta, localChangePending: false });
 }
 
 /** Mark an outbox event as successfully synced. */
-export async function markSynced(scope: IdbTransactionScope, id: string): Promise<void> {
+export function markSynced(scope: IdbTransactionScope, id: string): Promise<void> {
+  return recordSynced(scope, id, hasPendingEvent);
+}
+
+async function recordSynced(scope: IdbTransactionScope, id: string, hasPending: HasPendingEvent): Promise<void> {
   const existing = await getRecord<OutboxEvent>(scope, OUTBOX_STORE, id);
   if (!existing) return;
   await putRecord(scope, OUTBOX_STORE, { ...existing, synced: true, syncedAt: new Date() });
-  await clearLocalChangePending(scope, existing.versionMetaId ?? null);
+  await clearLocalChangePending(scope, existing, hasPending);
   changedScopes.add(scope);
 }
 
@@ -251,11 +297,21 @@ export async function markSynced(scope: IdbTransactionScope, id: string): Promis
  * actually apply on the next pull, instead of that pull's `apply-pull.ts`
  * guard deferring to a local edit that's already dead.
  */
-export async function markFailed(
+export function markFailed(
   scope: IdbTransactionScope,
   id: string,
   error: string,
   serverRetryable?: boolean
+): Promise<void> {
+  return recordFailed(scope, id, error, serverRetryable, hasPendingEvent);
+}
+
+async function recordFailed(
+  scope: IdbTransactionScope,
+  id: string,
+  error: string,
+  serverRetryable: boolean | undefined,
+  hasPending: HasPendingEvent
 ): Promise<void> {
   const existing = await getRecord<OutboxEvent>(scope, OUTBOX_STORE, id);
   if (!existing) return;
@@ -267,6 +323,6 @@ export async function markFailed(
     lastAttemptedAt: new Date(),
     retryable,
   });
-  if (!retryable) await clearLocalChangePending(scope, existing.versionMetaId ?? null);
+  if (!retryable) await clearLocalChangePending(scope, existing, hasPending);
   changedScopes.add(scope);
 }
