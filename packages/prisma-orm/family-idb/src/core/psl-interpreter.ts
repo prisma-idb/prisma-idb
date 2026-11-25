@@ -187,6 +187,12 @@ interface InterpretedModel {
   readonly definition: IdbModelNode & { readonly relations: IdbRelationNode[] };
   /** FK-side declarations keyed by target model for backrelation resolution. */
   readonly fksByTarget: ReadonlyMap<string, readonly ForeignKeyRelation[]>;
+  /**
+   * FK-side declarations this model refused, keyed by target model, with their
+   * relation names. A backrelation that pairs with one is not reported again,
+   * because the FK side's diagnostic already names the problem.
+   */
+  readonly rejectedFksByTarget: Map<string, (string | undefined)[]>;
 }
 
 // ── Core interpreter ───────────────────────────────────────────────────────────
@@ -292,6 +298,7 @@ function interpretModel(
   const relations: Record<string, IdbRelationNode> = {};
   const fieldDefaults: Record<string, string | number | boolean> = {};
   const fksByTarget = new Map<string, ForeignKeyRelation[]>();
+  const rejectedFksByTarget = new Map<string, (string | undefined)[]>();
   const fieldExecutionDefaults: FieldExecutionDefault[] = [];
   let autoIncrement = false;
   const autoIncrementFields: string[] = [];
@@ -330,6 +337,16 @@ function interpretModel(
     const holdsForeignKey =
       relationAttr !== undefined &&
       (relationAttr.value.fields !== undefined || relationAttr.value.references !== undefined);
+    // Upstream refuses fields and references on a list: the foreign key belongs to the other side.
+    if (field.list && modelNames.has(field.typeName) && holdsForeignKey) {
+      diagnostics.push({
+        code: "IDB_INVALID_RELATION",
+        message: `Backrelation list field "${model.name}.${field.name}" cannot declare fields or references. Define them on the relation field in "${field.typeName}" that holds the foreign key.`,
+        sourceId,
+        span: relationAttr.span,
+      });
+      continue;
+    }
     if (modelNames.has(field.typeName) && !holdsForeignKey) {
       if (excludedModelNames.has(field.typeName)) {
         // The model itself is never excluded because of a relation (ADR
@@ -359,6 +376,9 @@ function interpretModel(
           sourceId,
           span: field.span,
         });
+        const rejected = rejectedFksByTarget.get(field.typeName) ?? [];
+        rejected.push(relationAttr.value.name || undefined);
+        rejectedFksByTarget.set(field.typeName, rejected);
         continue;
       }
       const onDelete = onDeleteRaw ? REFERENTIAL_ACTION_MAP[onDeleteRaw] : undefined;
@@ -694,6 +714,7 @@ function interpretModel(
         : {}),
     },
     fksByTarget,
+    rejectedFksByTarget,
   };
 }
 
@@ -729,6 +750,20 @@ export interface InterpretPslOptions {
 export interface LoweredPslDefinition {
   readonly definition: IdbContractDefinition;
   readonly sourceMap: PslDefinitionSourceMap;
+}
+
+/**
+ * Claim the refused FK side on `target` that a backrelation from `modelName`
+ * named `relationName` pairs with: an unnamed backrelation pairs only with an
+ * unnamed FK side, as upstream does. A claimed side is removed, so a second
+ * backrelation on the same pair still reports its own problem.
+ */
+function consumeRejectedFk(target: InterpretedModel, modelName: string, relationName: string | undefined): boolean {
+  const rejected = target.rejectedFksByTarget.get(modelName);
+  const index = rejected?.indexOf(relationName) ?? -1;
+  if (index === -1) return false;
+  rejected!.splice(index, 1);
+  return true;
 }
 
 /** Lower supported PSL declarations and pair backrelations without assembling a contract. */
@@ -859,6 +894,7 @@ export function lowerPslDocumentToIdbContractDefinition(
         continue;
       }
       const fk = matches[0];
+      if (!fk && consumeRejectedFk(targetInterp, model.name, relationName)) continue;
       if (!fk && relationName !== undefined && pairFks.length > 0) {
         const names = pairFks.map((candidate) => (candidate.relationName ? `"${candidate.relationName}"` : "no name"));
         diagnostics.push({
