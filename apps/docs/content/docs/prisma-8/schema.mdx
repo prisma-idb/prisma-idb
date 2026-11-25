@@ -168,7 +168,7 @@ IDB reads the attributes it has a use for and refuses the rest, rather than drop
 - A hidden relation still enforces its foreign key and its `onDelete` and `onUpdate` actions. Deleting a `User` still cascades into, or is restricted by, rows that point to it through a hidden relation, including rows of an `@@ignore` model.
 - `include()` and nested writes refuse a hidden relation with an error that names it, and the generated types leave it out.
 - A primary key, an index or a relation can't use an `@ignore` scalar field, and neither can `@id` or `@unique` on the field itself. A hidden relation counts too, because it still needs its foreign-key fields. The schema fails with `IDB_IGNORED_FIELD_REFERENCED`.
-- A TypeScript model or relation takes the same behavior with `ignored: true`. To leave a scalar field out, leave it out of `fields`.
+- In TypeScript, write `ignored: true` on a model or a relation. A relation flag hides only that relation, so set it on both sides to hide both. To leave a scalar field out, leave it out of `fields`.
 - Sync never sends an `@@ignore` model's rows, and the sync server reads `@ignore` differently, as [Client Contracts](/docs/prisma-8/sync/client-contracts) explains.
 
 To keep data on the server and out of the browser, use `@idb.exclude` instead, as [Server-only fields and models](#server-only-fields-and-models) explains.
