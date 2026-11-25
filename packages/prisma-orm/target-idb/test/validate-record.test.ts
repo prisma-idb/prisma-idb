@@ -188,11 +188,12 @@ describe("validateRecord", () => {
     expect(validateRecord(scalar, "Item", { id: "a", json: [nest(999, shared), shared] }).ok).toBe(false);
   });
 
-  it("accepts shared subtrees without rechecking each reference", () => {
+  it("accepts ordinary shared subtrees and rejects graphs whose JSON representation would be much larger", () => {
     const scalar = contract({ json: field("idb/json@1") });
     let shared: unknown = { a: 1 };
+    expect(validateRecord(scalar, "Item", { id: "a", json: [shared, shared] })).toEqual({ ok: true });
     for (let i = 0; i < 30; i++) shared = [shared, shared];
-    expect(validateRecord(scalar, "Item", { id: "a", json: shared })).toEqual({ ok: true });
+    expect(validateRecord(scalar, "Item", { id: "a", json: shared }).ok).toBe(false);
   });
 
   it("honors mapped enum values on scalars and lists", () => {
