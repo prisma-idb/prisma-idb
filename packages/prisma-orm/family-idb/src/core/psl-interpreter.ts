@@ -178,7 +178,7 @@ function interpretEnums(
 /** A lowered model with mutable relations for the backrelation pass. */
 interface InterpretedModel {
   readonly definition: IdbModelNode & { readonly relations: IdbRelationNode[] };
-  /** FK-side declarations keyed by target model and relation name. */
+  /** FK-side declarations keyed by target model for backrelation resolution. */
   readonly fksByTarget: ReadonlyMap<string, { fieldName: string; localFields: string[]; targetFields: string[] }>;
 }
 
@@ -194,9 +194,13 @@ interface IgnoredDeclarations {
   readonly relationPairs: ReadonlySet<string>;
 }
 
-/** Identifies a relation by the model that holds the foreign key and the model it points to. */
+/**
+ * Identifies a relation by the model that holds the foreign key, the model it
+ * points to and its name, the way Prisma pairs the two sides. An empty name
+ * counts as no name. Used only to decide what an `@ignore` removes.
+ */
 function relationPairKey(owningModel: string, targetModel: string, name: string | undefined): string {
-  return JSON.stringify([owningModel, targetModel, name]);
+  return JSON.stringify([owningModel, targetModel, name === "" ? undefined : name]);
 }
 
 /** Collects the `@ignore`/`@@ignore` declarations of a schema. */
@@ -243,10 +247,11 @@ function interpretModel(
   // The binder already reported why; interpreting past it would only add noise.
   if (modelAttributes.failed) return undefined;
   const modelFields = Object.values(model.fields);
-  // Fields marked `@idb.exclude`. Empty (no-op) in "full" projection — the
-  // attribute only takes effect when projecting the client contract.
   const ignoredFieldNames = new Set(modelFields.filter((f) => attributes.isFieldIgnored(f)).map((f) => f.name));
-  // An `@ignore` field leaves the contract in every projection, so exclusion has nothing left to do for it.
+  // Fields marked `@idb.exclude`. Empty (no-op) in "full" projection — the
+  // attribute only takes effect when projecting the client contract. An
+  // `@ignore` field leaves the contract in every projection, so exclusion has
+  // nothing left to do for it.
   const excludedFieldNames = new Set(
     projection === "client"
       ? modelFields.filter((f) => attributes.isFieldExcluded(f) && !ignoredFieldNames.has(f.name)).map((f) => f.name)
@@ -488,7 +493,7 @@ function interpretModel(
         ...(onUpdate !== undefined ? { onUpdate } : {}),
       };
       sourceMap.set(["models", model.name, "relations", field.name], relationAttr.span);
-      fksByTarget.set(relationPairKey(model.name, field.typeName, relationAttr.value.name), {
+      fksByTarget.set(field.typeName, {
         fieldName: field.name,
         localFields,
         targetFields,
@@ -935,7 +940,7 @@ export function lowerPslDocumentToIdbContractDefinition(
       if (!targetInterp) continue;
 
       // Find the FK in the target model that points back to this model
-      const fk = targetInterp.fksByTarget.get(pair);
+      const fk = targetInterp.fksByTarget.get(model.name);
       if (!fk) {
         interp.definition.relations.push({
           name: field.name,

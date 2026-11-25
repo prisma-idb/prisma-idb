@@ -1972,6 +1972,14 @@ describe("@ignore and @@ignore", () => {
         ],
       ],
       [
+        "an @ignore field in a unique index",
+        "model Item {\n  id String @id\n  code String @ignore\n  @@unique([code])\n}",
+        [
+          "IDB_IGNORED_FIELD_REFERENCED",
+          'Field "Item.code" is marked @ignore, but an index of model "Item" uses it, and the field is not in the contract. Remove @ignore from the field, or remove the field from the index.',
+        ],
+      ],
+      [
         "an @ignore field in an index",
         "model Item {\n  id String @id\n  name String @ignore\n  @@index([name])\n}",
         [
@@ -2030,7 +2038,9 @@ describe("@ignore and @@ignore", () => {
     });
 
     it("refuses @ignore with arguments", () => {
-      expect(codes("model Item {\n  id String @id\n  s String @ignore(1)\n}", projection)).toHaveLength(1);
+      expect(codes("model Item {\n  id String @id\n  s String @ignore(1)\n}", projection)).toEqual([
+        ["PSL_INVALID_ATTRIBUTE_SYNTAX", 'Attribute "ignore" received too many positional arguments'],
+      ]);
     });
 
     it.each(["backrelation", "owner"] as const)(
@@ -2116,6 +2126,33 @@ describe("@ignore and @@ignore", () => {
       expect(models["User"]!.relations).toEqual({});
       expect(models["Profile"]!.relations).toEqual({});
       expect(Object.keys(models["Profile"]!.fields)).toEqual(["id", "userId"]);
+    });
+
+    it("treats an empty relation name as no name when it decides what @ignore removes", () => {
+      const result = interpret(
+        'model User {\n  id String @id\n  posts Post[]\n}\nmodel Post {\n  id String @id\n  authorId String\n  author User @relation("", fields: [authorId], references: [id]) @ignore\n}',
+        projection
+      );
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      const models = result.value.domain.namespaces[NS]!.models as unknown as Record<string, TestContractModel>;
+      expect(models["User"]!.relations).toEqual({});
+      expect(models["Post"]!.relations).toEqual({});
+    });
+
+    it("pairs a named owning relation with an unnamed backrelation, as without @ignore", () => {
+      const result = interpret(
+        'model User {\n  id String @id\n  posts Post[]\n}\nmodel Post {\n  id String @id\n  authorId String\n  author User @relation("Authored", fields: [authorId], references: [id])\n}',
+        projection
+      );
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      const models = result.value.domain.namespaces[NS]!.models as unknown as Record<string, TestContractModel>;
+      expect(models["User"]!.relations["posts"]).toMatchObject({
+        cardinality: "1:N",
+        on: { targetFields: ["authorId"] },
+      });
+      expect(Object.keys(models["Post"]!.relations)).toEqual(["author"]);
     });
 
     it("leaves an @@ignore model with relations out, keeping the foreign key of the other side", () => {
