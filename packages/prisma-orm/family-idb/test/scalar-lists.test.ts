@@ -133,8 +133,21 @@ describe("scalar lists", () => {
 
   // Upstream also reads tagged and null elements. Elements here are plain
   // literals or enum members, and list elements are never null.
+  it("rejects a tagged DateTime[] default element as list syntax IDB doesn't read", () => {
+    const result = psl("DateTime[]", "@default([date`2024-01-01T00:00:00Z`])");
+    expect(result.ok ? [] : result.failure.diagnostics.map((d) => d.code)).toEqual(["PSL_INVALID_ATTRIBUTE_SYNTAX"]);
+  });
+
+  it("keeps the written digits of PSL Decimal[] default elements", () => {
+    const result = psl("Decimal[]", "@default([1.5, 1.10, 12345678901234567890.123])");
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.execution?.mutations?.defaults.map((d) => d.onCreate)).toEqual([
+      { kind: "generator", id: "literal", params: { value: ["1.5", "1.10", "12345678901234567890.123"] } },
+    ]);
+  });
+
   it.each([
-    ["DateTime[]", "[date`2024-01-01T00:00:00Z`]"],
     ["Int[]", "[null]"],
     ["String[]", '["a", null]'],
     ["Role[]", "[null]"],

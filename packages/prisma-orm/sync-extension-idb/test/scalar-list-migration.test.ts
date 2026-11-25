@@ -16,77 +16,91 @@ const oldContract = defineContract({
   target: idbTarget,
   models: { Sample: { store: "samples", key: "id", fields: { id: "String", name: "String" } } },
 });
-const newContract = defineContract({
-  family: idbFamily,
-  target: idbTarget,
-  models: {
-    Sample: {
-      store: "samples",
-      key: "id",
-      fields: { id: "String", name: "String", tags: "String[]" },
-      defaults: { tags: [] },
+/** The same model with a required list added under the given default. */
+function contractWithTags(tags: string[]) {
+  return defineContract({
+    family: idbFamily,
+    target: idbTarget,
+    models: {
+      Sample: {
+        store: "samples",
+        key: "id",
+        fields: { id: "String", name: "String", tags: "String[]" },
+        defaults: { tags },
+      },
     },
-  },
-});
+  });
+}
 
-it("backfills stored rows and pending creates, preserves sparse patches, and tracks resolved list updates", async () => {
-  const options = { factory: new IDBFactory(), dbName: "scalar-list-migration", extensions: [idbSyncExtension] };
-  const baseline = buildContractSpaceFixture(oldContract);
-  const old = await createAutoMigratingSyncIdbClient({ ...options, contractSpace: baseline });
-  await asAccessors(old.orm)["samples"]!.create({ id: "create", name: "Created" });
-  await asAccessors(old.rawClient.orm)["samples"]!.create({ id: "update", name: "Before" });
-  await asAccessors(old.orm)["samples"]!.where({ id: "update" }).update({ name: "Edited" });
-  await old.close();
-  const planned = new IdbMigrationPlanner().plan({
-    contract: newContract,
-    fromContract: oldContract,
-    origin: null,
-    statements: [],
-    schema: null,
-    frameworkComponents: [],
-    spaceId: "app",
-    policy: { allowedOperationClasses: ["additive", "widening", "destructive", "data"] },
-  });
-  if (planned.kind !== "success") throw new Error("Expected a successful migration plan");
-  const ops = planned.plan.operations as unknown as MigrationPackage["ops"];
-  const metadata = {
-    from: oldContract.storage.storageHash,
-    to: newContract.storage.storageHash,
-    providedInvariants: [],
-    createdAt: "2026-10-18T00:00:00.000Z",
-  };
-  const current = await createAutoMigratingSyncIdbClient({
-    ...options,
-    contractSpace: {
-      contractJson: newContract,
-      headRef: { hash: newContract.storage.storageHash, invariants: [] },
-      migrations: [
-        ...baseline.migrations,
-        { dirName: "0001_lists", metadata: { ...metadata, migrationHash: computeMigrationHash(metadata, ops) }, ops },
-      ],
-    },
-  });
-  try {
-    const events = await scanAll(current, "_idb_sync_outbox");
-    expect(events.find((event) => event["operation"] === "create")?.["payload"]).toEqual({
-      id: "create",
-      name: "Created",
-      tags: [],
+it.each([
+  ["an empty", [] as string[]],
+  ["a nonempty", ["new", "unverified"]],
+])(
+  "backfills %s list default into stored rows and pending creates, preserves sparse patches, and tracks resolved list updates",
+  async (_, tags) => {
+    const newContract = contractWithTags(tags);
+    const options = {
+      factory: new IDBFactory(),
+      dbName: `scalar-list-migration-${tags.length}`,
+      extensions: [idbSyncExtension],
+    };
+    const baseline = buildContractSpaceFixture(oldContract);
+    const old = await createAutoMigratingSyncIdbClient({ ...options, contractSpace: baseline });
+    await asAccessors(old.orm)["samples"]!.create({ id: "create", name: "Created" });
+    await asAccessors(old.rawClient.orm)["samples"]!.create({ id: "update", name: "Before" });
+    await asAccessors(old.orm)["samples"]!.where({ id: "update" }).update({ name: "Edited" });
+    await old.close();
+    const planned = new IdbMigrationPlanner().plan({
+      contract: newContract,
+      fromContract: oldContract,
+      origin: null,
+      statements: [],
+      schema: null,
+      frameworkComponents: [],
+      spaceId: "app",
+      policy: { allowedOperationClasses: ["additive", "widening", "destructive", "data"] },
     });
-    expect(events.find((event) => event["operation"] === "update")?.["payload"]).toEqual({
-      key: "update",
-      patch: { name: "Edited" },
+    if (planned.kind !== "success") throw new Error("Expected a successful migration plan");
+    const ops = planned.plan.operations as unknown as MigrationPackage["ops"];
+    const metadata = {
+      from: oldContract.storage.storageHash,
+      to: newContract.storage.storageHash,
+      providedInvariants: [],
+      createdAt: "2026-10-18T00:00:00.000Z",
+    };
+    const current = await createAutoMigratingSyncIdbClient({
+      ...options,
+      contractSpace: {
+        contractJson: newContract,
+        headRef: { hash: newContract.storage.storageHash, invariants: [] },
+        migrations: [
+          ...baseline.migrations,
+          { dirName: "0001_lists", metadata: { ...metadata, migrationHash: computeMigrationHash(metadata, ops) }, ops },
+        ],
+      },
     });
-    expect(await asAccessors(current.orm)["samples"]!.findUnique("update")).toEqual({
-      id: "update",
-      name: "Edited",
-      tags: [],
-    });
-    await current.orm["samples"]!.where({ id: "update" }).update((u) => [u["tags"]!.push("queued")]);
-    expect(await scanAll(current, "_idb_sync_outbox")).toContainEqual(
-      expect.objectContaining({ payload: { key: "update", patch: { tags: ["queued"] } } })
-    );
-  } finally {
-    await current.close();
+    try {
+      const events = await scanAll(current, "_idb_sync_outbox");
+      expect(events.find((event) => event["operation"] === "create")?.["payload"]).toEqual({
+        id: "create",
+        name: "Created",
+        tags,
+      });
+      expect(events.find((event) => event["operation"] === "update")?.["payload"]).toEqual({
+        key: "update",
+        patch: { name: "Edited" },
+      });
+      expect(await asAccessors(current.orm)["samples"]!.findUnique("update")).toEqual({
+        id: "update",
+        name: "Edited",
+        tags,
+      });
+      await current.orm["samples"]!.where({ id: "update" }).update((u) => [u["tags"]!.push("queued")]);
+      expect(await scanAll(current, "_idb_sync_outbox")).toContainEqual(
+        expect.objectContaining({ payload: { key: "update", patch: { tags: [...tags, "queued"] } } })
+      );
+    } finally {
+      await current.close();
+    }
   }
-});
+);
