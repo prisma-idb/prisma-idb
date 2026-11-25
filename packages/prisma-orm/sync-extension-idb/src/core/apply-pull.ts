@@ -53,7 +53,12 @@
 import type { IdbTransactionScope } from "@prisma-idb/driver-idb/runtime";
 import type { IdbContract } from "@prisma-idb/client-idb/orm";
 import { getStoreName, getKeyPath, extractKeyFromRow } from "@prisma-idb/client-idb/orm";
-import { collectDeleteStoreNames, applyReferentialActionsForRow } from "@prisma-idb/client-idb/internal";
+import {
+  collectDeleteStoreNames,
+  applyReferentialActionsForRow,
+  createReferentialWrites,
+  verifyReferentialWrites,
+} from "@prisma-idb/client-idb/internal";
 import { decodeJsonRecord, validateRecord, validateKeyPath } from "@prisma-idb/target-idb/runtime";
 import type { SyncIdbClient } from "./sync-client";
 import { deleteRecord, putRecord } from "./raw-store";
@@ -191,8 +196,10 @@ async function applyLog<TContract extends IdbContract>(
       const identity = await resolvePullIdentity(scope, contract, log, key, record, meta);
       if (isDelete) {
         if (identity.row) {
-          await applyReferentialActionsForRow(scope, contract, log.model, identity.row);
+          const writes = createReferentialWrites("delete", log.model, identity.key);
+          await applyReferentialActionsForRow(scope, contract, log.model, identity.row, writes);
           await deleteRecord(scope, storeName, identity.key);
+          await verifyReferentialWrites(scope, contract, [writes]);
         }
       } else {
         await putRecord(scope, storeName, identity.record!);

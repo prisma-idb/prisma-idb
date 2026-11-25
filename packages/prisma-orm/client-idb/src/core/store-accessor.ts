@@ -33,6 +33,8 @@ import {
   type RelatedModelOf,
   type SelectedRow,
   type WhereFilter,
+  extractKeyFromRow,
+  getKeyPath,
   getRelation,
   getStoreName,
 } from "./types";
@@ -65,6 +67,8 @@ import { OpenTransaction } from "./open-transaction";
 import { assertBulkWriteIgnoresNothing } from "./bulk-write-guard";
 import {
   updateRowWithReferentialActions,
+  createReferentialWrites,
+  verifyReferentialWrites,
   collectOnUpdateEnforcementStoreNames,
   collectScalarFkStoreNames,
   executeBulkUpdateWithFkValidation,
@@ -807,6 +811,7 @@ export class IdbStoreAccessorImpl<
   }): Promise<DefaultModelRow<TContract, ModelName>> {
     const where = snapshotLookup(args.where as Record<string, unknown>);
     assertUniqueLookup(buildCatalog(this.#contract, this.#storeName, this.#modelName), where);
+    const keyPath = getKeyPath(this.#contract, this.#modelName);
     const whereExpr = shorthandToFilterExpr(where);
     assertKnownFilterFields(this.#contract, this.#modelName, whereExpr);
     const meta = this.#planMeta(this.#newGroupingKey());
@@ -878,7 +883,17 @@ export class IdbStoreAccessorImpl<
       assertEnumValues(this.#contract, this.#modelName, rowPatch);
       assertValidRecord(this.#contract, this.#modelName, "update", rowPatch);
       await validateScalarFks(scope, this.#contract, this.#modelName, rowPatch, existing);
-      const row = await updateRowWithReferentialActions(scope, this.#contract, this.#modelName, existing, rowPatch);
+      const key = extractKeyFromRow(existing, keyPath);
+      const writes = createReferentialWrites("update", this.#modelName, key);
+      const row = await updateRowWithReferentialActions(
+        scope,
+        this.#contract,
+        this.#modelName,
+        existing,
+        rowPatch,
+        writes
+      );
+      await verifyReferentialWrites(scope, this.#contract, [writes]);
       const updated = absentAsNull(this.#contract, this.#modelName)(row ?? existing);
       return updated as DefaultModelRow<TContract, ModelName>;
     });

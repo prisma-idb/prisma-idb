@@ -239,7 +239,7 @@ Depends on `adapter-idb` and `driver-idb`.
 | `./client`      | `createIdbClient({ contract, dbName })`, which builds the driver, adapter, runtime and ORM. Also `createManagedIdbClient`.      |
 | `./client-auto` | `createAutoMigratingIdbClient({ contractSpace, dbName, extensions })`, which migrates first. Also `createManagedAutoIdbClient`. |
 
-The `./internal` subpath shares `collectDeleteStoreNames` and `applyReferentialActionsForRow` with `sync-extension-idb`. Application code uses the three entry points above. Relation-mutation detection and `autoMigrate` remain source-only implementation helpers.
+The `./internal` subpath shares `collectDeleteStoreNames`, `applyReferentialActionsForRow`, `createReferentialWrites` and `verifyReferentialWrites` with `sync-extension-idb`. `applyReferentialActionsForRow` takes a required `writes` argument from `createReferentialWrites`; the caller passes it to `verifyReferentialWrites` after its own delete. Application code uses the three entry points above. Relation-mutation detection and `autoMigrate` remain source-only implementation helpers.
 
 All three are runtime only. `createManagedIdbClient(open, { enums, dbName })` wraps a client factory. The auto-migrating wrapper accepts the contract space directly.
 

@@ -491,13 +491,9 @@ describe("cascade cycle-guard with a compound-keyed self-referential model", () 
   });
 });
 
-// ── Regression: setDefault self-exclusion with a compound-keyed parent.
-//    `validateSetDefaultPatch`'s `excludeKey` comparison used to be a plain
-//    `!==`, which never matched a freshly-extracted compound array key
-//    against the caller's `excludeKey` array — the exclusion silently became
-//    a no-op, letting the still-present (about-to-be-deleted) row itself
-//    satisfy the "does the default value reference a real row" check, and a
-//    dangling FK would slip through unnoticed after the delete completed. ──
+// ── setDefault with a compound-keyed parent: the row being deleted must not
+//    satisfy its own children's default. The default is checked after the
+//    delete lands, when that row is gone. ──
 
 const compoundSetDefaultContract = defineContract({
   family: idbFamilyPack,
@@ -557,17 +553,14 @@ describe("setDefault self-exclusion with a compound-keyed parent", () => {
     // (about to be) the row being deleted itself; no other "system" row
     // could satisfy the default post-deletion.
     await orm["users"]!.create({ orgId: "org1", id: "system", name: "The System User" } as never);
-    await orm["posts"]!.create({ id: "p1", title: "Post", authorId: "u1" } as never);
+    await orm["posts"]!.create({ id: "p1", title: "Post", authorId: "system" } as never);
 
-    // The relation is enforced from `User`'s own field "id" against Post's
-    // fieldDefaults.authorId ("system"). Deleting the User row whose id is
-    // literally "system" is exactly the self-referencing case: at scan time
-    // (before the delete lands) that row is still physically present, so an
-    // exclusion bug would let it wrongly "validate" its own default.
+    // Deleting the User whose id is "system" resets p1.authorId to "system",
+    // the row that is going away, so the default references nothing.
     await expect(orm["users"]!.delete(["org1", "system"] as never)).rejects.toThrow(/does not reference a real row/i);
     // The whole transaction rolled back: user still present, post untouched.
     expect(await getAllRows(db, "users")).toHaveLength(1);
     const posts = await getAllRows(db, "posts");
-    expect(posts[0]?.["authorId"]).toBe("u1");
+    expect(posts[0]?.["authorId"]).toBe("system");
   });
 });
