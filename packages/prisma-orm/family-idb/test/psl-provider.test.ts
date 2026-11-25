@@ -344,6 +344,11 @@ describe("stripIdbExcludeAttributes", () => {
       "model A {\n  id String @id\n  // trailing\r  b String\r}\n",
     ],
     [
+      "a comment inside an empty argument list",
+      "model A {\n  id String @id\n  @@idb.exclude( // marker\n  )\n}\n",
+      "model A {\n  id String @id\n}\n",
+    ],
+    [
       "CRLF line endings",
       "model A {\r\n  id String @id\r\n  s String @idb.exclude\r\n  @@idb.exclude\r\n}\r\n",
       "model A {\r\n  id String @id\r\n  s String\r\n}\r\n",
@@ -368,7 +373,12 @@ describe("stripIdbExcludeAttributes", () => {
     expect(stripIdbExcludeAttributes(schema)).toBe(expected);
   });
 
-  it.each(["@idb.exclude( @unique", "@idb.exclude.", "@idb:exclude", "@idb.exclude(1)"])(
+  it("strips the colon-qualified spelling that IndexedDB recognizes", () => {
+    const schema = "model A {\n  id String @id\n  hidden String @idb:exclude\n  @@idb:exclude\n}\n";
+    expect(stripIdbExcludeAttributes(schema)).toBe("model A {\n  id String @id\n  hidden String\n}\n");
+  });
+
+  it.each(["@idb.exclude( @unique", "@idb.exclude.", "@idb::exclude", "@idb.exclude(1)"])(
     "leaves a malformed exclusion marker untouched: %s",
     (attribute) => {
       const schema = `model A {\n  id String @id ${attribute}\n  other String @idb.exclude\n}\n`;

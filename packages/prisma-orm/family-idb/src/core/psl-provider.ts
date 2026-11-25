@@ -34,10 +34,9 @@ export function stripIdbExcludeAttributes(schema: string): string {
     const name = attribute?.name();
     if (!name || name.path().join(".") !== IDB_EXCLUDE_ATTR) continue;
     // A recovered name or argument list can contain tokens from adjacent attributes.
-    const writtenName = schema.slice(name.syntax.offset, name.syntax.endOffset).replace(/\s/gu, "");
-    if (writtenName !== IDB_EXCLUDE_ATTR) continue;
+    if (significantText(name.syntax).replace(":", ".") !== IDB_EXCLUDE_ATTR) continue;
     const args = attribute?.argList();
-    if (args && schema.slice(args.syntax.offset, args.syntax.endOffset).replace(/\s/gu, "") !== "()") continue;
+    if (args && significantText(args.syntax) !== "()") continue;
     cuts.push(cutFor(schema, element.offset, element.endOffset));
   }
   // One pass over the cuts in source order; a cut that overlaps the previous one only extends it.
@@ -50,27 +49,29 @@ export function stripIdbExcludeAttributes(schema: string): string {
   return result + schema.slice(cursor);
 }
 
+function significantText(node: SyntaxNode): string {
+  let value = "";
+  for (const token of node.tokens()) {
+    if (token.kind === "Whitespace" || token.kind === "Newline" || token.kind === "Comment") continue;
+    value += token.text;
+  }
+  return value;
+}
+
 /** The text to remove for one attribute at `[start, end)`, so the line around it stays well formed. */
 function cutFor(schema: string, start: number, end: number): { start: number; end: number } {
-  const lineStart = Math.max(schema.lastIndexOf("\n", start - 1), schema.lastIndexOf("\r", start - 1)) + 1;
-  const carriageReturn = schema.indexOf("\r", end);
-  const lineFeed = schema.indexOf("\n", end);
-  const lineEnd = Math.min(
-    carriageReturn === -1 ? schema.length : carriageReturn,
-    lineFeed === -1 ? schema.length : lineFeed
-  );
-  const before = schema.slice(lineStart, start);
-  const after = schema.slice(end, lineEnd);
-  if (before.trim() === "" && after.trim() === "") {
-    const lineBreakLength = schema.startsWith("\r\n", lineEnd) ? 2 : 1;
-    return { start: lineStart, end: Math.min(schema.length, lineEnd + lineBreakLength) };
-  }
-  if (before.trim() === "") {
-    // Keep the indentation for any following attribute or comment.
-    return { start, end: end + (after.length - after.trimStart().length) };
-  }
-  // After a field or another attribute: drop it and the spaces before it.
-  return { start: start - (before.length - before.trimEnd().length), end };
+  const atLineBreak = (offset: number) => schema[offset] === "\n" || schema[offset] === "\r";
+  const isIndent = (offset: number) => !atLineBreak(offset) && schema[offset]?.trim() === "";
+  let before = start;
+  while (isIndent(before - 1)) before--;
+  if (before > 0 && !atLineBreak(before - 1)) return { start: before, end };
+
+  let after = end;
+  while (isIndent(after)) after++;
+  // Keep the indentation for any following attribute or comment.
+  if (after < schema.length && !atLineBreak(after)) return { start, end: after };
+  const lineBreakLength = schema.startsWith("\r\n", after) ? 2 : 1;
+  return { start: before, end: Math.min(schema.length, after + lineBreakLength) };
 }
 
 /** Place contract.json beside schema.prisma, or use the schema basename otherwise. */
