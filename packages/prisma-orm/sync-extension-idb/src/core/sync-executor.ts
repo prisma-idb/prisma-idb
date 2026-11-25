@@ -27,6 +27,7 @@
  *    `SyncInterceptingTransactionScope` below.
  */
 
+import { isKeyRange } from "./key-range";
 import { AsyncIterableResult } from "@prisma/orm-framework/components/runtime";
 import type { IdbQueryExecutor, IdbQueryExecutorWithTransaction } from "@prisma-idb/client-idb/orm";
 import type { IdbContract } from "@prisma-idb/client-idb/orm";
@@ -204,7 +205,7 @@ function storeNamesOf(body: IdbPlanBody): string[] {
  * clonable values), a range is flattened to its plain, cloneable bounds.
  */
 function serializableKey(key: IDBValidKey | IDBKeyRange): unknown {
-  if (!(key instanceof IDBKeyRange)) return key;
+  if (!isKeyRange(key)) return key;
   return { lower: key.lower, upper: key.upper, lowerOpen: key.lowerOpen, upperOpen: key.upperOpen };
 }
 
@@ -517,7 +518,7 @@ class SyncInterceptingTransactionScope implements IdbTransactionScope {
     const { contract } = this.#config;
     let before: Record<string, unknown>[];
     if (plan.kind === "update") {
-      if (foreignKeyFieldsIn(contract, model, plan.patch).length === 0 || plan.key instanceof IDBKeyRange) return;
+      if (foreignKeyFieldsIn(contract, model, plan.patch).length === 0 || isKeyRange(plan.key)) return;
       const row = await getRecord<Record<string, unknown>>(this.#inner, plan.storeName, plan.key as IDBValidKey);
       before = row ? [row] : [];
     } else if (plan.kind === "scan-write" && plan.write === "put-merged" && plan.patch) {
@@ -596,7 +597,7 @@ class SyncInterceptingTransactionScope implements IdbTransactionScope {
         // either way). IDBKeyRange itself is not structured-clonable, so it
         // can't be stored raw inside the outbox record's payload either —
         // normalize it to plain, cloneable bounds first.
-        const key = plan.key instanceof IDBKeyRange ? undefined : plan.key;
+        const key = isKeyRange(plan.key) ? undefined : plan.key;
         await this.#writeOutboxAndMeta([
           { modelName, operation: "delete", payload: { key: serializableKey(plan.key) }, key },
         ]);
