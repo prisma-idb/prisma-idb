@@ -6,7 +6,7 @@
 
 An update with a relation callback finds its row by the filter alone, so it now throws `IdbRelationUpdateError` on a collection with `orderBy()`, `skip()` or `take()`, as in Prisma 8.
 
-After `take(0)`, `update()` still validates its data and throws `IdbRecordValidationError` for an invalid patch, as Prisma does before it looks for a row. Before, it returned `null` without checking. Foreign-key and `onUpdate` checks need a row, so they still don't run. This is a behavior change for code that relied on `take(0).update(invalid)` returning `null`.
+After `take(0)`, `update()` validates its data and throws `IdbRecordValidationError` for an invalid patch. Foreign-key and `onUpdate` checks run only when the update selects a row.
 
 An update after `orderBy()` or `skip()` checks foreign keys on the row it picks, so it throws only when that row is written, as Prisma does. A plain update still checks the foreign keys in its data first, so it can throw for a missing parent when no row matches. `orderBy({})` sorts by nothing and now counts as no order for scalar updates too, as it already did for relation updates.
 

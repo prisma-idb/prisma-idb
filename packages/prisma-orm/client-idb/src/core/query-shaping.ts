@@ -31,8 +31,10 @@ export function buildRowComparator(
   fields: Readonly<Record<string, CatalogField>> = {}
 ): IdbRowComparator | undefined {
   if (orderBy === undefined) return undefined;
+  const entries = Object.entries(orderBy);
+  if (entries.length === 0) return undefined;
   return (a: Record<string, unknown>, b: Record<string, unknown>): number => {
-    for (const [field, dir] of Object.entries(orderBy)) {
+    for (const [field, dir] of entries) {
       const metadata = fields[field];
       const decimal = metadata?.codecId === "idb/decimal@1" && !metadata.collection;
       const present = a[field] != null && b[field] != null;

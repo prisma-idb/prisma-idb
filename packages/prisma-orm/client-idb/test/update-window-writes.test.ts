@@ -5,7 +5,7 @@
  * `take(0)` selects no row but still rejects invalid data, as Prisma does.
  */
 import "fake-indexeddb/auto";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { buildSymbolTable } from "@prisma/orm-framework/psl-parser";
 import { parse } from "@prisma/orm-framework/psl-parser/syntax";
 import { interpretPslDocumentToIdbContract } from "@prisma-idb/family-idb/contract-psl";
@@ -276,6 +276,25 @@ describe("windowed update() with list operations", () => {
 
     expect(updated).toMatchObject({ id: "s2", values: ["b", "c"] });
     expect((await rowsOf("samples")).map((row) => row["values"])).toEqual([["a"], ["b", "c"]]);
+  });
+
+  it("stops at the first row when orderBy has no fields", async () => {
+    client = await open(contract);
+    const samples = client.orm["samples"]!;
+    await samples
+      .createAll(Array.from({ length: 128 }, (_, rank) => ({ id: String(rank).padStart(3, "0"), rank, values: [] })))
+      .toArray();
+
+    const advance = vi.spyOn(IDBCursor.prototype, "continue");
+    try {
+      expect(await samples.orderBy({}).update((u) => [u["values"]!.push("first")])).toMatchObject({
+        id: "000",
+        values: ["first"],
+      });
+      expect(advance).not.toHaveBeenCalled();
+    } finally {
+      advance.mockRestore();
+    }
   });
 });
 
