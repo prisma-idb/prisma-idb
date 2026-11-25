@@ -342,7 +342,12 @@ function execUpdate(store: IDBObjectStore, plan: IdbUpdatePlan, onComplete: OnCo
   // Step 1: read the current record.
   const getReq = store.get(plan.key);
   getReq.onsuccess = guardCallback(plan, "PUT_FAILED", "update (put phase)", onError, () => {
-    const existing = (getReq.result as Row | undefined) ?? {};
+    const existing = getReq.result as Row | undefined;
+    // A missing row is not updated: `put` is the operation that inserts.
+    if (existing === undefined) {
+      onComplete([]);
+      return;
+    }
     // Step 2: shallow-merge patch onto existing record.
     const merged: Row = { ...existing, ...plan.patch };
     // Step 3: write the merged record back.
