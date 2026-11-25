@@ -1000,8 +1000,10 @@ async function rowExists(
  * row's values. Shared by `onDelete` cascade (`applyReferentialActionsForRow`)
  * and `onUpdate` cascade (`applyReferentialActionsForRowOnUpdate`).
  */
-function buildChildWhereFromRow(def: RelationDefinition, row: Record<string, unknown>): IdbFilterExpr {
-  return andExpr(def.targetFields.map((field, i) => fieldFilter(field, "eq", row[def.localFields[i]!])));
+function buildChildWhereFromRow(def: RelationDefinition, row: Record<string, unknown>): IdbFilterExpr | undefined {
+  const values = def.localFields.map((field) => row[field]);
+  if (values.some((value) => value === null || value === undefined)) return undefined;
+  return andExpr(def.targetFields.map((field, i) => fieldFilter(field, "eq", values[i])));
 }
 
 /** Reads a field's literal `@default(...)` value from `IdbModelStorage.fieldDefaults`, if declared. */
@@ -1179,6 +1181,7 @@ export async function applyReferentialActionsForRowOnUpdate(
       continue;
 
     const childWhere = buildChildWhereFromRow(def, oldRow);
+    if (!childWhere) continue;
 
     if (action === "restrict") {
       if (await childExists(scope, contract, meta, def, oldRow)) {
@@ -1613,8 +1616,17 @@ export function collectRelatedStoreNames(contract: IdbContract, modelName: strin
  * or a cycle of mutually-cascading models.
  */
 export function collectDeleteStoreNames(contract: IdbContract, modelName: string): string[] {
+  return collectDeleteActionScope(contract, modelName).storeNames;
+}
+
+function collectDeleteActionScope(
+  contract: IdbContract,
+  modelName: string
+): { storeNames: string[]; changesRootRows: boolean } {
+  const rootStore = getStoreName(contract, modelName);
   const stores = new Set<string>();
   const visitedModels = new Set<string>();
+  let changesRootRows = false;
 
   /** Collect cascade stores once per model so cyclic relations cannot recurse indefinitely. */
   function walk(mName: string): void {
@@ -1624,12 +1636,15 @@ export function collectDeleteStoreNames(contract: IdbContract, modelName: string
     for (const def of getChildEnforcementEdges(contract, mName)) {
       const action = def.onDelete;
       stores.add(def.relatedStoreName);
+      if (action !== "restrict" && !def.needsUniqueParent && def.relatedStoreName === rootStore) {
+        changesRootRows = true;
+      }
       if (action === "cascade") walk(def.relatedModelName);
     }
   }
 
   walk(modelName);
-  return [...stores];
+  return { storeNames: [...stores], changesRootRows };
 }
 
 /**
@@ -1678,6 +1693,7 @@ export async function applyReferentialActionsForRow(
       continue;
 
     const childWhere = buildChildWhereFromRow(def, row);
+    if (!childWhere) continue;
 
     if (action === "restrict") {
       const key = extractKeyFromRow(row, keyPath);
@@ -1764,7 +1780,7 @@ export async function executeDeleteAllWithReferentialActions(options: {
   where?: IdbFilterExpr;
 }): Promise<Record<string, unknown>[]> {
   const { executor, contract, modelName, where } = options;
-  const storeNames = collectDeleteStoreNames(contract, modelName);
+  const { storeNames, changesRootRows } = collectDeleteActionScope(contract, modelName);
   return withMutationScope(executor, storeNames, async (scope) => {
     const storeName = getStoreName(contract, modelName);
     const meta = makePlanMeta(contract);
@@ -1781,7 +1797,9 @@ export async function executeDeleteAllWithReferentialActions(options: {
     for (const row of rows) {
       const key = extractKeyFromRow(row, keyPath);
       // An earlier cascade can delete or rewrite a row selected by this bulk operation.
-      const [current] = await scope.execute({ meta, kind: "key-get", storeName, key } as IdbAtomicPlan);
+      const current = changesRootRows
+        ? (await scope.execute({ meta, kind: "key-get", storeName, key } as IdbAtomicPlan))[0]
+        : row;
       if (!current) continue;
       await applyReferentialActionsForRow(scope, contract, modelName, current, undefined, decimalParents);
       await scope.execute({ meta, kind: "delete", storeName, key } as IdbAtomicPlan);

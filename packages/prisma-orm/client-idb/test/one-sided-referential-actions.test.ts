@@ -303,6 +303,63 @@ it.each([false, true])(
   }
 );
 
+it("preserves unrelated children when a bulk delete clears a later parent's referenced field", async () => {
+  const db = await open(
+    defineContract({
+      family: idbFamilyPack,
+      target: idbTargetPack,
+      models: {
+        Parent: {
+          store: "parents",
+          key: "id",
+          fields: { id: "String", alias: "String", refCode: "String?" },
+          indexes: {
+            alias: { keyPath: "alias", unique: true },
+            refCode: { keyPath: "refCode", unique: true },
+          },
+          relations: {
+            owner: {
+              to: "Parent",
+              cardinality: "N:1",
+              on: { local: ["refCode"], target: ["alias"] },
+              onDelete: "setNull",
+            },
+          },
+        },
+        Child: {
+          store: "children",
+          key: "id",
+          fields: { id: "String", refCode: "String?" },
+          relations: {
+            parent: {
+              to: "Parent",
+              cardinality: "N:1",
+              on: { local: ["refCode"], target: ["refCode"] },
+              onDelete: "cascade",
+            },
+          },
+        },
+      },
+    })
+  );
+  const child = { id: "child", refCode: null };
+  await db.withTransaction(["parents", "children"], async (scope) => {
+    for (const record of [
+      { id: "a", alias: "target", refCode: "d-alias" },
+      { id: "b", alias: "b-alias", refCode: "target" },
+      { id: "d", alias: "d-alias", refCode: "b-alias" },
+    ]) {
+      await scope.execute({ kind: "put", storeName: "parents", record } as never);
+    }
+    await scope.execute({ kind: "put", storeName: "children", record: child } as never);
+  });
+  await db.orm["parents"]!.where((model) => model.id.in(["a", "b"]))
+    .deleteAll()
+    .toArray();
+  expect(await rows("parents")).toEqual([{ id: "d", alias: "d-alias", refCode: null }]);
+  expect(await rows("children")).toEqual([child]);
+});
+
 describe("one-sided foreign key: actions that keep the child", () => {
   it.each([
     { action: "setNull", contract: oneSided({ onDelete: "setNull", onUpdate: "setNull" }, "String?"), value: null },
