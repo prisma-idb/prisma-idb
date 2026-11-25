@@ -383,7 +383,9 @@ function excludedInverse(model: IdbModelNode, relation: IdbRelationNode, definit
 function isUniqueTuple(model: IdbModelNode, fields: readonly string[]): boolean {
   return (
     sameFieldSet(keyPathFields(model.key), fields) ||
-    model.indexes.some((index) => index.unique && sameFieldSet(keyPathFields(index.keyPath), fields))
+    model.indexes.some(
+      (index) => index.unique && !index.multiEntry && sameFieldSet(keyPathFields(index.keyPath), fields)
+    )
   );
 }
 
@@ -399,8 +401,8 @@ function isUniqueTuple(model: IdbModelNode, fields: readonly string[]): boolean 
  *   rows could point at one parent.
  * - `SetNull` writes `null` into every foreign-key field, so each must be optional.
  * - A `1:1` that isn't paired with a foreign key can't carry an action, because
- *   the client would never run it, and the fields it joins to must be unique,
- *   as upstream requires of every one-to-one, or a read could match several rows.
+ *   the client would never run it. Its target fields must be unique so a
+ *   singular read can match at most one row.
  */
 function validateRelationNullability(
   model: IdbModelNode,
@@ -414,6 +416,26 @@ function validateRelationNullability(
   const nullableIn = (owner: IdbModelNode | undefined, names: readonly string[]) =>
     names.map((name) => owner?.fields.find((field) => field.name === name)?.nullable);
   const side = relation.cardinality === "1:N" ? undefined : toOneSide(model, relation, target);
+
+  if (relation.cardinality === "1:1") {
+    if (
+      relation.localFields.length !== relation.targetFields.length ||
+      new Set(relation.localFields).size !== relation.localFields.length ||
+      new Set(relation.targetFields).size !== relation.targetFields.length
+    ) {
+      report("IDB_INVALID_RELATION", `${label} must use distinct, paired join fields on both sides.`, at);
+      return;
+    }
+    const referencedModel = side === "owner" ? target : side === "inverse" ? model : undefined;
+    const referencedFields = side === "owner" ? relation.targetFields : relation.localFields;
+    if (referencedModel && !isUniqueTuple(referencedModel, referencedFields)) {
+      report(
+        "IDB_INVALID_RELATION",
+        `${label} is one-to-one, but its referenced fields in "${referencedModel.modelName}" aren't unique. Add a unique index over those fields or reference its primary key.`,
+        at
+      );
+    }
+  }
 
   if (side === "owner") {
     if (relation.cardinality === "1:1" && !isUniqueTuple(model, relation.localFields)) {
