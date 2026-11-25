@@ -212,12 +212,13 @@ describe("observeTransaction", () => {
   });
 
   it.each(["beforeEncode", "activityStarted"] as const)(
-    "blocks the statement when %s throws synchronously, and reports it as failed",
+    "blocks the statement when %s throws synchronously, reports it as failed, and aborts the transaction",
     async (hook) => {
       const { fields, log } = makeFields();
       const { scope } = makeScope();
       const refused = new Error("refused");
       const ended: string[] = [];
+      const finalized: string[] = [];
       const tx = await observeTransaction(
         async () => scope,
         [
@@ -228,6 +229,9 @@ describe("observeTransaction", () => {
             activityEnded(activity: { kind: string }, result: { outcome: string }) {
               if (activity.kind === "statement") ended.push(result.outcome);
             },
+            activityFinalized(activity: { kind: string }, result: { outcome: string }) {
+              if (activity.kind === "transaction") finalized.push(result.outcome);
+            },
           }),
         ],
         fields
@@ -235,6 +239,10 @@ describe("observeTransaction", () => {
       await expect(tx.execute(plan)).rejects.toBe(refused);
       expect(scope.execute).not.toHaveBeenCalled();
       expect(ended).toEqual(["failed"]);
+      // A caller that catches the error cannot commit the transaction's other writes.
+      expect(scope.rollback).toHaveBeenCalledTimes(1);
+      await expect(tx.commit()).rejects.toThrow("aborted");
+      expect(finalized).toEqual(["rolled-back"]);
       expect(log.error).not.toHaveBeenCalled();
     }
   );

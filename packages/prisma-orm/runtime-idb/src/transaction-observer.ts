@@ -147,13 +147,15 @@ export async function observeTransaction(
         await ended;
       }
     },
-    rollback() {
-      rolledBack = true;
-      closed = true;
-      run.stopAcceptingChildren();
-      scope.rollback();
-    },
+    rollback,
   };
+
+  function rollback(): void {
+    rolledBack = true;
+    closed = true;
+    run.stopAcceptingChildren();
+    scope.rollback();
+  }
 
   /** Runs one statement as a child activity of the transaction. */
   function executeObserved(plan: IdbAtomicPlan): Promise<Awaited<ReturnType<IdbTransactionScope["execute"]>>> {
@@ -228,6 +230,9 @@ export async function observeTransaction(
       }
     } catch (error) {
       finish("failed", []);
+      // A failed execute() aborts the transaction, so a hook that blocks the statement does too.
+      // Otherwise a caller that catches the error could still commit the transaction's other writes.
+      rollback();
       throw error;
     }
     return scope.execute(plan).then(

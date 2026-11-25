@@ -40,7 +40,7 @@ import type { IdbLoweredPlan } from "@prisma-idb/adapter-idb/runtime";
  *   request. An async `beforeEncode` is warned about once per client.
  * - A synchronous throw from `activityStarted` or `beforeEncode` blocks the
  *   statement: it fails with that error before reaching IndexedDB, and the
- *   caller's rollback aborts the transaction.
+ *   transaction aborts, as it does when a statement fails.
  * - `onRow` runs only for statements that return rows, not for writes.
  * - `intercept` hooks are not consulted, so a cache never serves a read inside
  *   a transaction.
