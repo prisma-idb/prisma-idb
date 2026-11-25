@@ -24,7 +24,9 @@ export const OUTBOX_STORE = "_idb_sync_outbox";
 /**
  * The push order of outbox events: `{ seq, eventId }` rows whose `seq` comes
  * from IndexedDB's key generator. Each row is added in the transaction that
- * adds its event, so `seq` order is commit order, across reloads, clocks and tabs.
+ * adds its event, so `seq` order is commit order, across reloads, clocks and tabs. One worker
+ * pushes in that order, one cycle at a time; workers in different tabs do not
+ * coordinate their push cycles.
  */
 export const OUTBOX_ORDER_STORE = "_idb_sync_outbox_order";
 
