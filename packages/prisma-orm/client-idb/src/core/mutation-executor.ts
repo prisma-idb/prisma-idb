@@ -1734,13 +1734,19 @@ export async function applyReferentialActionsForRow(
   const keyPath = getKeyPath(contract, modelName);
   const key = extractKeyFromRow(row, keyPath);
   root ??= { operation: "delete", modelName, key, decimalParents: new Map() };
-  const rowKey = keyToken([getStoreName(contract, modelName), key]);
+  const storeName = getStoreName(contract, modelName);
+  const rowKey = keyToken([storeName, key]);
   if (visited.has(rowKey)) return;
   visited.add(rowKey);
 
   const meta = makePlanMeta(contract);
-  for (const def of getChildEnforcementEdges(contract, modelName)) {
-    const values = childJoinValues(def, row);
+  const edges = getChildEnforcementEdges(contract, modelName);
+  const rewritesParent = edges.length > 1 && collectDeleteActionScope(contract, modelName).changesRootRows;
+  for (const [index, def] of edges.entries()) {
+    const current =
+      rewritesParent && index > 0 ? (await scope.execute({ meta, kind: "key-get", storeName, key }))[0] : row;
+    if (!current) return;
+    const values = childJoinValues(def, current);
     if (!values) continue;
 
     const action = def.onDelete;
@@ -1751,7 +1757,7 @@ export async function applyReferentialActionsForRow(
     if (
       def.checksDecimalParent &&
       action !== "restrict" &&
-      !(await checkDecimalParent(scope, contract, meta, modelName, def, row, root.decimalParents))
+      !(await checkDecimalParent(scope, contract, meta, modelName, def, current, root.decimalParents))
     )
       continue;
 
@@ -1779,6 +1785,8 @@ export async function applyReferentialActionsForRow(
         children.length > 1 && collectDeleteActionScope(contract, def.relatedModelName).changesRootRows;
       for (const [index, candidate] of children.entries()) {
         const childKey = extractKeyFromRow(candidate, childKeyPath);
+        // The ancestor still needs to run its remaining actions before its original caller deletes it.
+        if (visited.has(keyToken([def.relatedStoreName, childKey]))) continue;
         const child =
           rewritesSiblings && index > 0
             ? (await scope.execute({ meta, kind: "key-get", storeName: def.relatedStoreName, key: childKey }))[0]

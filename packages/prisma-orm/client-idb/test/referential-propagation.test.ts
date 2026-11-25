@@ -231,6 +231,73 @@ it("uses current referenced fields when a recursive delete rewrote a selected si
   }
 });
 
+it.each(["setDefault", "cascade"] as const)(
+  "finishes the deleting row's later actions after a recursive %s",
+  async (action) => {
+    const client = await open(
+      defineContract({
+        family,
+        target,
+        models: {
+          Group: {
+            store: "groups",
+            key: "id",
+            fields: { id: "String", leaderId: "String?" },
+            indexes: { idLeader: { keyPath: ["id", "leaderId"], unique: true } },
+            fieldDefaults: { leaderId: "fallback" },
+            relations: {
+              nodes: {
+                to: "Node",
+                cardinality: "1:N",
+                onDelete: "cascade",
+                on: { local: ["id"], target: ["groupId"] },
+              },
+              leader: { to: "Node", cardinality: "N:1", onDelete: action, on: { local: ["leaderId"], target: ["id"] } },
+            },
+          },
+          Node: {
+            store: "nodes",
+            key: "id",
+            fields: { id: "String", groupId: "String" },
+            relations: { group: { to: "Group", cardinality: "N:1", on: { local: ["groupId"], target: ["id"] } } },
+          },
+          Leaf: {
+            store: "leaves",
+            key: "id",
+            fields: { id: "String", groupId: "String", leaderKey: "String?" },
+            relations: {
+              group: {
+                to: "Group",
+                cardinality: "N:1",
+                onUpdate: "cascade",
+                onDelete: "cascade",
+                on: { local: ["groupId", "leaderKey"], target: ["id", "leaderId"] },
+              },
+            },
+          },
+        },
+      })
+    );
+    try {
+      await client.orm["groups"]!.createAll([
+        { id: "g", leaderId: null },
+        { id: "other", leaderId: null },
+      ]).toArray();
+      await client.orm["nodes"]!.createAll([
+        { id: "a", groupId: "g" },
+        { id: "fallback", groupId: "other" },
+      ]).toArray();
+      await client.orm["groups"]!.where({ id: "g" }).update({ leaderId: "a" });
+      await client.orm["leaves"]!.create({ id: "l", groupId: "g", leaderKey: "a" });
+      await client.orm["groups"]!.delete("g");
+      expect(await client.orm["leaves"]!.findUnique("l")).toBeNull();
+      expect(await client.orm["nodes"]!.findUnique("fallback")).toMatchObject({ groupId: "other" });
+    } finally {
+      await client.close();
+    }
+  }
+);
+
 it("does not validate a cascade patch when there are no matching descendants", async () => {
   const client = await open(
     defineContract({
