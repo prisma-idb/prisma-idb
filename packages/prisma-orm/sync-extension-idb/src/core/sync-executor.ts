@@ -518,7 +518,7 @@ class SyncInterceptingTransactionScope implements IdbTransactionScope {
     const { contract } = this.#config;
     let before: Record<string, unknown>[];
     if (plan.kind === "update") {
-      if (foreignKeyFieldsIn(contract, model, plan.patch).length === 0 || plan.key instanceof IDBKeyRange) return;
+      if (foreignKeyFieldsIn(contract, model, plan.patch).length === 0 || isKeyRange(plan.key)) return;
       const row = await getRecord<Record<string, unknown>>(this.#inner, plan.storeName, plan.key as IDBValidKey);
       before = row ? [row] : [];
     } else if (plan.kind === "scan-write" && plan.write === "put-merged" && plan.patch) {
