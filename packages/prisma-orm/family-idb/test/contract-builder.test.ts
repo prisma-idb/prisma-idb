@@ -1073,6 +1073,74 @@ describe("defineContract — conflicting reciprocal relation actions", () => {
   });
 });
 
+describe.each(["full", "client"] as const)("defineContract — %s projection", (projection) => {
+  describe.each([
+    ["__proto__", "JavaScript reads it as an object's prototype rather than as a key"],
+    ["_generated", "contract emission drops every key with that name"],
+  ])("defineContract — the reserved name %s", (name, reason) => {
+    const define = (models: Record<string, ModelDef<string>>, enums?: Record<string, readonly string[]>) =>
+      defineContract({ family: idbFamilyPack, target: idbTargetPack, models, ...(enums ? { enums } : {}) } as never, {
+        projection,
+      });
+    const user = (overrides: Partial<ModelDef<string>> = {}): ModelDef<string> => ({
+      store: "users",
+      key: "id",
+      fields: { id: "String", email: "String" },
+      ...overrides,
+    });
+
+    it.each([
+      [
+        "an index",
+        () => define({ User: user({ indexes: { [name]: { keyPath: "email", unique: true } } }) }),
+        `Model "User" index name`,
+      ],
+      [
+        "a field",
+        () => define({ User: user({ fields: { id: "String", [name]: "String" } }) }),
+        `Model "User" field name`,
+      ],
+      ["a store", () => define({ User: user({ store: name }) }), `Model "User" store name`],
+      ["a model", () => define({ [name]: user() }), "Model name"],
+      [
+        "a relation",
+        () =>
+          define({
+            User: user(),
+            Post: {
+              store: "posts",
+              key: "id",
+              fields: { id: "String", authorId: "String" },
+              relations: { [name]: { to: "User", cardinality: "N:1", on: { local: ["authorId"], target: ["id"] } } },
+            },
+          }),
+        `Model "Post" relation name`,
+      ],
+      ["an enum", () => define({ User: user() }, { [name]: ["A"] }), "Enum name"],
+      ["an enum member", () => define({ User: user() }, { Role: [name] }), `Enum "Role" member name`],
+    ])("refuses %s with that name", (_, build, label) => {
+      expect(build).toThrow(`IDB_RESERVED_NAME: ${label} "${name}" can't be used: ${reason}. Rename it.`);
+    });
+  });
+});
+
+describe("defineContract — the contract marker store", () => {
+  it.each(["full", "client"] as const)("refuses a model that uses its name (%s projection)", (projection) => {
+    expect(() =>
+      defineContract(
+        {
+          family: idbFamilyPack,
+          target: idbTargetPack,
+          models: { User: { store: "_prisma_next_marker", key: "id", fields: { id: "String" } } },
+        },
+        { projection }
+      )
+    ).toThrow(
+      `IDB_RESERVED_NAME: Model "User" store name "_prisma_next_marker" can't be used: the client keeps its contract marker in a store with that name. Rename it.`
+    );
+  });
+});
+
 describe("defineContract — literal defaults", () => {
   it("ignores Object.prototype members when a field shares their name", () => {
     const contract = defineContract({

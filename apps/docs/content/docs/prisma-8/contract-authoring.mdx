@@ -51,6 +51,12 @@ TypeScript uses `"1:N"` for a backrelation and `"1:1"` or `"N:1"` for a to-one r
 
 Scalar and enum fields can be lists. Lists cannot be optional. An empty-list default makes the field optional on create. See the [scalar-list reference](/docs/prisma-8/scalar-list-reference). The [Schema & Config reference](/docs/prisma-8/schema) lists scalar types and IndexedDB key restrictions.
 
+### Reserved names
+
+Neither authoring path accepts `__proto__` or `_generated` as the name of a model, store, field, relation, index, enum or enum member. Both report `IDB_RESERVED_NAME`. JavaScript reads `__proto__` as an object's prototype rather than as a key, and contract emission drops every key named `_generated`. Both paths also refuse `_prisma_next_marker` as a store name, because the client always creates that store for the contract marker.
+
+With the sync extension, the client also creates stores whose names start with `_idb_sync_`. Authoring doesn't check your store names against that prefix, so don't use it.
+
 ## Equivalent contracts
 
 These definitions produce the same contract, including the implicit `userId` index and execution defaults.
@@ -166,6 +172,12 @@ export function buildContract(input: DefineContractInput) {
   }
 }
 ```
+
+### Names
+
+| Code                | Meaning                                                                                                                                      |
+| ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `IDB_RESERVED_NAME` | A model, store, field, relation, index, enum or enum member is named `__proto__` or `_generated`, or a store is named `_prisma_next_marker`. |
 
 ### Keys and indexes
 

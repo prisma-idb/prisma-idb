@@ -139,7 +139,8 @@ function interpretEnums(
   diagnostics: ContractSourceDiagnostic[],
   sourceMap: PslDefinitionSourceMap
 ): Record<string, IdbEnumNode> {
-  const enums: Record<string, IdbEnumNode> = {};
+  // Keyed by user-chosen names, so `__proto__` must stay an own key for validation to refuse it.
+  const enums: Record<string, IdbEnumNode> = Object.create(null);
 
   for (const block of Object.values(table.defaultNamespace.blocks)) {
     if (block.keyword !== "enum") continue;
@@ -334,9 +335,10 @@ function interpretModel(
   }
 
   // ── Walk fields ──────────────────────────────────────────────────────────────
-  const fields: Record<string, IdbFieldNode> = {};
-  const relations: Record<string, IdbRelationNode> = {};
-  const fieldDefaults: Record<string, string | number | boolean> = {};
+  // Keyed by user-chosen names, so `__proto__` must stay an own key for validation to refuse it.
+  const fields: Record<string, IdbFieldNode> = Object.create(null);
+  const relations: Record<string, IdbRelationNode> = Object.create(null);
+  const fieldDefaults: Record<string, string | number | boolean> = Object.create(null);
   const fksByTarget = new Map<string, { fieldName: string; localFields: string[]; targetFields: string[] }>();
   const fieldExecutionDefaults: FieldExecutionDefault[] = [];
   let autoIncrement = false;

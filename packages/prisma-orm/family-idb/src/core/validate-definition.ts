@@ -264,13 +264,6 @@ function validateIndexes(model: IdbModelNode, report: Report): void {
   const seen = new Set<string>();
   for (const index of [...model.indexes, ...foreignKeyIndexes(model)]) {
     const indexAt = [...at, "indexes", index.name];
-    if (index.name === "__proto__") {
-      report(
-        "IDB_INVALID_INDEX",
-        `Model "${model.modelName}" index name "__proto__" is lost during contract emission. Choose a different index name.`,
-        indexAt
-      );
-    }
     if (seen.has(index.name)) {
       report(
         "IDB_INVALID_INDEX",
@@ -470,10 +463,61 @@ function validateBackrelations(model: IdbModelNode, definition: IdbContractDefin
   }
 }
 
+/**
+ * Why `name` can't be a key in the emitted contract, if it can't. JavaScript
+ * reads `__proto__` as an object's prototype rather than as a key, and
+ * contract canonicalization drops every key named `_generated`, so a model,
+ * field, relation, store, index or enum with either name would vanish from
+ * the contract.
+ */
+function reservedNameReason(name: string): string | undefined {
+  if (name === "__proto__") return "JavaScript reads it as an object's prototype rather than as a key";
+  if (name === "_generated") return "contract emission drops every key with that name";
+  return undefined;
+}
+
+/** The store the client always creates to hold the contract marker, so no model can use its name. */
+const MARKER_STORE_NAME = "_prisma_next_marker";
+
+/** Refuse names the emitted contract can't keep as keys, and the store name the client keeps for its marker. */
+function validateReservedNames(definition: IdbContractDefinition, report: Report): void {
+  const check = (label: string, name: string, at: IdbDefinitionPath) => {
+    const reason = reservedNameReason(name);
+    if (reason !== undefined)
+      report("IDB_RESERVED_NAME", `${label} "${name}" can't be used: ${reason}. Rename it.`, at);
+  };
+  for (const node of definition.enums) {
+    check("Enum name", node.name, ["enums", node.name]);
+    for (const member of node.members) {
+      check(`Enum "${node.name}" member name`, member.name, ["enums", node.name, "members", member.name]);
+    }
+  }
+  for (const model of definition.models) {
+    const at = ["models", model.modelName];
+    check("Model name", model.modelName, at);
+    check(`Model "${model.modelName}" store name`, model.storeName, [...at, "storeName"]);
+    if (model.storeName === MARKER_STORE_NAME) {
+      report(
+        "IDB_RESERVED_NAME",
+        `Model "${model.modelName}" store name "${model.storeName}" can't be used: the client keeps its contract marker in a store with that name. Rename it.`,
+        [...at, "storeName"]
+      );
+    }
+    for (const field of model.fields)
+      check(`Model "${model.modelName}" field name`, field.name, [...at, "fields", field.name]);
+    for (const relation of model.relations) {
+      check(`Model "${model.modelName}" relation name`, relation.name, [...at, "relations", relation.name]);
+    }
+    for (const index of model.indexes)
+      check(`Model "${model.modelName}" index name`, index.name, [...at, "indexes", index.name]);
+  }
+}
+
 /** Check shared IDB authoring rules without assembling a contract or stopping at the first error. */
 export function validateIdbContractDefinition(definition: IdbContractDefinition): IdbDiagnostic[] {
   const diagnostics: IdbDiagnostic[] = [];
   const report: Report = (code, message, at) => diagnostics.push({ code, message, at });
+  validateReservedNames(definition, report);
   validateEnums(definition, report);
   for (const model of definition.models) {
     validateKeys(model, report);
