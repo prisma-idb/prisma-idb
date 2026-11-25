@@ -11,6 +11,7 @@ import idbFamilyPack from "@prisma-idb/family-idb/pack";
 import idbTargetPack from "@prisma-idb/target-idb/pack";
 import type { IdbReferentialAction } from "@prisma-idb/target-idb/pack";
 import type { IdbTransactionScope } from "@prisma-idb/driver-idb/runtime";
+import type { IdbFilterExpr } from "@prisma-idb/adapter-idb/runtime";
 import { createAutoMigratingIdbClient } from "../src/exports/client-auto";
 import type { IdbContract } from "../src/exports/orm";
 import { buildContractSpaceFixture } from "./_contract-space-fixture";
@@ -21,7 +22,7 @@ type Accessor = {
   createAll(data: Row[]): { toArray(): Promise<Row[]> };
   delete(key: unknown): Promise<Row>;
   deleteAll(): { toArray(): Promise<Row[]> };
-  where(filter: Row): Accessor;
+  where(filter: Row | ((model: { id: { in(values: string[]): IdbFilterExpr } }) => IdbFilterExpr)): Accessor;
   update(patch: Row): Promise<Row | null>;
   updateAll(patch: Row): { toArray(): Promise<Row[]> };
   all(): { toArray(): Promise<Row[]> };
@@ -207,6 +208,65 @@ it("preserves the rows when a one-sided action targets an ambiguous legacy Decim
   });
   expect(await rows("users")).toEqual(users);
   expect(await rows("posts")).toEqual([post]);
+});
+
+it("allows a cascade after an earlier bulk delete resolves the Decimal ambiguity", async () => {
+  const db = await open(
+    defineContract({
+      family: idbFamilyPack,
+      target: idbTargetPack,
+      models: {
+        Parent: {
+          store: "parents",
+          key: "id",
+          fields: { id: "String", code: "Decimal", status: "String", legacyStatus: "String" },
+          indexes: {
+            codeStatus: { keyPath: ["code", "status"], unique: true },
+            legacyStatus: { keyPath: "legacyStatus", unique: true },
+          },
+        },
+        Child: {
+          store: "children",
+          key: "id",
+          fields: { id: "String", code: "Decimal", status: "String" },
+          fieldDefaults: { status: "on" },
+          relations: {
+            parent: {
+              to: "Parent",
+              cardinality: "N:1",
+              on: { local: ["code", "status"], target: ["code", "status"] },
+              onDelete: "cascade",
+            },
+            legacy: {
+              to: "Parent",
+              cardinality: "N:1",
+              on: { local: ["status"], target: ["legacyStatus"] },
+              onDelete: "setDefault",
+            },
+          },
+        },
+      },
+    })
+  );
+  const records = [
+    { id: "a", code: "1", status: "on", legacyStatus: "unused-a" },
+    { id: "b", code: "2", status: "other", legacyStatus: "previous" },
+    { id: "c", code: "1.00", status: "on", legacyStatus: "unused-c" },
+    { id: "d", code: "1", status: "previous", legacyStatus: "on" },
+  ];
+  await db.withTransaction(["parents", "children"], async (scope) => {
+    for (const record of records) await scope.execute({ kind: "put", storeName: "parents", record } as never);
+    await scope.execute({
+      kind: "put",
+      storeName: "children",
+      record: { id: "child", code: "1", status: "previous" },
+    } as never);
+  });
+  await db.orm["parents"]!.where((model) => model.id.in(["a", "b", "c"]))
+    .deleteAll()
+    .toArray();
+  expect(await rows("parents")).toEqual([records[3]]);
+  expect(await rows("children")).toEqual([]);
 });
 
 describe("one-sided foreign key: actions that keep the child", () => {

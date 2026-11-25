@@ -193,7 +193,7 @@ The error names the parent's relation, here `User.todos`. If the parent doesn't 
 
 When the parent doesn't declare the inverse relation, `Cascade`, `SetNull` and `SetDefault` need the referenced fields to be the parent's primary key or a unique index, so that each child belongs to one parent. If they aren't unique, the delete or update fails while any child exists. A relation whose parent declares the inverse doesn't get this check: if its referenced fields aren't unique, the action applies to every child whose foreign key matches the old value, including children of another parent with the same value. Reference unique fields to avoid this.
 
-To find the children, the client reads the index on the child's foreign-key fields. A TypeScript relation with `index: false` has no such index, so each delete or referenced-field change reads the whole child store.
+The client uses the child’s foreign-key index when it can plan an indexed lookup. Numeric comparison of Decimal values may require a scan because IndexedDB indexes them as strings. A TypeScript relation with `index: false` also needs a scan when there is no other matching index.
 
 Both actions default to `Restrict`, matching Postgres, where an undeclared action is `NO ACTION`. So a synced app's client and server refuse the same changes. An update only triggers `onUpdate` when a referenced value actually changes.
 
