@@ -504,12 +504,13 @@ export function createIdbAttributeBinder(input: IdbAttributeBinderInput): IdbAtt
   const boundFields = new Map<FieldSymbol, BoundFieldAttributes>();
 
   function hasCompleteDefaultArgs(attribute: ResolvedAttribute<FieldAttributeAst>): boolean {
+    if (attribute.name !== "default" && attribute.name !== "onCreate" && attribute.name !== "onUpdate") return true;
     const args = attribute.node.argList();
     // A recovered list can contain only the prefix of a malformed argument.
     if (!args || args.rparen()) return true;
     diagnostics.push({
       code: "PSL_INVALID_ATTRIBUTE_SYNTAX",
-      message: "The @default argument list is incomplete.",
+      message: `The @${attribute.name} argument list is incomplete.`,
       sourceId,
       span: attribute.span,
     });
@@ -517,9 +518,7 @@ export function createIdbAttributeBinder(input: IdbAttributeBinderInput): IdbAtt
   }
 
   function checkExcludedFieldDefaults(field: FieldSymbol): void {
-    for (const attribute of field.attributes) {
-      if (attribute.name === "default") hasCompleteDefaultArgs(attribute);
-    }
+    for (const attribute of field.attributes) hasCompleteDefaultArgs(attribute);
   }
 
   /**
@@ -568,6 +567,10 @@ export function createIdbAttributeBinder(input: IdbAttributeBinderInput): IdbAtt
 
     for (const attribute of field.attributes) {
       const span = attribute.span;
+      if (!hasCompleteDefaultArgs(attribute)) {
+        failed = true;
+        continue;
+      }
       switch (attribute.name) {
         case "id":
           if (interpret(idFieldSpec, attribute, ctx) === undefined) failed = true;
@@ -583,10 +586,6 @@ export function createIdbAttributeBinder(input: IdbAttributeBinderInput): IdbAtt
           updatedAt ??= span;
           break;
         case "default": {
-          if (!hasCompleteDefaultArgs(attribute)) {
-            failed = true;
-            break;
-          }
           const value = interpret(defaultFieldSpec, attribute, ctx);
           if (value === undefined) failed = true;
           else defaultValue ??= { value: value.value, span };

@@ -229,6 +229,22 @@ function interpret(schema: string, projection?: ContractProjection) {
 }
 
 describe("excluded scalar attribute binding", () => {
+  it.each(["@onCreate(uuid(7e1))", "@onUpdate(nanoid(8e1))"])(
+    "rejects incomplete execution default arguments in either projection: %s",
+    (attribute) => {
+      for (const projection of ["full", "client"] as const) {
+        const exclusion = projection === "client" ? " @idb.exclude" : "";
+        const result = interpret(
+          `model Example {\n id String @id\n token String ${attribute}${exclusion}\n}`,
+          projection
+        );
+        expect(result.ok ? [] : result.failure.diagnostics).toContainEqual(
+          expect.objectContaining({ code: "PSL_INVALID_ATTRIBUTE_SYNTAX" })
+        );
+      }
+    }
+  );
+
   it.each([
     ["field", "model Hidden {\n id String @id\n score Float @idb.exclude @default(9e999)\n}"],
     ["model", "model Hidden {\n id String @id\n score Float @default(9e999)\n @@idb.exclude\n}"],
