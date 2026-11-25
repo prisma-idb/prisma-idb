@@ -83,22 +83,22 @@ describe("first-use marker check on a plain client", () => {
     }
   });
 
-  it("checks again after a newer version closes the connection, and warns with CONTRACT.MARKER_MISMATCH", async () => {
+  it("warns again after reopening a connection with the same mismatched marker", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const name = `marker-warning-${++dbCounter}`;
-    await migrateTo(name, 1, contract.storage.storageHash);
+    await migrateTo(name, 1, "another-contract");
     const client = createIdbClient({ contract, dbName: name });
     try {
       await client.orm["users"]!.all().toArray();
-      expect(warn).not.toHaveBeenCalled();
+      expect(String(warn.mock.calls[0]![0])).toContain("CONTRACT.MARKER_MISMATCH");
+      warn.mockClear();
 
-      // Another tab migrates the database to a newer contract.
-      await migrateTo(name, 2, "newer-contract");
+      await migrateTo(name, 2, "another-contract");
       await client.orm["users"]!.all().toArray();
       await client.orm["users"]!.all().toArray();
       expect(warn).toHaveBeenCalledTimes(1);
       expect(String(warn.mock.calls[0]![0])).toContain("CONTRACT.MARKER_MISMATCH");
-      expect(String(warn.mock.calls[0]![0])).toContain("newer-contract");
+      expect(String(warn.mock.calls[0]![0])).toContain("another-contract");
     } finally {
       await client.close();
     }

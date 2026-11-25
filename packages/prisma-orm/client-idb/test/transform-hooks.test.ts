@@ -93,26 +93,34 @@ describe("auto-migration extension transform hooks", () => {
     }
   });
 
-  it("aborts when a later hook throws from an IDB event continuation", async () => {
-    const extensions: IdbExtensionSpace[] = [
-      {
-        spaceId: "metadata",
-        contractSpace: metadataSpace,
-        onTransformRecords: (tx, _op, _model, done) => {
-          const request = tx.objectStore("metadata").put({ id: "hook", name: "first" });
-          request.onsuccess = () => done();
+  it.each([new Error("hook failed"), new DOMException("hook failed", "VersionError")])(
+    "preserves a hook failure thrown from an IDB event continuation: %s",
+    async (failure) => {
+      const extensions: IdbExtensionSpace[] = [
+        {
+          spaceId: "metadata",
+          contractSpace: metadataSpace,
+          onTransformRecords: (tx, _op, _model, done) => {
+            const request = tx.objectStore("metadata").put({ id: "hook", name: "first" });
+            request.onsuccess = () => done();
+          },
         },
-      },
-      {
-        spaceId: "observer",
-        contractSpace: observerSpace,
-        onTransformRecords: () => {
-          throw new Error("hook failed");
+        {
+          spaceId: "observer",
+          contractSpace: observerSpace,
+          onTransformRecords: () => {
+            throw failure;
+          },
         },
-      },
-    ];
-    await expect(
-      createAutoMigratingIdbClient({ contractSpace: appSpace, extensions, dbName: "hooks", factory: new IDBFactory() })
-    ).rejects.toThrow("hook failed");
-  });
+      ];
+      await expect(
+        createAutoMigratingIdbClient({
+          contractSpace: appSpace,
+          extensions,
+          dbName: "hooks",
+          factory: new IDBFactory(),
+        })
+      ).rejects.toBe(failure);
+    }
+  );
 });

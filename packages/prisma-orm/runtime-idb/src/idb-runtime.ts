@@ -188,6 +188,14 @@ function keyRangeIdentity(range: IDBKeyRange): Record<string, unknown> {
   };
 }
 
+function warnAboutMarker(...args: [message: string] | [message: string, cause: unknown]): void {
+  try {
+    console.warn(...args);
+  } catch {
+    // A warning handler must not block database use.
+  }
+}
+
 /**
  * IDB runtime — the `RuntimeCore` subclass for IndexedDB.
  *
@@ -229,34 +237,37 @@ class IdbRuntimeImpl extends RuntimeCore<IdbQueryPlan, IdbPlanBody, IdbMiddlewar
   #markerCheckedGeneration = 0;
 
   /** Reads the marker on first use of each connection and warns when it is missing or names another contract. */
-  #ensureMarkerChecked(): Promise<void> {
-    if (this.#verifyMarkerOption === false) return Promise.resolve();
-    const generation = this.#driver.connectionGeneration;
-    if (this.#markerCheck === null || this.#markerCheckedGeneration !== generation) {
-      this.#markerCheckedGeneration = generation;
-      this.#markerCheck = this.#checkMarker();
-    }
-    return this.#markerCheck;
+  async #ensureMarkerChecked(): Promise<void> {
+    if (this.#verifyMarkerOption === false) return;
+    let generation: number;
+    do {
+      generation = this.#driver.connectionGeneration;
+      if (this.#markerCheck === null || this.#markerCheckedGeneration !== generation) {
+        this.#markerCheckedGeneration = generation;
+        this.#markerCheck = this.#checkMarker();
+      }
+      await this.#markerCheck;
+    } while (generation !== this.#driver.connectionGeneration);
   }
 
   async #checkMarker(): Promise<void> {
-    let marker: Awaited<ReturnType<IdbRuntimeDriverInstance["readMarker"]>>;
     try {
-      marker = await this.#driver.readMarker();
+      const marker = await this.#driver.readMarker();
+      const expected = (this.#contract["storage"] as { storageHash?: unknown } | undefined)?.storageHash;
+      const expectedHash = typeof expected === "string" ? expected : "unknown";
+      if (marker === null) {
+        warnAboutMarker(
+          `[prisma-idb] CONTRACT.MARKER_MISSING: the database has no contract marker, so nothing says it matches the contract (storageHash ${expectedHash}). Open it with an auto-migrating client, or apply its migrations first.`
+        );
+      } else if (typeof marker.storageHash !== "string") {
+        warnAboutMarker("[prisma-idb] CONTRACT.MARKER_UNREADABLE: the contract marker has no valid storageHash");
+      } else if (marker.storageHash !== expected) {
+        warnAboutMarker(
+          `[prisma-idb] CONTRACT.MARKER_MISMATCH: the database was migrated to storageHash ${marker.storageHash}, but the client's contract has ${expectedHash}. Queries may read or write the wrong record shape.`
+        );
+      }
     } catch (error) {
-      // The check reports; it never blocks. The query itself reports a broken connection.
-      console.warn("[prisma-idb] CONTRACT.MARKER_UNREADABLE: could not read the contract marker", error);
-      return;
-    }
-    const expected = (this.#contract["storage"] as { storageHash?: unknown } | undefined)?.storageHash;
-    if (marker === null) {
-      console.warn(
-        `[prisma-idb] CONTRACT.MARKER_MISSING: the database has no contract marker, so nothing says it matches the contract (storageHash ${String(expected)}). Open it with an auto-migrating client, or apply its migrations first.`
-      );
-    } else if (marker.storageHash !== expected) {
-      console.warn(
-        `[prisma-idb] CONTRACT.MARKER_MISMATCH: the database was migrated to storageHash ${marker.storageHash}, but the client's contract has ${String(expected)}. Queries may read or write the wrong record shape.`
-      );
+      warnAboutMarker("[prisma-idb] CONTRACT.MARKER_UNREADABLE: could not read the contract marker", error);
     }
   }
 

@@ -865,6 +865,47 @@ describe("first-use marker check", () => {
     }
   });
 
+  it.each(["query", "transaction"] as const)(
+    "rechecks the new connection before the first %s if the marker read races an upgrade",
+    async (operation) => {
+      let generation = 0;
+      const readMarker = vi.fn(async () => {
+        if (generation === 0) generation = 1;
+        return makeMarker();
+      });
+      const scope = {} as IdbTransactionScope;
+      const runtime = createIdbRuntime({
+        adapter: makeMockAdapter(),
+        driver: makeMockDriver({ readMarker, transaction: async () => scope, connectionGeneration: () => generation }),
+        contract: TEST_CONTRACT,
+      });
+      if (operation === "query") await run(runtime);
+      else expect(await runtime.transaction(["User"])).toBe(scope);
+      expect(readMarker).toHaveBeenCalledTimes(2);
+    }
+  );
+
+  it("does not block a query if the stored marker is malformed or the warning handler throws", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {
+      throw new Error("log unavailable");
+    });
+    try {
+      const marker = makeMarker({ storageHash: { toString: null, valueOf: null } as unknown as string });
+      const readMarker = vi.fn(async () => marker);
+      const runtime = createIdbRuntime({
+        adapter: makeMockAdapter(),
+        driver: makeMockDriver({ readMarker }),
+        contract: TEST_CONTRACT,
+      });
+      await expect(run(runtime)).resolves.toBeUndefined();
+      await expect(run(runtime)).resolves.toBeUndefined();
+      expect(readMarker).toHaveBeenCalledTimes(1);
+      expect(String(warn.mock.calls[0]![0])).toContain("CONTRACT.MARKER_UNREADABLE");
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it("stays quiet for a matching marker, and skips the read when turned off", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {

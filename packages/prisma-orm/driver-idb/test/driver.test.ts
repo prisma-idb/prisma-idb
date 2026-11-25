@@ -111,10 +111,19 @@ describe("IdbRuntimeDriverInstance.db", () => {
 // ── A newer version closing the connection ───────────────────────────────────
 
 /** Opens `name` at `version`, creating `store`, as another client's upgrade would. */
-function upgradeTo(name: string, version: number, store: string): Promise<void> {
+function upgradeTo(name: string, version: number, store: string, storageHash?: string, space = "app"): Promise<void> {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(name, version);
-    request.onupgradeneeded = () => request.result.createObjectStore(store, { keyPath: "id" });
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      db.createObjectStore(store, { keyPath: "id" });
+      if (storageHash !== undefined) {
+        const markers = db.objectStoreNames.contains("_prisma_next_marker")
+          ? request.transaction!.objectStore("_prisma_next_marker")
+          : db.createObjectStore("_prisma_next_marker", { keyPath: "space" });
+        markers.put({ space, storageHash });
+      }
+    };
     request.onsuccess = () => {
       request.result.close();
       resolve();
@@ -167,6 +176,65 @@ describe("a connection closed by a newer version", () => {
     expect(await instance.db).toBe(first);
     const names = (await indexedDB.databases()).map((info) => info.name);
     expect(names).not.toContain(name);
+  });
+
+  it("rejects writes from an invalidated driver when the app contract changed", async () => {
+    const name = dbName();
+    await upgradeTo(name, 1, "users", "old");
+    const instance = createIDBRuntimeDriver(name).create();
+    await instance.db;
+    await upgradeTo(name, 2, "another", "new");
+    await expect(
+      rowsOf(instance, { meta, kind: "put", storeName: "users", record: { id: "u1" } } as IdbPutPlan)
+    ).rejects.toThrow(/contract markers changed/);
+    await expect(instance.close()).resolves.toBeUndefined();
+    const current = createIDBRuntimeDriver(name).create();
+    expect(await rowsOf(current, { meta, kind: "get-all", storeName: "users" } as IdbGetAllPlan)).toEqual([]);
+    await current.close();
+  });
+
+  it("does not reopen after the caller closes an invalidated driver", async () => {
+    const name = dbName();
+    const instance = createIDBRuntimeDriver(name).create();
+    await instance.db;
+    await upgradeTo(name, 2, "users");
+    await instance.close();
+    await expect(instance.db).rejects.toThrow(/closed/);
+  });
+
+  it("checks the contract spaces that existed at the last successful connection", async () => {
+    const name = dbName();
+    await upgradeTo(name, 1, "users", "app");
+    const instance = createIDBRuntimeDriver(name).create();
+    await instance.db;
+    await upgradeTo(name, 2, "extension", "extension-v1", "extension");
+    expect((await instance.db).version).toBe(2);
+    await upgradeTo(name, 3, "extensionMetadata", "extension-v2", "extension");
+    await expect(instance.db).rejects.toThrow(/contract markers changed/);
+    await instance.close();
+  });
+
+  it("does not recreate a database deleted while the driver was invalidated", async () => {
+    const name = dbName();
+    const instance = createIDBRuntimeDriver(name).create();
+    await instance.db;
+    await upgradeTo(name, 2, "users");
+    await new Promise<void>((resolve, reject) => {
+      const request = indexedDB.deleteDatabase(name);
+      request.onsuccess = () => resolve();
+      request.onerror = () => reject(request.error);
+    });
+    await expect(instance.db).rejects.toThrow(/deleted/);
+    expect((await indexedDB.databases()).map(({ name }) => name)).not.toContain(name);
+  });
+
+  it("uses an explicit version for the initial connection only", async () => {
+    const name = dbName();
+    const instance = createIDBRuntimeDriver(name, 1).create();
+    expect((await instance.db).version).toBe(1);
+    await upgradeTo(name, 2, "users");
+    expect((await instance.db).version).toBe(2);
+    await instance.close();
   });
 });
 
