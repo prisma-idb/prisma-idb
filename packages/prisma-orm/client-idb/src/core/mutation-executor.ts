@@ -959,9 +959,14 @@ async function checkDecimalParent(
     }
     cache.set(cacheKey, duplicates);
   }
-  if (duplicates.has(token) && (await childExists(scope, contract, meta, def, row))) {
-    throw new IdbDecimalIdentityConflictError(modelName);
-  }
+  if (!duplicates.has(token)) return;
+  const values = def.localFields.map((field) => row[field]);
+  if (!(await rowExists(scope, contract, meta, def.relatedModelName, def.targetFields, values))) return;
+  // Earlier writes in this transaction may have removed one of the aliases.
+  const where = andExpr(def.localFields.map((field, index) => fieldFilter(field, "eq", values[index])));
+  const matches = await readMutationRows(scope, contract, modelName, where, 2);
+  if (matches.length > 1) throw new IdbDecimalIdentityConflictError(modelName);
+  duplicates.delete(token);
 }
 
 /**
