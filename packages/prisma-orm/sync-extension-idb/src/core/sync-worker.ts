@@ -9,7 +9,7 @@ import {
   getNextBatch,
   getOldestPendingEvent,
   readForPush,
-  markSynced,
+  createOutboxBookkeeping,
   markFailed,
   pruneSyncedEvents,
   OUTBOX_STORE,
@@ -367,12 +367,13 @@ export function createSyncWorker<TContract extends IdbContract>(options: SyncWor
     await syncClient.withTransaction(
       [OUTBOX_STORE, OUTBOX_ORDER_STORE, VERSION_META_STORE, ...modelStores],
       async (scope) => {
+        const outbox = createOutboxBookkeeping(scope);
         for (const result of matched) {
           if (result.success) {
-            await markSynced(scope, result.id);
+            await outbox.markSynced(result.id);
             synced++;
           } else {
-            await markFailed(scope, result.id, result.error ?? "unknown error", result.retryable);
+            await outbox.markFailed(result.id, result.error ?? "unknown error", result.retryable);
             const reconciliation = reconciliations.get(result.id);
             if (reconciliation) await applyReconciliation(scope, reconciliation);
             failed++;

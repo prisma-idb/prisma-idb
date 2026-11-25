@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  createOutboxBookkeeping,
   getNextBatch,
   getOldestPendingEvent,
   markFailed,
@@ -266,6 +267,48 @@ describe("getOldestPendingEvent", () => {
 });
 
 describe("markSynced", () => {
+  it.each([false, true])(
+    "keeps another record's newly queued edit pending when marking events one by one (last event failed: %s)",
+    async (failed) => {
+      const { client } = await createTestSyncClient();
+      const recordA = 'User::"a"';
+      const recordB = 'User::"b"';
+      try {
+        await addOutboxEvents(client, [
+          outboxEvent({ id: "a1", versionMetaId: recordA }),
+          outboxEvent({ id: "b1", versionMetaId: recordB }),
+        ]);
+        await client.withTransaction(["_idb_sync_outbox", "_idb_sync_version_meta"], async (scope) => {
+          for (const [id, key] of [
+            [recordA, "a"],
+            [recordB, "b"],
+          ] as const) {
+            await scope.execute({
+              kind: "put",
+              storeName: "_idb_sync_version_meta",
+              record: { id, model: "User", key, lastAppliedChangeId: null, localChangePending: true },
+            } as never);
+          }
+          // Marking A reads the outbox while b2 doesn't exist yet.
+          await markSynced(scope, "a1");
+          await scope.execute({
+            kind: "add",
+            storeName: "_idb_sync_outbox",
+            record: outboxEvent({ id: "b2", versionMetaId: recordB }),
+          } as never);
+          // b2 still needs B's flag, so finishing the older b1 must not clear it.
+          if (failed) await markFailed(scope, "b1", "rejected", false);
+          else await markSynced(scope, "b1");
+        });
+        expect((await getVersionMeta(client, recordA))?.localChangePending).toBe(false);
+        expect((await getVersionMeta(client, recordB))?.localChangePending).toBe(true);
+        expect((await getNextBatch(client.rawClient)).map(({ id }) => id)).toEqual(["b2"]);
+      } finally {
+        await client.close();
+      }
+    }
+  );
+
   it("scans the outbox once for a whole batch, and keeps a record pending while another event for it is", async () => {
     const { client } = await createTestSyncClient();
     const metas = Array.from({ length: 30 }, (_, i) => `User::"u${i}"`);
@@ -298,7 +341,8 @@ describe("markSynced", () => {
         if (plan.kind === "cursor-scan" && plan.storeName === "_idb_sync_outbox") scans++;
         return execute(plan);
       };
-      for (const i of metas.keys()) await markSynced(scope, `e${i}`);
+      const outbox = createOutboxBookkeeping(scope);
+      for (const i of metas.keys()) await outbox.markSynced(`e${i}`);
     });
 
     expect(scans).toBe(1);
