@@ -1084,6 +1084,25 @@ describe("interpretPslDocumentToIdbContract", () => {
       ]);
     });
 
+    it("refuses a navigation field as a foreign key target", () => {
+      const result = interpret(`
+        model User {
+          id    String @id
+          posts Post[] @relation("Written")
+        }
+        model Post {
+          id       String @id
+          authorId String
+          author   User   @relation("Written", fields: [authorId], references: [posts])
+        }
+      `);
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.failure.diagnostics).toMatchObject([
+        { code: "IDB_INVALID_RELATION", message: expect.stringContaining('relation field "User.posts"') },
+      ]);
+    });
+
     it.each([
       ["onDelete", "__proto__"],
       ["onUpdate", "constructor"],

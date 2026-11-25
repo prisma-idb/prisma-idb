@@ -364,15 +364,22 @@ function interpretModel(
       const { references, onDelete: onDeleteRaw, onUpdate: onUpdateRaw } = relationAttr.value;
       const localFields = relationAttr.value.fields?.slice();
       const targetFields = references?.slice();
-      const unknownReference = targetFields?.find((name) => !Object.hasOwn(relatedModel.fields, name));
+      const invalidReference = targetFields?.find(
+        (name) => !Object.hasOwn(relatedModel.fields, name) || modelsByName.has(relatedModel.fields[name]!.typeName)
+      );
 
-      if (!localFields || !targetFields || unknownReference !== undefined) {
+      if (!localFields || !targetFields || invalidReference !== undefined) {
+        const relationName = `Relation field "${model.name}.${field.name}"`;
+        let message = `${relationName} must declare both fields and references in @relation.`;
+        if (invalidReference !== undefined) {
+          const targetName = `"${relatedModel.name}.${invalidReference}"`;
+          message = Object.hasOwn(relatedModel.fields, invalidReference)
+            ? `${relationName} references relation field ${targetName}. A foreign key must reference stored fields.`
+            : `${relationName} has unknown referenced field ${targetName}.`;
+        }
         diagnostics.push({
           code: "IDB_INVALID_RELATION",
-          message:
-            unknownReference === undefined
-              ? `Relation field "${model.name}.${field.name}" must declare both fields and references in @relation.`
-              : `Relation field "${model.name}.${field.name}" has unknown referenced field "${relatedModel.name}.${unknownReference}".`,
+          message,
           sourceId,
           span: field.span,
         });
