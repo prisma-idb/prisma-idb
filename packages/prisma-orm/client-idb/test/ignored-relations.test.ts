@@ -165,7 +165,9 @@ describe("@ignore and @@ignore at runtime", () => {
   });
 
   it("checks the foreign key of an ignored relation on create", async () => {
-    await expect(orm["posts"]!.create({ id: "p1", authorId: "missing" })).rejects.toThrow(/missing|author|User/);
+    await expect(orm["posts"]!.create({ id: "p1", authorId: "missing" })).rejects.toThrow(
+      "FK violation on relation 'author': no User with id='missing'"
+    );
     expect(await allRows(db, "posts")).toEqual([]);
   });
 
