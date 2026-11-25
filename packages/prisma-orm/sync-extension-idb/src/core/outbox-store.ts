@@ -21,6 +21,21 @@ export type { OutboxEvent };
 /** The object store holding pending and finished outbox events. */
 export const OUTBOX_STORE = "_idb_sync_outbox";
 
+/**
+ * The push order of outbox events: `{ seq, eventId }` rows whose `seq` comes
+ * from IndexedDB's key generator. Each row is added in the transaction that
+ * adds its event, so `seq` order is commit order, across reloads, clocks and tabs. One worker
+ * pushes in that order, one cycle at a time; workers in different tabs do not
+ * coordinate their push cycles.
+ */
+export const OUTBOX_ORDER_STORE = "_idb_sync_outbox_order";
+
+/** One row of {@link OUTBOX_ORDER_STORE}. */
+interface OutboxOrderRow {
+  readonly seq: number;
+  readonly eventId: string;
+}
+
 /** An event the next push may still send: not yet synced, and the server has not ruled it out. */
 const isPending = (event: OutboxEvent) => !event.synced && event.retryable;
 
@@ -60,8 +75,10 @@ function isInBackoff(event: OutboxEvent, backoff: RetryBackoff, now: Date): bool
 }
 
 /**
- * Every unsynced, retryable outbox event, oldest first (`createdAt`
- * ascending → FIFO ordering for push).
+ * Every unsynced, retryable outbox event in push order: the order store's
+ * sequence number ascending, which is the order the writes committed in.
+ * Events with no order row (queued before the order store existed) go first,
+ * and ties break on `createdAt` ascending.
  *
  * Filters `synced`/`retryable` in-memory over a full store scan — `boolean`
  * is not a valid IndexedDB key type (still an open spec proposal:
@@ -72,6 +89,12 @@ function isInBackoff(event: OutboxEvent, backoff: RetryBackoff, now: Date): bool
  */
 async function readPendingEvents(scope: IdbTransactionScope): Promise<OutboxEvent[]> {
   const at = (d: Date | null) => (d instanceof Date ? d.getTime() : 0);
+  const seqs = new Map(
+    (await scanStore<OutboxOrderRow>(scope, OUTBOX_ORDER_STORE)).map((row) => [row.eventId, row.seq])
+  );
+  // An event queued before the order store existed has no `seq`. It was queued
+  // before every event that has one, so it goes first, in `createdAt` order.
+  const seqOf = (event: OutboxEvent) => seqs.get(event.id) ?? -Infinity;
   return (
     (await scanStore(scope, OUTBOX_STORE))
       // Older outbox rows may lack nullable fields. Normalize reads without a backfill.
@@ -79,12 +102,12 @@ async function readPendingEvents(scope: IdbTransactionScope): Promise<OutboxEven
         (event) => absentAsNull(syncContract as unknown as IdbContract, "OutboxEvent")(event) as unknown as OutboxEvent
       )
       .filter(isPending)
-      .sort((a, b) => at(a.createdAt) - at(b.createdAt))
+      .sort((a, b) => seqOf(a) - seqOf(b) || at(a.createdAt) - at(b.createdAt))
   );
 }
 
 /**
- * Fetch the next batch of events to push: pending events, oldest first.
+ * Fetch the next batch of events to push: pending events in push order (see {@link readPendingEvents}).
  *
  * With `backoff`, the batch stops at the first event still waiting out its
  * retry delay. A later event never overtakes an earlier one, because it may
@@ -98,7 +121,7 @@ export async function getNextBatch<TContract extends IdbContract>(
   const { limit = 20, backoff, now = new Date() } = options ?? {};
   const batch: OutboxEvent[] = [];
 
-  await client.withTransaction([OUTBOX_STORE], async (scope) => {
+  await client.withTransaction([OUTBOX_STORE, OUTBOX_ORDER_STORE], async (scope) => {
     for (const event of await readPendingEvents(scope)) {
       if (batch.length === limit || (backoff && isInBackoff(event, backoff, now))) break;
       batch.push(event);
@@ -138,7 +161,7 @@ export async function getOldestPendingEvent<TContract extends IdbContract>(
   client: IdbClient<TContract>
 ): Promise<OutboxEvent | null> {
   let oldest: OutboxEvent | null = null;
-  await client.withTransaction([OUTBOX_STORE], async (scope) => {
+  await client.withTransaction([OUTBOX_STORE, OUTBOX_ORDER_STORE], async (scope) => {
     oldest = (await readPendingEvents(scope))[0] ?? null;
   });
   return oldest;
@@ -146,13 +169,22 @@ export async function getOldestPendingEvent<TContract extends IdbContract>(
 
 // ── Write helpers (inside an existing transaction scope) ──────────────────────
 
-/** Keep the newest 100 acknowledged events; failed and unsent events remain for retry or recovery. */
+/**
+ * Keep the newest 100 acknowledged events; failed and unsent events remain for retry or recovery.
+ * Order rows are needed only while an event can still be pushed, so rows of
+ * acknowledged or deleted events go. Needs {@link OUTBOX_STORE} and {@link OUTBOX_ORDER_STORE}.
+ */
 export async function pruneSyncedEvents(scope: IdbTransactionScope): Promise<void> {
-  const acknowledged = (await scanStore<OutboxEvent>(scope, OUTBOX_STORE))
+  const events = await scanStore<OutboxEvent>(scope, OUTBOX_STORE);
+  const acknowledged = events
     .filter((event) => event.synced === true)
     .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime() || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0));
   for (const event of acknowledged.slice(100)) {
     await deleteRecord(scope, OUTBOX_STORE, event.id);
+  }
+  const unsynced = new Set(events.filter((event) => event.synced !== true).map((event) => event.id));
+  for (const row of await scanStore<OutboxOrderRow>(scope, OUTBOX_ORDER_STORE)) {
+    if (!unsynced.has(row.eventId)) await deleteRecord(scope, OUTBOX_ORDER_STORE, row.seq);
   }
 }
 

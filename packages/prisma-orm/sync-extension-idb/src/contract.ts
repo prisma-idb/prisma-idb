@@ -1,4 +1,4 @@
-import { defineContract } from "@prisma-idb/family-idb/contract-ts";
+import { autoincrement, defineContract } from "@prisma-idb/family-idb/contract-ts";
 import idbFamily from "@prisma-idb/family-idb/pack";
 import idbTarget from "@prisma-idb/target-idb/pack";
 
@@ -26,6 +26,17 @@ export const syncContract = defineContract({
       },
       indexes: {
         byCreatedAt: { keyPath: "createdAt", unique: false },
+      },
+    },
+    // The outbox's push order. IndexedDB's key generator assigns `seq`, so the
+    // order survives reloads and doesn't depend on the clock or the tab.
+    OutboxOrder: {
+      store: "_idb_sync_outbox_order",
+      key: "seq",
+      fields: { seq: "Int", eventId: "String" },
+      defaults: { seq: autoincrement() },
+      indexes: {
+        byEventId: { keyPath: "eventId", unique: true },
       },
     },
     SyncMeta: {

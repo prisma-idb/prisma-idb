@@ -27,6 +27,9 @@ async function browserClient() {
       for (const store of ["bigUsers", "bigItems", "_idb_sync_outbox", "_idb_sync_version_meta"]) {
         request.result.createObjectStore(store, { keyPath: "id" });
       }
+      request.result
+        .createObjectStore("_idb_sync_outbox_order", { keyPath: "seq", autoIncrement: true })
+        .createIndex("byEventId", "eventId", { unique: true });
     };
     request.onsuccess = () => {
       request.result.close();

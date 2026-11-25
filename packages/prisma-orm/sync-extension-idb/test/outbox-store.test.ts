@@ -8,7 +8,7 @@ import {
   readForPush,
 } from "../src/core/outbox-store";
 import type { OutboxEvent, VersionMetaRecord } from "../src/types";
-import { createTestSyncClient, keyGet, scanAll } from "./helpers";
+import { asAccessors, createTestSyncClient, keyGet, scanAll } from "./helpers";
 
 async function getOutboxEvent(
   client: Awaited<ReturnType<typeof createTestSyncClient>>["client"],
@@ -103,6 +103,105 @@ describe("getNextBatch", () => {
     const batch = await getNextBatch(client.rawClient, { limit: 2 });
 
     expect(batch).toHaveLength(2);
+  });
+});
+
+describe("getNextBatch push order", () => {
+  it("keeps a reload's writes after earlier ones, even under an earlier clock", async () => {
+    const { client, dbName, contract } = await createTestSyncClient();
+    await asAccessors(client.orm)["users"]!.create({ id: "u1", name: "Parent" });
+    await client.close();
+
+    // A reload starts with fresh module state; this device's clock is now an hour behind.
+    vi.resetModules();
+    vi.useFakeTimers({ toFake: ["Date"], now: Date.now() - 3_600_000 });
+    try {
+      const { createSyncIdbClient } = await import("../src/exports/client");
+      const reloaded = createSyncIdbClient({ contract, dbName, trackedModels: "*" });
+      await asAccessors(reloaded.orm)["posts"]!.create({ id: "p1", title: "Child", authorId: "u1" });
+      const batch = await getNextBatch(reloaded.rawClient);
+      expect(batch.map((event) => event.entityType)).toEqual(["User", "Post"]);
+      await reloaded.close();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("the outbox order store", () => {
+  it("gets a row from each write path and loses the rows of acknowledged events when pruned", async () => {
+    const { client } = await createTestSyncClient();
+    const users = asAccessors(client.orm)["users"]!;
+    // A plain create takes the plan-level batch path; updateAll takes the transaction-scope path.
+    await users.create({ id: "u1", name: "One" });
+    await users.create({ id: "u2", name: "Two" });
+    await users.where({}).updateAll({ name: "Both" });
+
+    const events = await scanAll(client, "_idb_sync_outbox");
+    const orderRows = () => scanAll(client, "_idb_sync_outbox_order");
+    expect(events).toHaveLength(4);
+    expect((await orderRows()).map((row) => row["eventId"]).sort()).toEqual(events.map((event) => event["id"]).sort());
+
+    const [first] = await getNextBatch(client.rawClient, { limit: 1 });
+    await client.withTransaction(["_idb_sync_outbox", "_idb_sync_version_meta"], (scope) =>
+      markSynced(scope, first!.id)
+    );
+    await client.withTransaction(["_idb_sync_outbox", "_idb_sync_outbox_order"], pruneSyncedEvents);
+    const remaining = await orderRows();
+    expect(remaining).toHaveLength(3);
+    expect(remaining.map((row) => row["eventId"])).not.toContain(first!.id);
+  });
+});
+
+describe("getNextBatch push order after the order store was added", () => {
+  it("sends events queued before the upgrade, which have no order row, first", async () => {
+    const { client } = await createTestSyncClient();
+    await asAccessors(client.orm)["users"]!.create({ id: "u1", name: "Queued after" });
+    // Queued before the upgrade, so it has no order row, and its clock read later.
+    await addOutboxEvents(client, [outboxEvent({ id: "legacy", createdAt: new Date(Date.now() + 60_000) })]);
+    const batch = await getNextBatch(client.rawClient);
+    expect(batch.map((event) => event.id)[0]).toBe("legacy");
+    expect(batch).toHaveLength(2);
+  });
+});
+
+describe("getNextBatch push order with several legacy and new events", () => {
+  it("sends legacy events by createdAt, then new events by commit order whatever their createdAt", async () => {
+    const { client } = await createTestSyncClient();
+    const users = asAccessors(client.orm)["users"]!;
+    await users.create({ id: "u1", name: "First new" });
+    await users.create({ id: "u2", name: "Second new" });
+    // A reload under an earlier clock gives the second event an earlier createdAt than the first.
+    // One page load keeps createdAt increasing, so set the stored times directly.
+    await client.withTransaction(["_idb_sync_outbox"], async (scope) => {
+      for (const event of (await scope.execute({
+        kind: "cursor-scan",
+        storeName: "_idb_sync_outbox",
+      } as never)) as unknown as OutboxEvent[]) {
+        const id = (event.payload as { id?: string }).id;
+        const createdAt = new Date(id === "u1" ? "2030-01-01T00:00:00Z" : "2020-01-01T00:00:00Z");
+        await scope.execute({ kind: "put", storeName: "_idb_sync_outbox", record: { ...event, createdAt } } as never);
+      }
+    });
+    await addOutboxEvents(client, [
+      outboxEvent({ id: "legacy-late", createdAt: new Date("2040-01-01T00:00:00Z") }),
+      outboxEvent({ id: "legacy-early", createdAt: new Date("2040-01-01T00:00:00Z") }),
+    ]);
+    await addOutboxEvents(client, [outboxEvent({ id: "legacy-first", createdAt: new Date("2039-01-01T00:00:00Z") })]);
+
+    // The new events' stored times must be inverted, or sorting them by createdAt would also pass.
+    const createdAt = new Map(
+      (await scanAll(client, "_idb_sync_outbox")).map((event) => [
+        (event["payload"] as { id?: string }).id,
+        (event["createdAt"] as Date).getTime(),
+      ])
+    );
+    expect(createdAt.get("u2")!).toBeLessThan(createdAt.get("u1")!);
+
+    const batch = await getNextBatch(client.rawClient);
+    const ids = batch.map((event) => event.id);
+    expect(ids.slice(0, 3)).toEqual(["legacy-first", "legacy-early", "legacy-late"]);
+    expect(batch.slice(3).map((event) => (event.payload as { id?: string }).id)).toEqual(["u1", "u2"]);
   });
 });
 
@@ -412,7 +511,7 @@ describe("pruneSyncedEvents", () => {
       )
     );
 
-    await client.withTransaction(["_idb_sync_outbox"], pruneSyncedEvents);
+    await client.withTransaction(["_idb_sync_outbox", "_idb_sync_outbox_order"], pruneSyncedEvents);
 
     const retained = await scanAll(client, "_idb_sync_outbox");
     expect(retained).toHaveLength(100);
@@ -424,7 +523,7 @@ describe("pruneSyncedEvents", () => {
     const events = Array.from({ length: count }, (_, i) => outboxEvent({ id: `e${i}`, synced: true }));
     await addOutboxEvents(client, events);
 
-    await client.withTransaction(["_idb_sync_outbox"], pruneSyncedEvents);
+    await client.withTransaction(["_idb_sync_outbox", "_idb_sync_outbox_order"], pruneSyncedEvents);
 
     expect(await scanAll(client, "_idb_sync_outbox")).toEqual(expect.arrayContaining(events));
     expect(await scanAll(client, "_idb_sync_outbox")).toHaveLength(count);
@@ -442,7 +541,7 @@ describe("pruneSyncedEvents", () => {
     );
     await addOutboxEvents(client, events);
 
-    await client.withTransaction(["_idb_sync_outbox"], pruneSyncedEvents);
+    await client.withTransaction(["_idb_sync_outbox", "_idb_sync_outbox_order"], pruneSyncedEvents);
 
     const retained = await scanAll(client, "_idb_sync_outbox");
     expect(retained).toEqual(events.slice(4));
@@ -498,7 +597,7 @@ describe("pruneSyncedEvents", () => {
         await scope.execute({ kind: "put", storeName: "_idb_sync_version_meta", record } as never);
     });
 
-    await client.withTransaction(["_idb_sync_outbox"], pruneSyncedEvents);
+    await client.withTransaction(["_idb_sync_outbox", "_idb_sync_outbox_order"], pruneSyncedEvents);
 
     const retained = await scanAll(client, "_idb_sync_outbox");
     expect(retained.filter((e) => !e["synced"])).toEqual([...live].sort((a, b) => a.id.localeCompare(b.id)));
@@ -517,9 +616,9 @@ describe("pruneSyncedEvents", () => {
       ...live,
       ...Array.from({ length: 1_000 }, (_, i) => outboxEvent({ id: `history-${i}`, synced: true })),
     ]);
-    await client.withTransaction(["_idb_sync_outbox"], pruneSyncedEvents);
+    await client.withTransaction(["_idb_sync_outbox", "_idb_sync_outbox_order"], pruneSyncedEvents);
     const first = await scanAll(client, "_idb_sync_outbox");
-    await client.withTransaction(["_idb_sync_outbox"], pruneSyncedEvents);
+    await client.withTransaction(["_idb_sync_outbox", "_idb_sync_outbox_order"], pruneSyncedEvents);
     expect(await scanAll(client, "_idb_sync_outbox")).toEqual(first);
 
     const scannedRows: number[] = [];
@@ -537,7 +636,8 @@ describe("pruneSyncedEvents", () => {
     try {
       expect(await getNextBatch(client.rawClient, { limit: 30 })).toHaveLength(21);
       expect(await getNextBatch(client.rawClient, { limit: 30 })).toHaveLength(21);
-      expect(scannedRows).toEqual([122, 122]);
+      // Each read scans the order store (empty: these events were added directly) and the pruned outbox.
+      expect(scannedRows).toEqual([0, 122, 0, 122]);
     } finally {
       spy.mockRestore();
     }

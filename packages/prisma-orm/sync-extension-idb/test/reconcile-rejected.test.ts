@@ -9,6 +9,7 @@ import type { IdbContract } from "@prisma-idb/client-idb/orm";
 import { createSyncIdbClient } from "../src/exports/client";
 import {
   OUTBOX_STORE,
+  OUTBOX_ORDER_STORE,
   VERSION_META_STORE,
   SYNC_META_STORE,
   asAccessors,
@@ -110,7 +111,13 @@ describe("a push the server rejected for good", () => {
     const keyPath = compound ? ["tenant", "id"] : "id";
     const dbName = testDbName();
     (
-      await openTestDb(dbName, [{ name: "assets", keyPath }, OUTBOX_STORE, VERSION_META_STORE, SYNC_META_STORE])
+      await openTestDb(dbName, [
+        { name: "assets", keyPath },
+        OUTBOX_STORE,
+        OUTBOX_ORDER_STORE,
+        VERSION_META_STORE,
+        SYNC_META_STORE,
+      ])
     ).close();
     const contract = defineContract({
       family: idbFamilyPack,

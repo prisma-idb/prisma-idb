@@ -19,7 +19,7 @@ import type { IdbOrmClient, IdbOrmTransaction, IdbContract } from "@prisma-idb/c
 import { createIdbEnums } from "@prisma-idb/client-idb/internal";
 import type { IdbClient } from "@prisma-idb/client-idb/client";
 import { createEmitter } from "./emitter";
-import { countPendingEvents, getNextBatch, hasOutboxChanges } from "./outbox-store";
+import { countPendingEvents, getNextBatch, hasOutboxChanges, OUTBOX_ORDER_STORE } from "./outbox-store";
 import { SyncInterceptorExecutor } from "./sync-executor";
 import type { SyncWorkerOptions } from "./sync-worker";
 import { createSyncWorker } from "./sync-worker";
@@ -180,6 +180,7 @@ export function createSyncIdbClient<TContract extends IdbContract>(
     ...(options.factory !== undefined ? { factory: options.factory } : {}),
     ...(options.keyRange !== undefined ? { keyRange: options.keyRange } : {}),
   }).create();
+  explainMissingSyncStores(driver);
   const adapter = new IdbAdapter(idbCodecLookup);
   const runtime = createIdbRuntime({
     adapter,
@@ -275,4 +276,45 @@ export function createSyncIdbClient<TContract extends IdbContract>(
   };
 
   return client;
+}
+
+/**
+ * Makes a missing sync store fail with an error that says why. `createSyncIdbClient` doesn't migrate,
+ * so an app that applies migrations itself and skipped one of the sync extension's gets IndexedDB's
+ * bare `NotFoundError` from every tracked write and push. The newest store is the likeliest one missing.
+ */
+function explainMissingSyncStores(driver: ReturnType<ReturnType<typeof createIDBRuntimeDriver>["create"]>): void {
+  const explain = async (error: unknown, needsOrderStore: boolean): Promise<unknown> => {
+    if (!needsOrderStore) return error;
+    for (let cause = error; cause instanceof Error; cause = cause.cause) {
+      if (cause.name === "NotFoundError") {
+        const db = await driver.db.catch(() => undefined);
+        if (!db || db.objectStoreNames.contains(OUTBOX_ORDER_STORE)) return error;
+        return new Error(
+          `IDB: the database has no "${OUTBOX_ORDER_STORE}" store, which tracked writes and pushes use. ` +
+            "Apply the sync extension's migrations before you open createSyncIdbClient, or open the database " +
+            "with createAutoMigratingSyncIdbClient, which applies them.",
+          { cause: error }
+        );
+      }
+    }
+    return error;
+  };
+  const transaction = driver.transaction.bind(driver);
+  driver.transaction = (storeNames, mode) =>
+    transaction(storeNames, mode).catch(async (error: unknown) => {
+      throw await explain(error, storeNames.includes(OUTBOX_ORDER_STORE));
+    });
+  const execute = driver.execute.bind(driver);
+  driver.execute = (plan) => ({
+    async *[Symbol.asyncIterator]() {
+      try {
+        yield* execute(plan);
+      } catch (error) {
+        const needsOrderStore =
+          plan.kind === "batch" ? plan.storeNames.includes(OUTBOX_ORDER_STORE) : plan.storeName === OUTBOX_ORDER_STORE;
+        throw await explain(error, needsOrderStore);
+      }
+    },
+  });
 }

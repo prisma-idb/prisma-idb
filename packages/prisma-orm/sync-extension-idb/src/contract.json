@@ -12,6 +12,10 @@
       "model": "OutboxEvent",
       "namespace": "__unbound__"
     },
+    "_idb_sync_outbox_order": {
+      "model": "OutboxOrder",
+      "namespace": "__unbound__"
+    },
     "_idb_sync_version_meta": {
       "model": "VersionMeta",
       "namespace": "__unbound__"
@@ -121,6 +125,29 @@
               "storeName": "_idb_sync_outbox"
             }
           },
+          "OutboxOrder": {
+            "fields": {
+              "eventId": {
+                "nullable": false,
+                "type": {
+                  "codecId": "idb/string@1",
+                  "kind": "scalar"
+                }
+              },
+              "seq": {
+                "nullable": false,
+                "type": {
+                  "codecId": "idb/int32@1",
+                  "kind": "scalar"
+                }
+              }
+            },
+            "relations": {},
+            "storage": {
+              "keyPath": "seq",
+              "storeName": "_idb_sync_outbox_order"
+            }
+          },
           "SyncMeta": {
             "fields": {
               "id": {
@@ -199,7 +226,7 @@
         "id": "__unbound__"
       }
     },
-    "storageHash": "609932199fd5710d371fa966650a1806c1f587c912ff9d8c40f7b2efd84eed70",
+    "storageHash": "7d2923d8d5964d8ff9e6a0ceeb87819828634eaaecc037b3617c0d71e99587aa",
     "stores": {
       "_idb_sync_meta": {
         "keyPath": "id",
@@ -325,6 +352,35 @@
             }
           },
           "model": "OutboxEvent"
+        }
+      },
+      "_idb_sync_outbox_order": {
+        "autoIncrement": true,
+        "indexes": {
+          "byEventId": {
+            "keyPath": "eventId",
+            "unique": true
+          }
+        },
+        "keyPath": "seq",
+        "record": {
+          "fields": {
+            "eventId": {
+              "nullable": false,
+              "type": {
+                "codecId": "idb/string@1",
+                "kind": "scalar"
+              }
+            },
+            "seq": {
+              "nullable": false,
+              "type": {
+                "codecId": "idb/int32@1",
+                "kind": "scalar"
+              }
+            }
+          },
+          "model": "OutboxOrder"
         }
       },
       "_idb_sync_version_meta": {
