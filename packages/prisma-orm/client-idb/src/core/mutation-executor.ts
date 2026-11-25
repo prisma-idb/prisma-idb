@@ -522,6 +522,8 @@ async function applyChildOwnedMutation(
     return;
   }
 
+  // An incomplete parent key has no children to disconnect.
+  if ([...parentValues.values()].some((value) => value === null)) return;
   const setValues = Object.fromEntries(Array.from(parentValues.keys(), (field) => [field, null] as const));
   const parentJoinWhere = buildParentJoinWhere(parentValues);
   if (mutation.criteria.length === 0) {
@@ -885,21 +887,10 @@ function isDeclaredChildRelation(contract: IdbContract, modelName: string, def: 
 
 // ── Existence lookups ─────────────────────────────────────────────────────────
 
-/**
- * `true` if any child row matches the relation against `parentRow`'s values —
- * the existence check behind `restrict`. A null value references no child.
- */
-async function childExists(
-  scope: IdbTransactionScope,
-  contract: IdbContract,
-  meta: PlanMeta,
-  def: RelationDefinition,
-  parentRow: Record<string, unknown>,
-  additionalFilter?: IdbRowFilter
-): Promise<boolean> {
-  const values = def.localFields.map((field) => parentRow[field]);
-  if (values.some((value) => value === null || value === undefined)) return false;
-  return rowExists(scope, contract, meta, def.relatedModelName, def.targetFields, values, additionalFilter);
+/** A parent tuple with a null or missing value has no referencing children. */
+function childJoinValues(def: RelationDefinition, row: Record<string, unknown>): unknown[] | undefined {
+  const values = def.localFields.map((field) => row[field]);
+  return values.some((value) => value === null || value === undefined) ? undefined : values;
 }
 
 /** A one-sided mutating action needs a unique referenced key to identify the parent. */
@@ -908,9 +899,9 @@ async function refuseNonUniqueAction(
   contract: IdbContract,
   meta: PlanMeta,
   def: RelationDefinition,
-  parentRow: Record<string, unknown>
+  values: readonly unknown[]
 ): Promise<void> {
-  if (await childExists(scope, contract, meta, def, parentRow)) {
+  if (await rowExists(scope, contract, meta, def.relatedModelName, def.targetFields, values)) {
     throw new Error(
       `Cannot apply referential action on relation '${def.relationName}': the referenced fields must be unique.`
     );
@@ -988,14 +979,8 @@ async function rowExists(
   return lowered.finish(await executeMutationPlan(scope, lowered.idbPlan));
 }
 
-/**
- * Builds a filter matching a relation's children against one specific parent
- * row's values. Shared by `onDelete` cascade (`applyReferentialActionsForRow`)
- * and `onUpdate` cascade (`applyReferentialActionsForRowOnUpdate`).
- */
-function buildChildWhereFromRow(def: RelationDefinition, row: Record<string, unknown>): IdbFilterExpr | undefined {
-  const values = def.localFields.map((field) => row[field]);
-  if (values.some((value) => value === null || value === undefined)) return undefined;
+/** Match children against the parent's complete pre-change tuple. */
+function buildChildWhere(def: RelationDefinition, values: readonly unknown[]): IdbFilterExpr {
   return andExpr(def.targetFields.map((field, i) => fieldFilter(field, "eq", values[i])));
 }
 
@@ -1161,9 +1146,12 @@ export async function applyReferentialActionsForRowOnUpdate(
     );
     if (changedFields.length === 0) continue;
 
+    const values = childJoinValues(def, oldRow);
+    if (!values) continue;
+
     const action = def.onUpdate;
     if (def.needsUniqueParent && action !== "restrict") {
-      await refuseNonUniqueAction(scope, contract, meta, def, oldRow);
+      await refuseNonUniqueAction(scope, contract, meta, def, values);
       continue;
     }
     if (
@@ -1173,11 +1161,8 @@ export async function applyReferentialActionsForRowOnUpdate(
     )
       continue;
 
-    const childWhere = buildChildWhereFromRow(def, oldRow);
-    if (!childWhere) continue;
-
     if (action === "restrict") {
-      if (await childExists(scope, contract, meta, def, oldRow)) {
+      if (await rowExists(scope, contract, meta, def.relatedModelName, def.targetFields, values)) {
         throw new Error(
           `Cannot update ${modelName} '${keyToken(extractKeyFromRow(oldRow, keyPath))}': changing field(s) ${changedFields.join(", ")} ` +
             `would orphan child records on relation '${def.relationName}'. ` +
@@ -1187,6 +1172,7 @@ export async function applyReferentialActionsForRowOnUpdate(
       continue;
     }
 
+    const childWhere = buildChildWhere(def, values);
     if (action === "cascade") {
       const childPatch: Record<string, unknown> = {};
       for (let i = 0; i < def.localFields.length; i++) {
@@ -1638,9 +1624,12 @@ export async function applyReferentialActionsForRow(
 
   const meta = makePlanMeta(contract);
   for (const def of getChildEnforcementEdges(contract, modelName)) {
+    const values = childJoinValues(def, row);
+    if (!values) continue;
+
     const action = def.onDelete;
     if (def.needsUniqueParent && action !== "restrict") {
-      await refuseNonUniqueAction(scope, contract, meta, def, row);
+      await refuseNonUniqueAction(scope, contract, meta, def, values);
       continue;
     }
     if (
@@ -1650,14 +1639,11 @@ export async function applyReferentialActionsForRow(
     )
       continue;
 
-    const childWhere = buildChildWhereFromRow(def, row);
-    if (!childWhere) continue;
-
     if (action === "restrict") {
       const key = extractKeyFromRow(row, keyPath);
       const excludesSelf: IdbRowFilter | undefined =
         def.relatedModelName === modelName ? (child) => !keyEquals(extractKeyFromRow(child, keyPath), key) : undefined;
-      if (await childExists(scope, contract, meta, def, row, excludesSelf)) {
+      if (await rowExists(scope, contract, meta, def.relatedModelName, def.targetFields, values, excludesSelf)) {
         throw new Error(
           `Cannot delete ${modelName} '${keyToken(extractKeyFromRow(row, keyPath))}': child records exist on relation '${def.relationName}'. ` +
             "Delete those children first, or declare onDelete: Cascade, SetNull or SetDefault on the relation."
@@ -1666,6 +1652,7 @@ export async function applyReferentialActionsForRow(
       continue;
     }
 
+    const childWhere = buildChildWhere(def, values);
     if (action === "cascade") {
       const childKeyPath = getKeyPath(contract, def.relatedModelName);
       const children = await readMutationRows(scope, contract, def.relatedModelName, childWhere);
