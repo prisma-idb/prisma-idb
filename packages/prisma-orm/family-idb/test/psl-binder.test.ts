@@ -229,6 +229,19 @@ function interpret(schema: string, projection?: ContractProjection) {
 }
 
 describe("excluded scalar attribute binding", () => {
+  it.each([
+    ["field", "model Hidden {\n id String @id\n score Float @idb.exclude @default(9e999)\n}"],
+    ["model", "model Hidden {\n id String @id\n score Float @default(9e999)\n @@idb.exclude\n}"],
+  ])("rejects an incomplete default before applying client exclusions to a %s", (_kind, hidden) => {
+    const result = interpret(`model Visible {\n id String @id\n}\n${hidden}`, "client");
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.failure.diagnostics).toContainEqual(
+        expect.objectContaining({ code: "PSL_INVALID_ATTRIBUTE_SYNTAX" })
+      );
+    }
+  });
+
   it.each(["secret Json @default([now()]) @idb.exclude", "secret ServerOnly @default() @onCreate(1) @idb.exclude"])(
     "skips server-only attributes in the client projection: %s",
     (field) => {

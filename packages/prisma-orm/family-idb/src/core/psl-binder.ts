@@ -503,6 +503,25 @@ export function createIdbAttributeBinder(input: IdbAttributeBinderInput): IdbAtt
 
   const boundFields = new Map<FieldSymbol, BoundFieldAttributes>();
 
+  function hasCompleteDefaultArgs(attribute: ResolvedAttribute<FieldAttributeAst>): boolean {
+    const args = attribute.node.argList();
+    // A recovered list can contain only the prefix of a malformed argument.
+    if (!args || args.rparen()) return true;
+    diagnostics.push({
+      code: "PSL_INVALID_ATTRIBUTE_SYNTAX",
+      message: "The @default argument list is incomplete.",
+      sourceId,
+      span: attribute.span,
+    });
+    return false;
+  }
+
+  function checkExcludedFieldDefaults(field: FieldSymbol): void {
+    for (const attribute of field.attributes) {
+      if (attribute.name === "default") hasCompleteDefaultArgs(attribute);
+    }
+  }
+
   /**
    * What `@onCreate` and `@onUpdate` are checked against. The binder this file
    * creates doesn't resolve field types, so the field's contributed type is read
@@ -564,16 +583,8 @@ export function createIdbAttributeBinder(input: IdbAttributeBinderInput): IdbAtt
           updatedAt ??= span;
           break;
         case "default": {
-          const args = attribute.node.argList();
-          // A recovered list can contain only the prefix of a malformed argument.
-          if (args && !args.rparen()) {
+          if (!hasCompleteDefaultArgs(attribute)) {
             failed = true;
-            diagnostics.push({
-              code: "PSL_INVALID_ATTRIBUTE_SYNTAX",
-              message: "The @default argument list is incomplete.",
-              sourceId,
-              span,
-            });
             break;
           }
           const value = interpret(defaultFieldSpec, attribute, ctx);
@@ -632,6 +643,7 @@ export function createIdbAttributeBinder(input: IdbAttributeBinderInput): IdbAtt
     model: bindModel,
     field: bindField,
     excludedField: (model, field) => {
+      checkExcludedFieldDefaults(field);
       for (const marker of field.attributes.filter(({ name }) => name === IDB_EXCLUDE_ATTR)) {
         interpret(excludeFieldSpec, marker, { ...base, selfModel: model, field });
       }
@@ -642,10 +654,12 @@ export function createIdbAttributeBinder(input: IdbAttributeBinderInput): IdbAtt
     },
     isModelExcluded: (model) => {
       const markers = model.attributes.filter(({ name }) => name === IDB_EXCLUDE_ATTR);
+      if (markers.length === 0) return false;
       // Validate every marker, not just the first, so a repeated malformed exclusion cannot hide in either projection.
       // The model stays excluded either way: a malformed exclusion fails the contract through its diagnostic.
       for (const marker of markers) interpret(excludeModelSpec, marker, { ...base, selfModel: model });
-      return markers.length > 0;
+      for (const field of Object.values(model.fields)) checkExcludedFieldDefaults(field);
+      return true;
     },
     isFieldExcluded: (field) => field.attributes.some((attribute) => attribute.name === IDB_EXCLUDE_ATTR),
   };
