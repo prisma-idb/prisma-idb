@@ -169,20 +169,34 @@ describe("getNextBatch push order with several legacy and new events", () => {
   it("sends legacy events by createdAt, then new events by commit order whatever their createdAt", async () => {
     const { client } = await createTestSyncClient();
     const users = asAccessors(client.orm)["users"]!;
-    vi.useFakeTimers({ toFake: ["Date"], now: new Date("2030-01-01T00:00:00Z") });
-    try {
-      await users.create({ id: "u1", name: "First new" });
-      // The clock steps back, so the second new event's createdAt is earlier than the first's.
-      vi.setSystemTime(new Date("2020-01-01T00:00:00Z"));
-      await users.create({ id: "u2", name: "Second new" });
-    } finally {
-      vi.useRealTimers();
-    }
+    await users.create({ id: "u1", name: "First new" });
+    await users.create({ id: "u2", name: "Second new" });
+    // A reload under an earlier clock gives the second event an earlier createdAt than the first.
+    // One page load keeps createdAt increasing, so set the stored times directly.
+    await client.withTransaction(["_idb_sync_outbox"], async (scope) => {
+      for (const event of (await scope.execute({
+        kind: "cursor-scan",
+        storeName: "_idb_sync_outbox",
+      } as never)) as unknown as OutboxEvent[]) {
+        const id = (event.payload as { id?: string }).id;
+        const createdAt = new Date(id === "u1" ? "2030-01-01T00:00:00Z" : "2020-01-01T00:00:00Z");
+        await scope.execute({ kind: "put", storeName: "_idb_sync_outbox", record: { ...event, createdAt } } as never);
+      }
+    });
     await addOutboxEvents(client, [
       outboxEvent({ id: "legacy-late", createdAt: new Date("2040-01-01T00:00:00Z") }),
       outboxEvent({ id: "legacy-early", createdAt: new Date("2040-01-01T00:00:00Z") }),
     ]);
     await addOutboxEvents(client, [outboxEvent({ id: "legacy-first", createdAt: new Date("2039-01-01T00:00:00Z") })]);
+
+    // The new events' stored times must be inverted, or sorting them by createdAt would also pass.
+    const createdAt = new Map(
+      (await scanAll(client, "_idb_sync_outbox")).map((event) => [
+        (event["payload"] as { id?: string }).id,
+        (event["createdAt"] as Date).getTime(),
+      ])
+    );
+    expect(createdAt.get("u2")!).toBeLessThan(createdAt.get("u1")!);
 
     const batch = await getNextBatch(client.rawClient);
     const ids = batch.map((event) => event.id);
