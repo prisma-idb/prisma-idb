@@ -314,7 +314,7 @@ describe("applyPushEvent", () => {
     expect(await db.orm.public.User.first({ id: "u1" })).toEqual({ id: "u1", name: "Changed" });
   });
 
-  it("acknowledges creates that gain a nullable field and updates with equivalent date spellings", async () => {
+  it("rejects creates that gain a null field and accepts updates with equivalent date spellings", async () => {
     const db = await testDb();
     const adapter = createSqlSyncAdapter({ contract, syncServer: testSyncServer, contractCheck: "off" });
     await seed(db, { User: [{ id: "u1", name: "Ann" }], Board: [{ id: "b1", ownerId: "u1" }] });
@@ -338,7 +338,10 @@ describe("applyPushEvent", () => {
         scopeKey: "u1",
         events: [{ ...created, payload: { ...created.payload, dueAt: null } }],
       })
-    ).toEqual(expected(created.id));
+    ).toMatchObject({
+      ok: true,
+      results: [{ id: created.id, success: false, error: "Failed to apply event create", retryable: false }],
+    });
     expect(await send(updated)).toEqual(expected(updated.id));
     const replay = {
       ...updated,
@@ -348,7 +351,7 @@ describe("applyPushEvent", () => {
     expect(await db.orm.public.Changelog.all().toArray()).toHaveLength(2);
   });
 
-  it("distinguishes null from an omitted field with a non-null create default", () => {
+  it("distinguishes null from omission without changing the hash when a default is added", () => {
     const withDefault = structuredClone(contract);
     const table = (
       withDefault.storage as typeof contract.storage & {
@@ -357,12 +360,10 @@ describe("applyPushEvent", () => {
     ).namespaces.public.entries.table.Todo;
     table.columns.dueAt.default = { kind: "literal", value: "2026-01-02T03:04:05.000Z" };
     const event = { id: "todo", operation: "create" as const, payload: { id: "t1", boardId: "b1" } };
-    expect(
-      decodeWireEvent(withDefault, getKeyField, "Todo", {
-        ...event,
-        payload: { ...event.payload, dueAt: null },
-      }).payloadHash
-    ).not.toBe(decodeWireEvent(withDefault, getKeyField, "Todo", event).payloadHash);
+    const explicitNull = { ...event, payload: { ...event.payload, dueAt: null } };
+    const explicitNullHash = decodeWireEvent(withDefault, getKeyField, "Todo", explicitNull).payloadHash;
+    expect(explicitNullHash).not.toBe(decodeWireEvent(withDefault, getKeyField, "Todo", event).payloadHash);
+    expect(explicitNullHash).toBe(decodeWireEvent(contract, getKeyField, "Todo", explicitNull).payloadHash);
   });
 
   it("pins the persisted hash of decoded Date, BigInt, Bytes and nested Json values", () => {
@@ -457,7 +458,7 @@ describe("applyPushEvent", () => {
     expect(await appliedEvent(db, "evt2", identity)).toBe("none");
   });
 
-  describe("when a unique violation follows a concurrent commit of the same event", () => {
+  describe("when a retry starts before the original event commits", () => {
     /** The event's own transaction does not see the changelog row, as if the other request committed after its read. */
     function blindToChangelog(db: Awaited<ReturnType<typeof testDb>>, missingReads = Infinity) {
       const wrapTx = (tx: unknown) =>
@@ -528,10 +529,33 @@ describe("applyPushEvent", () => {
       expect(await db.orm.public.Changelog.all().toArray()).toHaveLength(1);
     });
 
+    it("acknowledges a retry whose original write committed before a lookup row was removed", async () => {
+      const db = await testDb();
+      const adapter = createSqlSyncAdapter({ contract, syncServer: testSyncServer, contractCheck: "off" });
+      await seed(db, {
+        User: [{ id: "u1", name: "Ann" }],
+        Lookup: [{ id: "lookup" }],
+        FoodEntry: [{ id: "food", userId: "u1" }],
+      });
+      const event = {
+        id: "food-update",
+        entityType: "FoodEntry",
+        operation: "update" as const,
+        payload: { key: "food", patch: { lookupId: "lookup" } },
+      };
+      const push = { scopeKey: "u1", events: [event] };
+      const success = { ok: true, results: [{ id: event.id, success: true }] };
+      expect(await adapter.applyPush(db, push)).toEqual(success);
+      await db.orm.public.FoodEntry.where({ id: "food" }).update({ lookupId: null });
+      await db.orm.public.Lookup.where({ id: "lookup" }).delete();
+      expect(await adapter.applyPush(blindToChangelog(db, 1), push)).toEqual(success);
+      expect(await db.orm.public.Changelog.all().toArray()).toHaveLength(1);
+    });
+
     it.each([
-      ["matches", null, { success: true }],
-      ["differs", "2026-01-02T03:04:05Z", { success: false, error: "Failed to apply event todo", retryable: false }],
-    ])("checks a stored hash that %s after the retry hits a unique violation", async (_, dueAt, expected) => {
+      ["matches", {}, { success: true }],
+      ["differs", { dueAt: null }, { success: false, error: "Failed to apply event todo", retryable: false }],
+    ])("checks a stored hash that %s after the retry hits a unique violation", async (_, patch, expected) => {
       const db = await testDb();
       const adapter = createSqlSyncAdapter({ contract, syncServer: testSyncServer, contractCheck: "off" });
       await seed(db, { User: [{ id: "u1", name: "Ann" }], Board: [{ id: "b1", ownerId: "u1" }] });
@@ -552,7 +576,7 @@ describe("applyPushEvent", () => {
       expect(
         await adapter.applyPushEvent(
           blindToChangelog(db),
-          { ...event, payload: { ...event.payload, dueAt } },
+          { ...event, payload: { ...event.payload, ...patch } },
           "Todo",
           check!.check,
           "u1"

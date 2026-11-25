@@ -9,7 +9,7 @@ import {
 } from "./authorization";
 import { lockRow, lockingRowReader } from "./row-lock";
 import { appendChangelogRow, appliedEvent, type PushEventIdentity } from "./changelog";
-import { isDeterministicWriteFailure, sqlState } from "./sqlstate";
+import { isDeterministicWriteFailure } from "./sqlstate";
 import { encodeWireKey, reviveWireKey, reviveWireValues, WireValidationError } from "./wire-values";
 import { hashPushPayload } from "./payload-hash";
 
@@ -133,7 +133,7 @@ export function decodeWireEvent(
   const decodedPayload = reviveWireValues(contract, model, wirePayload, keyField);
   let payloadHash: string;
   try {
-    payloadHash = hashPushPayload(contract, model, event.operation, decodedPayload);
+    payloadHash = hashPushPayload(decodedPayload);
   } catch {
     throw new WireValidationError("RECORD_VALIDATION_FAILURE", "Unable to fingerprint sync payload");
   }
@@ -320,10 +320,10 @@ export async function applyPushEventDecoded(
     // Log the real error server-side only — it can carry DB-internal detail
     // (constraint names, SQL fragments) that shouldn't reach the client.
     console.error(`push apply failed for event ${event.id}`, err);
-    // A timed-out first request can commit after the client's retry started:
-    // the retry then hits the first one's unique key. The event did apply.
+    // The original request can commit after the retry's first changelog read.
+    // Check that outcome before treating a SQL write failure as permanent.
     let retryable = !isDeterministicWriteFailure(err);
-    if (sqlState(err) === "23505") {
+    if (!retryable) {
       const applied = await wasApplied(db, event.id, identity, normalizeStoredKey);
       if (applied === "same") return { id: event.id, success: true };
       if (applied === undefined) retryable = true;

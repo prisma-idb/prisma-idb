@@ -184,7 +184,7 @@ Returned pull and rejected-push records contain only top-level fields from the c
 
 `db` is your Prisma 8 SQL client; it needs `.transaction(fn)` and `.orm.public.<Model>`.
 
-Push replay matches scope, model, key, operation and the decoded payload. On create, explicit null and omission hash alike for nullable fields without a create default. For defaulted fields and required JSON fields, the hash preserves explicit null. Decimal strings such as `"1.0"` and `"1.00"` hash differently. If a model rename, field rename, literal backfill, or other outbox transform changes the write between attempts, the retry is rejected as non-retryable even when the original write committed and its response was lost.
+Push replay matches scope, model, key, operation and the decoded payload. On create, explicit null and omission produce different hashes. Adding a nullable field to a queued create and filling it with null counts as a change. Decimal strings such as `"1.0"` and `"1.00"` hash differently. If a model rename, field rename, literal backfill, or other outbox transform changes the write between attempts, the retry is rejected as non-retryable even when the original write committed and its response was lost.
 
 Regenerate the PostgreSQL contract and apply the migration to add the nullable text column `Changelog.payloadHash` before deploying the adapter. The adapter refuses a contract without that field. Existing changelog rows with a null hash match on scope, model, key and operation.
 
