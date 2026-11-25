@@ -44,7 +44,7 @@ import {
   createMutationDefaultsCache,
   type MutationDefaultsCache,
 } from "./mutation-defaults";
-import { absentAsNull } from "@prisma-idb/target-idb/runtime";
+import { absentAsNull, isIgnoredRelation } from "@prisma-idb/target-idb/runtime";
 import { buildCatalog } from "./planner/catalog";
 import { preserveDecimalKeySpelling } from "./decimal-identity";
 import { lowerExists, lowerRows, lowerWrite, type WriteRequest } from "./planner/lower";
@@ -365,6 +365,11 @@ function parseMutationInput(
       continue;
     }
 
+    if (isIgnoredRelation(contract, modelName, fieldName)) {
+      throw new Error(
+        `Relation field "${fieldName}" on model "${modelName}" is hidden by @ignore or @@ignore, so nested writes can't use it.`
+      );
+    }
     if (!isRelationMutationCallback(value)) {
       throw new Error(`Relation field "${fieldName}" on model "${modelName}" expects a mutator callback`);
     }
