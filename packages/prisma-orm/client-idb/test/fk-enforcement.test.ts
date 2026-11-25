@@ -2485,6 +2485,61 @@ describe("one-to-one declared only on the foreign-key side", () => {
       await client.close();
     }
   });
+
+  it("opens stores for cascades from a nested connect through an inverse one-to-one", async () => {
+    const { client, orm } = await open(
+      defineContract({
+        family: idbFamilyPack,
+        target: idbTargetPack,
+        models: {
+          User: {
+            store: "users",
+            key: "id",
+            fields: { id: "String", code: "String" },
+            indexes: { code: { keyPath: "code", unique: true } },
+            relations: {
+              profile: { to: "Profile", cardinality: "1:1", on: { local: ["code"], target: ["userCode"] } },
+            },
+          },
+          Profile: {
+            store: "profiles",
+            key: "id",
+            fields: { id: "String", userCode: "String" },
+            indexes: { userCode: { keyPath: "userCode", unique: true } },
+            relations: { user: { to: "User", cardinality: "N:1", on: { local: ["userCode"], target: ["code"] } } },
+          },
+          Badge: {
+            store: "badges",
+            key: "id",
+            fields: { id: "String", profileCode: "String" },
+            relations: {
+              profile: {
+                to: "Profile",
+                cardinality: "N:1",
+                onUpdate: "cascade",
+                on: { local: ["profileCode"], target: ["userCode"] },
+              },
+            },
+          },
+        },
+      })
+    );
+    try {
+      await orm["users"]!.create({ id: "u1", code: "old" });
+      await orm["users"]!.create({ id: "u2", code: "new" });
+      await orm["profiles"]!.create({ id: "p", userCode: "old" });
+      await orm["badges"]!.create({ id: "b", profileCode: "old" });
+      await client.transaction(["users"], async (tx) => {
+        await tx["users"]!.where({ id: "u2" }).update({
+          profile: (rel: { connect(w: unknown): unknown }) => rel.connect({ id: "p" }),
+        } as never);
+      });
+      expect(await orm["profiles"]!.findUnique("p")).toMatchObject({ userCode: "new" });
+      expect(await orm["badges"]!.findUnique("b")).toMatchObject({ profileCode: "new" });
+    } finally {
+      await client.close();
+    }
+  });
 });
 
 // ── restrict and cascade on a 1:N ─────────────────────────────────────────────
