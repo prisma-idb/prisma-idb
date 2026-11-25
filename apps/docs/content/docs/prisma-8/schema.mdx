@@ -74,6 +74,8 @@ model Todo {
 const todos = await db.orm.todos.all();
 ```
 
+`@@map` and index names (`name:`, `map:`) decode escape sequences as upstream Prisma does. In a quoted string, `\n` represents a newline, and `\\` is one backslash. An unknown escape such as `\q` stays as written. A backtick string decodes only `` \` `` and `\\`. A store name that decodes differently from before refers to a different store. The migration drops the old store with its records. See [contract authoring](/docs/prisma-8/contract-authoring).
+
 No name in a schema, such as a model, store, field, relation, index or enum, can be `__proto__` or `_generated`, and no model can be stored in `_prisma_next_marker`. See [reserved names](/docs/prisma-8/contract-authoring#reserved-names).
 
 ## Primary keys
@@ -95,8 +97,6 @@ Every model needs a primary key.
 | `@@index([a, b])`  | A non-unique compound index. |
 
 Pass `name:` to choose an index's name, for example `@@index([userId], name: "byUser")`. Without one, the name is the field names joined with `_`, plus `_unique` for a unique index. A field can't appear twice in one index. Two indexes can't share a name, unless they cover the same fields; then they merge into one index, which is unique if either declaration is.
-
-Escape sequences in `@@map` and index names are decoded as in upstream Prisma, so `\n` is a newline rather than a backslash and an `n`, and `\\` is one backslash. An unknown escape such as `\q` stays as written.
 
 Like keys, indexed fields must be `String`, `Int`, `Float`, `DateTime`, `Decimal` or `Bytes`. IndexedDB silently leaves other values out of an index, so `contract emit` rejects an index on a `Boolean`, `BigInt` or `Json` field.
 
