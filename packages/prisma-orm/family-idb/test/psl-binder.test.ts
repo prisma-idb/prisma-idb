@@ -229,6 +229,13 @@ function interpret(schema: string, projection?: ContractProjection) {
 }
 
 describe("excluded scalar attribute binding", () => {
+  it("rejects a recovered list default with a missing bracket on an excluded field", () => {
+    const result = interpret("model Item {\n  id String @id\n  tags Int[] @idb.exclude @default([1)\n}", "client");
+    expect(result.ok ? [] : result.failure.diagnostics).toContainEqual(
+      expect.objectContaining({ code: "PSL_INVALID_ATTRIBUTE_SYNTAX" })
+    );
+  });
+
   it.each(["@onCreate(uuid(7e1))", "@onUpdate(nanoid(8e1))"])(
     "rejects incomplete execution default arguments in either projection: %s",
     (attribute) => {

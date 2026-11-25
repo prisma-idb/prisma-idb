@@ -506,8 +506,9 @@ export function createIdbAttributeBinder(input: IdbAttributeBinderInput): IdbAtt
   function hasCompleteDefaultArgs(attribute: ResolvedAttribute<FieldAttributeAst>): boolean {
     if (attribute.name !== "default" && attribute.name !== "onCreate" && attribute.name !== "onUpdate") return true;
     const args = attribute.node.argList();
-    // A recovered list can contain only the prefix of a malformed argument.
-    if (!args || args.rparen()) return true;
+    // A recovered expression can retain the attribute's closing parenthesis
+    // even when a nested list, object, or function call is incomplete.
+    if (!args || (args.rparen() && hasBalancedDelimiters(args.syntax))) return true;
     diagnostics.push({
       code: "PSL_INVALID_ATTRIBUTE_SYNTAX",
       message: `The @${attribute.name} argument list is incomplete.`,
@@ -515,6 +516,21 @@ export function createIdbAttributeBinder(input: IdbAttributeBinderInput): IdbAtt
       span: attribute.span,
     });
     return false;
+  }
+
+  function hasBalancedDelimiters(node: SyntaxNode): boolean {
+    const expected: ("RParen" | "RBracket" | "RBrace")[] = [];
+    for (const token of node.tokens()) {
+      if (token.kind === "LParen") expected.push("RParen");
+      else if (token.kind === "LBracket") expected.push("RBracket");
+      else if (token.kind === "LBrace") expected.push("RBrace");
+      else if (
+        (token.kind === "RParen" || token.kind === "RBracket" || token.kind === "RBrace") &&
+        expected.pop() !== token.kind
+      )
+        return false;
+    }
+    return expected.length === 0;
   }
 
   function checkExcludedFieldDefaults(field: FieldSymbol): void {
