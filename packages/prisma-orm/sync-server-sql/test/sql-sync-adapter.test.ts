@@ -67,6 +67,13 @@ describe("toSyncPushPayload", () => {
     expect(toSyncPushPayload("update", { key: "1", patch: { name: "Bo" } }, "id")).toEqual({ name: "Bo", id: "1" });
   });
 
+  it("reads only a patch's own key field when the key is named like an Object.prototype member", () => {
+    expect(toSyncPushPayload("update", { key: "1", patch: { name: "Bo" } }, "constructor")).toEqual({
+      name: "Bo",
+      constructor: "1",
+    });
+  });
+
   it("rejects patches that would override the event's ownership key", () => {
     expect(() => toSyncPushPayload("update", { key: "1", patch: { id: "2" } }, "id")).toThrow(/primary key/);
   });

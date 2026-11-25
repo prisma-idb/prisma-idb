@@ -155,6 +155,13 @@ describe("toWireEvent", () => {
     });
   });
 
+  it("sends an event for a model name that only Object.prototype has unchanged", () => {
+    for (const operation of ["create", "update", "delete"]) {
+      const unknown = event("constructor", operation, { key: "a", patch: { name: "b" } });
+      expect(toWireEvent(contract, unknown)).toBe(unknown);
+    }
+  });
+
   it("refuses a bigint or binary value in an unknown model's payload instead of letting JSON.stringify mangle it", () => {
     expect(() => toWireEvent(contract, event("Gone", "create", { id: "a", size: 5n }))).toThrow(WireEncodeError);
     expect(() =>

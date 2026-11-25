@@ -55,7 +55,7 @@ export function encodeJsonFieldValue(
   value: unknown
 ): unknown {
   const models = domainModelsAtDefaultNamespace(contract.domain);
-  const fields = Object.hasOwn(models, modelName) ? models[modelName]?.fields : undefined;
+  const fields = models[modelName]?.fields;
   const field = fields && Object.hasOwn(fields, fieldName) ? fields[fieldName] : undefined;
   if (!field) return value;
   return mapFields({ [fieldName]: value }, { [fieldName]: field }, contract, `Model "${modelName}"`, encodeScalar)[

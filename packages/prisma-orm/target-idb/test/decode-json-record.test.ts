@@ -1,7 +1,7 @@
 import type { ContractField, ContractWithDomain } from "@prisma/orm-framework/contract/types";
 import { describe, expect, it } from "vitest";
 import { validateRecord } from "../src/core/validate-record";
-import { decodeJsonRecord, encodeJsonRecord } from "../src/core/decode-json-record";
+import { decodeJsonRecord, encodeJsonFieldValue, encodeJsonRecord } from "../src/core/decode-json-record";
 
 const union: ContractField = {
   nullable: true,
@@ -106,6 +106,14 @@ describe("encodeJsonRecord", () => {
     const present = { toString: "title" };
     expect(encodeJsonRecord(typed, "Asset", present)).toEqual(present);
     expect(decodeJsonRecord(typed, "Asset", present)).toEqual(present);
+  });
+
+  it("passes a record through for a model or field name that only Object.prototype has", () => {
+    const record = { id: 1n };
+    expect(encodeJsonRecord(typed, "constructor", record)).toBe(record);
+    expect(decodeJsonRecord(typed, "constructor", record)).toBe(record);
+    expect(encodeJsonFieldValue(typed, "Asset", "constructor", 1n)).toBe(1n);
+    expect(encodeJsonFieldValue(typed, "Asset", "size", 1n)).toBe("1");
   });
 
   it("round-trips bigint, bytes, dates and list elements through JSON", () => {

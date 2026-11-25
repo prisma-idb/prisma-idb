@@ -1,3 +1,4 @@
+import pg from "pg";
 import { describe, expect, it, vi } from "vitest";
 import { createSyncFetchHandlers, ContractMismatchError } from "@prisma-idb/sync-extension-idb/client";
 import type { IdbContract } from "@prisma-idb/client-idb/orm";
@@ -232,6 +233,56 @@ describe("sync HTTP handlers", () => {
       ]);
     }
   );
+
+  it("refuses a Json value from PostgreSQL that JSON can't represent in a pulled or rejected record", async () => {
+    const sync = createSqlSync({
+      contract: testContract,
+      clientContract: testClientContract,
+      rootModel: "User",
+      db: testDb,
+      scopeKey: "u1",
+    });
+    const push = async (events: unknown[]) => sync.push(await pushRequest({ events }));
+    await push([
+      { id: "user", entityType: "User", operation: "create", payload: { id: "u1", name: "Ann" } },
+      {
+        id: "item",
+        entityType: "JsonItem",
+        operation: "create",
+        payload: { id: "j1", ownerId: "u1", value: 1, jsonValue: 1, optionalValue: null },
+      },
+    ]);
+    // PostgreSQL stores numbers beyond the double range, which JavaScript reads back as Infinity.
+    const sql = new pg.Client({ connectionString: process.env["DATABASE_URL"] });
+    await sql.connect();
+    try {
+      await sql.query(`UPDATE "JsonItem" SET "value" = '{"n": 1e400}' WHERE "id" = 'j1'`);
+    } finally {
+      await sql.end();
+    }
+
+    const pulled = await sync.pull(new Request(`https://sync.test/pull?storageHash=${context.storageHash}`));
+    expect(pulled.status).toBe(500);
+    expect(await pulled.json()).toEqual({
+      error: expect.stringMatching(/changelog entry \S+ \(JsonItem\): .*cannot be represented as JSON/),
+    });
+
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const rejected = await push([
+        { id: "move", entityType: "JsonItem", operation: "update", payload: { key: "j1", patch: { ownerId: "u2" } } },
+      ]);
+      expect(await rejected.json()).toEqual([
+        { id: "move", success: false, error: "SCOPE_VIOLATION", retryable: false },
+      ]);
+      expect(logged).toHaveBeenCalledWith(
+        "could not encode the rejected record for event move",
+        expect.objectContaining({ message: expect.stringMatching(/cannot be represented as JSON/) })
+      );
+    } finally {
+      logged.mockRestore();
+    }
+  });
 
   it("refuses a delete whose key is a client range, as a non-retryable key failure", async () => {
     const response = await handlers.push(

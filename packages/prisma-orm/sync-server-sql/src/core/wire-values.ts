@@ -25,8 +25,7 @@ const nativeJsonCodecs: Record<string, string> = {
 };
 
 function fieldsForModel(contract: SyncServerContract, model: string) {
-  const models = domainModelsAtDefaultNamespace(contract.domain);
-  return Object.hasOwn(models, model) ? models[model]?.fields : undefined;
+  return domainModelsAtDefaultNamespace(contract.domain)[model]?.fields;
 }
 
 /** Encode a native SQL key for comparison with a wire-form scope key. */

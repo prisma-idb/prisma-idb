@@ -76,7 +76,8 @@ async function handlePush(
       if (!result.record || model === undefined) return JSON.stringify(result);
       try {
         return JSON.stringify({ ...result, record: encodeWireValues(contract, model, result.record) });
-      } catch {
+      } catch (error) {
+        console.error(`could not encode the rejected record for event ${result.id}`, error);
         const { record: _unencodable, ...withoutRecord } = result;
         return JSON.stringify(withoutRecord);
       }
