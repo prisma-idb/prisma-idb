@@ -133,7 +133,7 @@ export function decodeWireEvent(
   const decodedPayload = reviveWireValues(contract, model, wirePayload, keyField);
   let payloadHash: string;
   try {
-    payloadHash = hashPushPayload(event.operation, decodedPayload);
+    payloadHash = hashPushPayload(contract, model, event.operation, decodedPayload);
   } catch {
     throw new WireValidationError("RECORD_VALIDATION_FAILURE", "Unable to fingerprint sync payload");
   }
@@ -247,9 +247,13 @@ export async function applyPushEventDecoded(
 
   try {
     return await (db as { transaction<T>(fn: (tx: unknown) => Promise<T>): Promise<T> }).transaction(async (tx) => {
-      const applied = await appliedEvent(tx, event.id, identity, normalizeStoredKey);
-      if (applied === "same") return { id: event.id, success: true };
-      if (applied === "other") return reusedEventId;
+      const replayResult = async (): Promise<SqlPushResult | undefined> => {
+        const applied = await appliedEvent(tx, event.id, identity, normalizeStoredKey);
+        if (applied === "same") return { id: event.id, success: true };
+        return applied === "other" ? reusedEventId : undefined;
+      };
+      const applied = await replayResult();
+      if (applied) return applied;
 
       // The decoded payload carries the key; for an update, everything else is the patch.
       const { [keyField]: nativeKey, ...patch } = event.payload;
@@ -268,21 +272,23 @@ export async function applyPushEventDecoded(
       // Authorization decides how to handle a missing target on both dialects.
       if (event.operation !== "create" && !(await lockRow(db, tx, contract, model, nativeKey, "update"))) {
         // A concurrent delete can commit while this lock is waiting.
-        const replay = await appliedEvent(tx, event.id, identity, normalizeStoredKey);
-        if (replay === "same") return { id: event.id, success: true };
-        if (replay === "other") return reusedEventId;
+        const replay = await replayResult();
+        if (replay) return replay;
       }
       const startRow = event.operation === "create" ? event.payload : await plainReadRow(model, nativeKey);
-      if (!(await isAuthorized(startRow))) return scopeViolation;
+      // The original write may have committed while this retry waited on a lock.
+      if (!(await isAuthorized(startRow))) return (await replayResult()) ?? scopeViolation;
 
       if (event.operation !== "delete") {
         const candidate = event.operation === "create" ? event.payload : { ...startRow, ...patch };
-        if (event.operation === "update" && !(await isAuthorized(candidate))) return scopeViolation;
+        if (event.operation === "update" && !(await isAuthorized(candidate))) {
+          return (await replayResult()) ?? scopeViolation;
+        }
         if (
           check.kind === "scoped" &&
           !(await checkParentReferences(readRow, contract, model, check, candidate, parents))
         ) {
-          return scopeViolation;
+          return (await replayResult()) ?? scopeViolation;
         }
       }
 

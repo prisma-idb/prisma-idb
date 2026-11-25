@@ -348,6 +348,23 @@ describe("applyPushEvent", () => {
     expect(await db.orm.public.Changelog.all().toArray()).toHaveLength(2);
   });
 
+  it("distinguishes null from an omitted field with a non-null create default", () => {
+    const withDefault = structuredClone(contract);
+    const table = (
+      withDefault.storage as typeof contract.storage & {
+        namespaces: { public: { entries: { table: { Todo: { columns: { dueAt: { default?: unknown } } } } } } };
+      }
+    ).namespaces.public.entries.table.Todo;
+    table.columns.dueAt.default = { kind: "literal", value: "2026-01-02T03:04:05.000Z" };
+    const event = { id: "todo", operation: "create" as const, payload: { id: "t1", boardId: "b1" } };
+    expect(
+      decodeWireEvent(withDefault, getKeyField, "Todo", {
+        ...event,
+        payload: { ...event.payload, dueAt: null },
+      }).payloadHash
+    ).not.toBe(decodeWireEvent(withDefault, getKeyField, "Todo", event).payloadHash);
+  });
+
   it("pins the persisted hash of decoded Date, BigInt, Bytes and nested Json values", () => {
     const payload = {
       id: "list-1",
@@ -442,7 +459,7 @@ describe("applyPushEvent", () => {
 
   describe("when a unique violation follows a concurrent commit of the same event", () => {
     /** The event's own transaction does not see the changelog row, as if the other request committed after its read. */
-    function blindToChangelog(db: Awaited<ReturnType<typeof testDb>>) {
+    function blindToChangelog(db: Awaited<ReturnType<typeof testDb>>, missingReads = Infinity) {
       const wrapTx = (tx: unknown) =>
         new Proxy(tx as object, {
           get(target, prop, receiver) {
@@ -453,7 +470,11 @@ describe("applyPushEvent", () => {
                 const root = Reflect.get(roots, model) as object;
                 if (model !== "Changelog") return root;
                 return new Proxy(root, {
-                  get: (r, method) => (method === "first" ? async () => null : Reflect.get(r, method)),
+                  get(r, method) {
+                    if (method !== "first") return Reflect.get(r, method);
+                    if (missingReads-- > 0) return async () => null;
+                    return (Reflect.get(r, method) as (...args: unknown[]) => unknown).bind(r);
+                  },
                 });
               },
             });
@@ -481,6 +502,31 @@ describe("applyPushEvent", () => {
         "u1"
       );
     };
+
+    it("acknowledges a retry when ownership changes after the first changelog read", async () => {
+      const db = await testDb();
+      const adapter = createSqlSyncAdapter({ contract, syncServer: testSyncServer, contractCheck: "off" });
+      await seed(db, {
+        User: [
+          { id: "u1", name: "Ann" },
+          { id: "u2", name: "Bo" },
+        ],
+        Board: [{ id: "b1", ownerId: "u1" }],
+        Todo: [{ id: "t1", boardId: "b1" }],
+      });
+      const event = {
+        id: "todo",
+        entityType: "Todo",
+        operation: "update" as const,
+        payload: { key: "t1", patch: { dueAt: "2026-01-02T03:04:05.000Z" } },
+      };
+      const push = { scopeKey: "u1", events: [event] };
+      const success = { ok: true, results: [{ id: "todo", success: true }] };
+      expect(await adapter.applyPush(db, push)).toEqual(success);
+      await db.orm.public.Board.where({ id: "b1" }).update({ ownerId: "u2" });
+      expect(await adapter.applyPush(blindToChangelog(db, 1), push)).toEqual(success);
+      expect(await db.orm.public.Changelog.all().toArray()).toHaveLength(1);
+    });
 
     it.each([
       ["matches", null, { success: true }],
