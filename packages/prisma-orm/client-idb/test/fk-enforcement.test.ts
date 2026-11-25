@@ -1593,8 +1593,7 @@ describe("onUpdate — cascade on a self-referential model", () => {
   });
   afterEach(() => db.close());
 
-  // The child FK is changed by onUpdate before the parent's write runs.
-  // Rejecting the parent key change must roll that child write back too.
+  // A rejected key change leaves every row untouched.
   it("rolls back a self-referential cascade when the primary key change is rejected", async () => {
     const orm = idbOrm({ contract: selfReferentialCascadeContract, executor });
     await orm["employees"]!.create({ id: "root", managerId: null, name: "Root" } as never);
