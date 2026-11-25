@@ -58,6 +58,7 @@ import { decodeJsonRecord, validateRecord, validateKeyPath } from "@prisma-idb/t
 import type { SyncIdbClient } from "./sync-client";
 import { deleteRecord, putRecord, scanStore } from "./raw-store";
 import { OUTBOX_STORE } from "./outbox-store";
+import { getModelNameForStore } from "./store-models";
 import { domainModelsAtDefaultNamespace } from "@prisma/orm-framework/contract/types";
 import { VERSION_META_STORE, versionMetaKey, resolveVersionMeta, nativeVersionMetaKey } from "./version-meta";
 import {
@@ -197,7 +198,7 @@ async function applyLog<TContract extends IdbContract>(
           const cascaded = recordDeletes(scope);
           await applyReferentialActionsForRow(cascaded.scope, contract, log.model, identity.row);
           await deleteRecord(scope, storeName, identity.key);
-          await discardPendingEdits(scope, contract, cascaded.deleted);
+          await discardPendingEdits(scope, contract, cascaded.deleted, { storeName, key: identity.key });
         }
       } else {
         await putRecord(scope, storeName, identity.record!);
@@ -248,45 +249,83 @@ export const DISCARDED_BY_PULL = "Discarded: a change pulled from the server del
 
 /**
  * The server wins over unsent edits of rows a pulled delete cascaded to: the
- * server removed those rows too, so their queued events can no longer apply.
- * Each one is marked non-retryable, and its row's pending flag is cleared, in
- * the pull's transaction, so the local rows and the queue agree.
+ * server removed those rows too, or, after a revocation, they are no longer the
+ * client's to change, so their queued events can no longer apply. Each one is
+ * marked non-retryable, and its row's pending flag is cleared, in the pull's
+ * transaction, so the local rows and the queue agree.
+ *
+ * The cascade follows the local foreign keys. An unsent update that moved a row
+ * onto a deleted parent changed that key only locally: the server still has the
+ * row under its old parent and did not delete it. Those events stay retryable and
+ * the row stays pending, so the push is rejected and reconciliation restores the
+ * row from the server, instead of the client losing it for good.
  */
 async function discardPendingEdits(
   scope: IdbTransactionScope,
   contract: IdbContract,
-  deleted: readonly DeletedRow[]
+  deleted: readonly DeletedRow[],
+  root: DeletedRow
 ): Promise<void> {
-  const pendingMetaIds = new Set<string>();
+  const pending = new Map<string, VersionMetaRecord>();
   // A Decimal key is matched numerically against every metadata row, so read them once, not per row.
   let snapshot: Map<string, VersionMetaRecord> | undefined;
   for (const { storeName, key } of deleted) {
-    const model = modelForStore(contract, storeName);
+    const model = getModelNameForStore(contract, storeName);
     if (model === undefined) continue;
     if (snapshot === undefined && hasDecimalPrimaryKey(contract, model)) {
       const rows = await scanStore<VersionMetaRecord>(scope, VERSION_META_STORE);
       snapshot = new Map(rows.map((row) => [row.id, row]));
     }
     const meta = await resolveVersionMeta(scope, contract, model, key, key, snapshot);
-    if (!meta?.localChangePending) continue;
-    pendingMetaIds.add(meta.id);
+    if (meta?.localChangePending) pending.set(meta.id, meta);
+  }
+  // Only a delete that cascaded to rows with unsent edits reads the outbox.
+  if (pending.size === 0) return;
+
+  const deletedIds = new Set<string>();
+  for (const row of [root, ...deleted]) {
+    const model = getModelNameForStore(contract, row.storeName);
+    if (model !== undefined) deletedIds.add(versionMetaKey(model, row.key));
+  }
+  const events = (await scanStore<OutboxEvent>(scope, OUTBOX_STORE)).filter(
+    (event) => !event.synced && event.retryable && event.versionMetaId !== null && pending.has(event.versionMetaId)
+  );
+  const moved = new Set(
+    events.filter((event) => movesOntoDeletedRow(contract, event, deletedIds)).map((event) => event.versionMetaId)
+  );
+  for (const event of events) {
+    if (moved.has(event.versionMetaId)) continue;
+    await putRecord(scope, OUTBOX_STORE, { ...event, retryable: false, lastError: DISCARDED_BY_PULL });
+  }
+  for (const meta of pending.values()) {
+    if (moved.has(meta.id)) continue;
     const cleared = { ...meta, localChangePending: false } satisfies VersionMetaRecord;
     await putRecord(scope, VERSION_META_STORE, cleared);
-    snapshot?.set(cleared.id, cleared);
-  }
-  if (pendingMetaIds.size === 0) return;
-  for (const event of await scanStore<OutboxEvent>(scope, OUTBOX_STORE)) {
-    if (event.synced || !event.retryable || event.versionMetaId === null) continue;
-    if (!pendingMetaIds.has(event.versionMetaId)) continue;
-    await putRecord(scope, OUTBOX_STORE, { ...event, retryable: false, lastError: DISCARDED_BY_PULL });
   }
 }
 
-/** The model stored in `storeName`, or `undefined` for a store no model uses. */
-function modelForStore(contract: IdbContract, storeName: string): string | undefined {
-  return Object.entries(domainModelsAtDefaultNamespace(contract.domain)).find(
-    ([, model]) => (model as { storage?: { storeName?: string } }).storage?.storeName === storeName
-  )?.[0];
+/** Whether an update's patch sets a foreign key to a row in `deletedIds` (version-meta ids). */
+function movesOntoDeletedRow(contract: IdbContract, event: OutboxEvent, deletedIds: ReadonlySet<string>): boolean {
+  if (event.operation !== "update") return false;
+  const patch = (event.payload as { patch?: Record<string, unknown> } | null)?.patch;
+  if (patch === undefined || patch === null) return false;
+  const model = domainModelsAtDefaultNamespace(contract.domain)[event.entityType] as
+    | {
+        relations?: Record<
+          string,
+          { to: string | { model: string }; cardinality: string; on: { localFields: readonly string[] } }
+        >;
+      }
+    | undefined;
+  for (const relation of Object.values(model?.relations ?? {})) {
+    if (relation.cardinality !== "N:1") continue;
+    const fields = relation.on.localFields;
+    if (fields.length === 0 || !fields.every((field) => field in patch)) continue;
+    const target = fields.length === 1 ? patch[fields[0]!] : fields.map((field) => patch[field]);
+    const targetModel = typeof relation.to === "string" ? relation.to : relation.to.model;
+    if (target !== null && deletedIds.has(versionMetaKey(targetModel, target))) return true;
+  }
+  return false;
 }
 
 /** Keep application and metadata aliases on their existing spelling after the pending-change guard. */

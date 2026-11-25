@@ -71,7 +71,11 @@ For each synced record, `_idb_sync_version_meta` records two things:
 
 The worker maintains this store; you don't write to it.
 
-A pulled delete, or a revocation that removes a row, can cascade to rows that have their own pending changes. The server deleted those rows too, so the server wins: in the pull's transaction, their queued events are marked non-retryable with a `lastError` that starts with `Discarded:`, and they stop counting as pending. Rows that a `SetNull` cascade only updates keep their pending changes, which still apply to the row on the server.
+A pulled delete, or a revocation that removes a row, can cascade to rows that have their own pending changes. After a delete, the server deleted those rows too; after a revocation, they are no longer the client's to change. Either way the server wins: in the pull's transaction, their queued events are marked non-retryable with a `lastError` that starts with `Discarded:`, and they stop counting as pending. Rows that a `SetNull` cascade only updates keep their pending changes, which still apply to the row on the server.
+
+The cascade follows the foreign keys on this device. A row whose unsent edit moved it onto the deleted parent is still under its old parent on the server, so the server did not delete it. Its edit stays queued and the row stays pending. The push is rejected, and reconciliation restores the row from the server.
+
+A discarded event stays in `_idb_sync_outbox` with `synced: false` and `retryable: false`. The worker never pushes it again, and its automatic cleanup never removes it, so discarded events accumulate until you delete them. To list them, read the outbox store through `db.rawClient.withTransaction` and keep the events whose `lastError` starts with `Discarded:`. The `payload` still holds the edit, so the app can show it to the user or re-create the row with a new write, which queues a fresh event. To clear one, delete the event in a `withTransaction` on `_idb_sync_outbox`. Deleting it is safe because the row is gone and its pending flag is already cleared. The next cleanup removes the event's row in `_idb_sync_outbox_order`.
 
 ### The pull cursor
 
@@ -143,7 +147,7 @@ worker.start();
 
 The worker doesn't start on its own. Each cycle first pushes: it sends batches of outbox events until none is left to send. It then pulls, but only if no retryable event remains in the outbox. This keeps a pull from landing on an edit the server has not seen. While the server reports more pages, the cycle keeps pulling, pushing any new edits between pages under the same rule. A first sync therefore catches up in one cycle instead of one page per `intervalMs`. A cycle repeats every `intervalMs` while idle, and backs off after failures.
 
-The worker automatically keeps the newest 100 successfully acknowledged outbox events per database, ordered by `createdAt` descending and event id descending for ties. It prunes before each cycle's first push, including idle cycles, and after each push-result batch in the same transaction as the results. Unsent and failed events keep their full payload and error, including permanent rejections. Version metadata is preserved. This cleanup applies only to the worker; direct calls to low-level outbox helpers such as `markSynced` do not prune history.
+The worker automatically keeps the newest 100 successfully acknowledged outbox events per database, ordered by `createdAt` descending and event id descending for ties. It prunes before each cycle's first push, including idle cycles, and after each push-result batch in the same transaction as the results. Unsent and failed events keep their full payload and error, including permanent rejections and events discarded by a pulled delete (see Conflicts). Version metadata is preserved. This cleanup applies only to the worker; direct calls to low-level outbox helpers such as `markSynced` do not prune history.
 
 A failed push, including a request that throws or times out, stays retryable however many times it fails, unless the server says it can never succeed. Events are pushed in order, so an event that is waiting out its backoff holds back the events behind it. After 10 failed tries, `pushcompleted` carries `stalled: { eventId, tries, lastError }` for the oldest event. Show it to the user: the outbox is stuck behind that event, and pulls pause until it clears.
 

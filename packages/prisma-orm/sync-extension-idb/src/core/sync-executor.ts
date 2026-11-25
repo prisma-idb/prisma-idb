@@ -54,6 +54,7 @@ import { domainModelsAtDefaultNamespace } from "@prisma/orm-framework/contract/t
 import type { OutboxEvent, OutboxWriteEntry, VersionMetaRecord } from "../types";
 import { OUTBOX_ORDER_STORE, OUTBOX_STORE } from "./outbox-store";
 import { scanStore } from "./raw-store";
+import { getModelNameForStore } from "./store-models";
 import { VERSION_META_STORE, versionMetaKey, resolveVersionMeta } from "./version-meta";
 import { hasDecimalPrimaryKey, preserveDecimalKeySpelling } from "@prisma-idb/client-idb/internal";
 
@@ -168,30 +169,6 @@ function outboxOpsFor(entries: readonly OutboxWriteEntry[], meta: IdbQueryPlan<u
     };
     return key !== undefined ? [add, order, versionMetaPutOp(modelName, key, meta)] : [add, order];
   });
-}
-
-// ── Store name → model name (reverse lookup, for the transaction-scope path) ──
-
-const storeToModelCache = new WeakMap<IdbContract, ReadonlyMap<string, string>>();
-
-/**
- * `IdbAtomicPlan`s (used inside a transaction scope) only carry a
- * `storeName`, not a model name — unlike `IdbQueryAst`, which carries
- * `modelName` directly. Cached per contract since it's static for a given
- * contract instance.
- */
-function getModelNameForStore(contract: IdbContract, storeName: string): string | undefined {
-  let map = storeToModelCache.get(contract);
-  if (!map) {
-    const built = new Map<string, string>();
-    for (const [modelName, model] of Object.entries(domainModelsAtDefaultNamespace(contract.domain))) {
-      const modelStoreName = (model as { storage?: { storeName?: string } }).storage?.storeName;
-      if (modelStoreName) built.set(modelStoreName, modelName);
-    }
-    map = built;
-    storeToModelCache.set(contract, map);
-  }
-  return map.get(storeName);
 }
 
 /** Synthetic `PlanMeta` for ops issued directly against a transaction scope (no originating `IdbQueryPlan` to borrow one from). */

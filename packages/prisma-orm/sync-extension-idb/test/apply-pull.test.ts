@@ -710,3 +710,145 @@ describe("applyPull with a compound key", () => {
     expect(await scanAll(client, "_idb_sync_version_meta")).toEqual([]);
   });
 });
+
+describe("applyPull discarding unsent edits of cascaded rows", () => {
+  it("keeps an unsent move onto a parent the server deletes, so the push is rejected and reconciled", async () => {
+    const { client } = await createTestSyncClient();
+    try {
+      await applyPull(client, [
+        log({ changelogId: "c1", operation: "create" }),
+        log({ changelogId: "c2", keyPath: "u2", operation: "create", record: { id: "u2", name: "Bob" } }),
+        log({
+          changelogId: "c3",
+          model: "Post",
+          keyPath: "p1",
+          operation: "create",
+          record: { id: "p1", title: "Hi", authorId: "u1" },
+        }),
+      ]);
+      // Moved offline: the server still has p1 under u1, so deleting u2 there does not delete p1.
+      await asAccessors(client.orm)["posts"]!.where({ id: "p1" }).update({ authorId: "u2" });
+
+      const result = await applyPull(client, [
+        log({ changelogId: "c4", keyPath: "u2", operation: "delete", record: null }),
+      ]);
+
+      expect(result).toMatchObject({ applied: 1, halted: false });
+      expect(await scanAll(client, "posts")).toEqual([]);
+      expect(await client.outbox.hasPending()).toBe(true);
+      expect(await scanAll(client, "_idb_sync_outbox")).toMatchObject([
+        { entityType: "Post", operation: "update", retryable: true, lastError: null },
+      ]);
+      expect(await keyGet(client, "_idb_sync_version_meta", 'Post::"p1"')).toMatchObject({
+        localChangePending: true,
+      });
+    } finally {
+      await client.close();
+    }
+  });
+
+  /** Org → Board → Card cascades, a Note whose org is set to null, and a Decimal-keyed Card. */
+  async function createTreeClient() {
+    const name = testDbName();
+    (
+      await openTestDb(name, [
+        { name: "orgs", keyPath: "id" },
+        { name: "boards", keyPath: "id", indexes: [{ name: "orgId", keyPath: "orgId" }] },
+        { name: "cards", keyPath: "id", indexes: [{ name: "boardId", keyPath: "boardId" }] },
+        { name: "notes", keyPath: "id", indexes: [{ name: "orgId", keyPath: "orgId" }] },
+        OUTBOX_STORE,
+        OUTBOX_ORDER_STORE,
+        VERSION_META_STORE,
+      ])
+    ).close();
+    const contract = defineContract({
+      family: idbFamilyPack,
+      target: idbTargetPack,
+      models: {
+        Org: {
+          store: "orgs",
+          key: "id",
+          fields: { id: "String" },
+          relations: {
+            boards: { to: "Board", cardinality: "1:N", on: { local: ["id"], target: ["orgId"] } },
+            notes: { to: "Note", cardinality: "1:N", on: { local: ["id"], target: ["orgId"] } },
+          },
+        },
+        Board: {
+          store: "boards",
+          key: "id",
+          fields: { id: "String", orgId: "String" },
+          indexes: { orgId: { keyPath: "orgId" } },
+          relations: {
+            org: { to: "Org", cardinality: "N:1", on: { local: ["orgId"], target: ["id"] }, onDelete: "cascade" },
+            cards: { to: "Card", cardinality: "1:N", on: { local: ["id"], target: ["boardId"] } },
+          },
+        },
+        Card: {
+          store: "cards",
+          key: "id",
+          fields: { id: "Decimal", boardId: "String", title: "String" },
+          indexes: { boardId: { keyPath: "boardId" } },
+          relations: {
+            board: {
+              to: "Board",
+              cardinality: "N:1",
+              on: { local: ["boardId"], target: ["id"] },
+              onDelete: "cascade",
+            },
+          },
+        },
+        Note: {
+          store: "notes",
+          key: "id",
+          fields: { id: "String", orgId: "String?", text: "String" },
+          indexes: { orgId: { keyPath: "orgId" } },
+          relations: {
+            org: { to: "Org", cardinality: "N:1", on: { local: ["orgId"], target: ["id"] }, onDelete: "setNull" },
+          },
+        },
+      },
+    }) as unknown as IdbContract;
+    const client = createSyncIdbClient({ contract, dbName: name, trackedModels: "*" });
+    const create = (n: number, model: string, keyPath: unknown, record: Record<string, unknown>): LogWithRecord =>
+      ({ changelogId: changelogId(n), model, operation: "create", keyPath, record }) as LogWithRecord;
+    await applyPull(client, [
+      create(1, "Org", "o1", { id: "o1" }),
+      create(2, "Board", "b1", { id: "b1", orgId: "o1" }),
+      create(3, "Card", "1.50", { id: "1.50", boardId: "b1", title: "server" }),
+      create(4, "Note", "n1", { id: "n1", orgId: "o1", text: "server" }),
+    ]);
+    return client;
+  }
+
+  it("discards a grandchild's unsent edit, matched by its Decimal key, and keeps a SetNull child's", async () => {
+    const client = await createTreeClient();
+    try {
+      const accessors = asAccessors(client.orm);
+      await accessors["cards"]!.where({ boardId: "b1" }).update({ title: "edited offline" });
+      await accessors["notes"]!.where({ id: "n1" }).update({ text: "edited offline" });
+      expect(await scanAll(client, "_idb_sync_outbox")).toHaveLength(2);
+
+      const result = await applyPull(client, [
+        { changelogId: changelogId(5), model: "Org", operation: "delete", keyPath: "o1", record: null },
+      ]);
+
+      expect(result).toMatchObject({ applied: 1, halted: false });
+      expect(await scanAll(client, "boards")).toEqual([]);
+      expect(await scanAll(client, "cards")).toEqual([]);
+      expect(await scanAll(client, "notes")).toMatchObject([{ id: "n1", orgId: null, text: "edited offline" }]);
+      const events = await scanAll(client, "_idb_sync_outbox");
+      expect(events.find((event) => event["entityType"] === "Card")).toMatchObject({
+        retryable: false,
+        lastError: DISCARDED_BY_PULL,
+      });
+      expect(events.find((event) => event["entityType"] === "Note")).toMatchObject({
+        retryable: true,
+        lastError: null,
+      });
+      expect(await client.outbox.pendingCount()).toBe(1);
+    } finally {
+      await client.close();
+    }
+  });
+});
