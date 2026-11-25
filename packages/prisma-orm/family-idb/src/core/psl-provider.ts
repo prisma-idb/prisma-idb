@@ -11,51 +11,58 @@ import { interpretPslDocumentToIdbContract } from "./psl-interpreter";
 import { IDB_EXCLUDE_ATTR } from "./psl-binder";
 
 /**
- * Removes `@idb.exclude`/`@@idb.exclude` from raw PSL text — the `idb`
- * namespace family-idb owns (`psl-interpreter.ts`'s `IDB_EXCLUDE_ATTR`).
- * A foreign PSL parser (e.g. the SQL family's) doesn't recognize this
- * namespace and hard-errors on it (`PSL_EXTENSION_NAMESPACE_NOT_COMPOSED`);
- * stripping it is the text-level equivalent of what family-idb itself
- * already does for these same fields under `projection: "full"`, where the
- * attribute is documented as a no-op. Use this when sharing a schema.prisma
- * authored for family-idb with a different family's schema loader — the
- * server always wants every field these attributes would otherwise hide
- * from the client.
+ * Removes `@idb.exclude`/`@@idb.exclude` from a PSL schema, so another
+ * family's parser can read a schema written for family-idb. The SQL family,
+ * for example, rejects the `idb` namespace it doesn't know
+ * (`PSL_EXTENSION_NAMESPACE_NOT_COMPOSED`), and the server wants every field
+ * these attributes hide from the client.
+ *
+ * It finds the attributes in the parser's syntax tree, so text that only
+ * looks like one, such as `@idb.exclude` inside a string default or a
+ * comment, is left alone. The tree keeps every attribute, including those on
+ * a model the symbol table drops (a duplicate model name, or a block the
+ * parser recovered from). Other attributes, `@ignore` and `@@ignore`
+ * included, stay as written.
  */
 export function stripIdbExcludeAttributes(schema: string): string {
-  // Walk the syntax tree rather than the symbol table: the tree keeps every
-  // attribute, including those on a model the symbol table drops (a duplicate
-  // model name, or a block the parser recovered from). Text that only looks
-  // like an attribute, such as `@idb.exclude` inside a string default or a
-  // comment, is never a node. Node offsets are UTF-16 string indices, so they
-  // slice correctly after non-ASCII text.
   const { document } = parse(schema, "schema.prisma");
-  const spans: { start: number; end: number }[] = [];
+  // Node offsets are UTF-16 string indices, so they slice correctly after non-ASCII text.
+  const cuts: { start: number; end: number }[] = [];
   for (const element of document.syntax.descendants()) {
     if (!(element instanceof SyntaxNode)) continue;
     const attribute = FieldAttributeAst.cast(element) ?? ModelAttributeAst.cast(element);
     if (attribute?.name()?.path().join(".") === IDB_EXCLUDE_ATTR) {
-      spans.push({ start: element.offset, end: element.endOffset });
+      cuts.push(cutFor(schema, element.offset, element.endOffset));
     }
   }
-  // Cut from the end, so earlier offsets stay valid.
-  let result = schema;
-  for (const { start, end } of spans.sort((a, b) => b.start - a.start)) {
-    const lineStart = result.lastIndexOf("\n", start - 1) + 1;
-    const lineEndIndex = result.indexOf("\n", end);
-    const lineEnd = lineEndIndex === -1 ? result.length : lineEndIndex;
-    const before = result.slice(lineStart, start);
-    const after = result.slice(end, lineEnd);
-    if (before.trim() === "" && (after.trim() === "" || after.trim().startsWith("//"))) {
-      // A model-level attribute alone on its line: drop the line, with any trailing comment.
-      result = result.slice(0, lineStart) + result.slice(lineEndIndex === -1 ? lineEnd : lineEnd + 1);
-    } else {
-      // A field-level attribute: drop it and the spaces before it, and keep the field.
-      const trimmedStart = start - (before.length - before.trimEnd().length);
-      result = result.slice(0, trimmedStart) + result.slice(end);
-    }
+  // One pass over the cuts in source order; a cut that overlaps the previous one only extends it.
+  let result = "";
+  let cursor = 0;
+  for (const { start, end } of cuts.sort((a, b) => a.start - b.start)) {
+    if (start > cursor) result += schema.slice(cursor, start);
+    cursor = Math.max(cursor, end);
   }
-  return result;
+  return result + schema.slice(cursor);
+}
+
+/** The text to remove for one attribute at `[start, end)`, so the line around it stays well formed. */
+function cutFor(schema: string, start: number, end: number): { start: number; end: number } {
+  const lineStart = schema.lastIndexOf("\n", start - 1) + 1;
+  const newline = schema.indexOf("\n", end);
+  const lineEnd = newline === -1 ? schema.length : newline;
+  const before = schema.slice(lineStart, start);
+  const after = schema.slice(end, lineEnd);
+  if (before.trim() === "" && (after.trim() === "" || after.trim().startsWith("//"))) {
+    // Alone on its line, as a model attribute usually is: drop the line and any trailing comment.
+    // A CRLF line's `\r` sits before the `\n`, so it goes with the line.
+    return { start: lineStart, end: newline === -1 ? lineEnd : newline + 1 };
+  }
+  if (before.trim() === "") {
+    // First on its line with more attributes after it: drop it and the spaces after it, and keep the indentation.
+    return { start, end: end + (after.length - after.trimStart().length) };
+  }
+  // After a field or another attribute: drop it and the spaces before it.
+  return { start: start - (before.length - before.trimEnd().length), end };
 }
 
 /** Place contract.json beside schema.prisma, or use the schema basename otherwise. */

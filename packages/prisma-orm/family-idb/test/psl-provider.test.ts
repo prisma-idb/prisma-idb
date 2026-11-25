@@ -348,6 +348,17 @@ describe("stripIdbExcludeAttributes", () => {
       "model A {\n  id String @id\n  s String @idb.exclude @unique\n}\n",
       "model A {\n  id String @id\n  s String @unique\n}\n",
     ],
+    [
+      "a model attribute after it on the same line",
+      'model A {\n  id String @id\n  @@idb.exclude @@map("a")\n}\n',
+      'model A {\n  id String @id\n  @@map("a")\n}\n',
+    ],
+    ["an enum block", "enum Role {\n  USER @idb.exclude\n  @@idb.exclude\n}\n", "enum Role {\n  USER\n}\n"],
+    [
+      "a composite type block",
+      "type Address {\n  street String @idb.exclude\n}\n",
+      "type Address {\n  street String\n}\n",
+    ],
   ])("strips @idb.exclude with %s and keeps the rest of the line", (_, schema, expected) => {
     expect(stripIdbExcludeAttributes(schema)).toBe(expected);
   });
