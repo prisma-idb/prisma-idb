@@ -256,21 +256,39 @@ describe("middleware inside transactions", () => {
     expect(planned.filter((plan) => plan.kind === "key-get" && plan.key === "")).toEqual([]);
   });
 
-  it("blocks a statement whose beforeEncode throws, and rolls the transaction back", async () => {
-    const refused = new Error("writes to users are refused");
-    const client = await open([
-      recorder([], {
-        beforeEncode(plan: unknown, ctx: { scope: string }) {
-          if (ctx.scope === "transaction" && (plan as { kind: string }).kind === "add") throw refused;
-          return plan;
-        },
-      } as unknown as Partial<IdbMiddleware>),
-    ]);
+  /** Refuses inside transactions to add the user `u1`; every other statement runs. */
+  const refusingU1 = (refused: Error) =>
+    recorder([], {
+      beforeEncode(plan: unknown, ctx: { scope: string }) {
+        const { kind, record } = plan as { kind: string; record?: { id?: unknown } };
+        if (ctx.scope === "transaction" && kind === "add" && record?.id === "u1") throw refused;
+        return plan;
+      },
+    } as unknown as Partial<IdbMiddleware>);
+
+  it("blocks a statement whose beforeEncode throws, and rolls the transaction's earlier writes back", async () => {
+    const refused = new Error("u1 is refused");
+    const client = await open([refusingU1(refused)]);
     await expect(
       client.transaction(["users"], async (tx) => {
-        await (tx["users"] as unknown as Accessor).create({ id: "u1" });
+        const users = tx["users"] as unknown as Accessor;
+        await users.create({ id: "u0" });
+        await users.create({ id: "u1" });
       })
     ).rejects.toBe(refused);
+    expect(await client.orm["users"]!.all().toArray()).toEqual([]);
+  });
+
+  it("aborts the transaction when a hook blocks a statement, even if the callback catches the error", async () => {
+    const refused = new Error("u1 is refused");
+    const client = await open([refusingU1(refused)]);
+    await expect(
+      client.transaction(["users"], async (tx) => {
+        const users = tx["users"] as unknown as Accessor;
+        await users.create({ id: "u0" });
+        await expect(users.create({ id: "u1" })).rejects.toBe(refused);
+      })
+    ).rejects.toThrow();
     expect(await client.orm["users"]!.all().toArray()).toEqual([]);
   });
 
