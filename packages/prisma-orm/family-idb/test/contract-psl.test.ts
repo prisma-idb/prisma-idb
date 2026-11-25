@@ -1374,6 +1374,19 @@ describe("interpretPslDocumentToIdbContract", () => {
   });
 
   describe("@default(literal)", () => {
+    it.each(["1e5", "1e999", "9e999", "-1.2E-3", "1e+3"])(
+      "rejects an incomplete numeric default recovered from %s",
+      (value) => {
+        const result = interpret(`model Item {\n id String @id\n score Float @default(${value})\n}`);
+        expect(result.ok).toBe(false);
+        if (!result.ok) {
+          expect(result.failure.diagnostics).toContainEqual(
+            expect.objectContaining({ code: "PSL_INVALID_ATTRIBUTE_SYNTAX" })
+          );
+        }
+      }
+    );
+
     it("resolves boolean/number/string literals", () => {
       const result = interpret(`
         model Post {

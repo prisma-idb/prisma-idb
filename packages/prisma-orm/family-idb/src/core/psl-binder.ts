@@ -564,6 +564,18 @@ export function createIdbAttributeBinder(input: IdbAttributeBinderInput): IdbAtt
           updatedAt ??= span;
           break;
         case "default": {
+          const args = attribute.node.argList();
+          // A recovered list can contain only the prefix of a malformed argument.
+          if (args && !args.rparen()) {
+            failed = true;
+            diagnostics.push({
+              code: "PSL_INVALID_ATTRIBUTE_SYNTAX",
+              message: "The @default argument list is incomplete.",
+              sourceId,
+              span,
+            });
+            break;
+          }
           const value = interpret(defaultFieldSpec, attribute, ctx);
           if (value === undefined) failed = true;
           else defaultValue ??= { value: value.value, span };
