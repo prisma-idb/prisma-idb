@@ -1,0 +1,5 @@
+{
+  "contract": null,
+  "error": "IDB_INVALID_RELATION: Relation \"Post.author\" is required but a foreign-key field it joins on is optional. Make the relation optional or make every foreign-key field required.\nIDB_INVALID_RELATION: Relation \"Post.editor\" declares onDelete: SetNull, but its foreign key has a required field, which can't be set to null. Make the foreign key optional or choose another action.\nIDB_INVALID_RELATION: Relation \"Post.reviewer\" is optional but every foreign-key field is required. Make the relation required or make a foreign-key field optional.",
+  "hashes": null
+}

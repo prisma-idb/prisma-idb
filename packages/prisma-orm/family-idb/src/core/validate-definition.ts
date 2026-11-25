@@ -1,6 +1,7 @@
-import { keyPathFields, sameJoinPairs } from "@prisma-idb/target-idb/pack";
+import { keyPathFields, sameFieldSet, sameJoinPairs } from "@prisma-idb/target-idb/pack";
 import type { IdbKeyPath } from "@prisma-idb/target-idb/pack";
 import { foreignKeyIndexes } from "./foreign-key-indexes";
+import { toOneSide } from "./relation-ownership";
 import type {
   IdbContractDefinition,
   IdbDefinitionPath,
@@ -378,6 +379,137 @@ function excludedInverse(model: IdbModelNode, relation: IdbRelationNode, definit
   );
 }
 
+/** `true` when the primary key or a unique index covers exactly `fields`, in any order. */
+function isUniqueTuple(model: IdbModelNode, fields: readonly string[]): boolean {
+  return (
+    sameFieldSet(keyPathFields(model.key), fields) ||
+    model.indexes.some(
+      (index) => index.unique && !index.multiEntry && sameFieldSet(keyPathFields(index.keyPath), fields)
+    )
+  );
+}
+
+/**
+ * Check a relation's nullability and `SetNull` actions against the side that
+ * holds its foreign key, as upstream Prisma does:
+ *
+ * - The side that holds the foreign key is optional exactly when one of its
+ *   foreign-key fields is optional.
+ * - Any other to-one side must be optional, because nothing in storage
+ *   guarantees that the related row exists.
+ * - The referenced side of a one-to-one needs a unique foreign key, or several
+ *   rows could point at one parent.
+ * - `SetNull` writes `null` into every foreign-key field, so each must be optional.
+ * - A `1:1` that isn't paired with a foreign key can't carry an action, because
+ *   the client would never run it. Its target fields must be unique so a
+ *   singular read can match at most one row.
+ */
+function validateRelationNullability(
+  model: IdbModelNode,
+  relation: IdbRelationNode,
+  target: IdbModelNode | undefined,
+  at: IdbDefinitionPath,
+  report: Report
+): void {
+  if (relation.unresolvedBackrelation) return;
+  const label = `Relation "${model.modelName}.${relation.name}"`;
+  const nullableIn = (owner: IdbModelNode | undefined, names: readonly string[]) =>
+    names.map((name) => owner?.fields.find((field) => field.name === name)?.nullable);
+  const side = relation.cardinality === "1:N" ? undefined : toOneSide(model, relation, target);
+
+  if (relation.cardinality === "1:1") {
+    if (
+      relation.localFields.length !== relation.targetFields.length ||
+      new Set(relation.localFields).size !== relation.localFields.length ||
+      new Set(relation.targetFields).size !== relation.targetFields.length
+    ) {
+      report("IDB_INVALID_RELATION", `${label} must use distinct, paired join fields on both sides.`, at);
+      return;
+    }
+    const referencedModel = side === "owner" ? target : side === "inverse" ? model : undefined;
+    const referencedFields = side === "owner" ? relation.targetFields : relation.localFields;
+    if (referencedModel && !isUniqueTuple(referencedModel, referencedFields)) {
+      report(
+        "IDB_INVALID_RELATION",
+        `${label} is one-to-one, but its referenced fields in "${referencedModel.modelName}" aren't unique. Add a unique index over those fields or reference its primary key.`,
+        at
+      );
+    }
+  }
+
+  if (side === "owner") {
+    if (relation.cardinality === "1:1" && !isUniqueTuple(model, relation.localFields)) {
+      report(
+        "IDB_INVALID_RELATION",
+        `${label} is one-to-one, but its foreign key isn't unique. Add a unique index on the foreign-key fields, or declare it as N:1.`,
+        at
+      );
+    }
+    const local = nullableIn(model, relation.localFields);
+    if (relation.nullable === false && local.some((nullable) => nullable === true)) {
+      report(
+        "IDB_INVALID_RELATION",
+        `${label} is required but a foreign-key field it joins on is optional. Make the relation optional or make every foreign-key field required.`,
+        at
+      );
+    }
+    if (relation.nullable === true && local.length > 0 && local.every((nullable) => nullable === false)) {
+      report(
+        "IDB_INVALID_RELATION",
+        `${label} is optional but every foreign-key field is required. Make the relation required or make a foreign-key field optional.`,
+        at
+      );
+    }
+  } else if (side === "inverse" && target && !isUniqueTuple(target, relation.targetFields)) {
+    report(
+      "IDB_INVALID_RELATION",
+      `${label} is singular, but the foreign key on "${relation.to}" (${relation.targetFields.map((name) => `"${name}"`).join(", ")}) isn't unique, so several "${relation.to}" rows could point at one "${model.modelName}". Add a unique index on the foreign-key fields, or make the relation a list.`,
+      at
+    );
+  }
+  if (side !== undefined && side !== "owner" && relation.nullable === false) {
+    report(
+      "IDB_INVALID_RELATION",
+      side === "inverse"
+        ? `${label} is required, but "${relation.to}" holds the foreign key, so nothing in storage guarantees a "${relation.to}" row exists. Make the relation optional.`
+        : `${label} is required, but no foreign key backs it, so nothing in storage guarantees a "${relation.to}" row exists. Make the relation optional, or declare it as N:1 if "${model.modelName}" holds the foreign key.`,
+      at
+    );
+  }
+
+  if (side === "undetermined" && target && !isUniqueTuple(target, relation.targetFields)) {
+    report(
+      "IDB_INVALID_RELATION",
+      `${label} is one-to-one, but the fields ${relation.targetFields.map((name) => `"${name}"`).join(", ")} of model "${relation.to}" are not unique, so several "${relation.to}" rows could match one "${model.modelName}". Add a unique index over exactly those fields, or make "${relation.name}" a 1:N relation.`,
+      at
+    );
+  }
+
+  const actions = (["onDelete", "onUpdate"] as const).filter((kind) => relation[kind] !== undefined);
+  if (side === "undetermined") {
+    if (actions.length > 0) {
+      report(
+        "IDB_INVALID_RELATION",
+        `${label} declares ${actions.join(" and ")}, but its 1:1 join doesn't identify the model that holds the foreign key, so the action would never run. Declare an N:1 relation on the model that holds the foreign key, with a reciprocal 1:1 relation on the referenced model, or point the 1:1 at the referenced model's primary key.`,
+        at
+      );
+    }
+    return;
+  }
+
+  const foreignKey =
+    side === "owner" ? nullableIn(model, relation.localFields) : nullableIn(target, relation.targetFields);
+  for (const kind of actions) {
+    if (relation[kind] === "setNull" && foreignKey.some((nullable) => nullable === false)) {
+      report(
+        "IDB_INVALID_RELATION",
+        `${label} declares ${kind}: SetNull, but its foreign key has a required field, which can't be set to null. Make the foreign key optional or choose another action.`,
+        at
+      );
+    }
+  }
+}
+
 /** Validate relation field exclusions and conflicting reciprocal referential actions. */
 function validateRelations(model: IdbModelNode, definition: IdbContractDefinition, report: Report): void {
   const at = ["models", model.modelName];
@@ -406,6 +538,7 @@ function validateRelations(model: IdbModelNode, definition: IdbContractDefinitio
         relationAt
       );
     }
+    validateRelationNullability(model, relation, target, relationAt, report);
     for (const inverse of target?.relations ?? []) {
       if (
         inverse.to !== model.modelName ||

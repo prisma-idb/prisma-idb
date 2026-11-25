@@ -142,6 +142,7 @@ model Todo {
 
 - One-to-many, many-to-one and one-to-one relations are supported. Many-to-many relations aren't; use an explicit join model.
 - Compound foreign keys are supported: `@relation(fields: [orgId, userId], references: [orgId, id])`.
+- On the side that holds the foreign key, declare an optional relation (`user User?`) when any foreign-key field is optional. Declare a required relation (`user User`) when every foreign-key field is required. `SetNull` requires every foreign-key field to be optional. Violations report `IDB_INVALID_RELATION`.
 - `onDelete` and `onUpdate` accept `Cascade`, `SetNull`, `SetDefault`, `Restrict` and `NoAction`. **Both default to `Restrict`.** `NoAction` behaves like `Restrict`.
 
 IndexedDB has no foreign keys of its own, so the client enforces them. See [Foreign keys and referential actions](/docs/prisma-8/api/writing#foreign-keys-and-referential-actions) for exactly what it checks.

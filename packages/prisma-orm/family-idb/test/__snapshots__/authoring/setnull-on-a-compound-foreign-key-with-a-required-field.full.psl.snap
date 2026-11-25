@@ -1,0 +1,27 @@
+{
+  "contract": null,
+  "diagnostics": {
+    "interpretation": [
+      {
+        "code": "IDB_INVALID_RELATION",
+        "message": "Relation \"Post.author\" declares onDelete: SetNull, but its foreign key has a required field, which can't be set to null. Make the foreign key optional or choose another action.",
+        "sourceId": "authoring.prisma",
+        "span": {
+          "end": {
+            "column": 108,
+            "line": 12,
+            "offset": 325
+          },
+          "start": {
+            "column": 9,
+            "line": 12,
+            "offset": 226
+          }
+        }
+      }
+    ],
+    "parse": [],
+    "symbols": []
+  },
+  "hashes": null
+}

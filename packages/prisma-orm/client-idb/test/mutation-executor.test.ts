@@ -576,7 +576,8 @@ describe("ORM nested scalar validation", () => {
     expect(await orm["posts"]!.findUnique("p1")).toMatchObject({ title: "before", authorId: null });
   });
 
-  it.each(["disconnect-all", "disconnect-key", "delete"])("rolls back invalid generated %s patches", async (action) => {
+  // `onDelete: SetNull` on this required key is refused at authoring, so only disconnects reach the runtime check.
+  it.each(["disconnect-all", "disconnect-key"])("rolls back invalid generated %s patches", async (action) => {
     const requiredContract = defineContract({
       family: idbFamilyPack,
       target: idbTargetPack,
@@ -586,7 +587,7 @@ describe("ORM nested scalar validation", () => {
           key: "id",
           fields: { id: "String", name: "String" },
           relations: {
-            posts: { to: "Post", cardinality: "1:N", on: { local: ["id"], target: ["authorId"] }, onDelete: "setNull" },
+            posts: { to: "Post", cardinality: "1:N", on: { local: ["id"], target: ["authorId"] } },
           },
         },
         Post: {
@@ -602,16 +603,58 @@ describe("ORM nested scalar validation", () => {
     const orm = idbOrm({ contract: requiredContract, executor });
     await orm["users"]!.create({ id: "u1", name: "before" } as never);
     await orm["posts"]!.create({ id: "p1", title: "before", authorId: "u1" } as never);
-    const write =
-      action === "delete"
-        ? orm["users"]!.delete("u1")
-        : orm["users"]!.where({ id: "u1" }).update({
-            name: "after",
-            posts: (rel: RelMutator) =>
-              action === "disconnect-key" ? rel.disconnect([{ id: "p1" }]) : rel.disconnect(),
-          } as never);
+    const write = orm["users"]!.where({ id: "u1" }).update({
+      name: "after",
+      posts: (rel: RelMutator) => (action === "disconnect-key" ? rel.disconnect([{ id: "p1" }]) : rel.disconnect()),
+    } as never);
     await expect(write).rejects.toThrow(IdbRecordValidationError);
     expect(await orm["users"]!.findUnique("u1")).toMatchObject({ name: "before" });
+    expect(await orm["posts"]!.findUnique("p1")).toMatchObject({ authorId: "u1" });
+  });
+
+  // Authoring refuses SetNull on a required key, but a contract.json emitted before that check can still carry one.
+  it("rolls back a SetNull delete that would null a required key in a contract built without that check", async () => {
+    const built = defineContract({
+      family: idbFamilyPack,
+      target: idbTargetPack,
+      models: {
+        User: {
+          store: "users",
+          key: "id",
+          fields: { id: "String", name: "String" },
+          relations: {
+            posts: { to: "Post", cardinality: "1:N", on: { local: ["id"], target: ["authorId"] }, onDelete: "setNull" },
+          },
+        },
+        Post: {
+          store: "posts",
+          key: "id",
+          fields: { id: "String", title: "String", authorId: "String?" },
+          relations: {
+            author: { to: "User", cardinality: "N:1", on: { local: ["authorId"], target: ["id"] } },
+          },
+        },
+      },
+    });
+    // Make the key required, as an older emitted contract could have it.
+    const requiredContract = structuredClone(built) as typeof built;
+    const raw = requiredContract as unknown as {
+      domain: {
+        namespaces: Record<string, { models: Record<string, { fields: Record<string, { nullable: boolean }> }> }>;
+      };
+      storage: { stores: Record<string, { record: { fields: Record<string, { nullable: boolean }> } }> };
+    };
+    for (const namespace of Object.values(raw.domain.namespaces)) {
+      const field = namespace.models["Post"]?.fields["authorId"];
+      if (field) field.nullable = false;
+    }
+    raw.storage.stores["posts"]!.record.fields["authorId"]!.nullable = false;
+
+    const orm = idbOrm({ contract: requiredContract, executor });
+    await orm["users"]!.create({ id: "u1", name: "Alice" } as never);
+    await orm["posts"]!.create({ id: "p1", title: "kept", authorId: "u1" } as never);
+    await expect(orm["users"]!.delete("u1")).rejects.toThrow(IdbRecordValidationError);
+    expect(await orm["users"]!.findUnique("u1")).toMatchObject({ name: "Alice" });
     expect(await orm["posts"]!.findUnique("p1")).toMatchObject({ authorId: "u1" });
   });
 

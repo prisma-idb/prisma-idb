@@ -1,0 +1,61 @@
+{
+  "contract": null,
+  "diagnostics": {
+    "interpretation": [
+      {
+        "code": "IDB_INVALID_RELATION",
+        "message": "Relation \"Post.author\" is required but a foreign-key field it joins on is optional. Make the relation optional or make every foreign-key field required.",
+        "sourceId": "authoring.prisma",
+        "span": {
+          "end": {
+            "column": 75,
+            "line": 8,
+            "offset": 199
+          },
+          "start": {
+            "column": 9,
+            "line": 8,
+            "offset": 133
+          }
+        }
+      },
+      {
+        "code": "IDB_INVALID_RELATION",
+        "message": "Relation \"Post.editor\" declares onDelete: SetNull, but its foreign key has a required field, which can't be set to null. Make the foreign key optional or choose another action.",
+        "sourceId": "authoring.prisma",
+        "span": {
+          "end": {
+            "column": 94,
+            "line": 10,
+            "offset": 319
+          },
+          "start": {
+            "column": 9,
+            "line": 10,
+            "offset": 234
+          }
+        }
+      },
+      {
+        "code": "IDB_INVALID_RELATION",
+        "message": "Relation \"Post.reviewer\" is optional but every foreign-key field is required. Make the relation required or make a foreign-key field optional.",
+        "sourceId": "authoring.prisma",
+        "span": {
+          "end": {
+            "column": 77,
+            "line": 12,
+            "offset": 422
+          },
+          "start": {
+            "column": 9,
+            "line": 12,
+            "offset": 354
+          }
+        }
+      }
+    ],
+    "parse": [],
+    "symbols": []
+  },
+  "hashes": null
+}

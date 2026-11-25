@@ -15,6 +15,7 @@ import { warnDroppedRelation } from "./psl-interpreter";
 import { IdbContractError } from "./contract-error";
 import type { FieldDefault, GeneratedDefault } from "./field-defaults";
 import { idbGeneratorFunctionRegistry, idbGeneratorNode } from "./generator-functions";
+import { withDerivedToOneNullability } from "./relation-ownership";
 import { validateIdbContractDefinition } from "./validate-definition";
 
 // ── Field type system ─────────────────────────────────────────────────────────
@@ -63,9 +64,12 @@ export type RelationDef = {
   readonly onDelete?: IdbReferentialAction;
   readonly onUpdate?: IdbReferentialAction;
   /**
-   * Whether a to-one (`N:1` / `1:1`) relation can be absent. Defaults to
-   * `true` when any `on.local` field is nullable (`"String?"`), `false`
-   * otherwise. Ignored for `1:N`.
+   * Whether a to-one (`N:1` / `1:1`) relation can be absent. Ignored for `1:N`.
+   * On the side that holds the foreign key, it defaults to `true` when any
+   * `on.local` field is nullable (`"String?"`) and `false` otherwise, and an
+   * explicit value must agree. Any other `1:1`, such as the referenced side of
+   * a one-to-one, defaults to `true` and can't be `false`, because nothing in
+   * storage guarantees that the related row exists.
    */
   readonly nullable?: boolean;
   /**
@@ -266,18 +270,16 @@ function lowerField(
   };
 }
 
-/** Translate one relation declaration into a relation node, resolving whether a to-one relation is nullable. */
-function lowerRelation(name: string, rel: RelationDef, def: ModelDef<string>): IdbRelationNode {
+/** Translate one relation declaration into a relation node. */
+function lowerRelation(name: string, rel: RelationDef): IdbRelationNode {
   return {
     name,
     to: rel.to,
     cardinality: rel.cardinality,
     localFields: rel.on.local,
     targetFields: rel.on.target,
-    // The emitter rejects a to-one relation without a boolean `nullable`.
-    ...(rel.cardinality === "1:N"
-      ? {}
-      : { nullable: rel.nullable ?? rel.on.local.some((f) => def.fields[f]?.endsWith("?") === true) }),
+    // A to-one relation without `nullable` gets one from `withDerivedToOneNullability`.
+    ...(rel.cardinality === "1:N" || rel.nullable === undefined ? {} : { nullable: rel.nullable }),
     ...(rel.onDelete !== undefined ? { onDelete: rel.onDelete } : {}),
     ...(rel.onUpdate !== undefined ? { onUpdate: rel.onUpdate } : {}),
     ...(rel.index !== undefined ? { index: rel.index } : {}),
@@ -511,7 +513,7 @@ function lowerModel(modelName: string, def: ProjectedModelDef, enums: EnumDefs):
       return lowerField(name, spec, enums, literalDefault, executionDefault);
     }),
     indexes: Object.entries(def.indexes ?? {}).map(([name, idx]) => lowerIndex(name, idx)),
-    relations: Object.entries(def.relations ?? {}).map(([name, rel]) => lowerRelation(name, rel, def)),
+    relations: Object.entries(def.relations ?? {}).map(([name, rel]) => lowerRelation(name, rel)),
   };
 }
 
@@ -536,10 +538,10 @@ export function buildIdbContractDefinition(
 
   const enumNodes = lowerEnums(enums);
 
-  const definition = {
+  const definition = withDerivedToOneNullability({
     enums: enumNodes,
     models: Object.entries(models).map(([modelName, def]) => lowerModel(modelName, def, enums)),
-  };
+  });
   const diagnostics = validateIdbContractDefinition(definition);
   if (diagnostics.length > 0) throw new IdbContractError(diagnostics);
   return { ...definition, enums: projection === "client" ? keepReferencedEnums(enumNodes, models) : enumNodes };
