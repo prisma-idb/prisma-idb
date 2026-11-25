@@ -83,6 +83,7 @@ function rowsIterable(...rows: Record<string, unknown>[]): AsyncIterable<Record<
 
 interface MockDriverOptions {
   readMarker?: () => Promise<IdbMarkerRecord | null>;
+  connectionGeneration?: () => number;
   execute?: (plan: IdbPlanBody) => AsyncIterable<Record<string, unknown>>;
   close?: () => Promise<void>;
   transaction?: (storeNames: string[], mode?: IDBTransactionMode) => Promise<IdbTransactionScope>;
@@ -95,7 +96,7 @@ function makeMockDriver(options: MockDriverOptions = {}): IdbRuntimeDriverInstan
   const defaultTransaction = (): Promise<IdbTransactionScope> => {
     throw new Error("Mock driver does not implement transaction(); pass `options.transaction` to enable.");
   };
-  return {
+  const driver: IdbRuntimeDriverInstance = {
     familyId: "idb" as const,
     targetId: "idb" as const,
     db: Promise.resolve(stubDb()),
@@ -103,7 +104,11 @@ function makeMockDriver(options: MockDriverOptions = {}): IdbRuntimeDriverInstan
     execute: options.execute ?? ((_plan: IdbPlanBody) => rowsIterable({ id: 1 })),
     close: options.close ?? (async () => undefined),
     transaction: options.transaction ?? defaultTransaction,
-  } satisfies IdbRuntimeDriverInstance;
+  };
+  if (options.connectionGeneration) {
+    Object.defineProperty(driver, "connectionGeneration", { get: options.connectionGeneration });
+  }
+  return driver;
 }
 
 // ── Mock adapter factory ─────────────────────────────────────────────────────
@@ -772,5 +777,191 @@ describe("verifyMarker edge cases", () => {
     });
 
     await expect(runtime.verifyMarker()).resolves.toBe(false);
+  });
+});
+
+// ── First-use marker check ───────────────────────────────────────────────────
+
+describe("first-use marker check", () => {
+  const run = async (runtime: ReturnType<typeof createIdbRuntime>) => {
+    for await (const _row of runtime.query(makeQueryPlan())) {
+      // drain
+    }
+  };
+
+  it.each([
+    ["missing", null, "CONTRACT.MARKER_MISSING"],
+    ["for another contract", makeMarker({ storageHash: "other" }), "CONTRACT.MARKER_MISMATCH"],
+  ])("warns once, before the first query, when the marker is %s", async (_, marker, code) => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const readMarker = vi.fn(async () => marker);
+    try {
+      const runtime = createIdbRuntime({
+        adapter: makeMockAdapter(),
+        driver: makeMockDriver({ readMarker }),
+        contract: TEST_CONTRACT,
+      });
+      await Promise.all([run(runtime), run(runtime)]);
+      await run(runtime);
+      expect(readMarker).toHaveBeenCalledTimes(1);
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(String(warn.mock.calls[0]![0])).toContain(code);
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
+  it("warns instead of failing when the marker can't be read, and checks before a transaction too", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const failing = createIdbRuntime({
+        adapter: makeMockAdapter(),
+        driver: makeMockDriver({
+          readMarker: async () => {
+            throw new Error("connection closed");
+          },
+        }),
+        contract: TEST_CONTRACT,
+      });
+      await expect(run(failing)).resolves.toBeUndefined();
+      expect(String(warn.mock.calls[0]![0])).toContain("CONTRACT.MARKER_UNREADABLE");
+
+      const readMarker = vi.fn(async () => null);
+      const scope = {} as IdbTransactionScope;
+      const inTransaction = createIdbRuntime({
+        adapter: makeMockAdapter(),
+        driver: makeMockDriver({ readMarker, transaction: async () => scope }),
+        contract: TEST_CONTRACT,
+      });
+      expect(await inTransaction.transaction(["User"])).toBe(scope);
+      expect(readMarker).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
+  it("checks the marker even when a middleware answers the query from its own cache", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const readMarker = vi.fn(async () => makeMarker({ storageHash: "other" }));
+    const execute = vi.fn();
+    const cached: IdbMiddleware = {
+      name: "cached",
+      familyId: "idb",
+      intercept: { onQuery: async () => ({ rows: [{ id: 1 }] }) },
+    };
+    try {
+      const runtime = createIdbRuntime({
+        adapter: makeMockAdapter(),
+        driver: { ...makeMockDriver({ readMarker }), execute } as IdbRuntimeDriverInstance,
+        contract: TEST_CONTRACT,
+        middleware: [cached],
+      });
+      await run(runtime);
+      expect(execute).not.toHaveBeenCalled();
+      expect(readMarker).toHaveBeenCalledTimes(1);
+      expect(String(warn.mock.calls[0]![0])).toContain("CONTRACT.MARKER_MISMATCH");
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
+  it("checks again on the first use after a newer version closed the connection", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    let generation = 0;
+    let marker = makeMarker();
+    const readMarker = vi.fn(async () => marker);
+    try {
+      const runtime = createIdbRuntime({
+        adapter: makeMockAdapter(),
+        driver: makeMockDriver({ readMarker, connectionGeneration: () => generation }),
+        contract: TEST_CONTRACT,
+      });
+      await run(runtime);
+      expect(warn).not.toHaveBeenCalled();
+
+      generation = 1;
+      marker = makeMarker({ storageHash: "newer" });
+      await Promise.all([run(runtime), run(runtime)]);
+      await run(runtime);
+      expect(readMarker).toHaveBeenCalledTimes(2);
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(String(warn.mock.calls[0]![0])).toContain("CONTRACT.MARKER_MISMATCH");
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
+  it.each(["query", "transaction"] as const)(
+    "rechecks the new connection before the first %s if the marker read races an upgrade",
+    async (operation) => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      let generation = 0;
+      const readMarker = vi.fn(async () => {
+        if (generation === 0) generation = 1;
+        if (operation === "transaction") throw new Error("incompatible connection");
+        return makeMarker({ storageHash: "other" });
+      });
+      const scope = {} as IdbTransactionScope;
+      const runtime = createIdbRuntime({
+        adapter: makeMockAdapter(),
+        driver: makeMockDriver({ readMarker, transaction: async () => scope, connectionGeneration: () => generation }),
+        contract: TEST_CONTRACT,
+      });
+      try {
+        if (operation === "query") await run(runtime);
+        else expect(await runtime.transaction(["User"])).toBe(scope);
+        expect(readMarker).toHaveBeenCalledTimes(2);
+        expect(warn).toHaveBeenCalledTimes(1);
+      } finally {
+        warn.mockRestore();
+      }
+    }
+  );
+
+  it("does not block a query if the stored marker is malformed or the warning handler throws", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {
+      throw new Error("log unavailable");
+    });
+    try {
+      const marker = makeMarker({ storageHash: { toString: null, valueOf: null } as unknown as string });
+      const readMarker = vi.fn(async () => marker);
+      const runtime = createIdbRuntime({
+        adapter: makeMockAdapter(),
+        driver: makeMockDriver({ readMarker }),
+        contract: TEST_CONTRACT,
+      });
+      await expect(run(runtime)).resolves.toBeUndefined();
+      await expect(run(runtime)).resolves.toBeUndefined();
+      expect(readMarker).toHaveBeenCalledTimes(1);
+      expect(String(warn.mock.calls[0]![0])).toContain("CONTRACT.MARKER_UNREADABLE");
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("stays quiet for a matching marker, and skips the read when turned off", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await run(
+        createIdbRuntime({
+          adapter: makeMockAdapter(),
+          driver: makeMockDriver({ readMarker: async () => makeMarker() }),
+          contract: TEST_CONTRACT,
+        })
+      );
+      const readMarker = vi.fn(async () => null);
+      await run(
+        createIdbRuntime({
+          adapter: makeMockAdapter(),
+          driver: makeMockDriver({ readMarker }),
+          contract: TEST_CONTRACT,
+          verifyMarker: false,
+        })
+      );
+      expect(readMarker).not.toHaveBeenCalled();
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      vi.restoreAllMocks();
+    }
   });
 });

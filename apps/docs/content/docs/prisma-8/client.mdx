@@ -119,6 +119,8 @@ You don't plan or edit an extension's migrations. The sync extension is currentl
 | `db.withTransaction(stores, fn)` | Runs low-level plans in one transaction. See [Transactions](/docs/prisma-8/api/transactions). |
 | `db.close()`                     | Closes the connection.                                                                        |
 
+The runtime checks the app contract marker on the first database query or transaction on each connection. A query served by middleware without touching IndexedDB leaves the check for the next database use. A missing marker logs `CONTRACT.MARKER_MISSING`, and a different marker logs `CONTRACT.MARKER_MISMATCH`. An unreadable marker logs `CONTRACT.MARKER_UNREADABLE`. The warning itself allows the operation to proceed. If an upgrade closes the connection, the driver only reconnects when the contract markers that were already present still match. Auto-migrating clients write the app marker before opening. Pass `verifyMarker: false` to `createIdbClient` or `createSyncIdbClient` to skip the warning check. The runtime warning compares only the `app` marker.
+
 <Cards>
   <Card title="Querying" href="/docs/prisma-8/api/querying" />
   <Card title="Writing" href="/docs/prisma-8/api/writing" />

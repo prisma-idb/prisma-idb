@@ -7,6 +7,7 @@ import { createTransactionScope, type IdbTransactionScope } from "./transaction-
 /** The connection a driver instance holds. Kept off the class so its type stays structural. */
 interface ConnectionState {
   db: Promise<IDBDatabase> | undefined;
+  generation: number;
   closed: boolean;
   markers: Promise<ReadonlyMap<string, string> | null> | undefined;
   readonly open: (markers?: ConnectionState["markers"]) => Promise<IDBDatabase>;
@@ -22,6 +23,7 @@ export class IdbRuntimeDriverInstance implements RuntimeDriverInstance<"idb", "i
   constructor(dbName: string, version?: number, factory?: IDBFactory, keyRange?: typeof IDBKeyRange) {
     const state: ConnectionState = {
       db: undefined,
+      generation: 0,
       closed: false,
       markers: undefined,
       open: (markers) => {
@@ -43,6 +45,7 @@ export class IdbRuntimeDriverInstance implements RuntimeDriverInstance<"idb", "i
             // against the old schema while the waiting upgrade is still blocked.
             if (verified) state.markers = readContractHashes(db);
             state.db = undefined;
+            state.generation++;
           }
         ).then(async (db) => {
           if (markers !== undefined) {
@@ -91,6 +94,15 @@ export class IdbRuntimeDriverInstance implements RuntimeDriverInstance<"idb", "i
     return state.db;
   }
 
+  /**
+   * Changes each time a newer version closes this driver's connection. The
+   * runtime compares it to decide when to check the contract marker again,
+   * since the upgrade may have moved the database to another contract.
+   */
+  get connectionGeneration(): number {
+    return connections.get(this)!.generation;
+  }
+
   async close(): Promise<void> {
     const state = connections.get(this)!;
     state.closed = true;
@@ -100,6 +112,10 @@ export class IdbRuntimeDriverInstance implements RuntimeDriverInstance<"idb", "i
 
   /**
    * Read the contract marker from the `_prisma_next_marker` store.
+   *
+   * Reads the `"app"` marker, the one for the contract the client was built from.
+   * Extension spaces, such as the sync stores, keep their own marker rows, and
+   * the runtime has no contract for them to compare against, so they are not read.
    *
    * Returns `null` when the marker store does not exist (fresh database
    * that hasn't been initialised yet) or when no marker record is present.

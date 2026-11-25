@@ -1,6 +1,6 @@
 import type { RuntimeDriverDescriptor } from "@prisma/orm-framework/components/execution";
 import { idbDriverDescriptorMeta } from "../core/descriptor-meta";
-import { IdbRuntimeDriverInstance } from "../core/idb-driver";
+import { IdbRuntimeDriverInstance as BuiltInIdbRuntimeDriver } from "../core/idb-driver";
 
 export type {
   IdbPlanBody,
@@ -23,7 +23,10 @@ export type {
   IdbMarkerRecord,
 } from "../core/plan-body";
 export { MARKER_STORE_NAME } from "../core/plan-body";
-export type { IdbRuntimeDriverInstance } from "../core/idb-driver";
+/** A custom driver can omit connection generations if its connection never changes. */
+export type IdbRuntimeDriverInstance = Omit<BuiltInIdbRuntimeDriver, "connectionGeneration"> & {
+  readonly connectionGeneration?: number;
+};
 export { IdbExecuteError } from "../core/execute/error";
 export type { IdbExecuteErrorCode } from "../core/execute/error";
 export type { IdbTransactionScope } from "../core/transaction-scope";
@@ -60,11 +63,11 @@ export function createIDBRuntimeDriver(
      */
     readonly keyRange?: typeof IDBKeyRange;
   }
-): RuntimeDriverDescriptor<"idb", "idb", void, IdbRuntimeDriverInstance> {
+): RuntimeDriverDescriptor<"idb", "idb", void, BuiltInIdbRuntimeDriver> {
   return {
     ...idbDriverDescriptorMeta,
-    create(): IdbRuntimeDriverInstance {
-      return new IdbRuntimeDriverInstance(dbName, version, options?.factory, options?.keyRange);
+    create(): BuiltInIdbRuntimeDriver {
+      return new BuiltInIdbRuntimeDriver(dbName, version, options?.factory, options?.keyRange);
     },
   };
 }

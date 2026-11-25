@@ -45,6 +45,15 @@ export interface IdbRuntimeOptions {
    * When omitted, a real context is derived from `contract`.
    */
   readonly ctx?: ActivityContextFields;
+  /**
+   * When to compare the database's contract marker with `contract`, as Prisma 8's
+   * SQL runtime does. `"onFirstUse"`, the default, reads the marker before
+   * the first query or transaction, and again after a newer version reopened the connection, and warns with `CONTRACT.MARKER_MISSING` or
+   * `CONTRACT.MARKER_MISMATCH`, or `CONTRACT.MARKER_UNREADABLE` when the read fails. The check never
+   * blocks the query. `false` skips it. The marker compared is the one for the contract's own
+   * space (`"app"`); the marker rows of extension spaces are not read.
+   */
+  readonly verifyMarker?: "onFirstUse" | false;
 }
 
 /**
@@ -179,6 +188,14 @@ function keyRangeIdentity(range: IDBKeyRange): Record<string, unknown> {
   };
 }
 
+function warnAboutMarker(...args: [message: string] | [message: string, cause: unknown]): void {
+  try {
+    console.warn(...args);
+  } catch {
+    // A warning handler must not block database use.
+  }
+}
+
 /**
  * IDB runtime — the `RuntimeCore` subclass for IndexedDB.
  *
@@ -208,6 +225,53 @@ class IdbRuntimeImpl extends RuntimeCore<IdbQueryPlan, IdbPlanBody, IdbMiddlewar
     this.#adapter = options.adapter;
     this.#driver = options.driver;
     this.#contract = options.contract;
+    this.#verifyMarkerOption = options.verifyMarker ?? "onFirstUse";
+  }
+
+  readonly #verifyMarkerOption: "onFirstUse" | false;
+  // Shared by concurrent first uses, so they read the marker and warn once. `#checkMarker` reports every
+  // failure as a warning and never throws, so a failed read is not retried on the same connection.
+  #markerCheck: Promise<void> | null = null;
+  // The driver connection the marker was checked on. A newer version that closes the connection
+  // may have migrated the database to another contract, so the next use checks again.
+  #markerCheckedGeneration = 0;
+
+  /** Reads the marker on first use of each connection and warns when it is missing or names another contract. */
+  async #ensureMarkerChecked(): Promise<void> {
+    if (this.#verifyMarkerOption === false) return;
+    let generation: number;
+    do {
+      generation = this.#driver.connectionGeneration ?? 0;
+      if (this.#markerCheck === null || this.#markerCheckedGeneration !== generation) {
+        this.#markerCheckedGeneration = generation;
+        this.#markerCheck = this.#checkMarker(generation);
+      }
+      await this.#markerCheck;
+    } while (generation !== (this.#driver.connectionGeneration ?? 0));
+  }
+
+  async #checkMarker(generation: number): Promise<void> {
+    try {
+      const marker = await this.#driver.readMarker();
+      if (generation !== (this.#driver.connectionGeneration ?? 0)) return;
+      const expected = (this.#contract["storage"] as { storageHash?: unknown } | undefined)?.storageHash;
+      const expectedHash = typeof expected === "string" ? expected : "unknown";
+      if (marker === null) {
+        warnAboutMarker(
+          `[prisma-idb] CONTRACT.MARKER_MISSING: the database has no contract marker, so nothing says it matches the contract (storageHash ${expectedHash}). Open it with an auto-migrating client, or apply its migrations first.`
+        );
+      } else if (typeof marker.storageHash !== "string") {
+        warnAboutMarker("[prisma-idb] CONTRACT.MARKER_UNREADABLE: the contract marker has no valid storageHash");
+      } else if (marker.storageHash !== expected) {
+        warnAboutMarker(
+          `[prisma-idb] CONTRACT.MARKER_MISMATCH: the database was migrated to storageHash ${marker.storageHash}, but the client's contract has ${expectedHash}. Queries may read or write the wrong record shape.`
+        );
+      }
+    } catch (error) {
+      if (generation === (this.#driver.connectionGeneration ?? 0)) {
+        warnAboutMarker("[prisma-idb] CONTRACT.MARKER_UNREADABLE: could not read the contract marker", error);
+      }
+    }
   }
 
   /**
@@ -217,7 +281,13 @@ class IdbRuntimeImpl extends RuntimeCore<IdbQueryPlan, IdbPlanBody, IdbMiddlewar
    * codec encoding can resolve field→codec mappings from the contract's
    * storage schema.
    */
-  protected override lower(plan: IdbQueryPlan, ctx: CodecCallContext): Promise<IdbLoweredPlan> {
+  protected override async lower(plan: IdbQueryPlan, ctx: CodecCallContext): Promise<IdbLoweredPlan> {
+    // The marker check runs here rather than in `runDriver`, because lowering
+    // comes before middleware `intercept`. A middleware that answers from its
+    // own cache never reaches the driver, and would otherwise skip the check.
+    // Lowering starts when the result is first iterated, so a plan that is
+    // built and never run reads nothing.
+    await this.#ensureMarkerChecked();
     const lowererCtx: IdbLowererContext = {
       ...ctx,
       contract: this.#contract,
@@ -269,6 +339,7 @@ class IdbRuntimeImpl extends RuntimeCore<IdbQueryPlan, IdbPlanBody, IdbMiddlewar
   }
 
   async transaction(storeNames: string[], mode: IDBTransactionMode = "readwrite"): Promise<IdbTransactionScope> {
+    await this.#ensureMarkerChecked();
     return this.#driver.transaction(storeNames, mode);
   }
 
