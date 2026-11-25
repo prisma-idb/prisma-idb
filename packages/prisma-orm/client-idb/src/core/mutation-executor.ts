@@ -1831,8 +1831,15 @@ export async function applyReferentialActionsForRow(
     if (action === "cascade") {
       const childKeyPath = getKeyPath(contract, def.relatedModelName);
       const children = await readMutationRows(scope, contract, def.relatedModelName, childWhere);
-      for (const child of children) {
-        const childKey = extractKeyFromRow(child, childKeyPath);
+      const rewritesSiblings =
+        children.length > 1 && collectDeleteActionScope(contract, def.relatedModelName).changesRootRows;
+      for (const [index, candidate] of children.entries()) {
+        const childKey = extractKeyFromRow(candidate, childKeyPath);
+        const child =
+          rewritesSiblings && index > 0
+            ? (await scope.execute({ meta, kind: "key-get", storeName: def.relatedStoreName, key: childKey }))[0]
+            : candidate;
+        if (!child) continue;
         const childVia = `Cascade on relation '${def.relationName}' deletes ${def.relatedModelName} '${keyToken(childKey)}'`;
         await applyReferentialActionsForRow(scope, contract, def.relatedModelName, child, writes, visited, childVia);
         await scope.execute({ meta, kind: "delete", storeName: def.relatedStoreName, key: childKey } as IdbAtomicPlan);
