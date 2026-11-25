@@ -5,6 +5,7 @@ import type { MockInstance } from "vitest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ContractProjection } from "../src/core/psl-interpreter";
 import { interpretPslDocumentToIdbContract } from "../src/core/psl-interpreter";
+import { IdbMigrationPlanner } from "@prisma-idb/target-idb/migration";
 
 let warnSpy: MockInstance<(...args: unknown[]) => void>;
 
@@ -42,6 +43,8 @@ type TestContractModel = {
   readonly storage: {
     readonly relations: Record<string, unknown>;
     readonly fieldDefaults?: Record<string, unknown>;
+    readonly storeName?: string;
+    readonly ignored?: boolean;
   };
 };
 
@@ -1992,7 +1995,7 @@ describe("@ignore and @@ignore", () => {
         `${user}model Post {\n  id String @id\n  authorId String @ignore\n  author User @relation(fields: [authorId], references: [id])\n}`,
         [
           "IDB_IGNORED_FIELD_REFERENCED",
-          'Field "Post.authorId" is marked @ignore, but relation field "Post.author" joins on it. Mark the relation field @ignore as well, or remove @ignore from the field.',
+          'Field "Post.authorId" is marked @ignore, but relation field "Post.author" joins on it. The relation enforces its foreign key even when it is @ignore, so remove @ignore from the field.',
         ],
       ],
       [
@@ -2000,7 +2003,7 @@ describe("@ignore and @@ignore", () => {
         "model User {\n  id String @id\n  code String @ignore\n}\nmodel Post {\n  id String @id\n  authorCode String\n  author User @relation(fields: [authorCode], references: [code])\n}",
         [
           "IDB_IGNORED_FIELD_REFERENCED",
-          'Field "User.code" is marked @ignore, but relation field "Post.author" references it. Mark the relation field @ignore as well, or remove @ignore from the field.',
+          'Field "User.code" is marked @ignore, but relation field "Post.author" references it. The relation enforces its foreign key even when it is @ignore, so remove @ignore from the field.',
         ],
       ],
       [
@@ -2030,8 +2033,8 @@ describe("@ignore and @@ignore", () => {
       ],
       [
         "an unknown field attribute in an @@ignore model",
-        "model Item {\n  id String @id @madeUp\n  @@ignore\n}",
-        ["PSL_UNSUPPORTED_FIELD_ATTRIBUTE", 'Field "Item.id" uses unsupported attribute "@madeUp".'],
+        "model Item {\n  id String @id\n  name String @madeUp\n  @@ignore\n}",
+        ["PSL_UNSUPPORTED_FIELD_ATTRIBUTE", 'Field "Item.name" uses unsupported attribute "@madeUp".'],
       ],
     ])("refuses %s", (_, schema, diagnostic) => {
       expect(codes(schema, projection)).toEqual([diagnostic]);
@@ -2043,11 +2046,25 @@ describe("@ignore and @@ignore", () => {
       ]);
     });
 
+    const modelsOf = (schema: string) => {
+      const result = interpret(schema, projection);
+      if (!result.ok) throw new Error(JSON.stringify(result.failure.diagnostics));
+      return {
+        contract: result.value,
+        models: result.value.domain.namespaces[NS]!.models as unknown as Record<string, TestContractModel>,
+      };
+    };
+    /** The relations the client hides: those flagged `ignored` in storage. */
+    const hidden = (model: TestContractModel) =>
+      Object.entries(model.storage.relations ?? {})
+        .filter(([, relation]) => (relation as { ignored?: boolean }).ignored === true)
+        .map(([name]) => name)
+        .sort();
+
     it.each(["backrelation", "owner"] as const)(
-      "ignores one named %s while preserving the other relation",
+      "hides one named %s and keeps every relation for enforcement",
       (ignoredSide) => {
-        const result = interpret(
-          `
+        const { models } = modelsOf(`
         model User {
           id String @id
           written Post[] @relation("Written") ${ignoredSide === "backrelation" ? "@ignore" : ""}
@@ -2060,26 +2077,18 @@ describe("@ignore and @@ignore", () => {
           writer User @relation("Written", fields: [writerId], references: [id]) ${ignoredSide === "owner" ? "@ignore" : ""}
           editor User @relation("Edited", fields: [editorId], references: [id])
         }
-      `,
-          projection
-        );
-        expect(result.ok).toBe(true);
-        if (!result.ok) return;
-        const models = result.value.domain.namespaces[NS]!.models as unknown as Record<string, TestContractModel>;
-        expect(Object.keys(models["User"]!.relations)).toEqual(["edited"]);
+      `);
+        expect(Object.keys(models["User"]!.relations).sort()).toEqual(["edited", "written"]);
+        expect(models["User"]!.relations["written"]).toMatchObject({ on: { targetFields: ["writerId"] } });
         expect(models["User"]!.relations["edited"]).toMatchObject({ on: { targetFields: ["editorId"] } });
-        expect(Object.keys(models["Post"]!.relations).sort()).toEqual(
-          ignoredSide === "backrelation" ? ["editor", "writer"] : ["editor"]
-        );
-        expect(Object.keys(models["Post"]!.fields)).toContain("writerId");
+        expect(Object.keys(models["Post"]!.relations).sort()).toEqual(["editor", "writer"]);
+        expect(hidden(models["User"]!)).toEqual(["written"]);
+        expect(hidden(models["Post"]!)).toEqual(ignoredSide === "owner" ? ["writer"] : []);
       }
     );
 
-    it.each(["backrelation", "owner"] as const)(
-      "ignores one side of a named self-relation while preserving the other self-relation (%s)",
-      (ignoredSide) => {
-        const result = interpret(
-          `
+    it.each(["backrelation", "owner"] as const)("hides one side of a named self-relation (%s)", (ignoredSide) => {
+      const { models } = modelsOf(`
         model User {
           id String @id
           managerId String?
@@ -2089,85 +2098,87 @@ describe("@ignore and @@ignore", () => {
           mentor User? @relation("Mentoring", fields: [mentorId], references: [id])
           mentees User[] @relation("Mentoring")
         }
-      `,
-          projection
-        );
-        expect(result.ok).toBe(true);
-        if (!result.ok) return;
-        const models = result.value.domain.namespaces[NS]!.models as unknown as Record<string, TestContractModel>;
-        expect(Object.keys(models["User"]!.relations).sort()).toEqual(
-          ignoredSide === "backrelation" ? ["manager", "mentees", "mentor"] : ["mentees", "mentor"]
-        );
-        expect(models["User"]!.relations["mentees"]).toMatchObject({ on: { targetFields: ["mentorId"] } });
-        expect(Object.keys(models["User"]!.fields)).toContain("managerId");
-      }
-    );
+      `);
+      expect(Object.keys(models["User"]!.relations).sort()).toEqual(["manager", "mentees", "mentor", "reports"]);
+      expect(models["User"]!.relations["reports"]).toMatchObject({ on: { targetFields: ["managerId"] } });
+      expect(models["User"]!.relations["mentees"]).toMatchObject({ on: { targetFields: ["mentorId"] } });
+      expect(hidden(models["User"]!)).toEqual(ignoredSide === "owner" ? ["manager", "reports"] : ["reports"]);
+    });
 
-    it("keeps a one-to-one owning relation when only its singular backrelation is @ignore", () => {
-      const result = interpret(
-        "model User {\n  id String @id\n  profile Profile? @ignore\n}\nmodel Profile {\n  id String @id\n  userId String @unique\n  user User @relation(fields: [userId], references: [id])\n}",
-        projection
+    it("keeps a one-to-one owning relation visible when only its singular backrelation is @ignore", () => {
+      const { models } = modelsOf(
+        "model User {\n  id String @id\n  profile Profile? @ignore\n}\nmodel Profile {\n  id String @id\n  userId String @unique\n  user User @relation(fields: [userId], references: [id])\n}"
       );
-      expect(result.ok).toBe(true);
-      if (!result.ok) return;
-      const models = result.value.domain.namespaces[NS]!.models as unknown as Record<string, TestContractModel>;
       expect(models["User"]!.relations).toEqual({});
       expect(Object.keys(models["Profile"]!.relations)).toEqual(["user"]);
+      expect(hidden(models["Profile"]!)).toEqual([]);
     });
 
-    it("removes the singular backrelation of an @ignore one-to-one owner", () => {
-      const result = interpret(
-        "model User {\n  id String @id\n  profile Profile?\n}\nmodel Profile {\n  id String @id\n  userId String @unique\n  user User @relation(fields: [userId], references: [id]) @ignore\n}",
-        projection
+    it("hides an @ignore one-to-one owner and leaves out its singular backrelation", () => {
+      const { models } = modelsOf(
+        "model User {\n  id String @id\n  profile Profile?\n}\nmodel Profile {\n  id String @id\n  userId String @unique\n  user User @relation(fields: [userId], references: [id]) @ignore\n}"
       );
-      expect(result.ok).toBe(true);
-      if (!result.ok) return;
-      const models = result.value.domain.namespaces[NS]!.models as unknown as Record<string, TestContractModel>;
       expect(models["User"]!.relations).toEqual({});
-      expect(models["Profile"]!.relations).toEqual({});
-      expect(Object.keys(models["Profile"]!.fields)).toEqual(["id", "userId"]);
+      expect(Object.keys(models["Profile"]!.relations)).toEqual(["user"]);
+      expect(hidden(models["Profile"]!)).toEqual(["user"]);
     });
 
-    it("treats an empty relation name as no name when it decides what @ignore removes", () => {
-      const result = interpret(
-        'model User {\n  id String @id\n  posts Post[]\n}\nmodel Post {\n  id String @id\n  authorId String\n  author User @relation("", fields: [authorId], references: [id]) @ignore\n}',
-        projection
+    it("treats an empty relation name as no name when it pairs an @ignore owner with its backrelation", () => {
+      const { models } = modelsOf(
+        'model User {\n  id String @id\n  posts Post[]\n}\nmodel Post {\n  id String @id\n  authorId String\n  author User @relation("", fields: [authorId], references: [id]) @ignore\n}'
       );
-      expect(result.ok).toBe(true);
-      if (!result.ok) return;
-      const models = result.value.domain.namespaces[NS]!.models as unknown as Record<string, TestContractModel>;
-      expect(models["User"]!.relations).toEqual({});
-      expect(models["Post"]!.relations).toEqual({});
+      expect(hidden(models["User"]!)).toEqual(["posts"]);
+      expect(hidden(models["Post"]!)).toEqual(["author"]);
     });
 
     it("pairs a named owning relation with an unnamed backrelation, as without @ignore", () => {
-      const result = interpret(
-        'model User {\n  id String @id\n  posts Post[]\n}\nmodel Post {\n  id String @id\n  authorId String\n  author User @relation("Authored", fields: [authorId], references: [id])\n}',
-        projection
+      const { models } = modelsOf(
+        'model User {\n  id String @id\n  posts Post[]\n}\nmodel Post {\n  id String @id\n  authorId String\n  author User @relation("Authored", fields: [authorId], references: [id])\n}'
       );
-      expect(result.ok).toBe(true);
-      if (!result.ok) return;
-      const models = result.value.domain.namespaces[NS]!.models as unknown as Record<string, TestContractModel>;
       expect(models["User"]!.relations["posts"]).toMatchObject({
         cardinality: "1:N",
         on: { targetFields: ["authorId"] },
       });
       expect(Object.keys(models["Post"]!.relations)).toEqual(["author"]);
+      expect(hidden(models["User"]!)).toEqual([]);
     });
 
-    it("leaves an @@ignore model with relations out, keeping the foreign key of the other side", () => {
-      const result = interpret(
-        "model User {\n  id String @id\n  legacy Legacy[]\n}\nmodel Legacy {\n  id String @id\n  userId String\n  user User @relation(fields: [userId], references: [id])\n  @@ignore\n}\nmodel Post {\n  id String @id\n  legacyId String\n  legacy Legacy @relation(fields: [legacyId], references: [id])\n}",
-        projection
+    it("keeps an @@ignore model's store and relations, hidden from the client", () => {
+      const { contract, models } = modelsOf(
+        "model User {\n  id String @id\n  legacy Legacy[]\n}\nmodel Legacy {\n  id String @id\n  userId String\n  user User @relation(fields: [userId], references: [id], onDelete: Cascade)\n  @@ignore\n}\nmodel Post {\n  id String @id\n  legacyId String\n  legacy Legacy @relation(fields: [legacyId], references: [id])\n}"
       );
-      expect(result.ok).toBe(true);
-      if (!result.ok) return;
-      const models = result.value.domain.namespaces[NS]!.models as unknown as Record<string, TestContractModel>;
-      expect(Object.keys(models).sort()).toEqual(["Post", "User"]);
-      expect(Object.keys(models["Post"]!.fields)).toEqual(["id", "legacyId"]);
-      expect(models["Post"]!.relations).toEqual({});
-      expect(models["User"]!.relations).toEqual({});
-      expect(Object.keys(result.value.storage.stores).sort()).toEqual(["post", "user"]);
+      expect(Object.keys(models).sort()).toEqual(["Legacy", "Post", "User"]);
+      expect(models["Legacy"]!.storage).toMatchObject({ storeName: "legacy", ignored: true });
+      expect(models["Legacy"]!.storage.relations).toEqual({ user: { onDelete: "cascade", ignored: true } });
+      expect(hidden(models["User"]!)).toEqual(["legacy"]);
+      expect(hidden(models["Post"]!)).toEqual(["legacy"]);
+      expect(Object.keys(contract.storage.stores).sort()).toEqual(["legacy", "post", "user"]);
+      expect(contract.storage.stores["legacy"]!.indexes).toHaveProperty("userId");
+      expect(Object.keys(contract.roots).sort()).toEqual(["post", "user"]);
+    });
+
+    it.each([
+      ["@@ignore on a model", "", "@@ignore", ""],
+      ["@ignore on an owning relation", "", "", "@ignore"],
+    ])("plans no migration operation when a schema adds %s", (_, before, modelAttribute, relationAttribute) => {
+      const schema = (attribute: string, relation: string) =>
+        `model User {\n  id String @id\n  legacy Legacy[]\n}\nmodel Legacy {\n  id String @id\n  userId String\n  user User @relation(fields: [userId], references: [id]) ${relation}\n  ${attribute}\n}`;
+      const from = modelsOf(schema(before, before)).contract;
+      const to = modelsOf(schema(modelAttribute, relationAttribute)).contract;
+      expect(to.storage.stores).toEqual(from.storage.stores);
+      expect(to.storage.storageHash).toBe(from.storage.storageHash);
+      const plan = new IdbMigrationPlanner().plan({
+        contract: to,
+        fromContract: from,
+        origin: null,
+        statements: [],
+        schema: null,
+        frameworkComponents: [],
+        spaceId: "app",
+        policy: { allowedOperationClasses: ["additive", "widening", "destructive", "data"] },
+      });
+      if (plan.kind !== "success") throw new Error("Expected a successful migration plan");
+      expect(plan.plan.operations).toEqual([]);
     });
   });
 });

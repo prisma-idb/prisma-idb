@@ -142,16 +142,27 @@ export const idbEmission = {
    * { readonly storeName: '<name>'; readonly keyPath: '<field>' }
    * ```
    *
+   * An `@@ignore` model adds `readonly ignored: true`, and a hidden relation
+   * adds `readonly relations: { readonly <name>: { readonly ignored: true } }`.
+   *
    * @param _modelName - The Prisma model name (unused; provided for API symmetry).
    * @param model      - The resolved `ContractModel` whose `storage` is cast to
    *                     {@link IdbModelStorage}.
    */
   generateModelStorageType(_modelName: string, model: ContractModel): string {
     const idbModel = model as ContractModel<IdbModelStorage>;
-    return [
-      `{ readonly storeName: ${serializeValue(idbModel.storage.storeName)}`,
-      `readonly keyPath: ${serializeValue(idbModel.storage.keyPath)} }`,
-    ].join("; ");
+    const parts = [
+      `readonly storeName: ${serializeValue(idbModel.storage.storeName)}`,
+      `readonly keyPath: ${serializeValue(idbModel.storage.keyPath)}`,
+    ];
+    // The typed client reads these flags to hide ignored relations, so they are
+    // the only relation storage the type carries.
+    if (idbModel.storage.ignored === true) parts.push("readonly ignored: true");
+    const ignoredRelations = Object.entries(idbModel.storage.relations ?? {})
+      .filter(([, relation]) => relation.ignored === true)
+      .map(([name]) => `readonly ${serializeObjectKey(name)}: { readonly ignored: true }`);
+    if (ignoredRelations.length > 0) parts.push(`readonly relations: { ${ignoredRelations.join("; ")} }`);
+    return `{ ${parts.join("; ")} }`;
   },
 
   /**

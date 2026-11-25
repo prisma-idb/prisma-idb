@@ -180,24 +180,26 @@ interface InterpretedModel {
   readonly definition: IdbModelNode & { readonly relations: IdbRelationNode[] };
   /** FK-side declarations keyed by target model for backrelation resolution. */
   readonly fksByTarget: ReadonlyMap<string, { fieldName: string; localFields: string[]; targetFields: string[] }>;
+  /** The same declarations keyed by {@link relationPairKey}, tried first so named relations pair by name. */
+  readonly fksByPair: ReadonlyMap<string, { fieldName: string; localFields: string[]; targetFields: string[] }>;
 }
 
 // ── Core interpreter ───────────────────────────────────────────────────────────
 
-/** What `@ignore` and `@@ignore` leave out of the contract, in every projection. */
+/** The `@ignore` and `@@ignore` declarations of a schema, in every projection. */
 interface IgnoredDeclarations {
   /** Models marked `@@ignore`. */
   readonly models: ReadonlySet<string>;
   /** The `@ignore` fields of each model. */
   readonly fieldsByModel: ReadonlyMap<string, ReadonlySet<string>>;
-  /** Relations with an ignored owning field, keyed by {@link relationPairKey}. */
+  /** Relations with an ignored owning field, keyed by {@link relationPairKey}. Their backrelations are hidden too. */
   readonly relationPairs: ReadonlySet<string>;
 }
 
 /**
  * Identifies a relation by the model that holds the foreign key, the model it
  * points to and its name, the way Prisma pairs the two sides. An empty name
- * counts as no name. Used only to decide what an `@ignore` removes.
+ * counts as no name.
  */
 function relationPairKey(owningModel: string, targetModel: string, name: string | undefined): string {
   return JSON.stringify([owningModel, targetModel, name === "" ? undefined : name]);
@@ -362,12 +364,14 @@ function interpretModel(
   const relations: Record<string, IdbRelationNode> = {};
   const fieldDefaults: Record<string, string | number | boolean> = {};
   const fksByTarget = new Map<string, { fieldName: string; localFields: string[]; targetFields: string[] }>();
+  const fksByPair = new Map<string, { fieldName: string; localFields: string[]; targetFields: string[] }>();
   const fieldExecutionDefaults: FieldExecutionDefault[] = [];
   let autoIncrement = false;
   const autoIncrementFields: string[] = [];
 
   for (const field of modelFields) {
-    if (ignoredFieldNames.has(field.name)) {
+    // An `@ignore` scalar leaves the contract. An `@ignore` relation field stays, hidden from the client, below.
+    if (ignoredFieldNames.has(field.name) && !modelNames.has(field.typeName)) {
       const { unique } = attributes.field(model, field);
       if (unique) {
         diagnostics.push({
@@ -391,14 +395,12 @@ function interpretModel(
     const fieldAttributes = attributes.field(model, field);
     if (fieldAttributes.failed) continue;
 
-    if (modelNames.has(field.typeName)) {
-      if (ignored.models.has(field.typeName)) continue;
-      const relation = fieldAttributes.relation?.value;
-      if (
-        (field.list || relation?.fields === undefined) &&
-        ignored.relationPairs.has(relationPairKey(field.typeName, model.name, relation?.name))
-      )
-        continue;
+    // A singular backrelation (a to-one field without foreign-key fields) has no
+    // representation here. When it or its owning relation is `@ignore`, the
+    // client would hide it anyway, so it is left out instead of refused.
+    if (!field.list && modelNames.has(field.typeName) && fieldAttributes.relation?.value.fields === undefined) {
+      const pair = relationPairKey(field.typeName, model.name, fieldAttributes.relation?.value.name);
+      if (ignoredFieldNames.has(field.name) || ignored.relationPairs.has(pair)) continue;
     }
 
     // Relation list field (backrelation) — skip for now, resolved in second pass
@@ -452,7 +454,7 @@ function interpretModel(
         for (const reason of joinsIgnored) {
           diagnostics.push({
             code: "IDB_IGNORED_FIELD_REFERENCED",
-            message: `${reason} Mark the relation field @ignore as well, or remove @ignore from the field.`,
+            message: `${reason} The relation enforces its foreign key even when it is @ignore, so remove @ignore from the field.`,
             sourceId,
             span: relationAttr.span,
           });
@@ -491,13 +493,12 @@ function interpretModel(
         nullable: field.optional,
         ...(onDelete !== undefined ? { onDelete } : {}),
         ...(onUpdate !== undefined ? { onUpdate } : {}),
+        ...(ignoredFieldNames.has(field.name) ? { ignored: true } : {}),
       };
       sourceMap.set(["models", model.name, "relations", field.name], relationAttr.span);
-      fksByTarget.set(field.typeName, {
-        fieldName: field.name,
-        localFields,
-        targetFields,
-      });
+      const fk = { fieldName: field.name, localFields, targetFields };
+      fksByTarget.set(field.typeName, fk);
+      fksByPair.set(relationPairKey(model.name, field.typeName, relationAttr.value.name), fk);
 
       for (const fkField of localFields) {
         if (excludedFieldNames.has(fkField)) continue;
@@ -788,6 +789,7 @@ function interpretModel(
       })),
       relations: Object.values(relations),
       autoIncrement,
+      ...(ignored.models.has(model.name) ? { ignored: true } : {}),
       ...(autoIncrementFields.length > 0 ? { autoIncrementFields } : {}),
       ...(projection === "client"
         ? {
@@ -800,6 +802,7 @@ function interpretModel(
         : {}),
     },
     fksByTarget,
+    fksByPair,
   };
 }
 
@@ -879,20 +882,14 @@ export function lowerPslDocumentToIdbContractDefinition(
     projection === "client" ? allModelsUnprojected.filter((m) => attributes.isModelExcluded(m)).map((m) => m.name) : []
   );
 
-  // `@ignore` and `@@ignore` leave fields, relations and models out of the
-  // contract in every projection, as in Prisma.
+  // `@@ignore` models and `@ignore` relations stay in the contract, flagged so
+  // the client hides them while their stores and foreign keys keep working.
+  // `@ignore` scalar fields leave the contract.
   const ignored = collectIgnoredDeclarations(allModelsUnprojected, modelNames, attributes);
-  for (const model of allModelsUnprojected.filter((m) => ignored.models.has(m.name))) {
-    // Its attributes are still checked, so the schema fails the same way with or without it.
-    attributes.model(model);
-    for (const field of Object.values(model.fields)) attributes.field(model, field);
-  }
 
   // The models actually interpreted — excluded models are dropped entirely
   // in "client" projection, never reaching `interpretModel`.
-  const allModels = allModelsUnprojected.filter(
-    (m) => !ignored.models.has(m.name) && (projection !== "client" || !excludedModelNames.has(m.name))
-  );
+  const allModels = allModelsUnprojected.filter((m) => projection !== "client" || !excludedModelNames.has(m.name));
 
   const interpretedByName = new Map<string, InterpretedModel>();
 
@@ -927,20 +924,15 @@ export function lowerPslDocumentToIdbContractDefinition(
       if (excludedModelNames.has(field.typeName)) continue;
       const relation = attributes.field(model, field).relation?.value;
       const pair = relationPairKey(field.typeName, model.name, relation?.name);
-      // An ignored owner removes its inverse. Ignoring the inverse alone preserves the owner.
-      if (
-        ignored.models.has(field.typeName) ||
-        ignored.fieldsByModel.get(model.name)?.has(field.name) === true ||
-        ignored.relationPairs.has(pair)
-      ) {
-        continue;
-      }
+      // An ignored owner hides its backrelation too. Ignoring the backrelation alone leaves the owner visible.
+      const hidden = ignored.fieldsByModel.get(model.name)?.has(field.name) === true || ignored.relationPairs.has(pair);
 
       const targetInterp = interpretedByName.get(field.typeName);
       if (!targetInterp) continue;
 
-      // Find the FK in the target model that points back to this model
-      const fk = targetInterp.fksByTarget.get(model.name);
+      // Find the FK in the target model that points back to this model: the
+      // one with the same relation name, or else the one for this target model.
+      const fk = targetInterp.fksByPair.get(pair) ?? targetInterp.fksByTarget.get(model.name);
       if (!fk) {
         interp.definition.relations.push({
           name: field.name,
@@ -949,6 +941,7 @@ export function lowerPslDocumentToIdbContractDefinition(
           localFields: [],
           targetFields: [],
           unresolvedBackrelation: true,
+          ...(hidden ? { ignored: true } : {}),
         });
         continue;
       }
@@ -960,6 +953,7 @@ export function lowerPslDocumentToIdbContractDefinition(
         cardinality: "1:N",
         localFields: fk.targetFields,
         targetFields: fk.localFields,
+        ...(hidden ? { ignored: true } : {}),
       });
       sourceMap.set(["models", model.name, "relations", field.name], field.span);
     }

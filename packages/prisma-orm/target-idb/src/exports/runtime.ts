@@ -4,6 +4,7 @@ import { idbTargetDescriptorMeta } from "../core/descriptor-meta";
 export { compareDecimalValues, isDecimalString } from "../core/decimal-compare";
 export { codecValueFromJson, codecValueToJson, idbCodecLookup } from "../core/codecs";
 export { absentAsNull } from "../core/absent-as-null";
+export { isIgnoredModel, isIgnoredRelation } from "../core/ignored";
 export type { AbsentAsNull } from "../core/absent-as-null";
 export { decodeJsonRecord } from "../core/decode-json-record";
 export { assertRecordValidator, validateRecord, validateKeyFields, validateKeyPath } from "../core/validate-record";

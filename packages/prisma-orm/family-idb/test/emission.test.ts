@@ -202,6 +202,40 @@ it("emits unique: false when canonicalization omits the index flag", () => {
   });
 });
 
+it("emits the ignored flags of models and relations in the model storage type, and nothing else from storage.relations", () => {
+  const contract = defineContract({
+    family: idbFamilyPack,
+    target: idbTargetPack,
+    models: {
+      User: {
+        store: "users",
+        key: "id",
+        fields: { id: "String" },
+        relations: { legacy: { to: "Legacy", cardinality: "1:N", on: { local: ["id"], target: ["userId"] } } },
+      },
+      Legacy: {
+        store: "legacy",
+        key: "id",
+        fields: { id: "String", userId: "String" },
+        relations: {
+          user: { to: "User", cardinality: "N:1", on: { local: ["userId"], target: ["id"] }, onDelete: "cascade" },
+        },
+        ignored: true,
+      },
+    },
+  });
+  const models = contract.domain.namespaces["__unbound__"]!.models as Record<
+    string,
+    Parameters<typeof idbEmission.generateModelStorageType>[1]
+  >;
+  expect(idbEmission.generateModelStorageType("User", models["User"]!)).toBe(
+    "{ readonly storeName: 'users'; readonly keyPath: 'id'; readonly relations: { readonly legacy: { readonly ignored: true } } }"
+  );
+  expect(idbEmission.generateModelStorageType("Legacy", models["Legacy"]!)).toBe(
+    "{ readonly storeName: 'legacy'; readonly keyPath: 'id'; readonly ignored: true; readonly relations: { readonly user: { readonly ignored: true } } }"
+  );
+});
+
 // ── validateContract ──────────────────────────────────────────────────────────
 
 describe("validateContract", () => {

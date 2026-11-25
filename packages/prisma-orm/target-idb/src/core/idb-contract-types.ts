@@ -153,6 +153,12 @@ export type IdbMutationDefaultGeneratorId =
 export type IdbRelationStorage = {
   readonly onDelete?: IdbReferentialAction; // default: 'restrict'
   readonly onUpdate?: IdbReferentialAction; // default: 'restrict'
+  /**
+   * `true` when the client hides the relation: PSL `@ignore` on either side, or
+   * a relation of or to an `@@ignore` model. The relation still enforces its
+   * foreign key and referential actions.
+   */
+  readonly ignored?: true;
 };
 
 /**
@@ -172,6 +178,12 @@ export type IdbModelStorage = {
   readonly keyPath: IdbKeyPath;
   readonly relations?: Record<string, IdbRelationStorage>;
   readonly fieldDefaults?: Record<string, string | number | boolean>;
+  /**
+   * `true` for a PSL `@@ignore` model. Its store, records, foreign keys and
+   * referential actions stay, but the client has no accessor for it and sync
+   * never sends its rows.
+   */
+  readonly ignored?: true;
 };
 
 /**
