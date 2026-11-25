@@ -2,11 +2,17 @@ import type { JsonValue } from "@prisma/orm-framework/contract/types";
 
 // A depth of 1 means one array or object containing scalar values.
 const MAX_JSON_DEPTH = 1000;
+// JSON repeats shared subtrees. Bound the extra work without limiting ordinary trees.
+const MAX_SHARED_WORK = 1_000_000;
 
-interface Frame {
+interface Subtree {
+  height: number;
+  work: number;
+}
+
+interface Frame extends Subtree {
   readonly container: object;
   readonly children: unknown[];
-  height: number;
 }
 
 export function isJsonCodec(codecId: string): boolean {
@@ -26,31 +32,38 @@ function isDenseJsonArray(value: readonly unknown[]): boolean {
 /** Checks for plain JSON data without altering the input or recursing on the JS stack. */
 export function isJsonCompatible(root: unknown): root is JsonValue {
   const path = new WeakSet<object>();
-  const heights = new WeakMap<object, number>();
+  const subtrees = new WeakMap<object, Subtree>();
   const frames: Frame[] = [];
+  let sharedWork = 0;
 
-  function addHeight(height: number): void {
+  function addChild(height: number, work: number): void {
     const parent = frames.at(-1);
-    if (parent) parent.height = Math.max(parent.height, height + 1);
+    if (parent) {
+      parent.height = Math.max(parent.height, height + 1);
+      parent.work = Math.min(parent.work + work, MAX_SHARED_WORK + 1);
+    }
   }
 
   function visit(value: unknown): boolean {
-    if (value === null || typeof value === "string" || typeof value === "boolean") return true;
-    if (typeof value === "number") return Number.isFinite(value);
+    if (value === null || typeof value === "string" || typeof value === "boolean" || typeof value === "number") {
+      addChild(0, typeof value === "string" ? 1 + value.length : 1);
+      return typeof value !== "number" || Number.isFinite(value);
+    }
     if (typeof value !== "object" || path.has(value) || frames.length >= MAX_JSON_DEPTH) return false;
 
-    const height = heights.get(value);
-    if (height !== undefined) {
+    const subtree = subtrees.get(value);
+    if (subtree !== undefined) {
       // A finished subtree may be reached again by a longer path.
-      if (frames.length + height > MAX_JSON_DEPTH) return false;
-      addHeight(height);
+      sharedWork += subtree.work;
+      if (frames.length + subtree.height > MAX_JSON_DEPTH || sharedWork > MAX_SHARED_WORK) return false;
+      addChild(subtree.height, subtree.work);
       return true;
     }
 
-    const children = jsonChildren(value);
-    if (children === undefined) return false;
+    const contents = jsonChildren(value);
+    if (contents === undefined) return false;
     path.add(value);
-    frames.push({ container: value, children, height: 1 });
+    frames.push({ container: value, ...contents, height: 1 });
     return true;
   }
 
@@ -62,19 +75,19 @@ export function isJsonCompatible(root: unknown): root is JsonValue {
     } else {
       frames.pop();
       path.delete(frame.container);
-      heights.set(frame.container, frame.height);
-      addHeight(frame.height);
+      subtrees.set(frame.container, { height: frame.height, work: frame.work });
+      addChild(frame.height, frame.work);
     }
   }
   return true;
 }
 
-function jsonChildren(value: object): unknown[] | undefined {
+function jsonChildren(value: object): { children: unknown[]; work: number } | undefined {
   if (Array.isArray(value)) {
     if (!isDenseJsonArray(value)) return undefined;
     const children: unknown[] = [];
     for (let index = 0; index < value.length; index++) children.push(value[index]);
-    return children;
+    return { children, work: 1 };
   }
 
   const prototype = Object.getPrototypeOf(value) as object | null;
@@ -82,11 +95,13 @@ function jsonChildren(value: object): unknown[] | undefined {
   if ("toJSON" in value && !Object.hasOwn(value, "toJSON")) return undefined;
 
   const children: unknown[] = [];
+  let work = 1;
   for (const key of Reflect.ownKeys(value)) {
     if (typeof key !== "string") return undefined;
     const descriptor = Object.getOwnPropertyDescriptor(value, key);
     if (!descriptor?.enumerable || !Object.hasOwn(descriptor, "value")) return undefined;
     children.push(descriptor.value);
+    work += 1 + key.length;
   }
-  return children;
+  return { children, work };
 }

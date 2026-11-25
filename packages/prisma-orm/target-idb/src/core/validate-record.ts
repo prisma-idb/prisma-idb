@@ -123,7 +123,8 @@ function buildField(
   // JSON null is a scalar value (Prisma JsonNull), independent of database nullability.
   if (jsonScalar) {
     validator = validator.narrow(
-      (value, context) => isJsonCompatible(value) || context.mustBe("a JSON-compatible value")
+      (value, context) =>
+        isJsonCompatible(value) || context.reject({ expected: "a JSON-compatible value", actual: "invalid JSON data" })
     );
     if (!field.many && !field.dict) return validator;
   }
