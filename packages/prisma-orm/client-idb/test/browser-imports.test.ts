@@ -3,10 +3,12 @@
  * The framework modules the auto-migrating client bundles for the browser import nothing from Node,
  * and every module the published client imports at runtime is installed with it.
  */
-import { readdirSync, readFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { build } from "tsdown";
+import { afterAll, describe, expect, it } from "vitest";
 import tsdownConfig from "../tsdown.config";
 import packageJson from "../package.json";
 
@@ -98,4 +100,30 @@ describe("runtime imports of the published client", () => {
     );
     expect(missing).toEqual([]);
   });
+});
+
+describe("built client", () => {
+  const outDir = mkdtempSync(join(tmpdir(), "client-idb-dist-"));
+  afterAll(() => rmSync(outDir, { recursive: true, force: true }));
+
+  it("imports only installed dependencies and no node: module, in every built file", async () => {
+    // Build the current config into a temporary directory, so the test reads what would be published
+    // and does not depend on a `dist` left over from an earlier build.
+    await build({
+      ...(tsdownConfig as object),
+      config: false,
+      outDir,
+      dts: false,
+      sourcemap: false,
+      logLevel: "silent",
+    });
+    const installed = new Set(Object.keys(packageJson.dependencies));
+    const built = readdirSync(outDir).filter((name) => name.endsWith(".mjs"));
+    expect(built).toContain("client-auto.mjs");
+
+    const specifiers = built.flatMap((name) => runtimeSpecifiersOf(readFileSync(join(outDir, name), "utf8")));
+    expect(specifiers.length).toBeGreaterThan(0);
+    expect(specifiers.filter((specifier) => specifier.startsWith("node:"))).toEqual([]);
+    expect(specifiers.filter((specifier) => !installed.has(packageOf(specifier)))).toEqual([]);
+  }, 60_000);
 });

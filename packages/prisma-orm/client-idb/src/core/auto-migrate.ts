@@ -110,7 +110,7 @@ export async function createAutoMigratingIdbClient<TContract extends IdbContract
   await autoMigrate({
     // The public `AutoMigrateClientOptions<TContract>` is generic over the
     // user's narrow IDB contract; the internal `autoMigrate` only consumes
-    // chain-walking fields, so widen to `ContractSpace<Contract>` here.
+    // the head ref and migration packages, so widen to `ContractSpace<Contract>` here.
     contractSpace: options.contractSpace as unknown as ContractSpace<Contract>,
     dbName: options.dbName,
     factory,
@@ -394,7 +394,8 @@ async function planSpacePath(input: {
       `Contract space "${spaceId}" is at its head ${head.hash}, but its marker does not record the required ` +
         `invariant(s) ${[...required].join(", ")}, and no migration from the head provides them. The contract space ` +
         "needs a migration from the head to itself that provides them. `prisma-idb migration contract-space` " +
-        "accepts only a linear chain, so build that contract space in code."
+        "accepts only a linear chain, so build that contract space in code. For a generated app space, " +
+        "delete the local database so it migrates from scratch, or re-plan so the head hash changes."
     );
   }
   if (outcome.kind === "unreachable") {

@@ -139,7 +139,9 @@ describe("auto-migrate invariants", () => {
     await first.close();
     await expect(
       createAutoMigratingIdbClient({ contractSpace: space([baseline, plain], ["fixed"]), dbName })
-    ).rejects.toThrow(/is at its head .* does not record the required invariant\(s\) fixed/);
+    ).rejects.toThrow(
+      /is at its head .* does not record the required invariant\(s\) fixed.*delete the local database/s
+    );
   });
 
   it("runs a migration for a newly required invariant on a database already at the head", async () => {
