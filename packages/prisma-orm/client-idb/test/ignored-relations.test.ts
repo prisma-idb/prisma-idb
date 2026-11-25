@@ -198,3 +198,80 @@ describe("@ignore and @@ignore at runtime", () => {
     expect(await allRows(db, "users")).toEqual([]);
   });
 });
+
+describe("referential actions through hidden relations", () => {
+  const actionsContract = defineContract({
+    family: idbFamilyPack,
+    target: idbTargetPack,
+    models: {
+      User: {
+        store: "users",
+        key: "id",
+        fields: { id: "String", slug: "String" },
+        indexes: { slug: { keyPath: "slug", unique: true } },
+        relations: {
+          drafts: {
+            to: "Draft",
+            cardinality: "1:N",
+            on: { local: ["slug"], target: ["authorSlug"] },
+            onUpdate: "cascade",
+            ignored: true,
+          },
+          reviews: {
+            to: "Review",
+            cardinality: "1:N",
+            on: { local: ["id"], target: ["reviewerId"] },
+            onDelete: "setNull",
+            ignored: true,
+          },
+        },
+      },
+      Draft: {
+        store: "drafts",
+        key: "id",
+        fields: { id: "String", authorSlug: "String" },
+        relations: {
+          author: { to: "User", cardinality: "N:1", on: { local: ["authorSlug"], target: ["slug"] }, ignored: true },
+        },
+      },
+      Review: {
+        store: "reviews",
+        key: "id",
+        fields: { id: "String", reviewerId: "String?" },
+        relations: {
+          reviewer: { to: "User", cardinality: "N:1", on: { local: ["reviewerId"], target: ["id"] }, ignored: true },
+        },
+      },
+    },
+  });
+
+  type ActionAccessor = LooseAccessor & {
+    where(filter: Record<string, unknown>): { update(patch: Record<string, unknown>): Promise<unknown> };
+  };
+  let db: IDBDatabase;
+  let actionsOrm: Record<string, ActionAccessor | undefined>;
+
+  beforeEach(async () => {
+    const name = `ignored-relation-actions-${++counter}`;
+    db = await openDb(name, actionsContract);
+    actionsOrm = idbOrm({
+      contract: actionsContract,
+      executor: new TestExecutor(createIDBRuntimeDriver(name).create()),
+    }) as unknown as Record<string, ActionAccessor | undefined>;
+  });
+  afterEach(() => db.close());
+
+  it("sets the foreign key to null through a hidden relation on delete", async () => {
+    await actionsOrm["users"]!.create({ id: "u1", slug: "alice" });
+    await actionsOrm["reviews"]!.create({ id: "r1", reviewerId: "u1" });
+    await actionsOrm["users"]!.delete("u1");
+    expect(await allRows(db, "reviews")).toEqual([{ id: "r1", reviewerId: null }]);
+  });
+
+  it("cascades an update of the referenced field through a hidden relation", async () => {
+    await actionsOrm["users"]!.create({ id: "u1", slug: "alice" });
+    await actionsOrm["drafts"]!.create({ id: "d1", authorSlug: "alice" });
+    await actionsOrm["users"]!.where({ id: "u1" }).update({ slug: "alicia" });
+    expect(await allRows(db, "drafts")).toEqual([{ id: "d1", authorSlug: "alicia" }]);
+  });
+});
