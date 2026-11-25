@@ -1279,6 +1279,9 @@ export async function verifyReferentialWrites(
   for (const write of rows.values()) {
     const storeName = getStoreName(contract, write.modelName);
     const [row] = await scope.execute({ meta, kind: "key-get", storeName, key: write.key });
+    // Primary keys can't change, so a missing row was deleted by a later
+    // action, such as a cascade that reached it after a SetNull. A deleted row
+    // has no foreign keys left to check.
     if (!row) continue;
     const fields = buildCatalog(contract, storeName, write.modelName).fields;
     const changed = new Set<string>();

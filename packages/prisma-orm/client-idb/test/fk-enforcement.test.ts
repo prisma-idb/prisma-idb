@@ -2397,6 +2397,24 @@ describe("referential writes — nested relation writes", () => {
       await client.close();
     }
   });
+
+  it("checks a create whose nested connect cascades into a grandchild", async () => {
+    const { client, orm } = await seed();
+    try {
+      await expect(
+        orm["users"]!.create({ id: "u3", tenantId: "t2", posts: (rel: Rel) => rel.connect({ id: "p1" }) })
+      ).rejects.toThrow("relation 'category' has no Category with tenantId='t2', id='c1'.");
+      expect(await orm["users"]!.findUnique("u3")).toBeNull();
+      expect(await orm["comments"]!.findUnique("m1")).toEqual({
+        id: "m1",
+        tenantId: "t1",
+        postId: "p1",
+        categoryId: "c1",
+      });
+    } finally {
+      await client.close();
+    }
+  });
 });
 
 // `SetDefault` changes a child's foreign key just like `SetNull` does, so the
