@@ -90,7 +90,24 @@
                   }
                 }
               },
-              "relations": {},
+              "relations": {
+                "owner": {
+                  "cardinality": "N:1",
+                  "nullable": false,
+                  "on": {
+                    "localFields": [
+                      "ownerId"
+                    ],
+                    "targetFields": [
+                      "id"
+                    ]
+                  },
+                  "to": {
+                    "model": "User",
+                    "namespace": "__unbound__"
+                  }
+                }
+              },
               "storage": {
                 "keyPath": "id",
                 "storeName": "tag"
@@ -167,7 +184,7 @@
           "id": "__unbound__"
         }
       },
-      "storageHash": "f1d972a30ea592edf9bb43313c771d34c9552d55ef81be164c0a1189a5739fbc",
+      "storageHash": "2183ef12cd858601d8616142e397916b90a3e1474f3ecbb751ab5ff38fe8a1a6",
       "stores": {
         "note": {
           "indexes": {
@@ -220,6 +237,12 @@
           }
         },
         "tag": {
+          "indexes": {
+            "ownerId": {
+              "keyPath": "ownerId",
+              "unique": false
+            }
+          },
           "keyPath": "id",
           "record": {
             "fields": {
@@ -276,6 +299,6 @@
   "hashes": {
     "executionHash": null,
     "profileHash": "40329830af4e39e0774683fbebcdc24dcf983a5da02c5fe6079a2a57579f861c",
-    "storageHash": "f1d972a30ea592edf9bb43313c771d34c9552d55ef81be164c0a1189a5739fbc"
+    "storageHash": "2183ef12cd858601d8616142e397916b90a3e1474f3ecbb751ab5ff38fe8a1a6"
   }
 }

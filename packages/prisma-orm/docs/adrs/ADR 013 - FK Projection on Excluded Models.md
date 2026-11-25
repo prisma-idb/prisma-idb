@@ -55,7 +55,7 @@ Removing it would silently change the shape of records the client has already sy
 
 ## Dated note (2026-11-25): relations and `@@ignore`
 
-A relation field that points to an `@@ignore` model must itself be marked `@ignore`, as Prisma requires; otherwise the schema fails with `IDB_INVALID_RELATION`. This differs from `@@idb.exclude`, where the relation is dropped with a warning, because `@@ignore` is a Prisma attribute and follows Prisma's rule. When either side of a relation is `@ignore`, the relation leaves the contract on both sides and the foreign-key fields stay as plain fields, as they do for an excluded model. A primary key, an index or a relation that is not ignored may not use an `@ignore` field (`IDB_IGNORED_FIELD_REFERENCED`). This does not change the decision above.
+As in Prisma, a relation field that points to an `@@ignore` model is ignored too, so the relation is omitted and its foreign-key fields stay as plain fields. Relations pair by name, so ignoring one relation leaves other relations between the same models in place. An ignored backrelation removes only itself: the owning relation and its foreign-key checks stay. An ignored owning relation also removes its backrelation, and its foreign-key fields stay as plain fields that the client no longer checks. A primary key, an index or a retained relation may not use an ignored field, and neither may `@id` or `@unique` on the ignored field itself (`IDB_IGNORED_FIELD_REFERENCED`). This does not change the decision above.
 
 ## Related
 

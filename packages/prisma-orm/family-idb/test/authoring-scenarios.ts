@@ -62,7 +62,12 @@ export const authoringScenarios: AuthoringScenario[] = [
           relations: { notes: { to: "Note", cardinality: "1:N", on: { local: ["id"], target: ["userId"] } } },
         },
         Post: { store: "post", key: "id", fields: { id: "String", authorId: "String" } },
-        Tag: { store: "tag", key: "id", fields: { id: "String", ownerId: "String" } },
+        Tag: {
+          store: "tag",
+          key: "id",
+          fields: { id: "String", ownerId: "String" },
+          relations: { owner: { to: "User", cardinality: "N:1", on: { local: ["ownerId"], target: ["id"] } } },
+        },
         Note: {
           store: "note",
           key: "id",

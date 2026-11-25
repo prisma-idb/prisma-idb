@@ -1948,19 +1948,11 @@ describe("@ignore and @@ignore", () => {
   describe.each(["full", "client"] as const)("in the %s projection", (projection) => {
     it.each([
       [
-        "a list relation field that points to an @@ignore model without @ignore",
-        "model User {\n  id String @id\n  legacy Legacy[]\n}\nmodel Legacy {\n  id String @id\n  userId String\n  user User @relation(fields: [userId], references: [id])\n  @@ignore\n}",
+        "a field-level unique index on an ignored field",
+        "model Item {\n  id String @id\n  code String @unique @ignore\n}",
         [
-          "IDB_INVALID_RELATION",
-          'Field "User.legacy" points to model "Legacy", which is marked @@ignore. Mark the field @ignore as well.',
-        ],
-      ],
-      [
-        "a to-one relation field that points to an @@ignore model without @ignore",
-        "model Legacy {\n  id String @id\n  @@ignore\n}\nmodel Post {\n  id String @id\n  legacyId String\n  legacy Legacy @relation(fields: [legacyId], references: [id])\n}",
-        [
-          "IDB_INVALID_RELATION",
-          'Field "Post.legacy" points to model "Legacy", which is marked @@ignore. Mark the field @ignore as well.',
+          "IDB_IGNORED_FIELD_REFERENCED",
+          'Field "Item.code" is marked @ignore, but @unique requires the field in the contract. Remove @ignore or remove @unique.',
         ],
       ],
       [
@@ -1997,7 +1989,7 @@ describe("@ignore and @@ignore", () => {
       ],
       [
         "a relation that references an @ignore field",
-        "model User {\n  id String @id\n  code String @unique @ignore\n}\nmodel Post {\n  id String @id\n  authorCode String\n  author User @relation(fields: [authorCode], references: [code])\n}",
+        "model User {\n  id String @id\n  code String @ignore\n}\nmodel Post {\n  id String @id\n  authorCode String\n  author User @relation(fields: [authorCode], references: [code])\n}",
         [
           "IDB_IGNORED_FIELD_REFERENCED",
           'Field "User.code" is marked @ignore, but relation field "Post.author" references it. Mark the relation field @ignore as well, or remove @ignore from the field.',
@@ -2041,9 +2033,94 @@ describe("@ignore and @@ignore", () => {
       expect(codes("model Item {\n  id String @id\n  s String @ignore(1)\n}", projection)).toHaveLength(1);
     });
 
+    it.each(["backrelation", "owner"] as const)(
+      "ignores one named %s while preserving the other relation",
+      (ignoredSide) => {
+        const result = interpret(
+          `
+        model User {
+          id String @id
+          written Post[] @relation("Written") ${ignoredSide === "backrelation" ? "@ignore" : ""}
+          edited Post[] @relation("Edited")
+        }
+        model Post {
+          id String @id
+          writerId String
+          editorId String
+          writer User @relation("Written", fields: [writerId], references: [id]) ${ignoredSide === "owner" ? "@ignore" : ""}
+          editor User @relation("Edited", fields: [editorId], references: [id])
+        }
+      `,
+          projection
+        );
+        expect(result.ok).toBe(true);
+        if (!result.ok) return;
+        const models = result.value.domain.namespaces[NS]!.models as unknown as Record<string, TestContractModel>;
+        expect(Object.keys(models["User"]!.relations)).toEqual(["edited"]);
+        expect(models["User"]!.relations["edited"]).toMatchObject({ on: { targetFields: ["editorId"] } });
+        expect(Object.keys(models["Post"]!.relations).sort()).toEqual(
+          ignoredSide === "backrelation" ? ["editor", "writer"] : ["editor"]
+        );
+        expect(Object.keys(models["Post"]!.fields)).toContain("writerId");
+      }
+    );
+
+    it.each(["backrelation", "owner"] as const)(
+      "ignores one side of a named self-relation while preserving the other self-relation (%s)",
+      (ignoredSide) => {
+        const result = interpret(
+          `
+        model User {
+          id String @id
+          managerId String?
+          mentorId String?
+          manager User? @relation("Management", fields: [managerId], references: [id]) ${ignoredSide === "owner" ? "@ignore" : ""}
+          reports User[] @relation("Management") ${ignoredSide === "backrelation" ? "@ignore" : ""}
+          mentor User? @relation("Mentoring", fields: [mentorId], references: [id])
+          mentees User[] @relation("Mentoring")
+        }
+      `,
+          projection
+        );
+        expect(result.ok).toBe(true);
+        if (!result.ok) return;
+        const models = result.value.domain.namespaces[NS]!.models as unknown as Record<string, TestContractModel>;
+        expect(Object.keys(models["User"]!.relations).sort()).toEqual(
+          ignoredSide === "backrelation" ? ["manager", "mentees", "mentor"] : ["mentees", "mentor"]
+        );
+        expect(models["User"]!.relations["mentees"]).toMatchObject({ on: { targetFields: ["mentorId"] } });
+        expect(Object.keys(models["User"]!.fields)).toContain("managerId");
+      }
+    );
+
+    it("keeps a one-to-one owning relation when only its singular backrelation is @ignore", () => {
+      const result = interpret(
+        "model User {\n  id String @id\n  profile Profile? @ignore\n}\nmodel Profile {\n  id String @id\n  userId String @unique\n  user User @relation(fields: [userId], references: [id])\n}",
+        projection
+      );
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      const models = result.value.domain.namespaces[NS]!.models as unknown as Record<string, TestContractModel>;
+      expect(models["User"]!.relations).toEqual({});
+      expect(Object.keys(models["Profile"]!.relations)).toEqual(["user"]);
+    });
+
+    it("removes the singular backrelation of an @ignore one-to-one owner", () => {
+      const result = interpret(
+        "model User {\n  id String @id\n  profile Profile?\n}\nmodel Profile {\n  id String @id\n  userId String @unique\n  user User @relation(fields: [userId], references: [id]) @ignore\n}",
+        projection
+      );
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      const models = result.value.domain.namespaces[NS]!.models as unknown as Record<string, TestContractModel>;
+      expect(models["User"]!.relations).toEqual({});
+      expect(models["Profile"]!.relations).toEqual({});
+      expect(Object.keys(models["Profile"]!.fields)).toEqual(["id", "userId"]);
+    });
+
     it("leaves an @@ignore model with relations out, keeping the foreign key of the other side", () => {
       const result = interpret(
-        "model User {\n  id String @id\n  legacy Legacy[] @ignore\n}\nmodel Legacy {\n  id String @id\n  userId String\n  user User @relation(fields: [userId], references: [id])\n  @@ignore\n}\nmodel Post {\n  id String @id\n  legacyId String\n  legacy Legacy @relation(fields: [legacyId], references: [id]) @ignore\n}",
+        "model User {\n  id String @id\n  legacy Legacy[]\n}\nmodel Legacy {\n  id String @id\n  userId String\n  user User @relation(fields: [userId], references: [id])\n  @@ignore\n}\nmodel Post {\n  id String @id\n  legacyId String\n  legacy Legacy @relation(fields: [legacyId], references: [id])\n}",
         projection
       );
       expect(result.ok).toBe(true);

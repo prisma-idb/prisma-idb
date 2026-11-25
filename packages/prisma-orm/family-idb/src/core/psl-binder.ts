@@ -402,6 +402,7 @@ export interface BoundModelAttributes {
 
 /** The arguments of `@relation(...)` that the interpreter reads. */
 export interface BoundRelation {
+  readonly name?: string | undefined;
   readonly fields?: readonly string[] | undefined;
   readonly references?: readonly string[] | undefined;
   readonly onDelete?: string | undefined;

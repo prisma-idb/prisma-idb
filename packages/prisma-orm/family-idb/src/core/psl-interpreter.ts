@@ -178,7 +178,7 @@ function interpretEnums(
 /** A lowered model with mutable relations for the backrelation pass. */
 interface InterpretedModel {
   readonly definition: IdbModelNode & { readonly relations: IdbRelationNode[] };
-  /** FK-side declarations keyed by target model for backrelation resolution. */
+  /** FK-side declarations keyed by target model and relation name. */
   readonly fksByTarget: ReadonlyMap<string, { fieldName: string; localFields: string[]; targetFields: string[] }>;
 }
 
@@ -190,13 +190,13 @@ interface IgnoredDeclarations {
   readonly models: ReadonlySet<string>;
   /** The `@ignore` fields of each model. */
   readonly fieldsByModel: ReadonlyMap<string, ReadonlySet<string>>;
-  /** Relations with an `@ignore` field on either side, keyed by {@link relationPairKey}. */
+  /** Relations with an ignored owning field, keyed by {@link relationPairKey}. */
   readonly relationPairs: ReadonlySet<string>;
 }
 
 /** Identifies a relation by the model that holds the foreign key and the model it points to. */
-function relationPairKey(owningModel: string, targetModel: string): string {
-  return JSON.stringify([owningModel, targetModel]);
+function relationPairKey(owningModel: string, targetModel: string, name: string | undefined): string {
+  return JSON.stringify([owningModel, targetModel, name]);
 }
 
 /** Collects the `@ignore`/`@@ignore` declarations of a schema. */
@@ -211,31 +211,17 @@ function collectIgnoredDeclarations(
     const fields = Object.values(model.fields).filter((field) => attributes.isFieldIgnored(field));
     fieldsByModel.set(model.name, new Set(fields.map((field) => field.name)));
     for (const field of fields) {
-      if (!modelNames.has(field.typeName)) continue;
-      // A list field is the back side: the foreign key lives on the model it lists.
-      relationPairs.add(
-        field.list ? relationPairKey(field.typeName, model.name) : relationPairKey(model.name, field.typeName)
-      );
+      if (field.list || !modelNames.has(field.typeName)) continue;
+      const relation = attributes.field(model, field).relation?.value;
+      if (relation?.fields !== undefined) {
+        relationPairs.add(relationPairKey(model.name, field.typeName, relation.name));
+      }
     }
   }
   return {
     models: new Set(models.filter((model) => attributes.isModelIgnored(model)).map((model) => model.name)),
     fieldsByModel,
     relationPairs,
-  };
-}
-
-/** Prisma requires `@ignore` on every relation field that points to an `@@ignore` model. */
-function missingIgnoreOnRelation(
-  modelName: string,
-  field: ModelSymbol["fields"][string],
-  sourceId: string
-): ContractSourceDiagnostic {
-  return {
-    code: "IDB_INVALID_RELATION",
-    message: `Field "${modelName}.${field.name}" points to model "${field.typeName}", which is marked @@ignore. Mark the field @ignore as well.`,
-    sourceId,
-    span: field.span,
   };
 }
 
@@ -377,10 +363,15 @@ function interpretModel(
 
   for (const field of modelFields) {
     if (ignoredFieldNames.has(field.name)) {
-      // Its attributes are still checked. An `@ignore` scalar leaves the
-      // contract; an `@ignore` relation field leaves it with its partner on the
-      // other model, and the foreign-key fields stay as plain fields.
-      attributes.field(model, field);
+      const { unique } = attributes.field(model, field);
+      if (unique) {
+        diagnostics.push({
+          code: "IDB_IGNORED_FIELD_REFERENCED",
+          message: `Field "${model.name}.${field.name}" is marked @ignore, but @unique requires the field in the contract. Remove @ignore or remove @unique.`,
+          sourceId,
+          span: unique,
+        });
+      }
       continue;
     }
     const excludedAttributes = excludedScalarAttributes.get(field);
@@ -395,12 +386,18 @@ function interpretModel(
     const fieldAttributes = attributes.field(model, field);
     if (fieldAttributes.failed) continue;
 
+    if (modelNames.has(field.typeName)) {
+      if (ignored.models.has(field.typeName)) continue;
+      const relation = fieldAttributes.relation?.value;
+      if (
+        (field.list || relation?.fields === undefined) &&
+        ignored.relationPairs.has(relationPairKey(field.typeName, model.name, relation?.name))
+      )
+        continue;
+    }
+
     // Relation list field (backrelation) — skip for now, resolved in second pass
     if (field.list && modelNames.has(field.typeName)) {
-      if (ignored.models.has(field.typeName)) {
-        diagnostics.push(missingIgnoreOnRelation(model.name, field, sourceId));
-        continue;
-      }
       if (excludedModelNames.has(field.typeName)) {
         // The model itself is never excluded because of a relation (ADR
         // 013) — just drop this backrelation and keep the model.
@@ -412,12 +409,6 @@ function interpretModel(
     // FK-side relation field: non-list, type is a model, has @relation
     const relationAttr = fieldAttributes.relation;
     if (!field.list && modelNames.has(field.typeName) && relationAttr) {
-      if (ignored.models.has(field.typeName)) {
-        diagnostics.push(missingIgnoreOnRelation(model.name, field, sourceId));
-        continue;
-      }
-      // The list field on the other side is `@ignore`, so the relation leaves the contract on both sides.
-      if (ignored.relationPairs.has(relationPairKey(model.name, field.typeName))) continue;
       if (excludedModelNames.has(field.typeName)) {
         // Same reasoning as the backrelation case above: drop the relation
         // (required or not), keep the model, keep the FK scalar field (it's
@@ -497,7 +488,7 @@ function interpretModel(
         ...(onUpdate !== undefined ? { onUpdate } : {}),
       };
       sourceMap.set(["models", model.name, "relations", field.name], relationAttr.span);
-      fksByTarget.set(field.typeName, {
+      fksByTarget.set(relationPairKey(model.name, field.typeName, relationAttr.value.name), {
         fieldName: field.name,
         localFields,
         targetFields,
@@ -929,11 +920,13 @@ export function lowerPslDocumentToIdbContractDefinition(
       // Already warned about and dropped by the first pass — don't also
       // report it as an unresolved backrelation.
       if (excludedModelNames.has(field.typeName)) continue;
-      // Left out by `@ignore` on either side, or refused because it points to an `@@ignore` model.
+      const relation = attributes.field(model, field).relation?.value;
+      const pair = relationPairKey(field.typeName, model.name, relation?.name);
+      // An ignored owner removes its inverse. Ignoring the inverse alone preserves the owner.
       if (
         ignored.models.has(field.typeName) ||
         ignored.fieldsByModel.get(model.name)?.has(field.name) === true ||
-        ignored.relationPairs.has(relationPairKey(field.typeName, model.name))
+        ignored.relationPairs.has(pair)
       ) {
         continue;
       }
@@ -942,7 +935,7 @@ export function lowerPslDocumentToIdbContractDefinition(
       if (!targetInterp) continue;
 
       // Find the FK in the target model that points back to this model
-      const fk = targetInterp.fksByTarget.get(model.name);
+      const fk = targetInterp.fksByTarget.get(pair);
       if (!fk) {
         interp.definition.relations.push({
           name: field.name,

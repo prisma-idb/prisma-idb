@@ -160,9 +160,10 @@ IDB reads the attributes it has a use for and refuses the rest, rather than drop
 
 `@ignore` on a field and `@@ignore` on a model leave it out of the contract in every projection, as in Prisma. A TypeScript model has no such attribute; leave the field or model out of `defineContract` instead. These rules apply:
 
-- A relation field that points to an `@@ignore` model must be marked `@ignore` too, or the schema fails with `IDB_INVALID_RELATION`.
-- When either side of a relation is `@ignore`, the relation leaves the contract on both sides. Its foreign-key fields stay as plain fields, and the client no longer checks them as foreign keys.
-- A primary key, an index or a relation that isn't ignored can't use an `@ignore` field. The schema fails with `IDB_IGNORED_FIELD_REFERENCED`.
+- A relation to an `@@ignore` model is omitted from the contract. Its foreign-key scalar fields stay.
+- Ignoring a backrelation removes that accessor and preserves the owning relation and its foreign-key checks. Ignoring the owning field also removes its matching backrelation. In that case the scalar fields stay and the client no longer checks them as foreign keys.
+- A primary key, an index or a relation that isn't ignored can't use an `@ignore` field, and neither can `@id` or `@unique` on the field itself. The schema fails with `IDB_IGNORED_FIELD_REFERENCED`.
+- The sync server reads `@ignore` differently, as [Client Contracts](/docs/prisma-8/sync/client-contracts) explains.
 
 To keep data on the server and out of the browser, use `@idb.exclude` instead, as [Server-only fields and models](#server-only-fields-and-models) explains.
 
