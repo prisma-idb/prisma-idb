@@ -7,6 +7,54 @@ import { createAutoMigratingIdbClient } from "../src/exports/client-auto";
 import type { IdbContract } from "../src/exports/orm";
 import { buildContractSpaceFixture } from "./_contract-space-fixture";
 
+it.each(["delete", "update"] as const)(
+  "does not require a SetDefault value when %s has no matching children",
+  async (kind) => {
+    const contract = defineContract({
+      family,
+      target,
+      models: {
+        Parent: {
+          store: "parents",
+          key: "id",
+          fields: { id: "String", code: "String" },
+          indexes: { code: { keyPath: "code", unique: true } },
+        },
+        Child: {
+          store: "children",
+          key: "id",
+          fields: { id: "String", parentCode: "String" },
+          relations: {
+            parent: {
+              to: "Parent",
+              cardinality: "N:1",
+              onDelete: "setDefault",
+              onUpdate: "setDefault",
+              on: { local: ["parentCode"], target: ["code"] },
+            },
+          },
+        },
+      },
+    });
+    const client = await createAutoMigratingIdbClient({
+      contractSpace: buildContractSpaceFixture([contract]),
+      dbName: `referential-missing-default-${crypto.randomUUID()}`,
+    });
+    try {
+      await client.orm["parents"]!.create({ id: "p", code: "old" });
+      if (kind === "delete") {
+        await client.orm["parents"]!.delete("p");
+        expect(await client.orm["parents"]!.findUnique("p")).toBeNull();
+      } else {
+        await client.orm["parents"]!.where({ id: "p" }).update({ code: "new" });
+        expect(await client.orm["parents"]!.findUnique("p")).toMatchObject({ code: "new" });
+      }
+    } finally {
+      await client.close();
+    }
+  }
+);
+
 function open(contract: IdbContract) {
   return createAutoMigratingIdbClient({
     contractSpace: buildContractSpaceFixture([contract]),

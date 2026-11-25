@@ -1158,12 +1158,13 @@ async function writeReferentialUpdate(
   def: RelationDefinition,
   action: "cascade" | "setNull" | "setDefault",
   where: IdbFilterExpr,
-  patch: Record<string, unknown>,
+  buildPatch: () => Record<string, unknown>,
   writes: ReferentialWrites,
   activeUpdates?: Set<string>
 ): Promise<void> {
   const children = await readMutationRows(scope, contract, def.relatedModelName, where);
   if (children.length === 0) return;
+  const patch = buildPatch();
   const keyPath = getKeyPath(contract, def.relatedModelName);
   const cause = `${actionLabel(action)} on relation '${def.relationName}'`;
   const hasDownstreamActions = getChildEnforcementEdges(contract, def.relatedModelName).some((edge) =>
@@ -1285,7 +1286,7 @@ export async function applyReferentialActionsForRowOnUpdate(
     const childWhere = buildChildWhere(def, values);
     const actionKey = keyToken([modelName, key, def.relationName]);
     if (activeUpdates.has(actionKey)) continue;
-    const childPatch =
+    const buildPatch = () =>
       action === "setNull"
         ? Object.fromEntries(def.targetFields.map((field) => [field, null]))
         : action === "setDefault"
@@ -1304,7 +1305,7 @@ export async function applyReferentialActionsForRowOnUpdate(
         def,
         action,
         childWhere,
-        childPatch,
+        buildPatch,
         writes,
         activeUpdates
       );
@@ -1731,11 +1732,11 @@ export async function applyReferentialActionsForRow(
       continue;
     }
 
-    const patch =
+    const buildPatch = () =>
       action === "setNull"
         ? Object.fromEntries(def.targetFields.map((field) => [field, null]))
         : buildSetDefaultPatch(contract, def);
-    await writeReferentialUpdate(scope, contract, modelName, def, action, childWhere, patch, writes);
+    await writeReferentialUpdate(scope, contract, modelName, def, action, childWhere, buildPatch, writes);
   }
 }
 
