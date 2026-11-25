@@ -1,0 +1,287 @@
+{
+  "contract": {
+    "capabilities": {
+      "idb": {
+        "ddlOnlyInUpgrade": true,
+        "transactionalDDL": true
+      }
+    },
+    "domain": {
+      "namespaces": {
+        "__unbound__": {
+          "models": {
+            "Avatar": {
+              "fields": {
+                "id": {
+                  "nullable": false,
+                  "type": {
+                    "codecId": "idb/string@1",
+                    "kind": "scalar"
+                  }
+                },
+                "userEmail": {
+                  "nullable": false,
+                  "type": {
+                    "codecId": "idb/string@1",
+                    "kind": "scalar"
+                  }
+                }
+              },
+              "relations": {
+                "user": {
+                  "cardinality": "N:1",
+                  "nullable": false,
+                  "on": {
+                    "localFields": [
+                      "userEmail"
+                    ],
+                    "targetFields": [
+                      "email"
+                    ]
+                  },
+                  "to": {
+                    "model": "User",
+                    "namespace": "__unbound__"
+                  }
+                }
+              },
+              "storage": {
+                "keyPath": "id",
+                "storeName": "avatar"
+              }
+            },
+            "Profile": {
+              "fields": {
+                "id": {
+                  "nullable": false,
+                  "type": {
+                    "codecId": "idb/string@1",
+                    "kind": "scalar"
+                  }
+                },
+                "userId": {
+                  "nullable": false,
+                  "type": {
+                    "codecId": "idb/string@1",
+                    "kind": "scalar"
+                  }
+                }
+              },
+              "relations": {
+                "user": {
+                  "cardinality": "N:1",
+                  "nullable": false,
+                  "on": {
+                    "localFields": [
+                      "userId"
+                    ],
+                    "targetFields": [
+                      "id"
+                    ]
+                  },
+                  "to": {
+                    "model": "User",
+                    "namespace": "__unbound__"
+                  }
+                }
+              },
+              "storage": {
+                "keyPath": "id",
+                "relations": {
+                  "user": {
+                    "onDelete": "cascade"
+                  }
+                },
+                "storeName": "profile"
+              }
+            },
+            "User": {
+              "fields": {
+                "email": {
+                  "nullable": false,
+                  "type": {
+                    "codecId": "idb/string@1",
+                    "kind": "scalar"
+                  }
+                },
+                "id": {
+                  "nullable": false,
+                  "type": {
+                    "codecId": "idb/string@1",
+                    "kind": "scalar"
+                  }
+                }
+              },
+              "relations": {
+                "avatar": {
+                  "cardinality": "1:1",
+                  "nullable": true,
+                  "on": {
+                    "localFields": [
+                      "email"
+                    ],
+                    "targetFields": [
+                      "userEmail"
+                    ]
+                  },
+                  "to": {
+                    "model": "Avatar",
+                    "namespace": "__unbound__"
+                  }
+                },
+                "profile": {
+                  "cardinality": "1:1",
+                  "nullable": true,
+                  "on": {
+                    "localFields": [
+                      "id"
+                    ],
+                    "targetFields": [
+                      "userId"
+                    ]
+                  },
+                  "to": {
+                    "model": "Profile",
+                    "namespace": "__unbound__"
+                  }
+                }
+              },
+              "storage": {
+                "keyPath": "id",
+                "storeName": "user"
+              }
+            }
+          }
+        }
+      }
+    },
+    "extensions": {},
+    "meta": {},
+    "profileHash": "40329830af4e39e0774683fbebcdc24dcf983a5da02c5fe6079a2a57579f861c",
+    "roots": {
+      "avatar": {
+        "model": "Avatar",
+        "namespace": "__unbound__"
+      },
+      "profile": {
+        "model": "Profile",
+        "namespace": "__unbound__"
+      },
+      "user": {
+        "model": "User",
+        "namespace": "__unbound__"
+      }
+    },
+    "storage": {
+      "namespaces": {
+        "__unbound__": {
+          "entries": {},
+          "id": "__unbound__"
+        }
+      },
+      "storageHash": "ed94fde2ff8aa5e3980c47fcfd415813c4074fc6c8b778fe0a740ccb08ce456a",
+      "stores": {
+        "avatar": {
+          "indexes": {
+            "userEmail": {
+              "keyPath": "userEmail",
+              "unique": true
+            }
+          },
+          "keyPath": "id",
+          "record": {
+            "fields": {
+              "id": {
+                "nullable": false,
+                "type": {
+                  "codecId": "idb/string@1",
+                  "kind": "scalar"
+                }
+              },
+              "userEmail": {
+                "nullable": false,
+                "type": {
+                  "codecId": "idb/string@1",
+                  "kind": "scalar"
+                }
+              }
+            },
+            "model": "Avatar"
+          }
+        },
+        "profile": {
+          "indexes": {
+            "userId": {
+              "keyPath": "userId",
+              "unique": true
+            }
+          },
+          "keyPath": "id",
+          "record": {
+            "fields": {
+              "id": {
+                "nullable": false,
+                "type": {
+                  "codecId": "idb/string@1",
+                  "kind": "scalar"
+                }
+              },
+              "userId": {
+                "nullable": false,
+                "type": {
+                  "codecId": "idb/string@1",
+                  "kind": "scalar"
+                }
+              }
+            },
+            "model": "Profile"
+          }
+        },
+        "user": {
+          "indexes": {
+            "email": {
+              "keyPath": "email",
+              "unique": false
+            },
+            "email_unique": {
+              "keyPath": "email",
+              "unique": true
+            },
+            "id": {
+              "keyPath": "id",
+              "unique": false
+            }
+          },
+          "keyPath": "id",
+          "record": {
+            "fields": {
+              "email": {
+                "nullable": false,
+                "type": {
+                  "codecId": "idb/string@1",
+                  "kind": "scalar"
+                }
+              },
+              "id": {
+                "nullable": false,
+                "type": {
+                  "codecId": "idb/string@1",
+                  "kind": "scalar"
+                }
+              }
+            },
+            "model": "User"
+          }
+        }
+      }
+    },
+    "target": "idb",
+    "targetFamily": "idb"
+  },
+  "error": null,
+  "hashes": {
+    "executionHash": null,
+    "profileHash": "40329830af4e39e0774683fbebcdc24dcf983a5da02c5fe6079a2a57579f861c",
+    "storageHash": "ed94fde2ff8aa5e3980c47fcfd415813c4074fc6c8b778fe0a740ccb08ce456a"
+  }
+}

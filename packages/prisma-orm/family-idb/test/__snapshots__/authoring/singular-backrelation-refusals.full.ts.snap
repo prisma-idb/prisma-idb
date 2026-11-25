@@ -1,0 +1,5 @@
+{
+  "contract": null,
+  "error": "IDB_INVALID_RELATION: Relation \"User.profile\" is required, but \"Profile\" holds the foreign key, so nothing in storage guarantees a \"Profile\" row exists. Make the relation optional.\nIDB_INVALID_RELATION: Relation \"User.avatar\" is singular, but the foreign key on \"Avatar\" (\"userId\") isn't unique, so several \"Avatar\" rows could point at one \"User\". Add a unique index on the foreign-key fields, or make the relation a list.",
+  "hashes": null
+}

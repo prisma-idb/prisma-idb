@@ -835,6 +835,174 @@ describe("interpretPslDocumentToIdbContract", () => {
       expect(result.failure.diagnostics[0]!.code).toBe("IDB_MISSING_RELATION_ATTRIBUTE");
     });
 
+    it.each(['@relation("ProfileUser")', '@relation(name: "ProfileUser")'])(
+      "pairs a singular backrelation named with %s",
+      (attribute) => {
+        const result = interpret(`
+          model User {
+            id      String   @id
+            profile Profile? ${attribute}
+            other   Profile? @relation("Other")
+          }
+          model Profile {
+            id      String @id
+            user    User   @relation("ProfileUser", fields: [userId], references: [id])
+            userId  String @unique
+            owner   User   @relation("Other", fields: [ownerId], references: [id])
+            ownerId String @unique
+          }
+        `);
+        expect(result.ok).toBe(true);
+        if (!result.ok) return;
+        const models = result.value.domain.namespaces[NS]!.models as unknown as Record<string, TestContractModel>;
+        expect(models["User"]!.relations["profile"]).toMatchObject({
+          cardinality: "1:1",
+          nullable: true,
+          on: { localFields: ["id"], targetFields: ["userId"] },
+        });
+        expect(models["User"]!.relations["other"]).toMatchObject({
+          cardinality: "1:1",
+          on: { localFields: ["id"], targetFields: ["ownerId"] },
+        });
+      }
+    );
+
+    it.each([
+      ["profile Profile? @relation(onDelete: Cascade)", "profile", "onDelete"],
+      ["profiles Profile[] @relation(onUpdate: Cascade, onDelete: Cascade)", "profiles", "onDelete and onUpdate"],
+    ])("refuses referential actions on a backrelation: %s", (field, name, actions) => {
+      const result = interpret(`
+        model User {
+          id String @id
+          ${field}
+        }
+        model Profile {
+          id     String @id
+          user   User   @relation(fields: [userId], references: [id])
+          userId String @unique
+        }
+      `);
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.failure.diagnostics.map(({ code, message }) => [code, message])).toEqual([
+        [
+          "IDB_INVALID_RELATION",
+          `Backrelation field "User.${name}" declares ${actions}, but it doesn't hold the foreign key. Declare referential actions on the relation field with fields and references in "Profile".`,
+        ],
+      ]);
+    });
+
+    it.each([
+      ["a Profile?", "b Profile?"],
+      ["a Profile?", "b Profile[]"],
+    ])("pairs both aliases with one foreign key: %s, %s", (first, second) => {
+      const result = interpret(`
+        model User {
+          id String @id
+          ${first} @relation("Account")
+          ${second} @relation("Account")
+        }
+        model Profile {
+          id     String @id
+          user   User   @relation("Account", fields: [userId], references: [id])
+          userId String @unique
+        }
+      `);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      const models = result.value.domain.namespaces[NS]!.models as unknown as Record<string, TestContractModel>;
+      for (const alias of ["a", "b"]) {
+        expect(models["User"]!.relations[alias]).toMatchObject({
+          on: { localFields: ["id"], targetFields: ["userId"] },
+        });
+      }
+    });
+
+    it.each(['@default("unused")', "@unique"])(
+      "rejects scalar attribute %s on a singular backrelation",
+      (attribute) => {
+        const result = interpret(`
+        model User {
+          id String @id
+          profile Profile? ${attribute}
+        }
+        model Profile {
+          id String @id
+          user User @relation(fields: [userId], references: [id])
+          userId String @unique
+        }
+      `);
+        expect(result.ok).toBe(false);
+        if (result.ok) return;
+        expect(result.failure.diagnostics.map(({ code }) => code)).toEqual(["PSL_UNSUPPORTED_FIELD_ATTRIBUTE"]);
+      }
+    );
+
+    it("treats an empty relation name as no name", () => {
+      const result = interpret(`
+        model User {
+          id    String @id
+          posts Post[] @relation("")
+        }
+        model Post {
+          id       String @id
+          authorId String
+          author   User   @relation(fields: [authorId], references: [id])
+        }
+      `);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      const models = result.value.domain.namespaces[NS]!.models as unknown as Record<string, TestContractModel>;
+      expect(models["User"]!.relations["posts"]).toMatchObject({
+        cardinality: "1:N",
+        on: { localFields: ["id"], targetFields: ["authorId"] },
+      });
+    });
+
+    it("says the names differ when a named backrelation matches no relation name", () => {
+      const result = interpret(`
+        model User {
+          id    String @id
+          posts Post[] @relation("Writen")
+        }
+        model Post {
+          id       String @id
+          authorId String
+          author   User   @relation("Written", fields: [authorId], references: [id])
+        }
+      `);
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.failure.diagnostics.map(({ code, message }) => [code, message])).toEqual([
+        [
+          "IDB_UNRESOLVED_BACKRELATION",
+          'Backrelation field "User.posts" is named "Writen", but no relation on "Post" that points at "User" has that name (found "Written"). Use the same name in @relation("...") on both sides.',
+        ],
+      ]);
+    });
+
+    it("reports a named singular backrelation that matches no foreign key", () => {
+      const result = interpret(`
+        model User {
+          id      String   @id
+          profile Profile? @relation("Missing")
+        }
+        model Profile {
+          id     String @id
+          user   User   @relation(fields: [userId], references: [id])
+          userId String @unique
+        }
+      `);
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.failure.diagnostics.map(({ code, message }) => [code, message])).toEqual([
+        [
+          "IDB_UNRESOLVED_BACKRELATION",
+          expect.stringContaining('Backrelation field "User.profile" is named "Missing", but no relation on "Profile"'),
+        ],
+      ]);
+    });
+
     it("errors when backrelation has no matching FK", () => {
       const result = interpret(`
         model User {
@@ -849,6 +1017,231 @@ describe("interpretPslDocumentToIdbContract", () => {
       expect(result.ok).toBe(false);
       if (result.ok) return;
       expect(result.failure.diagnostics[0]!.code).toBe("IDB_UNRESOLVED_BACKRELATION");
+    });
+
+    it("refuses fields and references on a backrelation list, as upstream does", () => {
+      const result = interpret(`
+        model User {
+          id    String @id
+          posts Post[] @relation(fields: [id], references: [authorId])
+        }
+        model Post {
+          id       String @id
+          authorId String
+        }
+      `);
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.failure.diagnostics.map(({ code, message }) => [code, message])).toEqual([
+        [
+          "IDB_INVALID_RELATION",
+          'Backrelation list field "User.posts" cannot declare fields or references. Define them on the relation field in "Post" that holds the foreign key.',
+        ],
+      ]);
+    });
+
+    it("drops a malformed list backrelation to an excluded model only in client projection", () => {
+      const schema = `
+        model User {
+          id    String @id
+          posts Post[] @relation(fields: [id], references: [authorId])
+        }
+        model Post {
+          id       String @id
+          authorId String
+          @@idb.exclude
+        }
+      `;
+      expect(interpret(schema, "client").ok).toBe(true);
+      expect(warnSpy).toHaveBeenCalled();
+      const full = interpret(schema, "full");
+      expect(full.ok).toBe(false);
+      if (!full.ok) expect(full.failure.diagnostics).toMatchObject([{ code: "IDB_INVALID_RELATION" }]);
+    });
+
+    it.each(["client", "full"] as const)("rejects unknown fields on a named join in %s projection", (projection) => {
+      const result = interpret(
+        `
+          model User {
+            id    String @id
+            posts Post[] @relation("Written")
+          }
+          model Post {
+            id       String @id
+            authorId String
+            author   User   @relation("Written", fields: [authorId], references: [misspelled])
+          }
+        `,
+        projection
+      );
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.failure.diagnostics).toMatchObject([
+        {
+          code: "IDB_INVALID_RELATION",
+          message: expect.stringContaining('unknown referenced field "User.misspelled"'),
+        },
+      ]);
+    });
+
+    it("refuses a navigation field as a foreign key target", () => {
+      const result = interpret(`
+        model User {
+          id    String @id
+          posts Post[] @relation("Written")
+        }
+        model Post {
+          id       String @id
+          authorId String
+          author   User   @relation("Written", fields: [authorId], references: [posts])
+        }
+      `);
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.failure.diagnostics).toMatchObject([
+        { code: "IDB_INVALID_RELATION", message: expect.stringContaining('relation field "User.posts"') },
+      ]);
+    });
+
+    it.each([
+      ["onDelete", "__proto__"],
+      ["onUpdate", "constructor"],
+    ])("rejects inherited names in %s: %s on a paired relation", (action, value) => {
+      const result = interpret(`
+        model User {
+          id   String @id
+          post Post?  @relation("Written")
+        }
+        model Post {
+          id       String @id
+          authorId String @unique
+          author   User   @relation("Written", fields: [authorId], references: [id], ${action}: ${value})
+        }
+      `);
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.failure.diagnostics).toMatchObject([
+        {
+          code: "IDB_UNKNOWN_REFERENTIAL_ACTION",
+          message: expect.stringContaining(`unknown ${action} value "${value}"`),
+        },
+      ]);
+    });
+
+    it.each([
+      ["a list", "posts Post[]"],
+      ["a singular", "post Post?"],
+    ])("reports only the refused foreign key, not %s backrelation that pairs with it", (_, backrelation) => {
+      const result = interpret(`
+        model User {
+          id    String @id
+          ${backrelation}
+        }
+        model Post {
+          id       String @id
+          authorId String @unique
+          author   User   @relation(fields: [authorId])
+        }
+      `);
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.failure.diagnostics.map(({ code, message }) => [code, message])).toEqual([
+        ["IDB_INVALID_RELATION", 'Relation field "Post.author" must declare both fields and references in @relation.'],
+      ]);
+    });
+
+    it("still reports a second backrelation that pairs with an already claimed refused foreign key", () => {
+      const result = interpret(`
+        model User {
+          id     String @id
+          posts  Post[]
+          drafts Post[]
+        }
+        model Post {
+          id       String @id
+          authorId String
+          author   User   @relation(fields: [authorId])
+        }
+      `);
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.failure.diagnostics.map(({ code }) => code)).toEqual([
+        "IDB_INVALID_RELATION",
+        "IDB_UNRESOLVED_BACKRELATION",
+      ]);
+    });
+
+    it("pairs several named self-relations on one model", () => {
+      const result = interpret(`
+        model Employee {
+          id        String     @id
+          managerId String?
+          mentorId  String?
+          manager   Employee?  @relation("M", fields: [managerId], references: [id])
+          reports   Employee[] @relation("M")
+          mentor    Employee?  @relation("T", fields: [mentorId], references: [id])
+          mentees   Employee[] @relation("T")
+        }
+      `);
+      if (!result.ok) throw new Error(JSON.stringify(result.failure.diagnostics));
+      const relations = (
+        result.value.domain.namespaces[NS]!.models["Employee"] as { relations: Record<string, unknown> }
+      ).relations;
+      expect(relations["reports"]).toMatchObject({
+        cardinality: "1:N",
+        on: { localFields: ["id"], targetFields: ["managerId"] },
+      });
+      expect(relations["mentees"]).toMatchObject({
+        cardinality: "1:N",
+        on: { localFields: ["id"], targetFields: ["mentorId"] },
+      });
+      expect(relations["manager"]).toMatchObject({
+        cardinality: "N:1",
+        on: { localFields: ["managerId"], targetFields: ["id"] },
+      });
+      expect(relations["mentor"]).toMatchObject({
+        cardinality: "N:1",
+        on: { localFields: ["mentorId"], targetFields: ["id"] },
+      });
+    });
+
+    it("pairs named backrelations with the foreign key of the same name", () => {
+      const result = interpret(`
+        model User {
+          id      String @id
+          written Post[] @relation("Written")
+          edited  Post[] @relation("Edited")
+        }
+        model Post {
+          id       String @id
+          authorId String
+          editorId String
+          author   User   @relation("Written", fields: [authorId], references: [id])
+          editor   User   @relation("Edited", fields: [editorId], references: [id])
+        }
+      `);
+      if (!result.ok) throw new Error(JSON.stringify(result.failure.diagnostics));
+      const relations = (result.value.domain.namespaces[NS]!.models["User"] as { relations: Record<string, unknown> })
+        .relations;
+      expect(relations["written"]).toMatchObject({ on: { localFields: ["id"], targetFields: ["authorId"] } });
+      expect(relations["edited"]).toMatchObject({ on: { localFields: ["id"], targetFields: ["editorId"] } });
+    });
+
+    it("errors when a backrelation names a relation that no foreign key has", () => {
+      const result = interpret(`
+        model User {
+          id    String @id
+          posts Post[] @relation("Other")
+        }
+        model Post {
+          id       String @id
+          authorId String
+          author   User   @relation("Written", fields: [authorId], references: [id])
+        }
+      `);
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.failure.diagnostics.map((d) => d.code)).toEqual(["IDB_UNRESOLVED_BACKRELATION"]);
     });
 
     it("errors on a required one-to-one relation over a nullable field and on SetNull over a required one", () => {
@@ -876,6 +1269,26 @@ describe("interpretPslDocumentToIdbContract", () => {
         ],
         ["IDB_INVALID_RELATION", expect.stringContaining('"Note.user" declares onUpdate: SetNull')],
       ]);
+    });
+
+    it("errors when an unnamed backrelation matches several foreign keys", () => {
+      const result = interpret(`
+        model User {
+          id    String @id
+          posts Post[]
+        }
+        model Post {
+          id       String @id
+          authorId String
+          editorId String
+          author   User   @relation("Written", fields: [authorId], references: [id])
+          editor   User   @relation("Edited", fields: [editorId], references: [id])
+        }
+      `);
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.failure.diagnostics.map((d) => d.code)).toEqual(["IDB_AMBIGUOUS_BACKRELATION"]);
+      expect(result.failure.diagnostics[0]!.message).toContain('"User.posts" matches multiple relations on "Post"');
     });
   });
 

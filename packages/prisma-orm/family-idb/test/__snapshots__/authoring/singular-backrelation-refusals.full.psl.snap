@@ -1,0 +1,44 @@
+{
+  "contract": null,
+  "diagnostics": {
+    "interpretation": [
+      {
+        "code": "IDB_INVALID_RELATION",
+        "message": "Relation \"User.profile\" is required, but \"Profile\" holds the foreign key, so nothing in storage guarantees a \"Profile\" row exists. Make the relation optional.",
+        "sourceId": "authoring.prisma",
+        "span": {
+          "end": {
+            "column": 24,
+            "line": 4,
+            "offset": 72
+          },
+          "start": {
+            "column": 9,
+            "line": 4,
+            "offset": 57
+          }
+        }
+      },
+      {
+        "code": "IDB_INVALID_RELATION",
+        "message": "Relation \"User.avatar\" is singular, but the foreign key on \"Avatar\" (\"userId\") isn't unique, so several \"Avatar\" rows could point at one \"User\". Add a unique index on the foreign-key fields, or make the relation a list.",
+        "sourceId": "authoring.prisma",
+        "span": {
+          "end": {
+            "column": 24,
+            "line": 5,
+            "offset": 96
+          },
+          "start": {
+            "column": 9,
+            "line": 5,
+            "offset": 81
+          }
+        }
+      }
+    ],
+    "parse": [],
+    "symbols": []
+  },
+  "hashes": null
+}
