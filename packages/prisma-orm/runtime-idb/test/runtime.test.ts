@@ -96,18 +96,19 @@ function makeMockDriver(options: MockDriverOptions = {}): IdbRuntimeDriverInstan
   const defaultTransaction = (): Promise<IdbTransactionScope> => {
     throw new Error("Mock driver does not implement transaction(); pass `options.transaction` to enable.");
   };
-  return {
+  const driver: IdbRuntimeDriverInstance = {
     familyId: "idb" as const,
     targetId: "idb" as const,
     db: Promise.resolve(stubDb()),
-    get connectionGeneration() {
-      return options.connectionGeneration?.() ?? 0;
-    },
     readMarker: options.readMarker ?? (async () => null),
     execute: options.execute ?? ((_plan: IdbPlanBody) => rowsIterable({ id: 1 })),
     close: options.close ?? (async () => undefined),
     transaction: options.transaction ?? defaultTransaction,
-  } satisfies IdbRuntimeDriverInstance;
+  };
+  if (options.connectionGeneration) {
+    Object.defineProperty(driver, "connectionGeneration", { get: options.connectionGeneration });
+  }
+  return driver;
 }
 
 // ── Mock adapter factory ─────────────────────────────────────────────────────

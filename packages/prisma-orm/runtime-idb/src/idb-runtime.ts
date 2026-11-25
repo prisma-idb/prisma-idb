@@ -241,13 +241,13 @@ class IdbRuntimeImpl extends RuntimeCore<IdbQueryPlan, IdbPlanBody, IdbMiddlewar
     if (this.#verifyMarkerOption === false) return;
     let generation: number;
     do {
-      generation = this.#driver.connectionGeneration;
+      generation = this.#driver.connectionGeneration ?? 0;
       if (this.#markerCheck === null || this.#markerCheckedGeneration !== generation) {
         this.#markerCheckedGeneration = generation;
         this.#markerCheck = this.#checkMarker();
       }
       await this.#markerCheck;
-    } while (generation !== this.#driver.connectionGeneration);
+    } while (generation !== (this.#driver.connectionGeneration ?? 0));
   }
 
   async #checkMarker(): Promise<void> {
