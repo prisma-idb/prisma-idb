@@ -238,11 +238,13 @@ function putMarkersInUpgrade(db: IDBDatabase, tx: IDBTransaction, markers: reado
 export class IdbUpgradeSupersededError extends Error {
   constructor(
     readonly dbName: string,
-    readonly targetVersion: number
+    readonly targetVersion: number,
+    cause?: DOMException
   ) {
     super(
-      `IDB: "${dbName}" is already at version ${targetVersion}, which another connection created, ` +
-        "so this upgrade did not run. Read the markers again and plan the next upgrade from them."
+      `IDB: Another connection reached version ${targetVersion} or newer for "${dbName}". ` +
+        "This upgrade did not run. Read the markers again and plan the next upgrade from them.",
+      { cause }
     );
     this.name = "IdbUpgradeSupersededError";
   }
@@ -399,6 +401,10 @@ export function openAndUpgrade(input: {
     request.onerror = (event) => {
       clearBlocked();
       const err = upgradeError ?? (event.target as IDBOpenDBRequest).error;
+      if (!upgraded && upgradeError === undefined && request.error?.name === "VersionError") {
+        reject(new IdbUpgradeSupersededError(input.dbName, input.targetVersion, request.error));
+        return;
+      }
       reject(err ?? new Error("IDB: migration open request failed without an error object"));
     };
 

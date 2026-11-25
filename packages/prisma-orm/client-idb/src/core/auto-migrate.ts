@@ -157,7 +157,7 @@ export async function autoMigrate(input: {
       // upgrade, and a marker at its head stays there, so every space is now at its head.
       return;
     } catch (error) {
-      if (!isLostUpgradeRace(error)) throw error;
+      if (!(error instanceof IdbUpgradeSupersededError)) throw error;
     }
     // The winning upgrade may already have brought every space this caller asked for to its
     // head, even on the last attempt, so the markers decide whether to try again.
@@ -174,14 +174,6 @@ export async function autoMigrate(input: {
 
 /** How many times one open plans and applies an upgrade before giving up on a contended database. */
 const MAX_MIGRATION_ATTEMPTS = 5;
-
-/** Another connection upgraded the database between this attempt's read and its open. */
-function isLostUpgradeRace(error: unknown): boolean {
-  return (
-    error instanceof IdbUpgradeSupersededError ||
-    (typeof error === "object" && error !== null && (error as { name?: unknown }).name === "VersionError")
-  );
-}
 
 /** The spaces whose marker is not yet their head. */
 async function spacesBehindHead(
