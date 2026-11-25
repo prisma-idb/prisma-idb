@@ -164,6 +164,27 @@ it("rejects unsupported list filters and operations even without matches", async
   await expect(samples.update((u) => [u["values"]!.push("x"), u["values"]!.pop(1)])).rejects.toThrow(/Conflicting/);
 });
 
+it("rejects invalid Json list pushes and prior elements that are no longer valid", async () => {
+  const { samples, client } = await fixture("Json");
+  await samples.create({ id: "current", values: [] });
+  await expect(
+    samples.where({ id: "current" }).update((u) => [u["values"]!.push({ nested: [undefined] })])
+  ).rejects.toThrow(/JSON-compatible value/);
+  expect((await samples.findUnique("current"))?.["values"]).toEqual([]);
+
+  const legacy = { id: "legacy", values: [{ a: 1, b: undefined }], defaulted: [] };
+  await client.withTransaction(["samples"], (scope) =>
+    scope.execute({ kind: "put", storeName: "samples", record: legacy } as never)
+  );
+  await expect(samples.where({ id: "legacy" }).update((u) => [u["values"]!.push(2)])).rejects.toThrow(
+    /JSON-compatible value/
+  );
+  await expect(samples.where({ id: "legacy" }).update((u) => [u["values"]!.addToSet(2)])).rejects.toThrow(
+    /JSON-compatible value/
+  );
+  expect(await samples.findUnique("legacy")).toStrictEqual(legacy);
+});
+
 it("does not reinterpret unmigrated missing lists as empty", async () => {
   const { samples, client } = await fixture("String");
   await client.withTransaction(["samples"], (scope) =>

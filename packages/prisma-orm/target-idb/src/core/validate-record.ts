@@ -8,6 +8,7 @@ import { domainModelsAtDefaultNamespace, valueObjectAt } from "@prisma/orm-frame
 import { type, type Type } from "arktype";
 import { idbCodecLookup } from "./codecs";
 import { isDecimalString } from "./decimal-compare";
+import { isJsonCodec, isJsonCompatible } from "./json-value";
 import { isValidIdbKey } from "./key-compare";
 
 /** The validation verdict, with diagnostic messages when a record or key is rejected. */
@@ -41,53 +42,6 @@ const scalarTypes: Record<string, Type> = {
 // Contracts and lookup objects are immutable for the lifetime of a runtime.
 const validators = new WeakMap<ContractWithDomain, WeakMap<ValidationCodecLookup, Map<string, Type>>>();
 
-/**
- * The deepest nesting a Json value may have. `JSON.stringify` and the sync
- * transport recurse too, so a value nested far deeper than this could be stored
- * but not synced. Checking iteratively keeps a hostile value from overflowing
- * the stack here and turns it into a validation issue instead.
- */
-const MAX_JSON_DEPTH = 1000;
-
-/**
- * A value JSON can represent: `null`, a string, a boolean, a finite number, or an
- * array or plain object of such values. IndexedDB could store a `Map`, a `Date`
- * or a class instance, but sync and SQL would lose it (a `Map` serializes as `{}`).
- *
- * An object property whose value is `undefined` is allowed, as in Prisma: JSON
- * drops the key. An `undefined` array element is refused, since JSON would
- * turn it into `null` without saying so.
- */
-function isJsonValue(root: unknown): boolean {
-  const path = new Set<object>();
-  // A frame is a container still being walked; `pending` holds its unchecked children.
-  const frames: { container: object; pending: unknown[] }[] = [];
-  const visit = (value: unknown, inArray: boolean): boolean => {
-    if (value === undefined) return !inArray && frames.length > 0;
-    if (value === null || typeof value === "string" || typeof value === "boolean") return true;
-    if (typeof value === "number") return Number.isFinite(value);
-    if (typeof value !== "object") return false;
-    if (path.has(value) || frames.length >= MAX_JSON_DEPTH) return false;
-    const proto = Object.getPrototypeOf(value) as unknown;
-    if (!Array.isArray(value) && proto !== Object.prototype && proto !== null) return false;
-    path.add(value);
-    frames.push({ container: value, pending: Array.isArray(value) ? [...value] : Object.values(value) });
-    return true;
-  };
-  if (root === undefined || !visit(root, false)) return false;
-  while (frames.length > 0) {
-    const frame = frames[frames.length - 1]!;
-    if (frame.pending.length === 0) {
-      path.delete(frame.container);
-      frames.pop();
-      continue;
-    }
-    const child = frame.pending.pop();
-    if (!visit(child, Array.isArray(frame.container))) return false;
-  }
-  return true;
-}
-
 /** Builds a native validator and rejects unsupported types with their field's owner. */
 function buildType(
   contract: ContractWithDomain,
@@ -108,9 +62,6 @@ function buildType(
     }
     if (fieldType.codecId === "idb/decimal@1") {
       validator = type("string").narrow(isDecimalString);
-    }
-    if (fieldType.codecId === "idb/json@1") {
-      validator = validator.narrow((value) => isJsonValue(value));
     }
     return validator;
   }
@@ -159,6 +110,7 @@ function buildField(
     if (!values?.length) throw new Error(`Unknown or empty enum "${ref.entityName}"`);
     validator = validator.narrow((value) => values.some((allowed) => Object.is(allowed, value)));
   }
+  const jsonScalar = field.type.kind === "scalar" && isJsonCodec(field.type.codecId);
   // Nullable applies to the container. List elements are nullable only when the field says so.
   if (field.many) {
     const elementNullable = field.many.elementNullable;
@@ -169,9 +121,12 @@ function buildField(
   }
   if (field.dict) validator = type({ "[string]": validator });
   // JSON null is a scalar value (Prisma JsonNull), independent of database nullability.
-  const jsonScalar =
-    field.type.kind === "scalar" && ["idb/json@1", "pg/json@1", "pg/jsonb@1"].includes(field.type.codecId);
-  if (jsonScalar && !field.many && !field.dict) return validator.narrow((value) => value !== undefined);
+  if (jsonScalar) {
+    validator = validator.narrow(
+      (value, context) => isJsonCompatible(value) || context.mustBe("a JSON-compatible value")
+    );
+    if (!field.many && !field.dict) return validator;
+  }
   return field.nullable ? validator.or("null") : validator.exclude("null | undefined");
 }
 

@@ -124,6 +124,20 @@ describe("applyPull", () => {
     expect(await scanAll(client, "users")).toEqual([{ id: "u1", name: 42n }]);
   });
 
+  it("rejects pulled records with invalid values inside a Json field", async () => {
+    const { client, contract } = await createTestSyncClient();
+    contract.domain.namespaces[Object.keys(contract.domain.namespaces)[0]!]!.models["User"]!.fields["name"] = {
+      nullable: false,
+      type: { kind: "scalar", codecId: "idb/json@1" },
+    };
+    const result = await applyPull(client, [
+      log({ changelogId: changelogId(1), operation: "create", record: { id: "u1", name: { legacy: undefined } } }),
+      log({ changelogId: changelogId(2), operation: "create", record: { id: "u1", name: { legacy: null } } }),
+    ]);
+    expect(result).toMatchObject({ applied: 1, validationFailed: 1, lastChangelogId: changelogId(2) });
+    expect(await scanAll(client, "users")).toEqual([{ id: "u1", name: { legacy: null } }]);
+  });
+
   it("applies a create log and writes version-meta", async () => {
     const { client } = await createTestSyncClient();
 
