@@ -135,6 +135,23 @@ beforeEach(async () => {
 afterEach(async () => client.close());
 
 describe("local scalar writes", () => {
+  it("rejects invalid Json in create, bulk create, update and upsert", async () => {
+    const json = { nested: [[undefined]] };
+    const invalid = { ...validRow("invalid"), json };
+    await expect(samples.create(invalid)).rejects.toThrow(IdbRecordValidationError);
+    await expect(samples.createAll([validRow(), invalid]).toArray()).rejects.toThrow(IdbRecordValidationError);
+    await expect(samples.upsert({ where: { id: "invalid" }, create: invalid, update: { json } })).rejects.toThrow(
+      IdbRecordValidationError
+    );
+    expect(await samples.all()).toEqual([]);
+    await samples.create(validRow());
+    await expect(samples.where({ id: "s1" }).update({ json })).rejects.toThrow(IdbRecordValidationError);
+    await expect(samples.upsert({ where: { id: "s1" }, create: validRow(), update: { json } })).rejects.toThrow(
+      IdbRecordValidationError
+    );
+    expect(await samples.all()).toEqual([validRow()]);
+  });
+
   it("rejects non-finite numbers before storage", async () => {
     const error = await samples.create({ ...validRow(), score: Infinity }).catch((error: unknown) => error);
     expect(error).toBeInstanceOf(IdbRecordValidationError);

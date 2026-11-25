@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { runInNewContext } from "node:vm";
 import type {
   ApplicationDomainNamespace,
   ContractField,
@@ -133,7 +134,12 @@ describe("validateRecord", () => {
   it("accepts only values JSON can represent in a Json field, including list elements", () => {
     const scalar = contract({ json: field("idb/json@1") });
     const list = contract({ json: field("idb/json@1", { many: { elementNullable: false } }) });
-    for (const json of [{ a: [1, "x", true, null, { b: 2 }] }, Object.assign(Object.create(null), { a: 1 })]) {
+    for (const json of [
+      { a: [1, "x", true, null, -0, { b: 2 }] },
+      { toJSON: "data" },
+      Object.assign(Object.create(null), { a: 1 }),
+      runInNewContext("({ a: [1] })"),
+    ]) {
       expect(validateRecord(scalar, "Item", { id: "a", json }).ok).toBe(true);
     }
     const cyclic: Record<string, unknown> = {};
@@ -144,25 +150,49 @@ describe("validateRecord", () => {
     expect(validateRecord(list, "Item", { id: "a", json: [{ a: 1 }, new Set()] }).ok).toBe(false);
   });
 
-  it("lets a Json object property be undefined, as Prisma does, but not an array element", () => {
-    const scalar = contract({ json: field("idb/json@1") });
-    for (const json of [{ a: 1, b: undefined }, { a: { b: undefined } }, [{ a: undefined }]]) {
-      expect(validateRecord(scalar, "Item", { id: "a", json }).ok).toBe(true);
+  it.each(["idb/json@1", "pg/json@1", "pg/jsonb@1"])("rejects lossy values for %s", (codecId) => {
+    const scalar = contract({ json: field(codecId) });
+    const list = contract({ json: field(codecId, { many: { elementNullable: false } }) });
+    const codecLookup = {
+      targetTypesFor: (id: string) => (id === codecId ? ["unknown"] : idbCodecLookup.targetTypesFor(id)),
+    };
+    const sparse = [1, 2];
+    delete sparse[0];
+    const withSerializer = Object.assign([1], { toJSON: "shadow" });
+    for (const json of [{ b: undefined }, { a: [[undefined]] }, sparse, withSerializer, { at: new Date(0) }]) {
+      for (const [schema, input] of [
+        [scalar, json],
+        [list, [json]],
+      ] as const) {
+        expect(validateRecord(schema, "Item", { id: "a", json: input }, { codecLookup })).toMatchObject({
+          ok: false,
+          issues: [expect.stringMatching(/json.*JSON-compatible value/s)],
+        });
+      }
     }
-    for (const json of [[1, undefined], { a: [undefined] }, undefined]) {
-      expect(validateRecord(scalar, "Item", { id: "a", json }).ok).toBe(false);
+    for (const json of [sparse, withSerializer]) {
+      expect(validateRecord(list, "Item", { id: "a", json }, { codecLookup }).ok).toBe(false);
     }
   });
 
-  it("reports a validation issue for a Json value nested too deeply instead of overflowing the stack", () => {
+  it("allows 1000 Json containers and rejects deeper nesting", () => {
     const scalar = contract({ json: field("idb/json@1") });
-    const nest = (depth: number) => {
-      let value: unknown = 1;
+    const nest = (depth: number, value: unknown = 1) => {
       for (let i = 0; i < depth; i++) value = [value];
       return value;
     };
-    expect(validateRecord(scalar, "Item", { id: "a", json: nest(500) }).ok).toBe(true);
+    expect(validateRecord(scalar, "Item", { id: "a", json: nest(1000) }).ok).toBe(true);
+    expect(validateRecord(scalar, "Item", { id: "a", json: nest(1001) }).ok).toBe(false);
     expect(validateRecord(scalar, "Item", { id: "a", json: nest(100_000) }).ok).toBe(false);
+    const shared = [1];
+    expect(validateRecord(scalar, "Item", { id: "a", json: [nest(999, shared), shared] }).ok).toBe(false);
+  });
+
+  it("accepts shared subtrees without rechecking each reference", () => {
+    const scalar = contract({ json: field("idb/json@1") });
+    let shared: unknown = { a: 1 };
+    for (let i = 0; i < 30; i++) shared = [shared, shared];
+    expect(validateRecord(scalar, "Item", { id: "a", json: shared })).toEqual({ ok: true });
   });
 
   it("honors mapped enum values on scalars and lists", () => {

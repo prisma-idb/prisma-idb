@@ -88,7 +88,7 @@ The framework already uses arktype for codec schemas. Runtime derivation avoids 
 
 ## Dated note (2026-11-24): Json values
 
-A `Json` field accepts only values JSON can represent: `null`, strings, booleans, finite numbers, and arrays and plain objects of those. Native IndexedDB storage could hold a `Map`, a `Date` or a class instance, but sync and SQL would lose or change it. This follows Prisma, whose `InputJsonValue` has no such types. Prisma also types object properties as optional, so an `undefined` property is accepted here; JSON drops the key. Prisma's array type excludes `undefined`, and JSON would turn an element into `null`, so an `undefined` array element is rejected. Nesting deeper than 1000 levels is rejected as a validation issue; the check is iterative so a hostile value can't overflow the stack. This narrows what writes accept and does not change the decision above.
+A `Json` value can contain `null`, strings, booleans, finite numbers, dense arrays, and plain objects of those values. The list declaration controls whether a `Json[]` element itself can be `null`. Omit object properties you would otherwise set to `undefined`. Writes reject undefined properties and array elements so IndexedDB and sync see the same members. Arrays must have an element at every index and cannot carry a `toJSON` property. Convert values such as `Date`, `BigInt`, and bytes to your application’s JSON representation before writing them. The nesting limit is 1000 arrays or objects. Plain objects from other realms and shared acyclic references are accepted. Validation tracks each container and checks the longest path without recursing on the JavaScript stack.
 
 ## Related
 
