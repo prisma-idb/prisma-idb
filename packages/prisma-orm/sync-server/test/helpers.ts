@@ -104,3 +104,30 @@ export function cyclicContract(): SyncServerContract {
     },
   });
 }
+
+/**
+ * The kanban models plus an `@@ignore` Legacy model that a Board owns, and a
+ * Note that reaches the root only through an `@ignore` owning relation.
+ */
+export function kanbanContractWithIgnored(): { contract: SyncServerContract; clientContract: SyncServerContract } {
+  const models: DefineContractInput["models"] = {
+    ...kanbanModels(),
+    Legacy: {
+      store: "legacy",
+      key: "id",
+      fields: { id: "String", boardId: "String" },
+      relations: { board: { to: "Board", cardinality: "N:1", on: { local: ["boardId"], target: ["id"] } } },
+      ignored: true,
+    },
+    Note: {
+      store: "notes",
+      key: "id",
+      fields: { id: "String", boardId: "String" },
+      relations: {
+        board: { to: "Board", cardinality: "N:1", on: { local: ["boardId"], target: ["id"] }, ignored: true },
+      },
+    },
+  };
+  const input = { family: idbFamilyPack, target: idbTargetPack, models };
+  return { contract: defineContract(input), clientContract: defineContract(input, { projection: "client" }) };
+}

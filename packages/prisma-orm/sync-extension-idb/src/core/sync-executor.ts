@@ -51,6 +51,7 @@ import type {
 import { extractKeyFromRow, getKeyPath, getStoreName } from "@prisma-idb/client-idb/orm";
 import type { IdbKeyPath } from "@prisma-idb/client-idb/orm";
 import { domainModelsAtDefaultNamespace } from "@prisma/orm-framework/contract/types";
+import { isIgnoredModel } from "@prisma-idb/target-idb/runtime";
 import type { OutboxEvent, OutboxWriteEntry, VersionMetaRecord } from "../types";
 import { OUTBOX_STORE } from "./outbox-store";
 import { scanStore } from "./raw-store";
@@ -294,8 +295,13 @@ export interface SyncInterceptorConfig {
   readonly onOutboxWrite?: (entries: readonly OutboxWriteEntry[]) => void;
 }
 
-/** Matches the configured model names or store names against a mutation’s model. */
+/**
+ * Matches the configured model names or store names against a mutation’s
+ * model. An `@@ignore` model is never tracked, even when listed: its rows are
+ * local-only, including rows a cascade changes.
+ */
 function isTrackedModel(config: SyncInterceptorConfig, modelName: string): boolean {
+  if (isIgnoredModel(config.contract, modelName)) return false;
   const { trackedModels } = config;
   if (trackedModels === "*") return true;
   const storeName = getStoreName(config.contract, modelName);

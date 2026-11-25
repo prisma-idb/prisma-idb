@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { createSyncServer } from "../src/exports/server";
-import { contractWithUnexcludedIsland, cyclicContract, kanbanClientContract, kanbanContract } from "./helpers";
+import {
+  contractWithUnexcludedIsland,
+  cyclicContract,
+  kanbanClientContract,
+  kanbanContract,
+  kanbanContractWithIgnored,
+} from "./helpers";
 
 describe("createSyncServer ownership graph", () => {
   it("accepts server-only islands but refuses their events", () => {
@@ -26,6 +32,31 @@ describe("createSyncServer ownership graph", () => {
     const contract = cyclicContract();
 
     expect(() => createSyncServer({ contract, clientContract: contract, rootModel: "A" })).toThrow(/Cycle detected/);
+  });
+
+  it("refuses events for an @@ignore model and doesn't require it to reach the root", () => {
+    const server = createSyncServer({ ...kanbanContractWithIgnored(), rootModel: "User" });
+    const [result] = server.validatePush(
+      [{ id: "e1", model: "Legacy", operation: "delete", payload: { id: "l1" }, wireKey: "l1" }],
+      { scopeKey: "u1" }
+    );
+    expect(result?.check).toEqual({ kind: "unknown-model" });
+  });
+
+  it("counts an @ignore owning relation as an ownership path", () => {
+    const server = createSyncServer({ ...kanbanContractWithIgnored(), rootModel: "User" });
+    const [result] = server.validatePush(
+      [{ id: "e1", model: "Note", operation: "delete", payload: { id: "n1" }, wireKey: "n1" }],
+      { scopeKey: "u1" }
+    );
+    expect(result?.check).toMatchObject({ kind: "scoped" });
+  });
+
+  it("throws when rootModel is @@ignore", () => {
+    const { contract, clientContract } = kanbanContractWithIgnored();
+    expect(() => createSyncServer({ contract, clientContract, rootModel: "Legacy" })).toThrow(
+      'Root model "Legacy" is marked @@ignore, so it never syncs and can\'t own synced rows.'
+    );
   });
 
   it("throws when rootModel is not in the contract", () => {
