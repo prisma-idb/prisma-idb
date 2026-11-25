@@ -99,10 +99,15 @@ describe("validateRecord", () => {
       json: { nested: [1] },
     };
     expect(validateRecord(schema, "Item", valid).ok).toBe(true);
+    // A Float holds ±Infinity, as upstream's float codecs do; NaN and an infinite Int do not.
+    for (const score of [Infinity, -Infinity]) {
+      expect(validateRecord(schema, "Item", { ...valid, score }).ok).toBe(true);
+    }
     for (const patch of [
       { count: 1.5 },
       { count: 2147483648 },
-      { score: Infinity },
+      { count: Infinity },
+      { score: NaN },
       { active: "true" },
       { date: "2026-01-01" },
       { date: new Date(NaN) },

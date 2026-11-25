@@ -56,12 +56,16 @@ function reduceAggregate(
   if (fn === "count") return rows.length;
   if (field === undefined) return null;
 
+  // A Float holds ±Infinity but never NaN; an Int is always finite.
+  const float = codecId === "idb/double@1";
   const values: number[] = [];
   for (const row of rows) {
     const raw = row[field];
     if (raw === null || raw === undefined) continue;
-    if (typeof raw !== "number" || !Number.isFinite(raw)) {
-      throw new TypeError(`${fn}("${field}") requires finite number values`);
+    if (typeof raw !== "number" || Number.isNaN(raw) || (!float && !Number.isFinite(raw))) {
+      throw new TypeError(
+        `${fn}("${field}") requires ${float ? "number values other than NaN" : "finite number values"}`
+      );
     }
     if (codecId === "idb/int32@1" && (!Number.isInteger(raw) || raw < -2147483648 || raw > 2147483647)) {
       throw new TypeError(`${fn}("${field}") requires Int values in the signed 32-bit range`);
@@ -84,12 +88,14 @@ function reduceAggregate(
   }
 }
 
-/** Reject overflow before a rounded or nonfinite intermediate total can reach the result. */
+/** Reject overflow from finite operands and propagate an infinite operand through the total. */
 function sumValues(values: readonly number[], field: string, integer: boolean): number {
   let total = 0;
+  let infinite = false;
   for (const value of values) {
+    if (!Number.isFinite(value)) infinite = true;
     total += value;
-    if (!Number.isFinite(total) || (integer && !Number.isSafeInteger(total))) {
+    if ((!infinite && !Number.isFinite(total)) || (integer && !Number.isSafeInteger(total))) {
       throw new RangeError(
         `Aggregate total for "${field}" exceeds the ${integer ? "safe integer" : "finite number"} range`
       );

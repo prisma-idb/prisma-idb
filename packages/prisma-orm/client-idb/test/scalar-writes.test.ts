@@ -152,8 +152,8 @@ describe("local scalar writes", () => {
     expect(await samples.all()).toEqual([validRow()]);
   });
 
-  it("rejects non-finite numbers before storage", async () => {
-    const error = await samples.create({ ...validRow(), score: Infinity }).catch((error: unknown) => error);
+  it("rejects NaN in a Float before storage", async () => {
+    const error = await samples.create({ ...validRow(), score: NaN }).catch((error: unknown) => error);
     expect(error).toBeInstanceOf(IdbRecordValidationError);
     expect(error).toMatchObject({ modelName: "Sample", operation: "create", issues: expect.any(Array) });
     expect(await samples.all()).toEqual([]);
@@ -165,7 +165,7 @@ describe("local scalar writes", () => {
     { count: -2147483649 },
     { count: NaN },
     { score: NaN },
-    { score: -Infinity },
+    { count: Infinity },
     { id: 3 },
     { active: "true" },
     { date: "2026-01-01" },
@@ -216,7 +216,7 @@ describe("local scalar writes", () => {
   });
 
   it.each(["createAll", "createCount"] as const)("rejects the whole %s batch", async (method) => {
-    const rows = [validRow("s1"), { ...validRow("s2"), score: Infinity }];
+    const rows = [validRow("s1"), { ...validRow("s2"), score: NaN }];
     const write = async () => await samples[method](rows);
     await expect(write()).rejects.toThrow(IdbRecordValidationError);
     expect(await samples.all()).toEqual([]);
@@ -254,7 +254,7 @@ describe("local scalar writes", () => {
 
   it.each(["create", "update"] as const)("validates the %s upsert input on either branch", async (input) => {
     const args = { where: { id: "s1" }, create: validRow(), update: { count: 2 } };
-    if (input === "create") args.create["score"] = Infinity;
+    if (input === "create") args.create["score"] = NaN;
     else args.update.count = 1.5;
     await expect(samples.upsert(args)).rejects.toThrow(IdbRecordValidationError);
     expect(await samples.all()).toEqual([]);

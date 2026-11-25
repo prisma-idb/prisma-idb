@@ -29,17 +29,17 @@ For installation, monorepo configuration, and missing hints, follow [Editor Setu
 
 ## Scalar types
 
-| Prisma type | JavaScript value | Notes                                                |
-| ----------- | ---------------- | ---------------------------------------------------- |
-| `String`    | `string`         |                                                      |
-| `Int`       | `number`         |                                                      |
-| `Float`     | `number`         |                                                      |
-| `Boolean`   | `boolean`        | Can't be a key or indexed. See [Indexes](#indexes).  |
-| `DateTime`  | `Date`           | Compared and sorted by time, not by object identity. |
-| `BigInt`    | `bigint`         | Can't be a key or indexed.                           |
-| `Decimal`   | `string`         | Stored as text; compared and sorted numerically.     |
-| `Json`      | any JSON value   | Can't be a key or indexed.                           |
-| `Bytes`     | `Uint8Array`     | Compared and sorted byte by byte.                    |
+| Prisma type | JavaScript value | Notes                                                               |
+| ----------- | ---------------- | ------------------------------------------------------------------- |
+| `String`    | `string`         |                                                                     |
+| `Int`       | `number`         |                                                                     |
+| `Float`     | `number`         | Accepts both infinities and rejects `NaN`. Defaults must be finite. |
+| `Boolean`   | `boolean`        | Can't be a key or indexed. See [Indexes](#indexes).                 |
+| `DateTime`  | `Date`           | Compared and sorted by time, not by object identity.                |
+| `BigInt`    | `bigint`         | Can't be a key or indexed.                                          |
+| `Decimal`   | `string`         | Stored as text; compared and sorted numerically.                    |
+| `Json`      | any JSON value   | Can't be a key or indexed.                                          |
+| `Bytes`     | `Uint8Array`     | Compared and sorted byte by byte.                                   |
 
 Add `?` to make a field optional. Its value is then `null` when it isn't set.
 

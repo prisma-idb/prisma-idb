@@ -28,6 +28,19 @@ export interface RecordValidationOptions {
   readonly optionalFields?: readonly string[];
 }
 
+/**
+ * Float codecs, on the IDB client and on the SQL server. A Float holds ±Infinity, as upstream's
+ * float codecs do, but not NaN: IndexedDB can't index NaN and JS NaN never equals itself, so
+ * queries over it would disagree with the server.
+ */
+const FLOAT_CODEC_IDS: ReadonlySet<string> = new Set([
+  "idb/double@1",
+  "sql/float@1",
+  "pg/float@1",
+  "pg/float4@1",
+  "pg/float8@1",
+]);
+
 const scalarTypes: Record<string, Type> = {
   string: type("string"),
   "string[]": type("string[]"),
@@ -57,6 +70,9 @@ function buildType(
     }
     let validator = types[0]!;
     for (const alternative of types.slice(1)) validator = validator.or(alternative!);
+    if (FLOAT_CODEC_IDS.has(fieldType.codecId)) {
+      validator = type("number").narrow((value) => !Number.isNaN(value));
+    }
     if (fieldType.codecId === "idb/int32@1") {
       validator = type("-2147483648 <= number.integer <= 2147483647");
     }

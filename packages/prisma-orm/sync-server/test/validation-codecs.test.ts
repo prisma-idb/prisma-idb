@@ -51,6 +51,23 @@ describe("SQL application codec validation", () => {
     ).toBe(false);
   });
 
+  it.each(["pg/float@1", "pg/float4@1", "pg/float8@1", "sql/float@1"])(
+    "accepts ±Infinity but not NaN in a %s push, as the client's Float does",
+    (codecId) => {
+      const contract = contractWithCodec(codecId);
+      const valid = (name: number) =>
+        validateRecord(contract, "User", { id: "u1", name }, { codecLookup: defaultValidationCodecs }).ok;
+      expect([valid(Infinity), valid(-Infinity), valid(NaN)]).toEqual([true, true, false]);
+    }
+  );
+
+  it("refuses an infinite Int", () => {
+    const contract = contractWithCodec("pg/int4@1");
+    expect(
+      validateRecord(contract, "User", { id: "u1", name: Infinity }, { codecLookup: defaultValidationCodecs }).ok
+    ).toBe(false);
+  });
+
   it("retains float4 number validation and validates native text arrays", () => {
     for (const [codecId, good, bad] of [
       ["pg/float4@1", 1.25, "1.25"],
