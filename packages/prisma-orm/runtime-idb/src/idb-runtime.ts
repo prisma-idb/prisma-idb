@@ -244,15 +244,16 @@ class IdbRuntimeImpl extends RuntimeCore<IdbQueryPlan, IdbPlanBody, IdbMiddlewar
       generation = this.#driver.connectionGeneration ?? 0;
       if (this.#markerCheck === null || this.#markerCheckedGeneration !== generation) {
         this.#markerCheckedGeneration = generation;
-        this.#markerCheck = this.#checkMarker();
+        this.#markerCheck = this.#checkMarker(generation);
       }
       await this.#markerCheck;
     } while (generation !== (this.#driver.connectionGeneration ?? 0));
   }
 
-  async #checkMarker(): Promise<void> {
+  async #checkMarker(generation: number): Promise<void> {
     try {
       const marker = await this.#driver.readMarker();
+      if (generation !== (this.#driver.connectionGeneration ?? 0)) return;
       const expected = (this.#contract["storage"] as { storageHash?: unknown } | undefined)?.storageHash;
       const expectedHash = typeof expected === "string" ? expected : "unknown";
       if (marker === null) {
@@ -267,7 +268,9 @@ class IdbRuntimeImpl extends RuntimeCore<IdbQueryPlan, IdbPlanBody, IdbMiddlewar
         );
       }
     } catch (error) {
-      warnAboutMarker("[prisma-idb] CONTRACT.MARKER_UNREADABLE: could not read the contract marker", error);
+      if (generation === (this.#driver.connectionGeneration ?? 0)) {
+        warnAboutMarker("[prisma-idb] CONTRACT.MARKER_UNREADABLE: could not read the contract marker", error);
+      }
     }
   }
 

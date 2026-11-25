@@ -869,10 +869,12 @@ describe("first-use marker check", () => {
   it.each(["query", "transaction"] as const)(
     "rechecks the new connection before the first %s if the marker read races an upgrade",
     async (operation) => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
       let generation = 0;
       const readMarker = vi.fn(async () => {
         if (generation === 0) generation = 1;
-        return makeMarker();
+        if (operation === "transaction") throw new Error("incompatible connection");
+        return makeMarker({ storageHash: "other" });
       });
       const scope = {} as IdbTransactionScope;
       const runtime = createIdbRuntime({
@@ -880,9 +882,14 @@ describe("first-use marker check", () => {
         driver: makeMockDriver({ readMarker, transaction: async () => scope, connectionGeneration: () => generation }),
         contract: TEST_CONTRACT,
       });
-      if (operation === "query") await run(runtime);
-      else expect(await runtime.transaction(["User"])).toBe(scope);
-      expect(readMarker).toHaveBeenCalledTimes(2);
+      try {
+        if (operation === "query") await run(runtime);
+        else expect(await runtime.transaction(["User"])).toBe(scope);
+        expect(readMarker).toHaveBeenCalledTimes(2);
+        expect(warn).toHaveBeenCalledTimes(1);
+      } finally {
+        warn.mockRestore();
+      }
     }
   );
 
