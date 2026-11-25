@@ -29,7 +29,7 @@ import type { PlanMeta } from "@prisma/orm-framework/contract/types";
 import type { ContractReferenceRelation } from "@prisma/orm-framework/contract/types";
 import { domainModelsAtDefaultNamespace } from "@prisma/orm-framework/contract/types";
 import type { IdbAtomicPlan, IdbPlanBody, IdbRowFilter } from "@prisma-idb/driver-idb/runtime";
-import { andExpr, fieldFilter, shorthandToFilterExpr } from "@prisma-idb/adapter-idb/runtime";
+import { andExpr, evaluateFilter, fieldFilter, shorthandToFilterExpr } from "@prisma-idb/adapter-idb/runtime";
 import { assertKnownFilterFields } from "./filter-fields";
 import type { IdbFilterExpr } from "@prisma-idb/adapter-idb/runtime";
 import type { IdbReferentialAction } from "@prisma-idb/target-idb/pack";
@@ -44,8 +44,8 @@ import {
   createMutationDefaultsCache,
   type MutationDefaultsCache,
 } from "./mutation-defaults";
-import { absentAsNull } from "@prisma-idb/target-idb/runtime";
-import { buildCatalog } from "./planner/catalog";
+import { absentAsNull, fieldValueToken } from "@prisma-idb/target-idb/runtime";
+import { buildCatalog, type QueryCatalog } from "./planner/catalog";
 import { preserveDecimalKeySpelling } from "./decimal-identity";
 import { lowerExists, lowerRows, lowerWrite, type WriteRequest } from "./planner/lower";
 import { planQuery } from "./planner/plan";
@@ -298,9 +298,20 @@ async function createGraph(
 
   const parentRow = await insertSingleRow(scope, contract, modelName, scalarData, defaultsCache);
 
+  const allWrites: ReferentialWrites[] = [];
   for (const item of childOwned) {
-    await applyChildOwnedMutation(scope, contract, modelName, parentRow, item.relation, item.mutation, defaultsCache);
+    await applyChildOwnedMutation(
+      scope,
+      contract,
+      modelName,
+      parentRow,
+      item.relation,
+      item.mutation,
+      defaultsCache,
+      allWrites
+    );
   }
+  await verifyReferentialWrites(scope, contract, allWrites);
 
   return parentRow;
 }
@@ -326,6 +337,7 @@ async function updateFirstGraph(
   }
 
   let parentRow = existingRow;
+  const allWrites: ReferentialWrites[] = [];
 
   if (Object.keys(scalarData).length > 0) {
     const storeName = getStoreName(contract, modelName);
@@ -337,16 +349,26 @@ async function updateFirstGraph(
     assertValidRecord(contract, modelName, "update", patch);
     await validateScalarFks(scope, contract, modelName, patch, existingRow);
     const writes = createReferentialWrites("update", modelName, key);
+    allWrites.push(writes);
     await applyReferentialActionsForRowOnUpdate(scope, contract, modelName, existingRow, patch, writes);
     const rows = await scope.execute({ meta, kind: "update", storeName, key, patch });
-    await verifyReferentialWrites(scope, contract, [writes]);
     const updated = rows[0];
     if (updated) parentRow = absentAsNull(contract, modelName)(updated);
   }
 
   for (const item of childOwned) {
-    await applyChildOwnedMutation(scope, contract, modelName, parentRow, item.relation, item.mutation, defaultsCache);
+    await applyChildOwnedMutation(
+      scope,
+      contract,
+      modelName,
+      parentRow,
+      item.relation,
+      item.mutation,
+      defaultsCache,
+      allWrites
+    );
   }
+  await verifyReferentialWrites(scope, contract, allWrites);
 
   return parentRow;
 }
@@ -509,7 +531,8 @@ async function applyChildOwnedMutation(
   parentRow: Record<string, unknown>,
   relation: RelationDefinition,
   mutation: ParsedRelationOperation,
-  defaultsCache: MutationDefaultsCache
+  defaultsCache: MutationDefaultsCache,
+  allWrites: ReferentialWrites[]
 ): Promise<void> {
   // parentValues: childFkField → parentPkValue (e.g. "authorId" → "u1")
   const parentValues = readParentColumnValues(parentModelName, relation, parentRow);
@@ -528,7 +551,7 @@ async function applyChildOwnedMutation(
   if (mutation.kind === "connect") {
     const setValues = Object.fromEntries(parentValues);
     for (const where of mutation.criteria) {
-      await writeChildRows(scope, contract, relation, setValues, where, defaultsCache);
+      await writeChildRows(scope, contract, relation, setValues, where, defaultsCache, allWrites);
     }
     return;
   }
@@ -536,12 +559,20 @@ async function applyChildOwnedMutation(
   const setValues = Object.fromEntries(Array.from(parentValues.keys(), (field) => [field, null] as const));
   const parentJoinWhere = buildParentJoinWhere(parentValues);
   if (mutation.criteria.length === 0) {
-    await writeChildRows(scope, contract, relation, setValues, parentJoinWhere, defaultsCache);
+    await writeChildRows(scope, contract, relation, setValues, parentJoinWhere, defaultsCache, allWrites);
     return;
   }
 
   for (const criterion of mutation.criteria) {
-    await writeChildRows(scope, contract, relation, setValues, andExpr([parentJoinWhere, criterion]), defaultsCache);
+    await writeChildRows(
+      scope,
+      contract,
+      relation,
+      setValues,
+      andExpr([parentJoinWhere, criterion]),
+      defaultsCache,
+      allWrites
+    );
   }
 }
 
@@ -689,7 +720,8 @@ async function writeChildRows(
   relation: RelationDefinition,
   setValues: Record<string, unknown>,
   where: IdbFilterExpr,
-  defaultsCache: MutationDefaultsCache
+  defaultsCache: MutationDefaultsCache,
+  allWrites: ReferentialWrites[]
 ): Promise<void> {
   const defaults = contract.execution?.mutations.defaults;
   const { relatedModelName: modelName, relatedStoreName: storeName } = relation;
@@ -714,7 +746,6 @@ async function writeChildRows(
   // into or out of the match set.
   const meta = makePlanMeta(contract);
   const keyPath = getKeyPath(contract, modelName);
-  const allWrites: ReferentialWrites[] = [];
   for (const row of await readMutationRows(scope, contract, modelName, where)) {
     const patch = applyUpdateDefaults(defaults, storeName, setValues, defaultsCache);
     assertValidRecord(contract, modelName, "update", patch);
@@ -727,7 +758,6 @@ async function writeChildRows(
     await applyReferentialActionsForRowOnUpdate(scope, contract, modelName, row, patch, writes);
     await scope.execute({ meta, kind: "update", storeName, key, patch } as IdbAtomicPlan);
   }
-  await verifyReferentialWrites(scope, contract, allWrites);
 }
 
 function buildParentJoinWhere(parentValues: Map<string, unknown>): IdbFilterExpr {
@@ -1115,7 +1145,7 @@ function getChildReferences(contract: IdbContract, modelName: string): readonly 
 interface ReferentialWrite {
   readonly modelName: string;
   readonly key: IDBValidKey;
-  readonly fields: Set<string>;
+  readonly before: Map<string, unknown>;
   readonly cause: string;
   readonly references: CheckedReference[];
 }
@@ -1163,37 +1193,130 @@ export async function verifyReferentialWrites(
   all: readonly ReferentialWrites[]
 ): Promise<void> {
   const meta = makePlanMeta(contract);
-  // Many children usually point at the same parent, so each parent is looked up once.
-  const found = new Map<string, boolean>();
+  const rows = new Map<string, ReferentialWrite & { root: ReferentialRoot }>();
   for (const writes of all) {
-    for (const write of writes.rows.values()) {
-      const storeName = getStoreName(contract, write.modelName);
-      const [row] = await scope.execute({ meta, kind: "key-get", storeName, key: write.key });
-      if (!row) continue;
-      const references = [...write.references];
-      for (const reference of getChildReferences(contract, write.modelName)) {
-        if (!references.some((checked) => sameReference(checked, reference))) references.push(reference);
+    for (const [id, write] of writes.rows) {
+      const existing = rows.get(id);
+      if (!existing) {
+        rows.set(id, { ...write, root: writes.root, before: new Map(write.before), references: [...write.references] });
+        continue;
       }
-      for (const reference of references) {
-        if (!reference.fields.some((field) => write.fields.has(field))) continue;
-        const values = reference.fields.map((field) => row[field]);
-        if (values.some((value) => value === null || value === undefined)) continue;
-        const { parentModelName, parentFields } = reference;
-        const lookup = JSON.stringify([parentModelName, parentFields, keyToken(values as IDBValidKey[])]);
-        let exists = found.get(lookup);
-        if (exists === undefined) {
-          exists = await parentExists(scope, contract, meta, parentModelName, parentFields, values);
-          found.set(lookup, exists);
-        }
-        if (exists) continue;
-        throw new Error(
-          `${describeRoot(writes.root)}: ${write.cause} leaves ${write.modelName} '${keyToken(write.key)}' with ` +
-            `${describeTuple(reference.fields, values)}, which does not reference a real row: relation ` +
-            `'${reference.relationName}' has no ${parentModelName} with ${describeTuple(parentFields, values)}.`
-        );
+      for (const [field, value] of write.before) {
+        if (!existing.before.has(field)) existing.before.set(field, value);
+      }
+      for (const reference of write.references) {
+        if (!existing.references.some((checked) => sameReference(checked, reference)))
+          existing.references.push(reference);
       }
     }
   }
+
+  const lookups = createFinalParentLookup(scope, contract, meta);
+  for (const write of rows.values()) {
+    const storeName = getStoreName(contract, write.modelName);
+    const [row] = await scope.execute({ meta, kind: "key-get", storeName, key: write.key });
+    if (!row) continue;
+    const fields = buildCatalog(contract, storeName, write.modelName).fields;
+    const changed = new Set<string>();
+    for (const [field, value] of write.before) {
+      if (!evaluateFilter(fieldFilter(field, "eq", value ?? null), row, fields)) changed.add(field);
+    }
+    const references = [...write.references];
+    for (const reference of getChildReferences(contract, write.modelName)) {
+      if (!references.some((checked) => sameReference(checked, reference))) references.push(reference);
+    }
+    for (const reference of references) {
+      // The action's own parent may have been deleted or changed even if its default kept the old value.
+      if (
+        !reference.fields.some((field) => changed.has(field)) &&
+        !write.references.some((handled) => sameReference(handled, reference))
+      ) {
+        continue;
+      }
+      const values = reference.fields.map((field) => row[field]);
+      if (values.some((value) => value === null || value === undefined)) continue;
+      if (await lookups(reference, values)) continue;
+      const { parentModelName, parentFields } = reference;
+      throw new Error(
+        `${describeRoot(write.root)}: ${write.cause} leaves ${write.modelName} '${keyToken(write.key)}' with ` +
+          `${describeTuple(reference.fields, values)}, which does not reference a real row: relation ` +
+          `'${reference.relationName}' has no ${parentModelName} with ${describeTuple(parentFields, values)}.`
+      );
+    }
+  }
+}
+
+/** Memoize indexed point lookups and scan each unindexed parent store only once. */
+function createFinalParentLookup(scope: IdbTransactionScope, contract: IdbContract, meta: PlanMeta) {
+  const found = new Map<string, boolean>();
+  const snapshots = new Map<string, Record<string, unknown>[]>();
+  const tuples = new Map<string, Set<string>>();
+  return async ({ parentModelName, parentFields }: CheckedReference, values: readonly unknown[]) => {
+    const storeName = getStoreName(contract, parentModelName);
+    const catalog = buildCatalog(contract, storeName, parentModelName);
+    const token = referenceTupleToken(catalog, parentFields, values);
+    const group = JSON.stringify([parentModelName, parentFields]);
+    const lookup = token === undefined ? undefined : JSON.stringify([group, token]);
+    if (lookup !== undefined && found.has(lookup)) return found.get(lookup)!;
+    const where = andExpr(parentFields.map((field, index) => fieldFilter(field, "eq", values[index])));
+    const logical = planQuery(catalog, { where });
+    const lowered = lowerExists(catalog, logical, meta, { where });
+    let exists: boolean;
+    if (logical.access.kind === "full") {
+      let snapshot = snapshots.get(storeName);
+      if (!snapshot) {
+        snapshot = await scope.execute({ meta, kind: "cursor-scan", storeName });
+        snapshots.set(storeName, snapshot);
+      }
+      if (token === undefined) {
+        exists = lowered.finish(snapshot);
+      } else {
+        let groupTuples = tuples.get(group);
+        if (!groupTuples) {
+          groupTuples = new Set<string>();
+          for (const row of snapshot) {
+            const rowToken = referenceTupleToken(
+              catalog,
+              parentFields,
+              parentFields.map((field) => row[field])
+            );
+            if (rowToken !== undefined) groupTuples.add(rowToken);
+          }
+          tuples.set(group, groupTuples);
+        }
+        exists = groupTuples.has(token);
+      }
+    } else {
+      exists = lowered.finish(await executeMutationPlan(scope, lowered.idbPlan));
+    }
+    if (lookup !== undefined) found.set(lookup, exists);
+    return exists;
+  };
+}
+
+/** Equality tokens for plain fields. Decimal and list comparisons use the query evaluator. */
+function referenceTupleToken(
+  catalog: QueryCatalog,
+  fields: readonly string[],
+  values: readonly unknown[]
+): string | undefined {
+  const parts: [string, string][] = [];
+  for (let index = 0; index < fields.length; index++) {
+    const spec = catalog.fields[fields[index]!];
+    if (spec?.codecId === "idb/decimal@1" || (spec?.collection && !spec.dict)) return undefined;
+    const token = fieldValueToken(values[index]);
+    if (typeof token === "number" && Number.isNaN(token)) return undefined;
+    if (
+      typeof token !== "string" &&
+      typeof token !== "number" &&
+      typeof token !== "bigint" &&
+      typeof token !== "boolean"
+    ) {
+      return undefined;
+    }
+    parts.push([typeof token, String(token)]);
+  }
+  return JSON.stringify(parts);
 }
 
 /** `true` when both describe the same child fields pointing at the same parent fields. */
@@ -1250,6 +1373,7 @@ async function writeReferentialUpdate(
   }
 
   const fields = Object.keys(patch);
+  const previousByKey = new Map(children.map((child) => [keyToken([extractKeyFromRow(child, keyPath)]), child]));
   const reference = {
     relationName: def.relationName,
     fields: def.targetFields,
@@ -1259,9 +1383,12 @@ async function writeReferentialUpdate(
   for (const row of updated) {
     const key = extractKeyFromRow(row, keyPath);
     const rowId = keyToken([def.relatedStoreName, key]);
+    const previous = previousByKey.get(keyToken([key]));
     const recorded = writes.rows.get(rowId);
     if (recorded) {
-      for (const field of fields) recorded.fields.add(field);
+      for (const field of fields) {
+        if (!recorded.before.has(field)) recorded.before.set(field, previous?.[field]);
+      }
       if (!recorded.references.some((checked) => sameReference(checked, reference))) {
         recorded.references.push(reference);
       }
@@ -1269,7 +1396,7 @@ async function writeReferentialUpdate(
       writes.rows.set(rowId, {
         modelName: def.relatedModelName,
         key,
-        fields: new Set(fields),
+        before: new Map(fields.map((field) => [field, previous?.[field]])),
         cause,
         references: [reference],
       });
@@ -1531,12 +1658,10 @@ export async function executeScalarCreateAllWithFkValidation(options: {
 function addReferentialWriteStores(
   contract: IdbContract,
   def: RelationDefinition,
-  action: "cascade" | "setNull" | "setDefault",
   stores: Set<string>,
   visited: Set<RelationDefinition>
 ): void {
   addOnUpdateStores(contract, def.relatedModelName, stores, visited, def.targetFields);
-  if (action === "setNull") return;
   for (const reference of getChildReferences(contract, def.relatedModelName)) {
     if (reference.fields.some((field) => def.targetFields.includes(field))) {
       stores.add(getStoreName(contract, reference.parentModelName));
@@ -1559,7 +1684,7 @@ function addOnUpdateStores(
     if (visited.has(def)) continue;
     visited.add(def);
     stores.add(def.relatedStoreName);
-    if (def.onUpdate !== "restrict") addReferentialWriteStores(contract, def, def.onUpdate, stores, visited);
+    if (def.onUpdate !== "restrict") addReferentialWriteStores(contract, def, stores, visited);
   }
   return enforces;
 }
@@ -1735,7 +1860,7 @@ export function collectDeleteStoreNames(contract: IdbContract, modelName: string
       stores.add(def.relatedStoreName);
       if (action === "cascade") walk(def.relatedModelName);
       if (action === "setNull" || action === "setDefault") {
-        addReferentialWriteStores(contract, def, action, stores, visitedUpdates);
+        addReferentialWriteStores(contract, def, stores, visitedUpdates);
       }
     }
   }
