@@ -23,6 +23,9 @@ async function setup() {
         key: "id",
         fields: { id: "String", code: "String" },
         indexes: { code: { keyPath: "code", unique: true } },
+        relations: {
+          cards: { to: "Card", cardinality: "1:N", on: { local: ["code"], target: ["boardCode"] } },
+        },
       },
       Card: {
         store: "cards",
@@ -67,10 +70,14 @@ async function setup() {
   const client = createSyncIdbClient({ contract, dbName });
   const orm = asAccessors(client.orm);
   await orm["boards"]!.create({ id: "b1", code: "old" });
+  await orm["boards"]!.create({ id: "b2", code: "other" });
   await orm["cards"]!.create({ id: "c1", boardCode: "old" });
   await orm["notes"]!.create({ id: "n1", cardBoardCode: "old" });
   return { client, orm };
 }
+
+type Orm = ReturnType<typeof asAccessors>;
+type Rel = { connect(where: unknown): unknown; disconnect(criteria?: unknown[]): unknown };
 
 describe("outbox order of onUpdate actions", () => {
   it.each([
@@ -84,6 +91,11 @@ describe("outbox order of onUpdate actions", () => {
       (orm: ReturnType<typeof asAccessors>) =>
         orm["boards"]!.upsert({ where: { id: "b1" }, create: { id: "b1", code: "new" }, update: { code: "new" } }),
     ],
+    [
+      "nested update",
+      (orm: Orm) =>
+        orm["boards"]!.where({ id: "b1" }).update({ code: "new", cards: (rel: Rel) => rel.connect([]) } as never),
+    ],
   ])("writes the parent's key change before the children it cascades to (%s)", async (_name, write) => {
     const { client, orm } = await setup();
     try {
@@ -94,6 +106,31 @@ describe("outbox order of onUpdate actions", () => {
       expect(await orm["boards"]!.findUnique("b1")).toEqual({ id: "b1", code: "new" });
       expect(await orm["cards"]!.findUnique("c1")).toEqual({ id: "c1", boardCode: "new" });
       expect(await orm["notes"]!.findUnique("n1")).toEqual({ id: "n1", cardBoardCode: "new" });
+    } finally {
+      await client.close();
+    }
+  });
+
+  it.each([
+    [
+      "connect",
+      (orm: Orm) =>
+        orm["boards"]!.where({ id: "b2" }).update({ cards: (rel: Rel) => rel.connect({ id: "c1" }) } as never),
+      "other",
+    ],
+    [
+      "disconnect",
+      (orm: Orm) => orm["boards"]!.where({ id: "b1" }).update({ cards: (rel: Rel) => rel.disconnect() } as never),
+      null,
+    ],
+  ])("writes a nested %s's foreign key before the children it cascades to", async (_name, write, code) => {
+    const { client, orm } = await setup();
+    try {
+      await write(orm);
+
+      const events = (await getNextBatch(client.rawClient, { limit: 20 })).filter((e) => e.operation === "update");
+      expect(events.map((e) => e.entityType)).toEqual(["Card", "Note"]);
+      expect(await orm["notes"]!.findUnique("n1")).toEqual({ id: "n1", cardBoardCode: code });
     } finally {
       await client.close();
     }
