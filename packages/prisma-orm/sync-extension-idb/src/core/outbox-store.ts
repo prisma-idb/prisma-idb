@@ -188,8 +188,17 @@ export async function pruneSyncedEvents(scope: IdbTransactionScope): Promise<voi
   }
 }
 
+/**
+ * Whether `versionMetaId` still has a pending outbox event other than
+ * `completedId`, the event just marked synced or failed. A fresh read ignores
+ * `completedId`, since that event is already stored as no longer pending.
+ */
 type HasPendingEvent = (scope: IdbTransactionScope, versionMetaId: string, completedId: string) => Promise<boolean>;
 
+/**
+ * The ids of every pending outbox event, by `versionMetaId`. A batch removes
+ * each `completedId` from it as it goes, instead of reading the outbox again.
+ */
 async function pendingIndex(scope: IdbTransactionScope): Promise<Map<string, Set<string>>> {
   const index = new Map<string, Set<string>>();
   for (const event of await scanStore<OutboxEvent>(scope, OUTBOX_STORE)) {
@@ -201,6 +210,7 @@ async function pendingIndex(scope: IdbTransactionScope): Promise<Map<string, Set
   return index;
 }
 
+/** Reads the outbox afresh; `completedId` is ignored, as the store already shows that event as finished. */
 const hasPendingEvent: HasPendingEvent = async (scope, versionMetaId) =>
   (await scanStore<OutboxEvent>(scope, OUTBOX_STORE)).some(
     (event) => event.versionMetaId === versionMetaId && isPending(event)
@@ -313,8 +323,6 @@ async function recordFailed(
     lastAttemptedAt: new Date(),
     retryable,
   });
-  if (!retryable) {
-    await clearLocalChangePending(scope, existing, hasPending);
-  }
+  if (!retryable) await clearLocalChangePending(scope, existing, hasPending);
   changedScopes.add(scope);
 }
