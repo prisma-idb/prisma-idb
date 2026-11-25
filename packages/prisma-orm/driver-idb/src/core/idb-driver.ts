@@ -26,6 +26,7 @@ export class IdbRuntimeDriverInstance implements RuntimeDriverInstance<"idb", "i
       markers: undefined,
       open: (markers) => {
         let verified = false;
+        let deleted = false;
         const opened = openIdbDatabase(
           dbName,
           markers === undefined ? version : undefined,
@@ -33,7 +34,11 @@ export class IdbRuntimeDriverInstance implements RuntimeDriverInstance<"idb", "i
           keyRange,
           markers !== undefined,
           (db, newVersion) => {
-            if (state.db !== opened || state.closed || newVersion === null) return;
+            if (state.db !== opened || state.closed) return;
+            if (newVersion === null) {
+              deleted = true;
+              return;
+            }
             // Start the marker read before closing. This transaction can finish
             // against the old schema while the waiting upgrade is still blocked.
             if (verified) state.markers = readContractHashes(db);
@@ -42,6 +47,13 @@ export class IdbRuntimeDriverInstance implements RuntimeDriverInstance<"idb", "i
         ).then(async (db) => {
           if (markers !== undefined) {
             const [before, after] = await Promise.all([markers, readContractHashes(db)]);
+            if (state.closed) {
+              db.close();
+              throw new Error("IDB: driver is closed");
+            }
+            if (deleted) throw databaseDeletedError(dbName);
+            // A newer upgrade may have closed this connection during the marker read.
+            if (state.db !== opened) return this.db;
             if (
               !before ||
               !after ||
@@ -152,6 +164,10 @@ export class IdbRuntimeDriverInstance implements RuntimeDriverInstance<"idb", "i
   }
 }
 
+function databaseDeletedError(dbName: string): Error {
+  return new Error(`IDB: "${dbName}" was deleted while the driver was disconnected.`);
+}
+
 /** Read the markers from one connection without keeping the version change blocked. */
 function readContractHashes(db: IDBDatabase): Promise<ReadonlyMap<string, string> | null> {
   if (!db.objectStoreNames.contains(MARKER_STORE_NAME)) return Promise.resolve(new Map());
@@ -203,7 +219,7 @@ function openIdbDatabase(
     if (reopening) {
       req.onupgradeneeded = () => {
         req.transaction!.abort();
-        reject(new Error(`IDB: "${dbName}" was deleted while the driver was disconnected.`));
+        reject(databaseDeletedError(dbName));
       };
     }
 

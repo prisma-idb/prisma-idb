@@ -17,7 +17,7 @@
  * singleton. Tests use unique db names (via dbName()) to avoid cross-test
  * state. Each instance is closed in afterEach.
  */
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { IdbRuntimeDriverInstance } from "../src/core/idb-driver";
 import type {
   IdbAtomicPlan,
@@ -212,6 +212,59 @@ describe("a connection closed by a newer version", () => {
     await upgradeTo(name, 3, "extensionMetadata", "extension-v2", "extension");
     await expect(instance.db).rejects.toThrow(/contract markers changed/);
     await instance.close();
+  });
+
+  it("waits for the next connection when an upgrade interrupts marker verification", async () => {
+    const name = dbName();
+    const markerStore = "_prisma_next_marker";
+    await upgradeTo(name, 1, "users", "app");
+    const instance = createIDBRuntimeDriver(name).create();
+    await instance.db;
+    await upgradeTo(name, 2, "extension", "extension-v1", "extension");
+    const holder = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open(name);
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    holder.onversionchange = () => holder.close();
+    const markers = holder.transaction(markerStore, "readwrite").objectStore(markerStore);
+    let release = false;
+    const holdMarkerStore = () => {
+      if (!release) markers.get("app").onsuccess = holdMarkerStore;
+    };
+    holdMarkerStore();
+
+    let nextUpgrade: Promise<void> | undefined;
+    const originalGetAll = IDBObjectStore.prototype.getAll;
+    const getAll = vi.spyOn(IDBObjectStore.prototype, "getAll").mockImplementation(function (
+      this: IDBObjectStore,
+      ...args
+    ) {
+      const db = this.transaction.db;
+      if (db.name === name && db.version === 2 && this.name === markerStore && !nextUpgrade) {
+        db.addEventListener(
+          "versionchange",
+          () => {
+            release = true;
+          },
+          { once: true }
+        );
+        nextUpgrade = upgradeTo(name, 3, "extensionMetadata");
+      }
+      return originalGetAll.apply(this, args);
+    });
+    try {
+      const scope = await instance.transaction(["users"], "readonly");
+      await scope.commit();
+      await nextUpgrade;
+      expect((await instance.db).version).toBe(3);
+    } finally {
+      release = true;
+      holder.close();
+      getAll.mockRestore();
+      await nextUpgrade;
+      await instance.close();
+    }
   });
 
   it("does not recreate a database deleted while the driver was invalidated", async () => {
