@@ -184,6 +184,51 @@ interface InterpretedModel {
 
 // ── Core interpreter ───────────────────────────────────────────────────────────
 
+/** What `@ignore` and `@@ignore` leave out of the contract, in every projection. */
+interface IgnoredDeclarations {
+  /** Models marked `@@ignore`. */
+  readonly models: ReadonlySet<string>;
+  /** The `@ignore` fields of each model. */
+  readonly fieldsByModel: ReadonlyMap<string, ReadonlySet<string>>;
+  /** Relations with an ignored owning field, keyed by {@link relationPairKey}. */
+  readonly relationPairs: ReadonlySet<string>;
+}
+
+/**
+ * Identifies a relation by the model that holds the foreign key, the model it
+ * points to and its name, the way Prisma pairs the two sides. An empty name
+ * counts as no name. Used only to decide what an `@ignore` removes.
+ */
+function relationPairKey(owningModel: string, targetModel: string, name: string | undefined): string {
+  return JSON.stringify([owningModel, targetModel, name === "" ? undefined : name]);
+}
+
+/** Collects the `@ignore`/`@@ignore` declarations of a schema. */
+function collectIgnoredDeclarations(
+  models: readonly ModelSymbol[],
+  modelNames: ReadonlySet<string>,
+  attributes: IdbAttributeBinder
+): IgnoredDeclarations {
+  const fieldsByModel = new Map<string, ReadonlySet<string>>();
+  const relationPairs = new Set<string>();
+  for (const model of models) {
+    const fields = Object.values(model.fields).filter((field) => attributes.isFieldIgnored(field));
+    fieldsByModel.set(model.name, new Set(fields.map((field) => field.name)));
+    for (const field of fields) {
+      if (field.list || !modelNames.has(field.typeName)) continue;
+      const relation = attributes.field(model, field).relation?.value;
+      if (relation?.fields !== undefined) {
+        relationPairs.add(relationPairKey(model.name, field.typeName, relation.name));
+      }
+    }
+  }
+  return {
+    models: new Set(models.filter((model) => attributes.isModelIgnored(model)).map((model) => model.name)),
+    fieldsByModel,
+    relationPairs,
+  };
+}
+
 /** Resolve one model into IDB fields, indexes, defaults, and reference relations. */
 function interpretModel(
   model: ModelSymbol,
@@ -194,17 +239,23 @@ function interpretModel(
   projection: ContractProjection,
   excludedModelNames: ReadonlySet<string>,
   sourceMap: PslDefinitionSourceMap,
-  attributes: IdbAttributeBinder
+  attributes: IdbAttributeBinder,
+  ignored: IgnoredDeclarations
 ): InterpretedModel | undefined {
   sourceMap.recordModel(model);
   const modelAttributes = attributes.model(model);
   // The binder already reported why; interpreting past it would only add noise.
   if (modelAttributes.failed) return undefined;
   const modelFields = Object.values(model.fields);
+  const ignoredFieldNames = new Set(modelFields.filter((f) => attributes.isFieldIgnored(f)).map((f) => f.name));
   // Fields marked `@idb.exclude`. Empty (no-op) in "full" projection — the
-  // attribute only takes effect when projecting the client contract.
+  // attribute only takes effect when projecting the client contract. An
+  // `@ignore` field leaves the contract in every projection, so exclusion has
+  // nothing left to do for it.
   const excludedFieldNames = new Set(
-    projection === "client" ? modelFields.filter((f) => attributes.isFieldExcluded(f)).map((f) => f.name) : []
+    projection === "client"
+      ? modelFields.filter((f) => attributes.isFieldExcluded(f) && !ignoredFieldNames.has(f.name)).map((f) => f.name)
+      : []
   );
   // Server-only scalars need no attribute binding beyond exclusion validation.
   // Retain key/index markers so projection cannot hide an invalid exclusion.
@@ -255,6 +306,20 @@ function interpretModel(
   }
 
   keyPath ??= [];
+  const ignoredKeyFields = (typeof keyPath === "string" ? [keyPath] : keyPath).filter((name) =>
+    ignoredFieldNames.has(name)
+  );
+  if (ignoredKeyFields.length > 0) {
+    for (const name of ignoredKeyFields) {
+      diagnostics.push({
+        code: "IDB_IGNORED_FIELD_REFERENCED",
+        message: `Field "${model.name}.${name}" is marked @ignore, but the primary key of model "${model.name}" uses it, and a model needs its key. Remove @ignore from the field, or mark the model @@ignore.`,
+        sourceId,
+        span: model.fields[name]?.span ?? model.span,
+      });
+    }
+    return undefined;
+  }
   sourceMap.set(
     ["models", model.name, "key"],
     idModelAttr?.span ??
@@ -273,6 +338,18 @@ function interpretModel(
   // a single field or an ordered list for a compound (multi-field) index.
   for (const index of modelAttributes.indexes) {
     const fields = [...index.fields];
+    const ignoredIndexFields = fields.filter((name) => ignoredFieldNames.has(name));
+    if (ignoredIndexFields.length > 0) {
+      for (const name of ignoredIndexFields) {
+        diagnostics.push({
+          code: "IDB_IGNORED_FIELD_REFERENCED",
+          message: `Field "${model.name}.${name}" is marked @ignore, but an index of model "${model.name}" uses it, and the field is not in the contract. Remove @ignore from the field, or remove the field from the index.`,
+          sourceId,
+          span: index.span,
+        });
+      }
+      continue;
+    }
     const defaultName = fields.length === 1 ? fields[0]! : fields.join("_");
     const indexName = index.name ?? (index.unique ? `${defaultName}_unique` : defaultName);
     const keyPath: IdbKeyPath = fields.length === 1 ? fields[0]! : fields;
@@ -290,6 +367,18 @@ function interpretModel(
   const autoIncrementFields: string[] = [];
 
   for (const field of modelFields) {
+    if (ignoredFieldNames.has(field.name)) {
+      const { unique } = attributes.field(model, field);
+      if (unique) {
+        diagnostics.push({
+          code: "IDB_IGNORED_FIELD_REFERENCED",
+          message: `Field "${model.name}.${field.name}" is marked @ignore, but @unique requires the field in the contract. Remove @ignore or remove @unique.`,
+          sourceId,
+          span: unique,
+        });
+      }
+      continue;
+    }
     const excludedAttributes = excludedScalarAttributes.get(field);
     if (excludedAttributes) {
       if (excludedAttributes.unique) {
@@ -301,6 +390,16 @@ function interpretModel(
     }
     const fieldAttributes = attributes.field(model, field);
     if (fieldAttributes.failed) continue;
+
+    if (modelNames.has(field.typeName)) {
+      if (ignored.models.has(field.typeName)) continue;
+      const relation = fieldAttributes.relation?.value;
+      if (
+        (field.list || relation?.fields === undefined) &&
+        ignored.relationPairs.has(relationPairKey(field.typeName, model.name, relation?.name))
+      )
+        continue;
+    }
 
     // Relation list field (backrelation) — skip for now, resolved in second pass
     if (field.list && modelNames.has(field.typeName)) {
@@ -333,6 +432,31 @@ function interpretModel(
           sourceId,
           span: field.span,
         });
+        continue;
+      }
+      const joinsIgnored = [
+        ...localFields
+          .filter((name) => ignoredFieldNames.has(name))
+          .map(
+            (name) =>
+              `Field "${model.name}.${name}" is marked @ignore, but relation field "${model.name}.${field.name}" joins on it.`
+          ),
+        ...targetFields
+          .filter((name) => ignored.fieldsByModel.get(field.typeName)?.has(name) === true)
+          .map(
+            (name) =>
+              `Field "${field.typeName}.${name}" is marked @ignore, but relation field "${model.name}.${field.name}" references it.`
+          ),
+      ];
+      if (joinsIgnored.length > 0) {
+        for (const reason of joinsIgnored) {
+          diagnostics.push({
+            code: "IDB_IGNORED_FIELD_REFERENCED",
+            message: `${reason} Mark the relation field @ignore as well, or remove @ignore from the field.`,
+            sourceId,
+            span: relationAttr.span,
+          });
+        }
         continue;
       }
       const onDelete = onDeleteRaw ? REFERENTIAL_ACTION_MAP[onDeleteRaw] : undefined;
@@ -755,12 +879,20 @@ export function lowerPslDocumentToIdbContractDefinition(
     projection === "client" ? allModelsUnprojected.filter((m) => attributes.isModelExcluded(m)).map((m) => m.name) : []
   );
 
+  // `@ignore` and `@@ignore` leave fields, relations and models out of the
+  // contract in every projection, as in Prisma.
+  const ignored = collectIgnoredDeclarations(allModelsUnprojected, modelNames, attributes);
+  for (const model of allModelsUnprojected.filter((m) => ignored.models.has(m.name))) {
+    // Its attributes are still checked, so the schema fails the same way with or without it.
+    attributes.model(model);
+    for (const field of Object.values(model.fields)) attributes.field(model, field);
+  }
+
   // The models actually interpreted — excluded models are dropped entirely
   // in "client" projection, never reaching `interpretModel`.
-  const allModels =
-    projection === "client"
-      ? allModelsUnprojected.filter((m) => !excludedModelNames.has(m.name))
-      : allModelsUnprojected;
+  const allModels = allModelsUnprojected.filter(
+    (m) => !ignored.models.has(m.name) && (projection !== "client" || !excludedModelNames.has(m.name))
+  );
 
   const interpretedByName = new Map<string, InterpretedModel>();
 
@@ -775,7 +907,8 @@ export function lowerPslDocumentToIdbContractDefinition(
       projection,
       excludedModelNames,
       sourceMap,
-      attributes
+      attributes,
+      ignored
     );
     if (result) {
       interpretedByName.set(model.name, result);
@@ -792,6 +925,16 @@ export function lowerPslDocumentToIdbContractDefinition(
       // Already warned about and dropped by the first pass — don't also
       // report it as an unresolved backrelation.
       if (excludedModelNames.has(field.typeName)) continue;
+      const relation = attributes.field(model, field).relation?.value;
+      const pair = relationPairKey(field.typeName, model.name, relation?.name);
+      // An ignored owner removes its inverse. Ignoring the inverse alone preserves the owner.
+      if (
+        ignored.models.has(field.typeName) ||
+        ignored.fieldsByModel.get(model.name)?.has(field.name) === true ||
+        ignored.relationPairs.has(pair)
+      ) {
+        continue;
+      }
 
       const targetInterp = interpretedByName.get(field.typeName);
       if (!targetInterp) continue;

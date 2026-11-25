@@ -214,6 +214,7 @@ export function buildContract(input: DefineContractInput) {
 | Code                                        | Meaning                                                                                                        |
 | ------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
 | `IDB_INVALID_RELATION`                      | A relation declaration is malformed, references an unknown model, or sits on a field whose type isn't a model. |
+| `IDB_IGNORED_FIELD_REFERENCED`              | A primary key, an index or a relation that isn't ignored uses an `@ignore` field.                              |
 | `IDB_MISSING_RELATION_ATTRIBUTE`            | A PSL to-one relation has no `@relation` declaration.                                                          |
 | `IDB_UNKNOWN_REFERENTIAL_ACTION`            | A PSL relation names an unsupported referential action.                                                        |
 | `IDB_CONFLICTING_RELATION_ACTIONS`          | Reciprocal relations both declare the same referential action.                                                 |

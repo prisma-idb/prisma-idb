@@ -18,6 +18,66 @@ export type AuthoringScenario = {
 // Casts below deliberately exercise declarations outside the TS type system.
 export const authoringScenarios: AuthoringScenario[] = [
   {
+    name: "ignore leaves fields, relations and models out in every projection",
+    clientProjection: true,
+    psl: `
+      model User {
+        id     String  @id
+        email  String
+        legacy String  @ignore
+        posts  Post[]
+        audits Audit[] @ignore
+        notes  Note[]
+        tags   Tag[]   @ignore
+      }
+      model Tag {
+        id      String @id
+        ownerId String
+        owner   User   @relation(fields: [ownerId], references: [id])
+      }
+      model Post {
+        id       String @id
+        authorId String
+        author   User   @relation(fields: [authorId], references: [id]) @ignore
+      }
+      model Note {
+        id     String @id
+        userId String
+        user   User   @relation(fields: [userId], references: [id])
+        draft  String @ignore @idb.exclude
+      }
+      model Audit {
+        id     String @id
+        userId String
+        user   User   @relation(fields: [userId], references: [id])
+        @@ignore
+      }
+    `,
+    ts: {
+      models: {
+        User: {
+          store: "user",
+          key: "id",
+          fields: { id: "String", email: "String" },
+          relations: { notes: { to: "Note", cardinality: "1:N", on: { local: ["id"], target: ["userId"] } } },
+        },
+        Post: { store: "post", key: "id", fields: { id: "String", authorId: "String" } },
+        Tag: {
+          store: "tag",
+          key: "id",
+          fields: { id: "String", ownerId: "String" },
+          relations: { owner: { to: "User", cardinality: "N:1", on: { local: ["ownerId"], target: ["id"] } } },
+        },
+        Note: {
+          store: "note",
+          key: "id",
+          fields: { id: "String", userId: "String" },
+          relations: { user: { to: "User", cardinality: "N:1", on: { local: ["userId"], target: ["id"] } } },
+        },
+      },
+    },
+  },
+  {
     name: "feature-complete (no defaults)",
     clientProjection: true,
     psl: `

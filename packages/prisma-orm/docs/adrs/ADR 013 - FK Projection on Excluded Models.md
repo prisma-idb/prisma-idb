@@ -53,6 +53,10 @@ Removing it would silently change the shape of records the client has already sy
 - **A required foreign-key field can hold a value that never matches a local row.** This follows from choosing to exclude the parent in the first place.
 - **Sync still needs a root model.** [ADR 014](ADR%20014%20-%20Sync%20Ownership%20DAG.md) requires every synced model to reach a root model, such as `User`, through relations, and it checks this against the models that survive projection. If the root model itself is excluded, `createSyncServer` throws when it is created.
 
+## Dated note (2026-11-25): relations and `@@ignore`
+
+As in Prisma, a relation field that points to an `@@ignore` model is ignored too, so the relation is omitted and its foreign-key fields stay as plain fields. Relations pair by name, so ignoring one relation leaves other relations between the same models in place. An ignored backrelation removes only itself: the owning relation and its foreign-key checks stay. An ignored owning relation also removes its backrelation, and its foreign-key fields stay as plain fields that the client no longer checks. A primary key, an index or a retained relation may not use an ignored field, and neither may `@id` or `@unique` on the ignored field itself (`IDB_IGNORED_FIELD_REFERENCED`). This does not change the decision above.
+
 ## Related
 
 - `family-idb/src/core/psl-interpreter.ts` and `contract-builder.ts`: the relation-dropping projection. `warnDroppedRelation` in `psl-interpreter.ts` is the shared warning.

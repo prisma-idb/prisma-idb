@@ -121,6 +121,10 @@ Keeping `./server` out of the browser bundle is the app's bundler configuration'
 - **No runtime cost.** The client contract is produced at build time. The browser never sees the full schema or the exclusion logic.
 - **Apps with separate frontend and backend packages need a third package for the schema**, laid out as above.
 
+## Dated note (2026-11-25): `@ignore` and `@@ignore`
+
+PSL `@ignore` and `@@ignore` are not exclusion attributes. As in Prisma, they leave the field or model out of the contract in every projection, the full contract included, so neither the browser nor the server-side IDB contract has them. `@idb.exclude` and `@@idb.exclude` remain the only way to keep data on the server and out of the browser. `stripIdbExcludeAttributes` removes only the `idb` attributes, so the SQL family reads `@ignore` and `@@ignore` as written. The pinned Prisma 8 SQL family (`8.0.0-rc.24`) keeps `@ignore` scalars, `@@ignore` models and `@ignore` owning relations in the server contract, and refuses `@ignore` on a list backrelation. Because the browser never writes an `@ignore` field, a synced model's `@ignore` field must be optional or have a default for server inserts to succeed. This adds an attribute pair and does not change the decision above.
+
 ## Related
 
 - [ADR 013](ADR%20013%20-%20FK%20Projection%20on%20Excluded%20Models.md): relations that point at excluded models.
