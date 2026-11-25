@@ -6,6 +6,7 @@ import type { IdbQueryExecutor } from "./executor";
 import { buildRowComparator, combineFilterExprs } from "./query-shaping";
 import type { IncludeEntry } from "./store-state";
 import { fieldValueToken, getStoreName } from "./types";
+import { decimalIdentityToken } from "@prisma-idb/target-idb/runtime";
 import type { IdbContract } from "./types";
 import { buildCatalog, type QueryCatalog } from "./planner/catalog";
 import { planQuery } from "./planner/plan";
@@ -88,6 +89,9 @@ export async function loadRelation(
   const relatedStoreName = getStoreName(contract, relatedModelName);
 
   const isScalar = entry.kind === "scalar";
+  const catalog = buildCatalog(contract, relatedStoreName, relatedModelName);
+  // Decimal join fields match numerically, as the FK check does: "1" joins "1.00".
+  const decimals = decimalPositions(catalog.fields, targetFields);
 
   // Collect the distinct local tuples to drive the related-store lookup. A
   // tuple is keyed by `tupleToken`, so equal Date/binary values collapse and
@@ -95,7 +99,7 @@ export async function loadRelation(
   // null in any local field has no related rows.
   const localTuples = new Map<string, unknown[]>();
   for (const row of rows) {
-    const token = tupleToken(row, localFields);
+    const token = tupleToken(row, localFields, decimals);
     if (token !== null)
       localTuples.set(
         token,
@@ -130,15 +134,14 @@ export async function loadRelation(
   );
   const where = refinedWhere === undefined ? joinWhere : andExpr([joinWhere, refinedWhere]);
   const request = { ...(refinedWhere === undefined ? {} : { where: refinedWhere }) };
-  const catalog = buildCatalog(contract, relatedStoreName, relatedModelName);
   const lowered = lowerRows(catalog, planQuery(catalog, { where }), planMeta, request, (row) => {
-    const token = tupleToken(row, targetFields);
+    const token = tupleToken(row, targetFields, decimals);
     return token !== null && localTuples.has(token);
   });
   const plan: IdbQueryPlan<Record<string, unknown>> = { meta: planMeta, idbPlan: lowered.idbPlan };
   const relatedRows = lowered.finish(await executor.query(plan).toArray());
 
-  return attachRelatedRows(relName, entry, rows, relatedRows, relation, catalog.fields);
+  return attachRelatedRows(relName, entry, rows, relatedRows, relation, catalog.fields, decimals);
 }
 
 /** Attach related rows by their join tuple, shaping each parent's collection independently. */
@@ -148,7 +151,8 @@ function attachRelatedRows(
   rows: Record<string, unknown>[],
   relatedRows: Record<string, unknown>[],
   relation: ContractReferenceRelation,
-  fields: QueryCatalog["fields"]
+  fields: QueryCatalog["fields"],
+  decimals: readonly boolean[]
 ): Record<string, unknown>[] {
   const {
     cardinality,
@@ -158,14 +162,14 @@ function attachRelatedRows(
     // Group related rows by their target tuple.
     const grouped = new Map<string, Record<string, unknown>[]>();
     for (const rrow of relatedRows) {
-      const gk = tupleToken(rrow, targetFields);
+      const gk = tupleToken(rrow, targetFields, decimals);
       if (gk === null) continue;
       const group = grouped.get(gk) ?? [];
       group.push(rrow);
       grouped.set(gk, group);
     }
     const groupFor = (row: Record<string, unknown>): Record<string, unknown>[] => {
-      const token = tupleToken(row, localFields);
+      const token = tupleToken(row, localFields, decimals);
       return token === null ? [] : (grouped.get(token) ?? []);
     };
 
@@ -195,25 +199,34 @@ function attachRelatedRows(
   // A refined `where` that excludes the related row yields `null` here.
   const indexed = new Map<string, Record<string, unknown>>();
   for (const rrow of relatedRows) {
-    const token = tupleToken(rrow, targetFields);
+    const token = tupleToken(rrow, targetFields, decimals);
     if (token !== null) indexed.set(token, rrow);
   }
   return rows.map((row) => {
-    const token = tupleToken(row, localFields);
+    const token = tupleToken(row, localFields, decimals);
     return { ...row, [relName]: (token === null ? undefined : indexed.get(token)) ?? null };
   });
+}
+
+/** Which positions of a join are Decimal fields, matched by numeric value rather than spelling. */
+function decimalPositions(fields: QueryCatalog["fields"], joinFields: readonly string[]): boolean[] {
+  return joinFields.map((field) => fields[field]?.codecId === "idb/decimal@1");
 }
 
 /**
  * A `Map` key for the values of `fields` in `row`, or `null` when any of them
  * is null or undefined. Equal `Date`s and binary values give equal tokens.
  */
-function tupleToken(row: Record<string, unknown>, fields: readonly string[]): string | null {
+function tupleToken(
+  row: Record<string, unknown>,
+  fields: readonly string[],
+  decimals: readonly boolean[] = []
+): string | null {
   const parts: unknown[] = [];
-  for (const field of fields) {
+  for (const [index, field] of fields.entries()) {
     const value = row[field];
     if (value === null || value === undefined) return null;
-    const token = fieldValueToken(value);
+    const token = fieldValueToken(decimals[index] ? decimalIdentityToken(value) : value);
     parts.push([typeof token, String(token)]);
   }
   return JSON.stringify(parts);

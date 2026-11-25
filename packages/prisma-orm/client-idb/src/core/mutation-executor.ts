@@ -46,7 +46,7 @@ import {
 } from "./mutation-defaults";
 import { absentAsNull } from "@prisma-idb/target-idb/runtime";
 import { buildCatalog } from "./planner/catalog";
-import { preserveDecimalKeySpelling } from "./decimal-identity";
+import { fieldValueChanged, preserveDecimalKeySpelling } from "./decimal-identity";
 import { lowerExists, lowerRows, lowerWrite, type WriteRequest } from "./planner/lower";
 import { planQuery } from "./planner/plan";
 import { withMutationScope, type IdbQueryExecutorWithTransaction } from "./mutation-scope";
@@ -58,7 +58,6 @@ import {
   type MutationCreateInput,
   type MutationUpdateInput,
   extractKeyFromRow,
-  fieldValuesEqual,
   getKeyPath,
   getStoreName,
   keyEquals,
@@ -1033,7 +1032,9 @@ export async function applyReferentialActionsForRowOnUpdate(
   const meta = makePlanMeta(contract);
   for (const def of getRelationDefinitions(contract, modelName)) {
     if (!isChildEnforcementRelation(contract, modelName, def)) continue;
-    const changedFields = def.localFields.filter((f) => f in patch && !fieldValuesEqual(patch[f], oldRow[f]));
+    const changedFields = def.localFields.filter(
+      (f) => f in patch && fieldValueChanged(contract, modelName, f, patch[f], oldRow[f])
+    );
     if (changedFields.length === 0) continue;
 
     const action = getReferentialActionForRelation(contract, modelName, def, "onUpdate");
