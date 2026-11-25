@@ -8,6 +8,11 @@ import { postgresCreateNamespace } from "@prisma/orm-postgres/target/types";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { defineConfig } from "../src/exports/postgres";
 import { sqlContractWithSync } from "../src/exports/schema";
+import { buildSymbolTable } from "@prisma/orm-framework/psl-parser";
+import { parse } from "@prisma/orm-framework/psl-parser/syntax";
+import { interpretPslDocumentToIdbContract } from "@prisma-idb/family-idb/contract-psl";
+import { createSyncServer } from "../src/exports/server";
+import type { SyncServerContract } from "../src/core/ownership-dag";
 
 const postgresContractOptions = {
   target: postgresPackRef,
@@ -137,6 +142,51 @@ model AuditLog {
       const [diagnostic] = result.failure.diagnostics;
       expect(diagnostic?.sourceId).toBe(schemaPath);
       expect(diagnostic?.span?.start.line).toBe(3);
+    });
+
+    it("builds the ownership graph from the SQL contract, through an @ignore owning relation, and never syncs an @@ignore model", async () => {
+      const schema = `model User {
+  id     String  @id
+  boards Board[]
+}
+model Board {
+  id      String   @id
+  ownerId String
+  owner   User     @relation(fields: [ownerId], references: [id]) @ignore
+  legacy  Legacy[]
+}
+model Legacy {
+  id      String @id
+  boardId String
+  board   Board  @relation(fields: [boardId], references: [id])
+  @@ignore
+}
+`;
+      const { result } = await loadSchema(schema);
+      if (!result.ok) {
+        throw new Error(result.failure.diagnostics.map((d) => `[${d.code}] ${d.message}`).join("\n"));
+      }
+      const { document, sources } = parse(schema, "schema.prisma");
+      const { symbolTable } = buildSymbolTable({ documents: [document], sources, defaultNamespaceId: "__unbound__" });
+      const clientContract = interpretPslDocumentToIdbContract(symbolTable, "schema.prisma", { projection: "client" });
+      if (!clientContract.ok) throw new Error(JSON.stringify(clientContract.failure.diagnostics));
+
+      const server = createSyncServer({
+        contract: result.value as SyncServerContract,
+        clientContract: clientContract.value,
+        rootModel: "User",
+        // Every model in this schema is keyed by `id`.
+        getKeyField: () => "id",
+      });
+      const [board, legacy] = server.validatePush(
+        [
+          { id: "e1", model: "Board", operation: "delete", payload: { id: "b1" }, wireKey: "b1" },
+          { id: "e2", model: "Legacy", operation: "delete", payload: { id: "l1" }, wireKey: "l1" },
+        ],
+        { scopeKey: "u1" }
+      );
+      expect(board?.check).toMatchObject({ kind: "scoped" });
+      expect(legacy?.check).toEqual({ kind: "unknown-model" });
     });
   });
 });

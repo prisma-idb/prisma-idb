@@ -38,10 +38,11 @@ export interface OwnershipDag {
  * still count as graph nodes, since a client model's authorization chain
  * may legitimately pass through one (see ADR 014's "why the full graph").
  *
- * `@@ignore` models are treated the same way: their rows stay in the browser
- * and never reach the outbox. Relations stay edges whether or not they are
- * `@ignore`, because they still join the same foreign keys, and the SQL
- * contract keeps an `@ignore` owning relation and an `@@ignore` model.
+ * `@@ignore` models, as `clientContract` marks them, are left out of the
+ * synced models too: their rows stay in the browser and never reach the
+ * outbox. The edges come from `contract`, the server's own contract (the SQL
+ * contract for a SQL server). The SQL family keeps an `@ignore` owning
+ * relation there, so it stays an edge.
  */
 export function buildOwnershipDag(
   contract: SyncServerContract,
