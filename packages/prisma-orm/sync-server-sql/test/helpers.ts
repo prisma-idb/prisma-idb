@@ -42,6 +42,8 @@ export const testClientContract = (() => {
               ([name]) =>
                 ![
                   "Changelog",
+                  "NumericTenant",
+                  "NumericItem",
                   "BigUser",
                   "BigItem",
                   "Lookup",

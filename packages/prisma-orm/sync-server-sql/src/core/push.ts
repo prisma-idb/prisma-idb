@@ -10,7 +10,7 @@ import {
 import { lockRow, lockingRowReader } from "./row-lock";
 import { appendChangelogRow, isEventApplied } from "./changelog";
 import { isDeterministicWriteFailure, sqlState } from "./sqlstate";
-import { reviveWireValues, WireValidationError } from "./wire-values";
+import { assertFloat4KeyFits, reviveWireValues, WireValidationError } from "./wire-values";
 
 /**
  * The fields `applyPushEvent` actually reads out of a push request's event —
@@ -123,11 +123,13 @@ export function decodeWireEvent(
     keyField = undefined;
   }
   const wirePayload = keyField === undefined ? {} : toSyncPushPayload(event.operation, event.payload, keyField);
+  const decodedPayload = reviveWireValues(contract, model, wirePayload, keyField);
+  if (keyField !== undefined) assertFloat4KeyFits(contract, model, keyField, decodedPayload[keyField]);
   return {
     id: event.id,
     model,
     operation: event.operation,
-    payload: reviveWireValues(contract, model, wirePayload, keyField),
+    payload: decodedPayload,
     wireKey: keyField === undefined ? undefined : wirePayload[keyField],
   };
 }

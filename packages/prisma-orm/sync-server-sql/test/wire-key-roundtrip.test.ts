@@ -7,8 +7,9 @@ import type { IdbContract } from "@prisma-idb/client-idb/orm";
 import { applyPull, createSyncIdbClient } from "@prisma-idb/sync-extension-idb/client";
 import { logWithRecordSchema } from "@prisma-idb/sync-extension-idb/schemas";
 import { createSqlSyncAdapter } from "../src/core/create-adapter";
+import { createSqlSync } from "../src/core/http-handlers";
 import { ormRootFor } from "../src/core/orm-root";
-import { testBigSyncServer, testContract, testDb, seed } from "./helpers";
+import { testBigSyncServer, testContract, testDb, seed, testSyncServer } from "./helpers";
 
 async function browserClient() {
   // IndexedDB has no bigint key type. The client projection retains digit strings.
@@ -20,11 +21,15 @@ async function browserClient() {
       BigItem: { store: "bigItems", key: "id", fields: { id: "String", ownerId: "String", name: "String" } },
     },
   }) as unknown as IdbContract;
+  return openSyncClient(contract, ["bigUsers", "bigItems"]);
+}
+
+async function openSyncClient(contract: IdbContract, stores: readonly string[]) {
   const dbName = `wire-key-roundtrip-${crypto.randomUUID()}`;
   await new Promise<void>((resolve, reject) => {
     const request = indexedDB.open(dbName, 1);
     request.onupgradeneeded = () => {
-      for (const store of ["bigUsers", "bigItems", "_idb_sync_outbox", "_idb_sync_version_meta"]) {
+      for (const store of [...stores, "_idb_sync_outbox", "_idb_sync_version_meta"]) {
         request.result.createObjectStore(store, { keyPath: "id" });
       }
     };
@@ -252,4 +257,291 @@ describe("wire-form SQL keys", () => {
       await client.close();
     }
   });
+});
+
+it("round-trips numeric keys from PostgreSQL to IndexedDB through create, update and delete", async () => {
+  const db = await testDb();
+  const contract = defineContract({
+    family: idbFamilyPack,
+    target: idbTargetPack,
+    models: {
+      NumericTenant: { store: "tenants", key: "id", fields: { id: "Int", name: "String" } },
+      NumericItem: { store: "items", key: "id", fields: { id: "Int", ownerId: "Int", name: "String" } },
+    },
+  }) as unknown as IdbContract;
+  const storageHash = contract.storage.storageHash;
+  const scopeKey = "7";
+  const handlers = createSqlSync({
+    contract: testContract,
+    clientContract: contract,
+    rootModel: "NumericTenant",
+    db,
+    scopeKey,
+  });
+  const client = await openSyncClient(contract, ["tenants", "items"]);
+  let cursor: string | null = null;
+  try {
+    async function push(id: string, entityType: string, operation: string, payload: unknown) {
+      const response = await handlers.push(
+        new Request("https://sync.test/push", {
+          method: "POST",
+          body: JSON.stringify({ storageHash, events: [{ id, entityType, operation, payload }] }),
+        })
+      );
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual([{ id, success: true }]);
+    }
+
+    async function pull(expected: {
+      model: string;
+      keyPath: number | string;
+      record?: unknown;
+      validationError?: string;
+    }) {
+      const url = new URL("https://sync.test/pull");
+      url.searchParams.set("storageHash", storageHash);
+      if (cursor) url.searchParams.set("since", cursor);
+      const response = await handlers.pull(new Request(url));
+      expect(response.status).toBe(200);
+      const { logs } = await response.json();
+      expect(logs).toMatchObject([expected]);
+      const changes = await applyPull(client, logWithRecordSchema.array().parse(logs));
+      expect(changes).toMatchObject(
+        expected.validationError
+          ? { applied: 0, skipped: 1, validationFailed: 1 }
+          : { applied: 1, skipped: 0, validationFailed: 0 }
+      );
+      cursor = changes.lastChangelogId;
+    }
+
+    const owner = { id: 7, name: "Ann" };
+    await db.orm.public.NumericTenant.select("id").create(owner);
+    await seed(db, {
+      Changelog: [
+        {
+          model: "NumericTenant",
+          keyPath: "7",
+          operation: "create",
+          scopeKey,
+          outboxEventId: "historical",
+        },
+      ],
+    });
+    await pull({ model: "NumericTenant", keyPath: 7, record: owner });
+
+    const item = { id: 8, ownerId: 7, name: "first" };
+    await push("create", "NumericItem", "create", item);
+    await pull({ model: "NumericItem", keyPath: item.id, record: item });
+    const readItem = () =>
+      client.withTransaction(["items"], (scope) =>
+        scope.execute({ kind: "key-get", storeName: "items", key: item.id } as never)
+      );
+    expect(await readItem()).toEqual([item]);
+
+    await push("update", "NumericItem", "update", { key: item.id, patch: { name: "second" } });
+    const updated = { ...item, name: "second" };
+    await pull({ model: "NumericItem", keyPath: item.id, record: updated });
+    expect(await readItem()).toEqual([updated]);
+
+    await seed(db, {
+      Changelog: [
+        {
+          id: "70000000-0000-7000-8000-000000000000",
+          model: "NumericItem",
+          keyPath: "8.5",
+          operation: "delete",
+          scopeKey,
+          outboxEventId: "bad-key",
+        },
+      ],
+    });
+    await pull({ model: "NumericItem", keyPath: "8.5", validationError: "KEYPATH_VALIDATION_FAILURE" });
+    expect(await readItem()).toEqual([updated]);
+
+    await push("delete", "NumericItem", "delete", { key: item.id });
+    await pull({ model: "NumericItem", keyPath: item.id, record: null });
+    expect(await readItem()).toEqual([]);
+  } finally {
+    await client.close();
+  }
+});
+
+it("rejects float4 keys that would identify a different row after PostgreSQL rounds them", async () => {
+  const db = await testDb();
+  await seed(db, { User: [{ id: "u1", name: "Ann" }] });
+  const adapter = createSqlSyncAdapter({ contract: testContract, syncServer: testSyncServer, contractCheck: "off" });
+  const apply = (id: string, operation: "create" | "update" | "delete", payload: unknown) =>
+    adapter.applyPush(db, { scopeKey: "u1", events: [{ id, entityType: "FloatItem", operation, payload }] });
+  const invalidKey = 16777217;
+  expect(await apply("invalid-create", "create", { id: invalidKey, ownerId: "u1", name: "wrong" })).toEqual({
+    ok: true,
+    results: [
+      { id: "invalid-create", success: false, error: "KEYPATH_VALIDATION_FAILURE", retryable: false, record: null },
+    ],
+  });
+  expect(await db.orm.public.FloatItem.all().toArray()).toEqual([]);
+  expect(await db.orm.public.Changelog.all().toArray()).toEqual([]);
+
+  const exact = { id: 16777216, ownerId: "u1", name: "exact" };
+  const fraction = { ...exact, id: Math.fround(0.1) };
+  expect(await apply("valid-integer", "create", exact)).toEqual({
+    ok: true,
+    results: [{ id: "valid-integer", success: true }],
+  });
+  expect(await apply("valid-fraction", "create", fraction)).toEqual({
+    ok: true,
+    results: [{ id: "valid-fraction", success: true }],
+  });
+  expect(await apply("invalid-update", "update", { key: invalidKey, patch: { name: "wrong" } })).toEqual({
+    ok: true,
+    results: [
+      { id: "invalid-update", success: false, error: "KEYPATH_VALIDATION_FAILURE", retryable: false, record: null },
+    ],
+  });
+  expect(await apply("invalid-delete", "delete", { key: invalidKey })).toEqual({
+    ok: true,
+    results: [
+      { id: "invalid-delete", success: false, error: "KEYPATH_VALIDATION_FAILURE", retryable: false, record: null },
+    ],
+  });
+  expect(await db.orm.public.FloatItem.first({ id: exact.id })).toMatchObject({ name: "exact" });
+  await seed(db, {
+    Changelog: [
+      {
+        id: "00000000-0000-7000-8000-000000000001",
+        model: "FloatItem",
+        keyPath: "0.1",
+        operation: "create",
+        scopeKey: "u1",
+        outboxEventId: "rounded-legacy",
+      },
+    ],
+  });
+  const pulled = await adapter.pull(db, { scopeKey: "u1" });
+  expect(pulled).toMatchObject({
+    ok: true,
+    logs: [
+      { keyPath: "0.1", validationError: "KEYPATH_VALIDATION_FAILURE" },
+      { keyPath: exact.id, record: exact },
+      { keyPath: fraction.id, record: fraction },
+    ],
+  });
+  if (!pulled.ok) throw new Error("pull failed");
+  expect(pulled.logs[0]).not.toHaveProperty("record");
+});
+
+it("keeps float4 parent keys and child references equal on pull and rejected pushes", async () => {
+  const db = await testDb();
+  const contract = defineContract({
+    family: idbFamilyPack,
+    target: idbTargetPack,
+    models: {
+      User: { store: "users", key: "id", fields: { id: "String", name: "String" } },
+      FloatItem: { store: "floatItems", key: "id", fields: { id: "Float", ownerId: "String", name: "String" } },
+      FloatChild: {
+        store: "floatChildren",
+        key: "id",
+        fields: {
+          id: "String",
+          parentId: "Float",
+          preferredId: "Float?",
+          measurement: "Float",
+        },
+      },
+    },
+  }) as unknown as IdbContract;
+  const scopeKey = "u1";
+  const storageHash = contract.storage.storageHash;
+  const serverContract = structuredClone(testContract);
+  // The SQL fixture emits the owning unique FK as N:1. Exercise an explicit 1:1 contract against the same FK.
+  const relations = serverContract.domain.namespaces["public"]!.models["FloatChild"]!.relations;
+  const preferred = relations["preferred"];
+  if (preferred?.cardinality === "N:1") relations["preferred"] = { ...preferred, cardinality: "1:1" };
+  const handlers = createSqlSync({
+    contract: serverContract,
+    clientContract: contract,
+    rootModel: "User",
+    db,
+    scopeKey,
+  });
+  const parent = { id: Math.fround(0.1), ownerId: scopeKey, name: "parent" };
+  const child = { id: "child", parentId: parent.id, preferredId: parent.id, measurement: 0.1 };
+  await seed(db, {
+    User: [
+      { id: scopeKey, name: "Ann" },
+      { id: "u2", name: "Other owner" },
+    ],
+  });
+  const otherParent = Math.fround(0.2);
+  await db.orm.public.FloatItem.select("id").create({ id: otherParent, ownerId: "u2", name: "other" });
+
+  async function push(events: unknown[]) {
+    const response = await handlers.push(
+      new Request("https://sync.test/push", {
+        method: "POST",
+        body: JSON.stringify({ storageHash, events }),
+      })
+    );
+    expect(response.status).toBe(200);
+    return response.json();
+  }
+
+  expect(
+    await push([
+      { id: "parent-create", entityType: "FloatItem", operation: "create", payload: parent },
+      { id: "child-create", entityType: "FloatChild", operation: "create", payload: child },
+    ])
+  ).toEqual([
+    { id: "parent-create", success: true },
+    { id: "child-create", success: true },
+  ]);
+
+  const client = await openSyncClient(contract, ["users", "floatItems", "floatChildren"]);
+  try {
+    const url = new URL("https://sync.test/pull");
+    url.searchParams.set("storageHash", storageHash);
+    const response = await handlers.pull(new Request(url));
+    expect(response.status).toBe(200);
+    const { logs } = await response.json();
+    expect(await applyPull(client, logWithRecordSchema.array().parse(logs))).toMatchObject({
+      applied: 2,
+      skipped: 0,
+      validationFailed: 0,
+    });
+    const [storedChild] = (await client.withTransaction(["floatChildren"], (scope) =>
+      scope.execute({ kind: "key-get", storeName: "floatChildren", key: child.id } as never)
+    )) as (typeof child)[];
+    expect(storedChild).toBeDefined();
+    expect.soft(storedChild).toEqual(child);
+    expect
+      .soft(
+        await client.withTransaction(["floatItems"], (scope) =>
+          scope.execute({ kind: "key-get", storeName: "floatItems", key: storedChild!.parentId } as never)
+        )
+      )
+      .toEqual([parent]);
+
+    expect
+      .soft(
+        await push([
+          {
+            id: "wrong-parent",
+            entityType: "FloatChild",
+            operation: "update",
+            payload: { key: child.id, patch: { parentId: otherParent } },
+          },
+        ])
+      )
+      .toEqual([
+        {
+          id: "wrong-parent",
+          success: false,
+          error: "SCOPE_VIOLATION",
+          retryable: false,
+          record: child,
+        },
+      ]);
+  } finally {
+    await client.close();
+  }
 });

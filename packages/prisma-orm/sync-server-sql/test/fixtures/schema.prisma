@@ -9,6 +9,7 @@ model User {
   listItems        ListItem[]
   privateNotes     PrivateNote[]
   boards           Board[]
+  floatItems       FloatItem[]
   jsonItems        JsonItem[]
   meals            Meal[]
   recipes          Recipe[]
@@ -173,4 +174,35 @@ model ListItem {
   bytes Bytes[]
   decimals Decimal[]
   jsons Json[]
+}
+
+model NumericTenant {
+  id   Int @id
+  name String
+  items NumericItem[]
+}
+
+model NumericItem {
+  id      Int @id
+  ownerId Int
+  owner   NumericTenant @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  name    String
+}
+
+model FloatItem {
+  id       Float(storage: float4) @id
+  ownerId  String
+  owner    User @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  name     String
+  children FloatChild[] @relation("FloatChildren")
+  preferredBy FloatChild? @relation("FloatPreference")
+}
+
+model FloatChild {
+  id          String @id
+  parentId    Float(storage: float4)
+  parent      FloatItem @relation("FloatChildren", fields: [parentId], references: [id], onDelete: Cascade)
+  preferredId Float(storage: float4)? @unique
+  preferred   FloatItem? @relation("FloatPreference", fields: [preferredId], references: [id])
+  measurement Float(storage: float4)
 }

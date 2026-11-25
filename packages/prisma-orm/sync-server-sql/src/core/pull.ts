@@ -3,7 +3,7 @@ import type { LogWithRecordBody } from "@prisma-idb/sync-extension-idb/schemas";
 import type { ContractMismatchOutcome } from "./contract-check-gate";
 import { parseChangelogCursor, readChangelogPage } from "./changelog";
 import { resolvePullRecord } from "./resolve-pull-record";
-import { WireValidationError } from "./wire-values";
+import { decodeStoredNumericKey, WireValidationError } from "./wire-values";
 
 export const DEFAULT_PULL_LIMIT = 50;
 
@@ -82,12 +82,18 @@ export async function pull(
   );
 
   const logs = await Promise.all(
-    rows.map(async ({ id: changelogId, keyPath, operation }): Promise<SqlPullLog> => {
+    rows.map(async ({ id: changelogId, keyPath: storedKey, operation }): Promise<SqlPullLog> => {
       const { model, check } = checksById.get(changelogId)!;
       const op = operation as SqlPullLog["operation"];
+      let keyPath = storedKey;
       let record: Record<string, unknown> | null;
       try {
-        record = await resolvePullRecord(db, syncServer, contract, getKeyField, model, check, keyPath, op);
+        let resolvedCheck = check;
+        if (check.kind !== "unknown-model") {
+          keyPath = decodeStoredNumericKey(contract, model, check.keyField, storedKey);
+          if (keyPath !== storedKey) resolvedCheck = { ...check, key: keyPath };
+        }
+        record = await resolvePullRecord(db, syncServer, contract, getKeyField, model, resolvedCheck, keyPath, op);
       } catch (error) {
         if (!(error instanceof WireValidationError) || error.code !== "KEYPATH_VALIDATION_FAILURE") throw error;
         // Preserve identity/cursor, but never signal a revoked-ownership delete.

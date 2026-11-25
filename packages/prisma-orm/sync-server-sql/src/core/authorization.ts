@@ -1,5 +1,5 @@
 import { domainModelsAtDefaultNamespace } from "@prisma/orm-framework/contract/types";
-import { resolveParentReferenceChecks } from "@prisma-idb/sync-server";
+import { resolveParentReferenceChecks, sameScopeKey } from "@prisma-idb/sync-server";
 import type {
   GetKeyField,
   OwnershipCheck,
@@ -77,7 +77,7 @@ export async function checkAuthorization(
 
   for (const path of check.paths) {
     const rootKey = await resolveRootKeyViaPath(readRow, contract, model, startRow, path, check.rootKeyField);
-    if (rootKey === check.scopeKey) return true;
+    if (sameScopeKey(rootKey, check.scopeKey)) return true;
   }
   return false;
 }

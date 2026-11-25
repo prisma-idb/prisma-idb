@@ -65,6 +65,12 @@ The request body has a different shape from these events: the client sends `enti
 
 On the wire, `BigInt` is a decimal string, `Bytes` is base64 and `DateTime` is an ISO string. `createSqlSync` uses this format on push, pull and rejected push records, including scalar list elements and PostgreSQL timestamps represented as JavaScript dates. If a rejected push's record can't be encoded or serialized, the response still reports every applied result, leaves that record out and logs the error with `console.error`. A pull page with a record that can't be encoded fails with HTTP 500 and names the changelog entry. `Json` columns follow the same rules as client `Json` writes, so a row whose `json` or `jsonb` value JSON can't represent, such as a number beyond the double range, fails every pull page that includes it until you fix the row. The server refuses a delete whose key is a client range (`{ lower, upper, ... }`) with a non-retryable `KEYPATH_VALIDATION_FAILURE`.
 
+For a numeric root key, use its string representation as the scope key. For example, key `7` matches scope `"7"`. The adapter restores numeric keys from changelog text and returns them as numbers on pull. A push with a PostgreSQL `float4` primary key must supply a number exactly representable at that precision. When deriving a scope key from a `float4` database value, use `String(Math.fround(value))`. Keep PostgreSQL’s `extra_float_digits` at 1 or higher so its output preserves enough precision to recover the key.
+
+Pull and rejected-push records use the same exact `float4` value for a primary key and foreign keys referencing it. For example, PostgreSQL may return both as `0.1`, but the adapter sends each as `0.10000000149011612` so IndexedDB can resolve the reference.
+
+When upgrading, check for historical `float4` changelog keys that would round to another number. An older push may have stored a row at `0.10000000149011612` and logged `"0.1"`. Pull emits `KEYPATH_VALIDATION_FAILURE` for that log and the client advances its cursor without applying the change. Reconcile affected changelog keys with the actual server keys, using the original writes for deleted rows. If a rounded key identified the scope root, reconcile the affected changelog scope keys too. For clients that already advanced past those entries, reconcile affected IndexedDB keys and references from current PostgreSQL data or rebuild the clients from corrected history.
+
 ## `buildPullQueries(logs, { scopeKey })`
 
 Takes changelog rows, each `{ changelogId, model, key }`, and returns one `{ changelogId, model, check }` per row, with `"unknown-model"`, `"root"` or `"scoped"` ownership checks. The SQL adapter validates each key when it resolves the record.
@@ -221,7 +227,7 @@ If a retry hits a unique key of its own first request, which timed out but still
 
 ### Rejected events carry the server's row
 
-`applyPush` adds a `record` field to every non-retryable failure. It holds the row's current state for `scopeKey`, as `pull` would return it: the row, or `null` if it is deleted or belongs to another user. The server runs the same ownership check as `pull`, so `record` never exposes a row the caller could not already pull. The client replaces its rejected local write with `record`. Serialize it the same way you serialize pulled records.
+`applyPush` includes a `record` on a non-retryable failure when it can determine the current state for `scopeKey`. It returns the visible row, or `null` when the row is missing or inaccessible. A finite key that PostgreSQL `float4` would round also returns `record: null`, which lets the client remove the rejected local key without affecting the rounded row. The server runs the same ownership check as `pull`, so `record` never exposes a row the caller could not already pull. The client replaces its rejected local write with `record`. Serialize it the same way you serialize pulled records.
 
 `record` is absent when the server cannot read the row: the key cannot be decoded or the model is unknown. The lower-level `applyPushEvent` never sets it.
 
