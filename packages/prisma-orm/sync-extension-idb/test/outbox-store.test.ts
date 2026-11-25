@@ -165,6 +165,32 @@ describe("getNextBatch push order after the order store was added", () => {
   });
 });
 
+describe("getNextBatch push order with several legacy and new events", () => {
+  it("sends legacy events by createdAt, then new events by commit order whatever their createdAt", async () => {
+    const { client } = await createTestSyncClient();
+    const users = asAccessors(client.orm)["users"]!;
+    vi.useFakeTimers({ toFake: ["Date"], now: new Date("2030-01-01T00:00:00Z") });
+    try {
+      await users.create({ id: "u1", name: "First new" });
+      // The clock steps back, so the second new event's createdAt is earlier than the first's.
+      vi.setSystemTime(new Date("2020-01-01T00:00:00Z"));
+      await users.create({ id: "u2", name: "Second new" });
+    } finally {
+      vi.useRealTimers();
+    }
+    await addOutboxEvents(client, [
+      outboxEvent({ id: "legacy-late", createdAt: new Date("2040-01-01T00:00:00Z") }),
+      outboxEvent({ id: "legacy-early", createdAt: new Date("2040-01-01T00:00:00Z") }),
+    ]);
+    await addOutboxEvents(client, [outboxEvent({ id: "legacy-first", createdAt: new Date("2039-01-01T00:00:00Z") })]);
+
+    const batch = await getNextBatch(client.rawClient);
+    const ids = batch.map((event) => event.id);
+    expect(ids.slice(0, 3)).toEqual(["legacy-first", "legacy-early", "legacy-late"]);
+    expect(batch.slice(3).map((event) => (event.payload as { id?: string }).id)).toEqual(["u1", "u2"]);
+  });
+});
+
 describe("getNextBatch with a backoff", () => {
   const backoff = { baseMs: 1_000, maxMs: 30_000 };
   const failedAt = new Date("2026-01-01T00:00:00.000Z");
