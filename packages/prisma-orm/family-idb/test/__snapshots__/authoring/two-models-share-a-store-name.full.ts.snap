@@ -1,0 +1,5 @@
+{
+  "contract": null,
+  "error": "IDB_DUPLICATE_STORE_NAME: Models \"Todo\" and \"todo\" both use store \"todo\". Give one of them another store name.",
+  "hashes": null
+}

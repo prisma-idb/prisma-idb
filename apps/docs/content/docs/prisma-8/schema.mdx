@@ -57,7 +57,7 @@ If older data contains several primary or unique keys for the same numeric value
 
 ## Models and stores
 
-Each model becomes an IndexedDB object store. The store is named after the model with its first letter lowercased, so `model TodoItem` is stored in `todoItem`. The same name is the model's key on the client: `db.orm.todoItem`.
+Each model becomes an IndexedDB object store. The store is named after the model with its first letter lowercased, so `model TodoItem` is stored in `todoItem`. The same name is the model's key on the client: `db.orm.todoItem`. Two models can't share a store, so `model Todo` and `model todo` need `@@map` to tell them apart.
 
 Use `@@map` to choose a different name:
 

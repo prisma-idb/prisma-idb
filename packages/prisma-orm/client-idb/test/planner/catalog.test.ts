@@ -38,17 +38,27 @@ describe("buildCatalog", () => {
     expect(buildCatalog(contract, "pairs", "Pair").primaryKey.keyPath).toEqual(["a", "b"]);
     expect(contract).toEqual(before);
   });
-  describe("models that share a store", () => {
-    const shared = defineContract({
-      family,
-      target,
-      models: {
-        Plain: { store: "shared", key: "id", fields: { id: "String" } },
-        Nullable: { store: "shared", key: "id", fields: { id: "String", note: "String?" } },
-      },
-    });
+  describe("models that share a store (contracts emitted before shared stores were refused)", () => {
+    // defineContract refuses shared stores now, so point the second model at the first model's store by hand.
+    const legacy = structuredClone(
+      defineContract({
+        family,
+        target,
+        models: {
+          Plain: { store: "shared", key: "id", fields: { id: "String" } },
+          Nullable: { store: "other", key: "id", fields: { id: "String", note: "String?" } },
+        },
+      })
+    ) as unknown as {
+      domain: { namespaces: Record<string, { models: Record<string, { storage: { storeName?: string } }> }> };
+      storage: { stores: Record<string, unknown> };
+    };
+    const models = Object.values(legacy.domain.namespaces)[0]!.models;
+    models["Nullable"]!.storage.storeName = "shared";
+    delete legacy.storage.stores["other"];
 
     it("reads the rows of each model, not of the last model that maps to the store", () => {
+      const shared = legacy as unknown as typeof contract;
       const row = { id: "1" };
       expect(buildCatalog(shared, "shared", "Plain").absentAsNull(row)).toEqual({ id: "1" });
       expect(buildCatalog(shared, "shared", "Nullable").absentAsNull(row)).toEqual({ id: "1", note: null });

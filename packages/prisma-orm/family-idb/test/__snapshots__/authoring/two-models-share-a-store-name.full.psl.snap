@@ -1,0 +1,27 @@
+{
+  "contract": null,
+  "diagnostics": {
+    "interpretation": [
+      {
+        "code": "IDB_DUPLICATE_STORE_NAME",
+        "message": "Models \"Todo\" and \"todo\" both use store \"todo\". Give one of them another store name.",
+        "sourceId": "authoring.prisma",
+        "span": {
+          "end": {
+            "column": 8,
+            "line": 7,
+            "offset": 96
+          },
+          "start": {
+            "column": 7,
+            "line": 5,
+            "offset": 56
+          }
+        }
+      }
+    ],
+    "parse": [],
+    "symbols": []
+  },
+  "hashes": null
+}
