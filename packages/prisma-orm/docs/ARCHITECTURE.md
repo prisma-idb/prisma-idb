@@ -299,13 +299,13 @@ The browser implementation has three main seams. `sync-executor.ts` appends outb
 
 `sync-server-sql` exports `createSqlSyncAdapter({ contract, syncServer })`. Its `applyPush` and `pull` methods own route orchestration. It has no free-standing push, pull or authorization functions: the adapter is the only way in. `sqlGetKeyField` finds a primary key in a SQL contract.
 
-| Module in `sync-server-sql/src/core/`                 | Responsibility                                                                                            |
-| ----------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| `apply-push.ts` and `wire-values.ts`                  | Batch validation, wire-value revival and ordered application through the first retryable failure.         |
-| `push.ts` and `authorization.ts`                      | Per-event validation, ownership checks and transactional writes.                                          |
-| `pull.ts` and `resolve-pull-record.ts`                | Paged changelog reads, current ownership checks and record resolution.                                    |
-| `changelog.ts`, `changelog-id.ts` and `scope-lock.ts` | Changelog insertion, push replay identity and exclusive cursors. A scope lock aligns commit and id order. |
-| `create-adapter.ts`                                   | Binds the contract, key resolver and sync server behind the public interface.                             |
+| Module in `sync-server-sql/src/core/`                                    | Responsibility                                                                                            |
+| ------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------- |
+| `apply-push.ts` and `wire-values.ts`                                     | Batch validation, wire-value revival and ordered application through the first retryable failure.         |
+| `push.ts` and `authorization.ts`                                         | Per-event validation, ownership checks and transactional writes.                                          |
+| `pull.ts` and `resolve-pull-record.ts`                                   | Paged changelog reads, current ownership checks and record resolution.                                    |
+| `changelog.ts`, `changelog-id.ts`, `scope-lock.ts` and `payload-hash.ts` | Changelog insertion, push replay identity and exclusive cursors. A scope lock aligns commit and id order. |
+| `create-adapter.ts`                                                      | Binds the contract, key resolver and sync server behind the public interface.                             |
 
 ## Dependency graph
 

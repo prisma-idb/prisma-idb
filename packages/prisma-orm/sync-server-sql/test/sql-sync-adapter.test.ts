@@ -48,6 +48,14 @@ describe("wire revival", () => {
   });
 });
 
+it("requires a regenerated changelog contract even for a standalone SQL adapter", () => {
+  const contract = structuredClone(testContract);
+  delete contract.domain.namespaces["public"]!.models["Changelog"]!.fields["payloadHash"];
+  expect(() => createSqlSyncAdapter({ contract })).toThrow(
+    /Changelog\.payloadHash.*Regenerate the PostgreSQL contract.*apply the migration/
+  );
+});
+
 describe("sqlGetKeyField", () => {
   it("resolves the single-column primary key from the contract's SQL storage", () => {
     expect(sqlGetKeyField(testContract, "User")).toBe("id");
@@ -340,16 +348,17 @@ describe("applyPushEvent", () => {
     expect(await db.orm.public.Changelog.all().toArray()).toHaveLength(2);
   });
 
-  it("pins the persisted hash of decoded Date, BigInt and Bytes values", () => {
+  it("pins the persisted hash of decoded Date, BigInt, Bytes and nested Json values", () => {
     const payload = {
       id: "list-1",
       dates: ["2026-01-02T03:04:05Z"],
       bigs: ["9007199254740993"],
       bytes: ["AQI="],
+      jsons: [{ z: [1, { y: "a", x: false }], a: null }],
     };
     const event = { id: "value-types", operation: "create" as const, payload };
     const fingerprint = decodeWireEvent(contract, getKeyField, "ListItem", event).payloadHash;
-    expect(fingerprint).toBe("a43e665892027c3297e8eac0b80bba7efddbdd5c213cf7986dd113d35d493ef3");
+    expect(fingerprint).toBe("e2240ae18acd826d81c736a43e84ad27a5751959a9ccc130309f949a06464755");
     expect(
       decodeWireEvent(contract, getKeyField, "ListItem", {
         ...event,
@@ -357,10 +366,17 @@ describe("applyPushEvent", () => {
           bytes: [new Uint8Array([1, 2])],
           dates: [new Date("2026-01-02T03:04:05.000Z")],
           bigs: [9007199254740993n],
+          jsons: [{ a: null, z: [1, { x: false, y: "a" }] }],
           id: "list-1",
         },
       }).payloadHash
     ).toBe(fingerprint);
+    expect(
+      decodeWireEvent(contract, getKeyField, "ListItem", {
+        ...event,
+        payload: { ...payload, jsons: [{ z: [{ y: "a", x: false }, 1], a: null }] },
+      }).payloadHash
+    ).not.toBe(fingerprint);
   });
 
   it.each([
