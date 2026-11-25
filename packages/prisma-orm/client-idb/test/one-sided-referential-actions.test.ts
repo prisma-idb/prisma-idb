@@ -210,64 +210,98 @@ it("preserves the rows when a one-sided action targets an ambiguous legacy Decim
   expect(await rows("posts")).toEqual([post]);
 });
 
-it("allows a cascade after an earlier bulk delete resolves the Decimal ambiguity", async () => {
-  const db = await open(
-    defineContract({
-      family: idbFamilyPack,
-      target: idbTargetPack,
-      models: {
-        Parent: {
-          store: "parents",
-          key: "id",
-          fields: { id: "String", code: "Decimal", status: "String", legacyStatus: "String" },
-          indexes: {
-            codeStatus: { keyPath: ["code", "status"], unique: true },
-            legacyStatus: { keyPath: "legacyStatus", unique: true },
+it.each([false, true])(
+  "uses current parent rows for Decimal actions in a bulk delete (earlier cascade: %s)",
+  async (earlierCascade) => {
+    const db = await open(
+      defineContract({
+        family: idbFamilyPack,
+        target: idbTargetPack,
+        models: {
+          Parent: {
+            store: "parents",
+            key: "id",
+            fields: {
+              id: "String",
+              code: "Decimal",
+              status: "String",
+              legacyStatus: "String",
+              cascadeTag: "String",
+              cascadeRef: "String?",
+            },
+            indexes: {
+              codeStatus: { keyPath: ["code", "status"], unique: true },
+              legacyStatus: { keyPath: "legacyStatus", unique: true },
+              cascadeTag: { keyPath: "cascadeTag", unique: true },
+            },
+            relations: {
+              ancestor: {
+                to: "Parent",
+                cardinality: "N:1",
+                on: { local: ["cascadeRef"], target: ["cascadeTag"] },
+                onDelete: "cascade",
+              },
+            },
+          },
+          Child: {
+            store: "children",
+            key: "id",
+            fields: { id: "String", code: "Decimal", status: "String" },
+            fieldDefaults: { status: "on" },
+            relations: {
+              parent: {
+                to: "Parent",
+                cardinality: "N:1",
+                on: { local: ["code", "status"], target: ["code", "status"] },
+                onDelete: "cascade",
+              },
+              legacy: {
+                to: "Parent",
+                cardinality: "N:1",
+                on: { local: ["status"], target: ["legacyStatus"] },
+                onDelete: "setDefault",
+              },
+            },
           },
         },
-        Child: {
-          store: "children",
-          key: "id",
-          fields: { id: "String", code: "Decimal", status: "String" },
-          fieldDefaults: { status: "on" },
-          relations: {
-            parent: {
-              to: "Parent",
-              cardinality: "N:1",
-              on: { local: ["code", "status"], target: ["code", "status"] },
-              onDelete: "cascade",
-            },
-            legacy: {
-              to: "Parent",
-              cardinality: "N:1",
-              on: { local: ["status"], target: ["legacyStatus"] },
-              onDelete: "setDefault",
-            },
-          },
-        },
-      },
-    })
-  );
-  const records = [
-    { id: "a", code: "1", status: "on", legacyStatus: "unused-a" },
-    { id: "b", code: "2", status: "other", legacyStatus: "previous" },
-    { id: "c", code: "1.00", status: "on", legacyStatus: "unused-c" },
-    { id: "d", code: "1", status: "previous", legacyStatus: "on" },
-  ];
-  await db.withTransaction(["parents", "children"], async (scope) => {
-    for (const record of records) await scope.execute({ kind: "put", storeName: "parents", record } as never);
-    await scope.execute({
-      kind: "put",
-      storeName: "children",
-      record: { id: "child", code: "1", status: "previous" },
-    } as never);
-  });
-  await db.orm["parents"]!.where((model) => model.id.in(["a", "b", "c"]))
-    .deleteAll()
-    .toArray();
-  expect(await rows("parents")).toEqual([records[3]]);
-  expect(await rows("children")).toEqual([]);
-});
+      })
+    );
+    const parent = (
+      id: string,
+      code: string,
+      status: string,
+      legacyStatus: string,
+      cascadeRef: string | null = null
+    ) => ({
+      id,
+      code,
+      status,
+      legacyStatus,
+      cascadeTag: id + "-tag",
+      cascadeRef,
+    });
+    const records = [
+      earlierCascade ? parent("a", "2", "other-a", "unused-a") : parent("a", "1", "on", "unused-a"),
+      parent("b", "3", "other-b", "previous"),
+      parent("c", "1.00", "on", "unused-c", earlierCascade ? "a-tag" : null),
+      parent("d", "1", "previous", "on"),
+      ...(earlierCascade ? [parent("e", "1", "on", "unused-e")] : []),
+    ];
+    await db.withTransaction(["parents", "children"], async (scope) => {
+      for (const record of records) await scope.execute({ kind: "put", storeName: "parents", record } as never);
+      await scope.execute({
+        kind: "put",
+        storeName: "children",
+        record: { id: "child", code: "1", status: "previous" },
+      } as never);
+    });
+    await db.orm["parents"]!.where((model) => model.id.in(["a", "b", "c"]))
+      .deleteAll()
+      .toArray();
+    expect(await rows("parents")).toEqual(records.slice(3));
+    expect(await rows("children")).toEqual(earlierCascade ? [{ id: "child", code: "1", status: "on" }] : []);
+  }
+);
 
 describe("one-sided foreign key: actions that keep the child", () => {
   it.each([
