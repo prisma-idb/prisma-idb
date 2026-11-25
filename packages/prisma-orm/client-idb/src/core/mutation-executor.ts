@@ -44,8 +44,14 @@ import {
   createMutationDefaultsCache,
   type MutationDefaultsCache,
 } from "./mutation-defaults";
-import { absentAsNull, decimalIdentityToken, isValidIdbKey } from "@prisma-idb/target-idb/runtime";
-import { buildCatalog } from "./planner/catalog";
+import {
+  absentAsNull,
+  decimalIdentityToken,
+  fieldValueToken,
+  isDecimalString,
+  isValidIdbKey,
+} from "@prisma-idb/target-idb/runtime";
+import { buildCatalog, type QueryCatalog } from "./planner/catalog";
 import { fieldValueChanged, IdbDecimalIdentityConflictError, preserveDecimalKeySpelling } from "./decimal-identity";
 import { lowerExists, lowerRows, lowerWrite, type WriteRequest } from "./planner/lower";
 import { planQuery } from "./planner/plan";
@@ -1269,6 +1275,7 @@ export async function verifyReferentialWrites(
     }
   }
 
+  const lookups = createFinalParentLookup(scope, contract, meta);
   for (const write of rows.values()) {
     const storeName = getStoreName(contract, write.modelName);
     const [row] = await scope.execute({ meta, kind: "key-get", storeName, key: write.key });
@@ -1295,8 +1302,8 @@ export async function verifyReferentialWrites(
       }
       const values = reference.fields.map((field) => row[field]);
       if (values.some((value) => value === null || value === undefined)) continue;
+      if (await lookups(reference, values)) continue;
       const { parentModelName, parentFields } = reference;
-      if (await parentExists(scope, contract, meta, parentModelName, parentFields, values)) continue;
       throw new Error(
         `${describeRoot(write.root)}: ${write.cause} leaves ${write.modelName} '${keyToken(write.key)}' with ` +
           `${describeTuple(reference.fields, values)}, which does not reference a real row: relation ` +
@@ -1304,6 +1311,82 @@ export async function verifyReferentialWrites(
       );
     }
   }
+}
+
+/** Memoize indexed point lookups and scan each unindexed parent store only once. */
+function createFinalParentLookup(scope: IdbTransactionScope, contract: IdbContract, meta: PlanMeta) {
+  const found = new Map<string, boolean>();
+  const snapshots = new Map<string, Record<string, unknown>[]>();
+  const tuples = new Map<string, Set<string>>();
+  return async ({ parentModelName, parentFields }: CheckedReference, values: readonly unknown[]) => {
+    const storeName = getStoreName(contract, parentModelName);
+    const catalog = buildCatalog(contract, storeName, parentModelName);
+    const token = referenceTupleToken(catalog, parentFields, values);
+    const group = JSON.stringify([parentModelName, parentFields]);
+    const lookup = token === undefined ? undefined : JSON.stringify([group, token]);
+    if (lookup !== undefined && found.has(lookup)) return found.get(lookup)!;
+    const where = andExpr(parentFields.map((field, index) => fieldFilter(field, "eq", values[index])));
+    const logical = planQuery(catalog, { where });
+    const lowered = lowerExists(catalog, logical, meta, { where });
+    let exists: boolean;
+    if (logical.access.kind === "full") {
+      let snapshot = snapshots.get(storeName);
+      if (!snapshot) {
+        snapshot = await scope.execute({ meta, kind: "cursor-scan", storeName });
+        snapshots.set(storeName, snapshot);
+      }
+      if (token === undefined) {
+        exists = lowered.finish(snapshot);
+      } else {
+        let groupTuples = tuples.get(group);
+        if (!groupTuples) {
+          groupTuples = new Set<string>();
+          for (const row of snapshot) {
+            const rowToken = referenceTupleToken(
+              catalog,
+              parentFields,
+              parentFields.map((field) => row[field])
+            );
+            if (rowToken !== undefined) groupTuples.add(rowToken);
+          }
+          tuples.set(group, groupTuples);
+        }
+        exists = groupTuples.has(token);
+      }
+    } else {
+      exists = lowered.finish(await executeMutationPlan(scope, lowered.idbPlan));
+    }
+    if (lookup !== undefined) found.set(lookup, exists);
+    return exists;
+  };
+}
+
+/** Equality tokens for scalar fields. List comparisons use the query evaluator. */
+function referenceTupleToken(
+  catalog: QueryCatalog,
+  fields: readonly string[],
+  values: readonly unknown[]
+): string | undefined {
+  const parts: [string, string][] = [];
+  for (let index = 0; index < fields.length; index++) {
+    const spec = catalog.fields[fields[index]!];
+    if (spec?.collection && !spec.dict) return undefined;
+    const value = values[index];
+    const decimal = spec?.codecId === "idb/decimal@1";
+    if (decimal && !isDecimalString(value)) return undefined;
+    const token = fieldValueToken(decimal ? decimalIdentityToken(value) : value);
+    if (typeof token === "number" && Number.isNaN(token)) return undefined;
+    if (
+      typeof token !== "string" &&
+      typeof token !== "number" &&
+      typeof token !== "bigint" &&
+      typeof token !== "boolean"
+    ) {
+      return undefined;
+    }
+    parts.push([typeof token, String(token)]);
+  }
+  return JSON.stringify(parts);
 }
 
 /** `true` when both describe the same child fields pointing at the same parent fields. */

@@ -1,5 +1,5 @@
 import "fake-indexeddb/auto";
-import { expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { defineContract } from "@prisma-idb/family-idb/contract-ts";
 import family from "@prisma-idb/family-idb/pack";
 import target from "@prisma-idb/target-idb/pack";
@@ -328,7 +328,7 @@ it.each([false, true])("checks cascades after all nested writes (later invalid w
   }
 });
 
-it.each([false, true])("checks distinct unindexed tuples (missing string target: %s)", async (missing) => {
+it.each([false, true])("checks distinct unindexed tuples in one scan (missing string target: %s)", async (missing) => {
   const client = await open(
     defineContract({
       family,
@@ -385,11 +385,98 @@ it.each([false, true])("checks distinct unindexed tuples (missing string target:
       }))
     ).toArray();
 
-    const write = client.orm["users"]!.where({ id: "u" }).update({ tenant: "new" });
-    if (missing) await expect(write).rejects.toThrow(/has no Category/);
-    else await write;
+    const cursor = vi.spyOn(IDBObjectStore.prototype, "openCursor");
+    try {
+      const write = client.orm["users"]!.where({ id: "u" }).update({ tenant: "new" });
+      if (missing) await expect(write).rejects.toThrow(/has no Category/);
+      else await write;
+      expect((cursor.mock.contexts as IDBObjectStore[]).filter((store) => store.name === "categories")).toHaveLength(1);
+    } finally {
+      cursor.mockRestore();
+    }
     expect(await client.orm["posts"]!.findUnique("01")).toMatchObject({ tenant: missing ? "old" : "new" });
   } finally {
     await client.close();
   }
+});
+
+// The batched parent lookup has to match a parent exactly when a filter `eq`
+// would. Each case cascades a tenant change into two children whose second
+// key points at the target by a value spelled differently from the target's
+// own (equal Dates, equal bytes, -0 and 0, Decimal aliases), and at one value
+// no target has. BigInt can't be a foreign key: IndexedDB can't index it.
+const equalityCases = [
+  ["DateTime", new Date(1000), new Date(1000), new Date(2000)],
+  ["Bytes", new Uint8Array([1, 2]), new Uint8Array([1, 2]), new Uint8Array([1, 3])],
+  ["Float", -0, 0, 1],
+  ["Decimal", "1.0", "1.00", "1.01"],
+] as const;
+
+describe.each([false, true])("changed foreign keys match parents like a filter (indexed: %s)", (indexed) => {
+  it.each(equalityCases)("%s", async (type, childValue, targetValue, missingValue) => {
+    const client = await open(
+      defineContract({
+        family,
+        target,
+        models: {
+          Owner: {
+            store: "owners",
+            key: "id",
+            fields: { id: "String", tenant: "String" },
+            relations: {
+              children: {
+                to: "Child",
+                cardinality: "1:N",
+                onUpdate: "cascade",
+                on: { local: ["tenant", "id"], target: ["tenant", "ownerId"] },
+              },
+            },
+          },
+          Target: {
+            store: "targets",
+            key: "id",
+            fields: { id: "String", tenant: "String", value: type },
+            ...(indexed ? { indexes: { tenantValue: { keyPath: ["tenant", "value"], unique: true } } } : {}),
+          },
+          Child: {
+            store: "children",
+            key: "id",
+            fields: { id: "String", tenant: "String", ownerId: "String", ref: type },
+            relations: {
+              target: {
+                to: "Target",
+                cardinality: "N:1",
+                on: { local: ["tenant", "ref"], target: ["tenant", "value"] },
+              },
+            },
+          },
+        },
+      })
+    );
+    try {
+      const orm = client.orm;
+      await orm["owners"]!.create({ id: "o", tenant: "old" });
+      await orm["targets"]!.createAll([
+        { id: "old-equal", tenant: "old", value: childValue },
+        { id: "old-missing", tenant: "old", value: missingValue },
+        { id: "new-equal", tenant: "new", value: targetValue },
+      ]).toArray();
+      await orm["children"]!.createAll([
+        { id: "a", tenant: "old", ownerId: "o", ref: childValue },
+        { id: "b", tenant: "old", ownerId: "o", ref: childValue },
+      ]).toArray();
+
+      // Both children resolve against the equal target in the new tenant.
+      await orm["owners"]!.where({ id: "o" }).update({ tenant: "new" });
+      expect(await orm["children"]!.findUnique("b")).toMatchObject({ tenant: "new" });
+
+      // A child whose value no target in the new tenant has is refused.
+      await orm["owners"]!.where({ id: "o" }).update({ tenant: "old" });
+      await orm["children"]!.where({ id: "b" }).update({ ref: missingValue });
+      await expect(orm["owners"]!.where({ id: "o" }).update({ tenant: "new" })).rejects.toThrow(/has no Target/);
+      expect(await orm["children"]!.findUnique("b")).toMatchObject({ tenant: "old" });
+    } finally {
+      await client.close();
+    }
+  });
 });
