@@ -376,18 +376,18 @@ describe("interpretPslDocumentToIdbContract", () => {
       expect(store.indexes!["email_unique"]).toMatchObject({ keyPath: "email", unique: true });
     });
 
-    it("uses name: arg as the index map key", () => {
+    it.each(["byEmail", "constructor"])("keeps an explicitly named unique index (%s)", (name) => {
       const result = interpret(`
         model User {
           id    String @id
           email String
-          @@index([email], name: "byEmail")
+          @@unique([email], name: "${name}")
         }
       `);
       expect(result.ok).toBe(true);
       if (!result.ok) return;
       const store = result.value.storage.stores["user"]!;
-      expect(store.indexes).toHaveProperty("byEmail");
+      expect(Object.entries(store.indexes ?? {})).toEqual([[name, { keyPath: "email", unique: true }]]);
     });
 
     it("creates unique index from @unique field attribute", () => {
@@ -849,6 +849,126 @@ describe("interpretPslDocumentToIdbContract", () => {
       expect(result.ok).toBe(false);
       if (result.ok) return;
       expect(result.failure.diagnostics[0]!.code).toBe("IDB_UNRESOLVED_BACKRELATION");
+    });
+
+    it.each(["both", "constructor"])("rejects two indexes with the name %s", (name) => {
+      const result = interpret(`
+        model Item {
+          id String @id
+          a  String
+          b  String
+          @@unique([a], name: "${name}")
+          @@index([b], name: "${name}")
+        }
+      `);
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.failure.diagnostics.map(({ code, message }) => [code, message])).toContainEqual([
+        "IDB_INVALID_INDEX",
+        `Model "Item" declares index name "${name}" more than once. Give each index its own name.`,
+      ]);
+    });
+
+    it.each([
+      {
+        name: "a field-level @unique",
+        schema: `
+          model Post {
+            id    String @id
+            email String @unique
+            other String
+            @@unique([other], name: "email_unique")
+          }`,
+        projection: undefined,
+        message:
+          'Model "Post" has two different indexes named "email_unique": one declared with that name and one generated from @unique on "email".',
+      },
+      {
+        name: "a unique foreign key",
+        schema: `
+          model User {
+            id    String @id
+            posts Post[]
+          }
+          model Post {
+            id       String @id
+            other    String
+            authorId String @unique
+            author   User   @relation(fields: [authorId], references: [id])
+            @@index([other], name: "authorId_unique")
+          }`,
+        projection: undefined,
+        message:
+          'Model "Post" has two different indexes named "authorId_unique": one declared with that name and one generated from @unique on "authorId".',
+      },
+      {
+        name: "an excluded field's @unique",
+        schema: `
+          model Post {
+            id    String @id
+            email String @unique @idb.exclude
+            other String
+            @@index([other], name: "email_unique")
+          }`,
+        projection: "client" as const,
+        message:
+          'Model "Post" has two different indexes named "email_unique": one declared with that name and one generated from @unique on "email".',
+      },
+      {
+        name: "a model-level index without a name",
+        schema: `
+          model Post {
+            id    String @id
+            a     String
+            b     String
+            @@index([a])
+            @@unique([b], name: "a")
+          }`,
+        projection: undefined,
+        message:
+          'Model "Post" has two different indexes named "a": one generated from @@index([a]) and one declared with that name.',
+      },
+    ])("rejects a declared index name that $name generates on other fields", ({ schema, projection, message }) => {
+      const result = interpret(schema, projection);
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      const diagnostic = result.failure.diagnostics.find(({ code }) => code === "IDB_INVALID_INDEX");
+      expect(diagnostic?.message).toBe(
+        `${message} Give the declared index another name, or name a generated one with name: on @@index or @@unique.`
+      );
+    });
+
+    it("merges a field-level @unique into a model-level @@index with the same name", () => {
+      const result = interpret(`
+        model Post {
+          id    String @id
+          email String @unique
+          @@index([email], name: "email_unique")
+        }
+      `);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value.storage.stores["post"]!.indexes).toEqual({
+        email_unique: { keyPath: "email", unique: true },
+      });
+    });
+
+    it.each([
+      ['@@index([value], map: "by_value")', false],
+      ['@@unique([value], map: "by_value")', true],
+    ])("merges a repeated index over the same fields into one: %s", (second, unique) => {
+      const result = interpret(`
+        model Item {
+          id    String @id
+          value String
+          @@index([value], map: "by_value")
+          ${second}
+        }
+      `);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      const store = result.value.storage.stores["item"]!;
+      expect(store.indexes).toEqual({ by_value: { keyPath: "value", unique } });
     });
   });
 
