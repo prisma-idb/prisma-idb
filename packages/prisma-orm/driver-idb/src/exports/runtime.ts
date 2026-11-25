@@ -63,10 +63,10 @@ export function createIDBRuntimeDriver(
      */
     readonly keyRange?: typeof IDBKeyRange;
   }
-): RuntimeDriverDescriptor<"idb", "idb", void, IdbRuntimeDriverInstance> {
+): RuntimeDriverDescriptor<"idb", "idb", void, BuiltInIdbRuntimeDriver> {
   return {
     ...idbDriverDescriptorMeta,
-    create(): IdbRuntimeDriverInstance {
+    create(): BuiltInIdbRuntimeDriver {
       return new BuiltInIdbRuntimeDriver(dbName, version, options?.factory, options?.keyRange);
     },
   };
