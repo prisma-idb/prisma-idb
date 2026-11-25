@@ -44,6 +44,9 @@ const invalid: readonly [IdbValueTransform, unknown, string][] = [
   [coerce("int"), "0x10", "cannot coerce 0x10 to int"],
   [coerce("int"), "0b11", "cannot coerce 0b11 to int"],
   [coerce("int"), "1e3", "cannot coerce 1e3 to int"],
+  // Number() rounds these to whole numbers; the written fraction isn't zero.
+  [coerce("int"), "2147483647.00000001", "cannot coerce 2147483647.00000001 to int"],
+  [coerce("int"), "1.00000000000000001", "cannot coerce 1.00000000000000001 to int"],
   [coerce("boolean"), "yes", "cannot coerce yes to boolean"],
   [coerce("boolean"), "TRUE", "cannot coerce TRUE to boolean"],
   [coerce("isoDateString"), true, "cannot coerce true to isoDateString"],

@@ -45,11 +45,17 @@ export function transformRecord(
 }
 
 /**
- * Decimal text `coerce("int")` reads, such as `"42"`, `" -7 "` or `"3.0"`.
- * `Number()` alone would also read `"0x10"`, `"0b11"` and `"1e3"`, which a
- * stored `Int` written as text never looks like.
+ * Reads the decimal text `coerce("int")` accepts, such as `"42"`, `" -7 "` or
+ * `"3.0"`, and returns `NaN` for anything else. `Number()` alone would also
+ * read `"0x10"`, `"0b11"` and `"1e3"`, which a stored `Int` written as text
+ * never looks like. A fraction must be all zeros, checked on the written
+ * digits, because `Number("2147483647.00000001")` rounds to a whole number.
  */
-const DECIMAL_TEXT = /^[+-]?\d+(\.\d+)?$/;
+function readIntText(value: string): number {
+  const match = /^([+-]?\d+)(?:\.(\d+))?$/.exec(value.trim());
+  if (match === null || /[1-9]/.test(match[2] ?? "")) return Number.NaN;
+  return Number(match[1]);
+}
 
 /** Applies one value transform; an unfilled placeholder throws, wherever it sits in a pipe. */
 function transformValue(transform: IdbValueTransform, value: unknown, mode: RecordTransformMode): unknown {
@@ -72,8 +78,8 @@ function transformValue(transform: IdbValueTransform, value: unknown, mode: Reco
               ? value
               : typeof value === "boolean"
                 ? Number(value)
-                : typeof value === "string" && DECIMAL_TEXT.test(value.trim())
-                  ? Number(value)
+                : typeof value === "string"
+                  ? readIntText(value)
                   : Number.NaN;
           if (isIntegerIn(n, INT32_RANGE)) return n;
           break;
