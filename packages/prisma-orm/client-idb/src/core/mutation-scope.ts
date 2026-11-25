@@ -32,9 +32,10 @@ export interface IdbQueryExecutorWithTransaction extends IdbQueryExecutor {
    * Open a multi-store IDB transaction and return a scope object.
    *
    * The returned scope's `execute()` runs `IdbAtomicPlan`s directly inside
-   * the transaction — no new transaction is opened per call, and the
-   * middleware chain is bypassed. `commit()` resolves when `tx.oncomplete`
-   * fires; `rollback()` calls `tx.abort()`.
+   * the transaction — no new transaction is opened per call. Middleware
+   * observes each statement without being awaited and cannot intercept it.
+   * `commit()` resolves when `tx.oncomplete` fires; `rollback()` calls
+   * `tx.abort()`.
    */
   transaction(storeNames: string[], mode?: IDBTransactionMode): Promise<IdbTransactionScope>;
 }

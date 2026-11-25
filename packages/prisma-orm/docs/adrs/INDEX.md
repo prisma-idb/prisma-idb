@@ -41,6 +41,7 @@ For an overview of how the packages fit together, see [ARCHITECTURE.md](../ARCHI
 | 025 | [Scalar lists](ADR%20025%20-%20Scalar%20Lists.md)                                                                         | Accepted   | Store native arrays with per-element codecs, explicit backfills, and Prisma 8 operations.                                                                                                          |
 | 026 | [Stale writes are rejected by base version](ADR%20026%20-%20Stale%20Writes%20Are%20Rejected%20by%20Base%20Version.md)     | Proposed   | Each pushed event carries the server version its edit was based on. The server rejects it if another device wrote the row since, and the client takes the server row.                              |
 | 027 | [Changelog retention and full resync](ADR%20027%20-%20Changelog%20Retention%20and%20Full%20Resync.md)                     | Proposed   | Delete changelog rows older than 30 days by default. A client with no cursor, or one older than the rows kept, gets HTTP 410 and downloads a snapshot from a full-sync endpoint instead.           |
+| 028 | [Middleware observes transactions without being awaited](ADR%20028%20-%20Middleware%20Observes%20Transactions%20Without%20Being%20Awaited.md) | Accepted | Statements inside a transaction run as middleware activities whose hooks are called but not awaited, intercepts are skipped, and every activity is finalized with the transaction's outcome. |
 
 ## Reading order for sync
 

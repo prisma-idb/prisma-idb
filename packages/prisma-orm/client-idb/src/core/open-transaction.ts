@@ -16,6 +16,7 @@ import type { PlanMeta } from "@prisma/orm-framework/contract/types";
 import type { IdbQueryPlan } from "@prisma-idb/adapter-idb/runtime";
 import { IdbExecuteError } from "@prisma-idb/driver-idb/runtime";
 import type { IdbAtomicPlan, IdbTransactionScope } from "@prisma-idb/driver-idb/runtime";
+import { withoutMiddleware } from "@prisma-idb/runtime-idb/runtime";
 import type { IdbQueryExecutorWithTransaction } from "./mutation-scope";
 import { executeMutationPlan } from "./mutation-executor";
 
@@ -51,7 +52,10 @@ export class OpenTransaction implements IdbQueryExecutorWithTransaction, IdbTran
     if (this.#failure) return;
     const [storeName] = this.#storeNames;
     try {
-      await this.#scope.execute({ meta: this.#meta, kind: "key-get", storeName: storeName!, key: "" });
+      // Middleware does not see this probe: the caller never sent it.
+      await this.#scope.execute(
+        withoutMiddleware({ meta: this.#meta, kind: "key-get", storeName: storeName!, key: "" })
+      );
     } catch (error) {
       // An inactive scope may still have pending work. The runner confirms
       // whether IndexedDB committed by waiting for the scope to settle.

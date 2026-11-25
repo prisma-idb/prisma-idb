@@ -18,6 +18,7 @@ import type {
 } from "@prisma-idb/adapter-idb/runtime";
 import type { IdbPlanBody, IdbRuntimeDriverInstance, IdbTransactionScope } from "@prisma-idb/driver-idb/runtime";
 import type { IdbMiddleware } from "./idb-middleware";
+import { observeTransaction } from "./transaction-observer";
 
 /**
  * Options for creating an IDB runtime instance.
@@ -42,7 +43,9 @@ export interface IdbRuntimeOptions {
   /**
    * Middleware execution context.
    *
-   * When omitted, a real context is derived from `contract`.
+   * When omitted, a real context is derived from `contract`. Its `log` writes `warn` and `error`
+   * to the console and drops `info`. Supply `ctx.log` to route middleware errors and runtime
+   * warnings elsewhere.
    */
   readonly ctx?: ActivityContextFields;
   /**
@@ -72,9 +75,10 @@ export interface IdbRuntime {
    * Open a multi-store IDB transaction and return an `IdbTransactionScope`.
    *
    * The scope's `execute(plan)` runs `IdbAtomicPlan`s directly inside the
-   * transaction. Middleware is bypassed, so transaction reads reach the driver
-   * without a cached result. `commit()` resolves on `tx.oncomplete`;
-   * `rollback()` calls `tx.abort()`.
+   * transaction. Middleware observes each statement without being awaited and
+   * cannot intercept it, so transaction reads reach the driver without a cached
+   * result. `commit()` resolves on `tx.oncomplete`, after the transaction's
+   * `activityFinalized` hooks; `rollback()` calls `tx.abort()`.
    *
    * Used by `withMutationScope()` in `client-idb`.
    */
@@ -115,15 +119,17 @@ function buildMiddlewareContext(contract: Record<string, unknown>): ActivityCont
     contract,
     mode: "permissive",
     now: () => Date.now(),
+    // Warnings and errors reach the console when the caller supplies no logger, so a middleware
+    // error inside a transaction, which cannot fail the statement, is not lost. Upstream's runtimes
+    // default to no-op loggers, which would hide those errors in a browser app.
     log: {
       info: () => undefined,
-      warn: () => undefined,
-      error: () => undefined,
+      warn: (...args: unknown[]) => console.warn(...args),
+      error: (...args: unknown[]) => console.error(...args),
     },
-    // Always "runtime": IdbTransactionScope.execute() bypasses the middleware
-    // chain entirely, so middleware is only ever invoked from the top-level
-    // query()/execute() paths, which is exactly the "runtime" scope. There is
-    // no IDB connection pool, so "connection" is not applicable either.
+    // Top-level query()/execute() run in "runtime" scope. Statements inside a
+    // transaction get "transaction" from the transaction observer. There is no
+    // IDB connection pool, so "connection" is not applicable.
     scope: "runtime",
     contentHash: async (exec: ExecutionPlan) => hashContent(canonicalStringify(hashablePlan(exec))),
   };
@@ -214,6 +220,8 @@ class IdbRuntimeImpl extends RuntimeCore<IdbQueryPlan, IdbPlanBody, IdbMiddlewar
   readonly #adapter: IdbRuntimeAdapterInstance;
   readonly #driver: IdbRuntimeDriverInstance;
   readonly #contract: Record<string, unknown>;
+  readonly #middleware: readonly IdbMiddleware[];
+  readonly #ctxFields: ActivityContextFields;
 
   constructor(options: IdbRuntimeOptions) {
     const ctx = options.ctx ?? buildMiddlewareContext(options.contract);
@@ -222,6 +230,8 @@ class IdbRuntimeImpl extends RuntimeCore<IdbQueryPlan, IdbPlanBody, IdbMiddlewar
       checkMiddlewareCompatibility(mw, "idb", "idb");
     }
     super({ middleware, ctx });
+    this.#middleware = middleware;
+    this.#ctxFields = ctx;
     this.#adapter = options.adapter;
     this.#driver = options.driver;
     this.#contract = options.contract;
@@ -229,6 +239,8 @@ class IdbRuntimeImpl extends RuntimeCore<IdbQueryPlan, IdbPlanBody, IdbMiddlewar
   }
 
   readonly #verifyMarkerOption: "onFirstUse" | false;
+  // Middleware already warned about an async `beforeEncode` inside one of this runtime's transactions.
+  readonly #warnedAsyncBeforeEncode = new WeakSet<IdbMiddleware>();
   // Shared by concurrent first uses, so they read the marker and warn once. `#checkMarker` reports every
   // failure as a warning and never throws, so a failed read is not retried on the same connection.
   #markerCheck: Promise<void> | null = null;
@@ -340,7 +352,13 @@ class IdbRuntimeImpl extends RuntimeCore<IdbQueryPlan, IdbPlanBody, IdbMiddlewar
 
   async transaction(storeNames: string[], mode: IDBTransactionMode = "readwrite"): Promise<IdbTransactionScope> {
     await this.#ensureMarkerChecked();
-    return this.#driver.transaction(storeNames, mode);
+    if (this.#middleware.length === 0) return this.#driver.transaction(storeNames, mode);
+    return observeTransaction(
+      () => this.#driver.transaction(storeNames, mode),
+      this.#middleware,
+      this.#ctxFields,
+      this.#warnedAsyncBeforeEncode
+    );
   }
 
   override async close(): Promise<void> {

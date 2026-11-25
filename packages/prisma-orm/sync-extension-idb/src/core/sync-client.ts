@@ -12,7 +12,7 @@ import { withDecimalIdentityScope } from "@prisma-idb/client-idb/internal";
 import { IdbAdapter } from "@prisma-idb/adapter-idb/runtime";
 import { createIDBRuntimeDriver } from "@prisma-idb/driver-idb/runtime";
 import type { IdbTransactionScope } from "@prisma-idb/driver-idb/runtime";
-import { createIdbRuntime } from "@prisma-idb/runtime-idb/runtime";
+import { createIdbRuntime, type IdbMiddleware } from "@prisma-idb/runtime-idb/runtime";
 import { idbCodecLookup } from "@prisma-idb/target-idb/runtime";
 import { idbOrm, runOrmTransaction } from "@prisma-idb/client-idb/orm";
 import type { IdbOrmClient, IdbOrmTransaction, IdbContract } from "@prisma-idb/client-idb/orm";
@@ -69,6 +69,8 @@ export interface SyncIdbClientOptions<TContract extends IdbContract> {
    * Defaults to `'*'` (all models).
    */
   readonly trackedModels?: ReadonlyArray<string> | "*";
+  /** Middleware for the client's runtime, as `createIdbClient` takes it. */
+  readonly middleware?: readonly IdbMiddleware[];
 }
 
 /** A tracked ORM and raw transaction access sharing one migrated IndexedDB database. */
@@ -192,6 +194,7 @@ export function createSyncIdbClient<TContract extends IdbContract>(
     driver,
     contract: options.contract as Record<string, unknown>,
     ...(options.verifyMarker !== undefined ? { verifyMarker: options.verifyMarker } : {}),
+    ...(options.middleware !== undefined && options.middleware.length > 0 ? { middleware: options.middleware } : {}),
   });
 
   /** Keeps append details and status notifications at the same commit boundary. */

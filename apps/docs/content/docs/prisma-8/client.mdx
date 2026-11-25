@@ -109,6 +109,34 @@ const db = await createAutoMigratingIdbClient({
 
 You don't plan or edit an extension's migrations. The sync extension is currently the only one; see [Sync](/docs/prisma-8/sync).
 
+## Add middleware
+
+Pass `middleware` to `createIdbClient`, `createAutoMigratingIdbClient` or a sync client to observe or change statements, for example to log or cache them. A middleware sees top-level queries with every hook, and the statements inside transactions with fewer guarantees:
+
+```ts
+import type { IdbMiddleware } from "@prisma-idb/runtime-idb/runtime";
+
+const logger: IdbMiddleware = {
+  name: "logger",
+  familyId: "idb",
+  async activityFinalized(activity, result, ctx) {
+    if (activity.kind === "statement") console.log(ctx.scope, result.outcome);
+  },
+};
+
+const db = await createAutoMigratingIdbClient({ contractSpace, dbName: "my-app", middleware: [logger] });
+```
+
+Inside a transaction, which covers `db.transaction()` and the nested, cascading and foreign-key-checked parts of a write:
+
+- Each statement is an activity beneath a transaction activity, and `ctx.scope` is `"transaction"`.
+- The statement hooks `activityStarted`, `beforeEncode`, `onRow` and `activityEnded` are called but not awaited. IndexedDB commits a transaction that waits, so a hook that awaits would end it early. Only the synchronous part of a hook runs before the statement, so don't change a plan after an `await` in `beforeEncode`. The first time an async `beforeEncode` runs in a transaction of a client, you get an `IDB.MIDDLEWARE_ASYNC_IN_TRANSACTION` warning.
+- To block a statement, throw synchronously from `activityStarted` or `beforeEncode`. The statement fails with your error before it reaches IndexedDB, and the transaction rolls back. A rejected promise can't block it, because the statement has already run.
+- `onRow` runs for reads only. Writes report affected rows.
+- `intercept` hooks are not called, so a cache never serves a read inside a transaction.
+- When the transaction completes or aborts, every statement and then the transaction get `activityFinalized` with `committed`, `rolled-back` or `unknown`. `commit()` resolves after those hooks, so invalidate a cache there.
+- Any other hook error is logged as `{ event, middleware, error }` and never fails the statement or the transaction. An error from the transaction's own `activityStarted` rejects before the transaction opens. The client's logger writes warnings and errors to the console.
+
 ## Client reference
 
 | Member                           | Description                                                                                   |
