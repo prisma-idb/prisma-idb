@@ -328,16 +328,11 @@ async function updateFirstGraph(
 
   if (Object.keys(scalarData).length > 0) {
     const storeName = getStoreName(contract, modelName);
-    const keyPath = getKeyPath(contract, modelName);
-    const key = extractKeyFromRow(existingRow, keyPath);
-    const meta = makePlanMeta(contract);
     const patch = applyUpdateDefaults(contract.execution?.mutations.defaults, storeName, scalarData, defaultsCache);
     assertEnumValues(contract, modelName, patch);
     assertValidRecord(contract, modelName, "update", patch);
     await validateScalarFks(scope, contract, modelName, patch, existingRow);
-    await applyReferentialActionsForRowOnUpdate(scope, contract, modelName, existingRow, patch);
-    const rows = await scope.execute({ meta, kind: "update", storeName, key, patch });
-    const updated = rows[0];
+    const updated = await updateRowWithReferentialActions(scope, contract, modelName, existingRow, patch);
     if (updated) parentRow = absentAsNull(contract, modelName)(updated);
   }
 
@@ -726,13 +721,12 @@ async function writeChildRows(
     // A generated value can be a foreign key, or a field other rows reference,
     // so each row's patch gets the checks and actions of any other update.
     await validateScalarFks(scope, contract, modelName, patch, row);
-    await applyReferentialActionsForRowOnUpdate(scope, contract, modelName, row, patch, {
+    await updateRowWithReferentialActions(scope, contract, modelName, row, patch, {
       operation: "update",
       modelName,
       key,
       decimalParents,
     });
-    await scope.execute({ meta, kind: "update", storeName, key, patch } as IdbAtomicPlan);
   }
 }
 
@@ -1182,7 +1176,7 @@ function describeRoot(root: ReferentialRoot): string {
   return `Cannot ${root.operation} ${root.modelName} '${keyToken(root.key)}'`;
 }
 
-/** Run each matching child's own onUpdate actions, then write the patch. */
+/** Write the patch to each matching child, then run that child's own onUpdate actions. */
 async function writeReferentialUpdate(
   scope: IdbTransactionScope,
   contract: IdbContract,
@@ -1214,7 +1208,7 @@ async function writeReferentialUpdate(
         : candidate;
     if (!child) continue;
     const via = `${cause} changes ${def.relatedModelName} '${keyToken(key)}'`;
-    await applyReferentialActionsForRowOnUpdate(
+    const row = await updateRowWithReferentialActions(
       scope,
       contract,
       def.relatedModelName,
@@ -1224,19 +1218,26 @@ async function writeReferentialUpdate(
       activeUpdates,
       via
     );
-    const [row] = await scope.execute({ meta, kind: "update", storeName: def.relatedStoreName, key, patch });
     if (row) updated.push(row);
   }
   return updated;
 }
 
 /**
- * Enforces every `onUpdate` action declared on `modelName`'s child relations
- * against one specific `oldRow` about to be patched with `patch`. Only
- * relations whose `localFields` are both present in `patch` and differ from
- * `oldRow`'s current value are enforced — a patch that sets a field to its
- * existing value, or never touches a locally-referenced field, is a no-op
- * here. Children are matched against `oldRow`'s pre-change values.
+ * Updates one row and enforces the `onUpdate` actions declared on its child
+ * relations. Only relations whose `localFields` are both present in `patch`
+ * and differ from `oldRow`'s current value are enforced — a patch that sets a
+ * field to its existing value, or never touches a locally-referenced field,
+ * is a no-op here. Children are matched against `oldRow`'s pre-change values.
+ *
+ * Every Restrict and uniqueness check runs before the row is written, so a
+ * Restrict sees the children as they were before any of this row's actions
+ * ran, even when a Cascade on another relation would rewrite them. The row
+ * is then written before any child, so the writes land in the order a SQL
+ * database applies them: a parent's new key exists before a child is pointed
+ * at it. A sync outbox records events in write order, and the server applies
+ * them one at a time, so a child written first would reference a key the
+ * server doesn't have yet.
  *
  * `cascade`, `setNull` and `setDefault` can trigger further `onUpdate`
  * actions on the child. Track active actions by row and relation so cycles
@@ -1247,8 +1248,11 @@ async function writeReferentialUpdate(
  *
  * Compound relations use values from the same `oldRow`/`patch`, so every
  * child is matched against the full pre-change tuple.
+ *
+ * Returns the row as stored once every action has run; an action can rewrite
+ * the row itself when a relation cycles back to it.
  */
-export async function applyReferentialActionsForRowOnUpdate(
+export async function updateRowWithReferentialActions(
   scope: IdbTransactionScope,
   contract: IdbContract,
   modelName: string,
@@ -1257,16 +1261,24 @@ export async function applyReferentialActionsForRowOnUpdate(
   root?: ReferentialRoot,
   activeUpdates: Set<string> = new Set(),
   via?: string
-): Promise<void> {
+): Promise<Record<string, unknown> | undefined> {
+  const storeName = getStoreName(contract, modelName);
   const keyPath = getKeyPath(contract, modelName);
   const key = extractKeyFromRow(oldRow, keyPath);
   root ??= { operation: "update", modelName, key, decimalParents: new Map() };
-  patch = preserveDecimalKeySpelling(contract, modelName, patch, key);
+  const actionPatch = preserveDecimalKeySpelling(contract, modelName, patch, key);
 
   const meta = makePlanMeta(contract);
+  const pending: {
+    def: ChildEnforcementEdge;
+    action: "cascade" | "setNull" | "setDefault";
+    actionKey: string;
+    childWhere: IdbFilterExpr;
+    childPatch: Record<string, unknown>;
+  }[] = [];
   for (const def of getChildEnforcementEdges(contract, modelName)) {
     const changedFields = def.localFields.filter(
-      (f) => f in patch && fieldValueChanged(contract, modelName, f, patch[f], oldRow[f])
+      (f) => f in actionPatch && fieldValueChanged(contract, modelName, f, actionPatch[f], oldRow[f])
     );
     if (changedFields.length === 0) continue;
     const values = childJoinValues(def, oldRow);
@@ -1316,10 +1328,19 @@ export async function applyReferentialActionsForRowOnUpdate(
           ? buildSetDefaultPatch(contract, def)
           : Object.fromEntries(
               def.localFields.flatMap((field, i) =>
-                changedFields.includes(field) ? [[def.targetFields[i]!, patch[field]]] : []
+                changedFields.includes(field) ? [[def.targetFields[i]!, actionPatch[field]]] : []
               )
             );
     if (action === "setDefault") await validateSetDefaultPatch(scope, contract, modelName, def, childPatch, key);
+    pending.push({ def, action, actionKey, childWhere, childPatch });
+  }
+
+  const [written] = await scope.execute({ meta, kind: "update", storeName, key, patch } as IdbAtomicPlan);
+  if (pending.length === 0 || !written) return written;
+
+  for (const { def, action, actionKey, childWhere, childPatch } of pending) {
+    // A cycle back to this row may have started the same action meanwhile.
+    if (activeUpdates.has(actionKey)) continue;
     activeUpdates.add(actionKey);
     try {
       await writeReferentialUpdate(scope, contract, def, action, childWhere, childPatch, root, activeUpdates);
@@ -1327,6 +1348,7 @@ export async function applyReferentialActionsForRowOnUpdate(
       activeUpdates.delete(actionKey);
     }
   }
+  return (await scope.execute({ meta, kind: "key-get", storeName, key }))[0];
 }
 
 // ── Scalar FK validation ──────────────────────────────────────────────────────
@@ -1622,16 +1644,17 @@ async function executeScalarUpdates(options: ScalarUpdateOptions, take?: 1): Pro
       assertEnumValues(contract, modelName, rowPatch);
       assertValidRecord(contract, modelName, "update", rowPatch);
       if (needsRowForFks || defaultsPerRow) await validateScalarFks(scope, contract, modelName, rowPatch, oldRow);
+      let updated: Record<string, unknown> | undefined;
       if (enforcesOnUpdate) {
-        await applyReferentialActionsForRowOnUpdate(scope, contract, modelName, oldRow, rowPatch, {
+        updated = await updateRowWithReferentialActions(scope, contract, modelName, oldRow, rowPatch, {
           operation: "update",
           modelName,
           key,
           decimalParents,
         });
+      } else {
+        [updated] = await scope.execute({ meta, kind: "update", storeName, key, patch: rowPatch } as IdbAtomicPlan);
       }
-      const rows = await scope.execute({ meta, kind: "update", storeName, key, patch: rowPatch } as IdbAtomicPlan);
-      const updated = rows[0];
       if (updated) results.push(updated);
     }
     return results;

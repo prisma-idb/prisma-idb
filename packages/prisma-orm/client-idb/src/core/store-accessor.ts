@@ -33,8 +33,6 @@ import {
   type RelatedModelOf,
   type SelectedRow,
   type WhereFilter,
-  extractKeyFromRow,
-  getKeyPath,
   getRelation,
   getStoreName,
 } from "./types";
@@ -66,7 +64,7 @@ import { loadRelation, storeNamesForRead } from "./relation-loader";
 import { OpenTransaction } from "./open-transaction";
 import { assertBulkWriteIgnoresNothing } from "./bulk-write-guard";
 import {
-  applyReferentialActionsForRowOnUpdate,
+  updateRowWithReferentialActions,
   collectOnUpdateEnforcementStoreNames,
   collectScalarFkStoreNames,
   executeBulkUpdateWithFkValidation,
@@ -809,7 +807,6 @@ export class IdbStoreAccessorImpl<
   }): Promise<DefaultModelRow<TContract, ModelName>> {
     const where = snapshotLookup(args.where as Record<string, unknown>);
     assertUniqueLookup(buildCatalog(this.#contract, this.#storeName, this.#modelName), where);
-    const keyPath = getKeyPath(this.#contract, this.#modelName);
     const whereExpr = shorthandToFilterExpr(where);
     assertKnownFilterFields(this.#contract, this.#modelName, whereExpr);
     const meta = this.#planMeta(this.#newGroupingKey());
@@ -881,10 +878,8 @@ export class IdbStoreAccessorImpl<
       assertEnumValues(this.#contract, this.#modelName, rowPatch);
       assertValidRecord(this.#contract, this.#modelName, "update", rowPatch);
       await validateScalarFks(scope, this.#contract, this.#modelName, rowPatch, existing);
-      const key = extractKeyFromRow(existing, keyPath);
-      await applyReferentialActionsForRowOnUpdate(scope, this.#contract, this.#modelName, existing, rowPatch);
-      const rows = await scope.execute({ meta, kind: "update", storeName, key, patch: rowPatch });
-      const updated = absentAsNull(this.#contract, this.#modelName)(rows[0] ?? existing);
+      const row = await updateRowWithReferentialActions(scope, this.#contract, this.#modelName, existing, rowPatch);
+      const updated = absentAsNull(this.#contract, this.#modelName)(row ?? existing);
       return updated as DefaultModelRow<TContract, ModelName>;
     });
   }
