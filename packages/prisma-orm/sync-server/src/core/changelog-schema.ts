@@ -23,6 +23,7 @@ model Changelog {
   operation     ChangeOperation
   scopeKey      String
   outboxEventId String          @unique
+  payloadHash   String?
   createdAt     DateTime        @default(now())
 
   @@index([scopeKey, id])

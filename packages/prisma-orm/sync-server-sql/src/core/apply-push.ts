@@ -1,7 +1,7 @@
-import type { GetKeyField, SyncServer, SyncPushEvent, SyncServerContract } from "@prisma-idb/sync-server";
+import type { GetKeyField, SyncServer, SyncServerContract } from "@prisma-idb/sync-server";
 import type { ContractMismatchOutcome } from "./contract-check-gate";
 import { applyPushEventDecoded, decodeFailureResult, decodeWireEvent } from "./push";
-import type { SqlPushResult } from "./push";
+import type { DecodedSqlPushEvent, SqlPushResult } from "./push";
 import type { ModelWritePolicies } from "./write-policy";
 import { violatesWritePolicy } from "./write-policy";
 import { withCurrentRecord } from "./rejected-record";
@@ -126,8 +126,8 @@ function decodeWireEvents(
   contract: SyncServerContract,
   getKeyField: GetKeyField,
   events: readonly SqlPushWireEvent[]
-): { pushEvents: SyncPushEvent[]; resolved: Map<string, SqlPushResult> } {
-  const pushEvents: SyncPushEvent[] = [];
+): { pushEvents: DecodedSqlPushEvent[]; resolved: Map<string, SqlPushResult> } {
+  const pushEvents: DecodedSqlPushEvent[] = [];
   const resolved = new Map<string, SqlPushResult>();
   for (const event of events) {
     try {

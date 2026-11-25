@@ -1,0 +1,817 @@
+[
+  {
+    "id": "alterType.AuditLog.createdAt",
+    "label": "Alter type of \"AuditLog\".\"createdAt\" to timestamptz(3)",
+    "operationClass": "data",
+    "target": {
+      "id": "postgres",
+      "details": {
+        "schema": "public",
+        "objectType": "column",
+        "name": "createdAt",
+        "table": "AuditLog"
+      }
+    },
+    "precheck": [
+      {
+        "description": "ensure column \"createdAt\" exists",
+        "sql": "SELECT EXISTS (SELECT 1 AS \"one\" FROM \"information_schema\".\"columns\" WHERE (\"table_schema\" = $1 AND \"table_name\" = $2 AND \"column_name\" = $3)) AS \"result\"",
+        "params": ["public", "AuditLog", "createdAt"],
+        "expectation": {
+          "expects": "present",
+          "object": "column \"createdAt\" on \"AuditLog\""
+        }
+      }
+    ],
+    "execute": [
+      {
+        "description": "alter type of \"createdAt\" to timestamptz(3)",
+        "sql": "ALTER TABLE \"public\".\"AuditLog\" ALTER COLUMN \"createdAt\" TYPE timestamptz(3) USING date_trunc('milliseconds', \"createdAt\")",
+        "meta": {
+          "convertedColumn": {
+            "table": "AuditLog",
+            "column": "createdAt",
+            "by": "conversion"
+          }
+        }
+      }
+    ],
+    "postcheck": [
+      {
+        "description": "verify column \"createdAt\" has type \"timestamp(3) with time zone\"",
+        "sql": "SELECT EXISTS (SELECT 1 AS \"one\" FROM \"pg_attribute\" AS \"a\" INNER JOIN \"pg_class\" AS \"c\" ON \"c\".\"oid\" = \"a\".\"attrelid\" INNER JOIN \"pg_namespace\" AS \"n\" ON \"n\".\"oid\" = \"c\".\"relnamespace\" WHERE (\"n\".\"nspname\" = $1 AND \"c\".\"relname\" = $2 AND \"a\".\"attname\" = $3 AND (format_type(\"a\".\"atttypid\", \"a\".\"atttypmod\")) = $4 AND NOT (\"a\".\"attisdropped\"))) AS \"result\"",
+        "params": ["public", "AuditLog", "createdAt", "timestamp(3) with time zone"]
+      }
+    ],
+    "meta": {
+      "warning": "TABLE_REWRITE"
+    }
+  },
+  {
+    "id": "alterType.Board.createdAt",
+    "label": "Alter type of \"Board\".\"createdAt\" to timestamptz(3)",
+    "operationClass": "data",
+    "target": {
+      "id": "postgres",
+      "details": {
+        "schema": "public",
+        "objectType": "column",
+        "name": "createdAt",
+        "table": "Board"
+      }
+    },
+    "precheck": [
+      {
+        "description": "ensure column \"createdAt\" exists",
+        "sql": "SELECT EXISTS (SELECT 1 AS \"one\" FROM \"information_schema\".\"columns\" WHERE (\"table_schema\" = $1 AND \"table_name\" = $2 AND \"column_name\" = $3)) AS \"result\"",
+        "params": ["public", "Board", "createdAt"],
+        "expectation": {
+          "expects": "present",
+          "object": "column \"createdAt\" on \"Board\""
+        }
+      }
+    ],
+    "execute": [
+      {
+        "description": "alter type of \"createdAt\" to timestamptz(3)",
+        "sql": "ALTER TABLE \"public\".\"Board\" ALTER COLUMN \"createdAt\" TYPE timestamptz(3) USING date_trunc('milliseconds', \"createdAt\")",
+        "meta": {
+          "convertedColumn": {
+            "table": "Board",
+            "column": "createdAt",
+            "by": "conversion"
+          }
+        }
+      }
+    ],
+    "postcheck": [
+      {
+        "description": "verify column \"createdAt\" has type \"timestamp(3) with time zone\"",
+        "sql": "SELECT EXISTS (SELECT 1 AS \"one\" FROM \"pg_attribute\" AS \"a\" INNER JOIN \"pg_class\" AS \"c\" ON \"c\".\"oid\" = \"a\".\"attrelid\" INNER JOIN \"pg_namespace\" AS \"n\" ON \"n\".\"oid\" = \"c\".\"relnamespace\" WHERE (\"n\".\"nspname\" = $1 AND \"c\".\"relname\" = $2 AND \"a\".\"attname\" = $3 AND (format_type(\"a\".\"atttypid\", \"a\".\"atttypmod\")) = $4 AND NOT (\"a\".\"attisdropped\"))) AS \"result\"",
+        "params": ["public", "Board", "createdAt", "timestamp(3) with time zone"]
+      }
+    ],
+    "meta": {
+      "warning": "TABLE_REWRITE"
+    }
+  },
+  {
+    "id": "alterType.Changelog.createdAt",
+    "label": "Alter type of \"Changelog\".\"createdAt\" to timestamptz(3)",
+    "operationClass": "data",
+    "target": {
+      "id": "postgres",
+      "details": {
+        "schema": "public",
+        "objectType": "column",
+        "name": "createdAt",
+        "table": "Changelog"
+      }
+    },
+    "precheck": [
+      {
+        "description": "ensure column \"createdAt\" exists",
+        "sql": "SELECT EXISTS (SELECT 1 AS \"one\" FROM \"information_schema\".\"columns\" WHERE (\"table_schema\" = $1 AND \"table_name\" = $2 AND \"column_name\" = $3)) AS \"result\"",
+        "params": ["public", "Changelog", "createdAt"],
+        "expectation": {
+          "expects": "present",
+          "object": "column \"createdAt\" on \"Changelog\""
+        }
+      }
+    ],
+    "execute": [
+      {
+        "description": "alter type of \"createdAt\" to timestamptz(3)",
+        "sql": "ALTER TABLE \"public\".\"Changelog\" ALTER COLUMN \"createdAt\" TYPE timestamptz(3) USING date_trunc('milliseconds', \"createdAt\")",
+        "meta": {
+          "convertedColumn": {
+            "table": "Changelog",
+            "column": "createdAt",
+            "by": "conversion"
+          }
+        }
+      }
+    ],
+    "postcheck": [
+      {
+        "description": "verify column \"createdAt\" has type \"timestamp(3) with time zone\"",
+        "sql": "SELECT EXISTS (SELECT 1 AS \"one\" FROM \"pg_attribute\" AS \"a\" INNER JOIN \"pg_class\" AS \"c\" ON \"c\".\"oid\" = \"a\".\"attrelid\" INNER JOIN \"pg_namespace\" AS \"n\" ON \"n\".\"oid\" = \"c\".\"relnamespace\" WHERE (\"n\".\"nspname\" = $1 AND \"c\".\"relname\" = $2 AND \"a\".\"attname\" = $3 AND (format_type(\"a\".\"atttypid\", \"a\".\"atttypmod\")) = $4 AND NOT (\"a\".\"attisdropped\"))) AS \"result\"",
+        "params": ["public", "Changelog", "createdAt", "timestamp(3) with time zone"]
+      }
+    ],
+    "meta": {
+      "warning": "TABLE_REWRITE"
+    }
+  },
+  {
+    "id": "alterType.Todo.createdAt",
+    "label": "Alter type of \"Todo\".\"createdAt\" to timestamptz(3)",
+    "operationClass": "data",
+    "target": {
+      "id": "postgres",
+      "details": {
+        "schema": "public",
+        "objectType": "column",
+        "name": "createdAt",
+        "table": "Todo"
+      }
+    },
+    "precheck": [
+      {
+        "description": "ensure column \"createdAt\" exists",
+        "sql": "SELECT EXISTS (SELECT 1 AS \"one\" FROM \"information_schema\".\"columns\" WHERE (\"table_schema\" = $1 AND \"table_name\" = $2 AND \"column_name\" = $3)) AS \"result\"",
+        "params": ["public", "Todo", "createdAt"],
+        "expectation": {
+          "expects": "present",
+          "object": "column \"createdAt\" on \"Todo\""
+        }
+      }
+    ],
+    "execute": [
+      {
+        "description": "alter type of \"createdAt\" to timestamptz(3)",
+        "sql": "ALTER TABLE \"public\".\"Todo\" ALTER COLUMN \"createdAt\" TYPE timestamptz(3) USING date_trunc('milliseconds', \"createdAt\")",
+        "meta": {
+          "convertedColumn": {
+            "table": "Todo",
+            "column": "createdAt",
+            "by": "conversion"
+          }
+        }
+      }
+    ],
+    "postcheck": [
+      {
+        "description": "verify column \"createdAt\" has type \"timestamp(3) with time zone\"",
+        "sql": "SELECT EXISTS (SELECT 1 AS \"one\" FROM \"pg_attribute\" AS \"a\" INNER JOIN \"pg_class\" AS \"c\" ON \"c\".\"oid\" = \"a\".\"attrelid\" INNER JOIN \"pg_namespace\" AS \"n\" ON \"n\".\"oid\" = \"c\".\"relnamespace\" WHERE (\"n\".\"nspname\" = $1 AND \"c\".\"relname\" = $2 AND \"a\".\"attname\" = $3 AND (format_type(\"a\".\"atttypid\", \"a\".\"atttypmod\")) = $4 AND NOT (\"a\".\"attisdropped\"))) AS \"result\"",
+        "params": ["public", "Todo", "createdAt", "timestamp(3) with time zone"]
+      }
+    ],
+    "meta": {
+      "warning": "TABLE_REWRITE"
+    }
+  },
+  {
+    "id": "alterType.account.accessTokenExpiresAt",
+    "label": "Alter type of \"account\".\"accessTokenExpiresAt\" to timestamptz(3)",
+    "operationClass": "data",
+    "target": {
+      "id": "postgres",
+      "details": {
+        "schema": "public",
+        "objectType": "column",
+        "name": "accessTokenExpiresAt",
+        "table": "account"
+      }
+    },
+    "precheck": [
+      {
+        "description": "ensure column \"accessTokenExpiresAt\" exists",
+        "sql": "SELECT EXISTS (SELECT 1 AS \"one\" FROM \"information_schema\".\"columns\" WHERE (\"table_schema\" = $1 AND \"table_name\" = $2 AND \"column_name\" = $3)) AS \"result\"",
+        "params": ["public", "account", "accessTokenExpiresAt"],
+        "expectation": {
+          "expects": "present",
+          "object": "column \"accessTokenExpiresAt\" on \"account\""
+        }
+      }
+    ],
+    "execute": [
+      {
+        "description": "alter type of \"accessTokenExpiresAt\" to timestamptz(3)",
+        "sql": "ALTER TABLE \"public\".\"account\" ALTER COLUMN \"accessTokenExpiresAt\" TYPE timestamptz(3) USING date_trunc('milliseconds', \"accessTokenExpiresAt\")",
+        "meta": {
+          "convertedColumn": {
+            "table": "account",
+            "column": "accessTokenExpiresAt",
+            "by": "conversion"
+          }
+        }
+      }
+    ],
+    "postcheck": [
+      {
+        "description": "verify column \"accessTokenExpiresAt\" has type \"timestamp(3) with time zone\"",
+        "sql": "SELECT EXISTS (SELECT 1 AS \"one\" FROM \"pg_attribute\" AS \"a\" INNER JOIN \"pg_class\" AS \"c\" ON \"c\".\"oid\" = \"a\".\"attrelid\" INNER JOIN \"pg_namespace\" AS \"n\" ON \"n\".\"oid\" = \"c\".\"relnamespace\" WHERE (\"n\".\"nspname\" = $1 AND \"c\".\"relname\" = $2 AND \"a\".\"attname\" = $3 AND (format_type(\"a\".\"atttypid\", \"a\".\"atttypmod\")) = $4 AND NOT (\"a\".\"attisdropped\"))) AS \"result\"",
+        "params": ["public", "account", "accessTokenExpiresAt", "timestamp(3) with time zone"]
+      }
+    ],
+    "meta": {
+      "warning": "TABLE_REWRITE"
+    }
+  },
+  {
+    "id": "alterType.account.createdAt",
+    "label": "Alter type of \"account\".\"createdAt\" to timestamptz(3)",
+    "operationClass": "data",
+    "target": {
+      "id": "postgres",
+      "details": {
+        "schema": "public",
+        "objectType": "column",
+        "name": "createdAt",
+        "table": "account"
+      }
+    },
+    "precheck": [
+      {
+        "description": "ensure column \"createdAt\" exists",
+        "sql": "SELECT EXISTS (SELECT 1 AS \"one\" FROM \"information_schema\".\"columns\" WHERE (\"table_schema\" = $1 AND \"table_name\" = $2 AND \"column_name\" = $3)) AS \"result\"",
+        "params": ["public", "account", "createdAt"],
+        "expectation": {
+          "expects": "present",
+          "object": "column \"createdAt\" on \"account\""
+        }
+      }
+    ],
+    "execute": [
+      {
+        "description": "alter type of \"createdAt\" to timestamptz(3)",
+        "sql": "ALTER TABLE \"public\".\"account\" ALTER COLUMN \"createdAt\" TYPE timestamptz(3) USING date_trunc('milliseconds', \"createdAt\")",
+        "meta": {
+          "convertedColumn": {
+            "table": "account",
+            "column": "createdAt",
+            "by": "conversion"
+          }
+        }
+      }
+    ],
+    "postcheck": [
+      {
+        "description": "verify column \"createdAt\" has type \"timestamp(3) with time zone\"",
+        "sql": "SELECT EXISTS (SELECT 1 AS \"one\" FROM \"pg_attribute\" AS \"a\" INNER JOIN \"pg_class\" AS \"c\" ON \"c\".\"oid\" = \"a\".\"attrelid\" INNER JOIN \"pg_namespace\" AS \"n\" ON \"n\".\"oid\" = \"c\".\"relnamespace\" WHERE (\"n\".\"nspname\" = $1 AND \"c\".\"relname\" = $2 AND \"a\".\"attname\" = $3 AND (format_type(\"a\".\"atttypid\", \"a\".\"atttypmod\")) = $4 AND NOT (\"a\".\"attisdropped\"))) AS \"result\"",
+        "params": ["public", "account", "createdAt", "timestamp(3) with time zone"]
+      }
+    ],
+    "meta": {
+      "warning": "TABLE_REWRITE"
+    }
+  },
+  {
+    "id": "alterType.account.refreshTokenExpiresAt",
+    "label": "Alter type of \"account\".\"refreshTokenExpiresAt\" to timestamptz(3)",
+    "operationClass": "data",
+    "target": {
+      "id": "postgres",
+      "details": {
+        "schema": "public",
+        "objectType": "column",
+        "name": "refreshTokenExpiresAt",
+        "table": "account"
+      }
+    },
+    "precheck": [
+      {
+        "description": "ensure column \"refreshTokenExpiresAt\" exists",
+        "sql": "SELECT EXISTS (SELECT 1 AS \"one\" FROM \"information_schema\".\"columns\" WHERE (\"table_schema\" = $1 AND \"table_name\" = $2 AND \"column_name\" = $3)) AS \"result\"",
+        "params": ["public", "account", "refreshTokenExpiresAt"],
+        "expectation": {
+          "expects": "present",
+          "object": "column \"refreshTokenExpiresAt\" on \"account\""
+        }
+      }
+    ],
+    "execute": [
+      {
+        "description": "alter type of \"refreshTokenExpiresAt\" to timestamptz(3)",
+        "sql": "ALTER TABLE \"public\".\"account\" ALTER COLUMN \"refreshTokenExpiresAt\" TYPE timestamptz(3) USING date_trunc('milliseconds', \"refreshTokenExpiresAt\")",
+        "meta": {
+          "convertedColumn": {
+            "table": "account",
+            "column": "refreshTokenExpiresAt",
+            "by": "conversion"
+          }
+        }
+      }
+    ],
+    "postcheck": [
+      {
+        "description": "verify column \"refreshTokenExpiresAt\" has type \"timestamp(3) with time zone\"",
+        "sql": "SELECT EXISTS (SELECT 1 AS \"one\" FROM \"pg_attribute\" AS \"a\" INNER JOIN \"pg_class\" AS \"c\" ON \"c\".\"oid\" = \"a\".\"attrelid\" INNER JOIN \"pg_namespace\" AS \"n\" ON \"n\".\"oid\" = \"c\".\"relnamespace\" WHERE (\"n\".\"nspname\" = $1 AND \"c\".\"relname\" = $2 AND \"a\".\"attname\" = $3 AND (format_type(\"a\".\"atttypid\", \"a\".\"atttypmod\")) = $4 AND NOT (\"a\".\"attisdropped\"))) AS \"result\"",
+        "params": ["public", "account", "refreshTokenExpiresAt", "timestamp(3) with time zone"]
+      }
+    ],
+    "meta": {
+      "warning": "TABLE_REWRITE"
+    }
+  },
+  {
+    "id": "alterType.account.updatedAt",
+    "label": "Alter type of \"account\".\"updatedAt\" to timestamptz(3)",
+    "operationClass": "data",
+    "target": {
+      "id": "postgres",
+      "details": {
+        "schema": "public",
+        "objectType": "column",
+        "name": "updatedAt",
+        "table": "account"
+      }
+    },
+    "precheck": [
+      {
+        "description": "ensure column \"updatedAt\" exists",
+        "sql": "SELECT EXISTS (SELECT 1 AS \"one\" FROM \"information_schema\".\"columns\" WHERE (\"table_schema\" = $1 AND \"table_name\" = $2 AND \"column_name\" = $3)) AS \"result\"",
+        "params": ["public", "account", "updatedAt"],
+        "expectation": {
+          "expects": "present",
+          "object": "column \"updatedAt\" on \"account\""
+        }
+      }
+    ],
+    "execute": [
+      {
+        "description": "alter type of \"updatedAt\" to timestamptz(3)",
+        "sql": "ALTER TABLE \"public\".\"account\" ALTER COLUMN \"updatedAt\" TYPE timestamptz(3) USING date_trunc('milliseconds', \"updatedAt\")",
+        "meta": {
+          "convertedColumn": {
+            "table": "account",
+            "column": "updatedAt",
+            "by": "conversion"
+          }
+        }
+      }
+    ],
+    "postcheck": [
+      {
+        "description": "verify column \"updatedAt\" has type \"timestamp(3) with time zone\"",
+        "sql": "SELECT EXISTS (SELECT 1 AS \"one\" FROM \"pg_attribute\" AS \"a\" INNER JOIN \"pg_class\" AS \"c\" ON \"c\".\"oid\" = \"a\".\"attrelid\" INNER JOIN \"pg_namespace\" AS \"n\" ON \"n\".\"oid\" = \"c\".\"relnamespace\" WHERE (\"n\".\"nspname\" = $1 AND \"c\".\"relname\" = $2 AND \"a\".\"attname\" = $3 AND (format_type(\"a\".\"atttypid\", \"a\".\"atttypmod\")) = $4 AND NOT (\"a\".\"attisdropped\"))) AS \"result\"",
+        "params": ["public", "account", "updatedAt", "timestamp(3) with time zone"]
+      }
+    ],
+    "meta": {
+      "warning": "TABLE_REWRITE"
+    }
+  },
+  {
+    "id": "alterType.session.createdAt",
+    "label": "Alter type of \"session\".\"createdAt\" to timestamptz(3)",
+    "operationClass": "data",
+    "target": {
+      "id": "postgres",
+      "details": {
+        "schema": "public",
+        "objectType": "column",
+        "name": "createdAt",
+        "table": "session"
+      }
+    },
+    "precheck": [
+      {
+        "description": "ensure column \"createdAt\" exists",
+        "sql": "SELECT EXISTS (SELECT 1 AS \"one\" FROM \"information_schema\".\"columns\" WHERE (\"table_schema\" = $1 AND \"table_name\" = $2 AND \"column_name\" = $3)) AS \"result\"",
+        "params": ["public", "session", "createdAt"],
+        "expectation": {
+          "expects": "present",
+          "object": "column \"createdAt\" on \"session\""
+        }
+      }
+    ],
+    "execute": [
+      {
+        "description": "alter type of \"createdAt\" to timestamptz(3)",
+        "sql": "ALTER TABLE \"public\".\"session\" ALTER COLUMN \"createdAt\" TYPE timestamptz(3) USING date_trunc('milliseconds', \"createdAt\")",
+        "meta": {
+          "convertedColumn": {
+            "table": "session",
+            "column": "createdAt",
+            "by": "conversion"
+          }
+        }
+      }
+    ],
+    "postcheck": [
+      {
+        "description": "verify column \"createdAt\" has type \"timestamp(3) with time zone\"",
+        "sql": "SELECT EXISTS (SELECT 1 AS \"one\" FROM \"pg_attribute\" AS \"a\" INNER JOIN \"pg_class\" AS \"c\" ON \"c\".\"oid\" = \"a\".\"attrelid\" INNER JOIN \"pg_namespace\" AS \"n\" ON \"n\".\"oid\" = \"c\".\"relnamespace\" WHERE (\"n\".\"nspname\" = $1 AND \"c\".\"relname\" = $2 AND \"a\".\"attname\" = $3 AND (format_type(\"a\".\"atttypid\", \"a\".\"atttypmod\")) = $4 AND NOT (\"a\".\"attisdropped\"))) AS \"result\"",
+        "params": ["public", "session", "createdAt", "timestamp(3) with time zone"]
+      }
+    ],
+    "meta": {
+      "warning": "TABLE_REWRITE"
+    }
+  },
+  {
+    "id": "alterType.session.expiresAt",
+    "label": "Alter type of \"session\".\"expiresAt\" to timestamptz(3)",
+    "operationClass": "data",
+    "target": {
+      "id": "postgres",
+      "details": {
+        "schema": "public",
+        "objectType": "column",
+        "name": "expiresAt",
+        "table": "session"
+      }
+    },
+    "precheck": [
+      {
+        "description": "ensure column \"expiresAt\" exists",
+        "sql": "SELECT EXISTS (SELECT 1 AS \"one\" FROM \"information_schema\".\"columns\" WHERE (\"table_schema\" = $1 AND \"table_name\" = $2 AND \"column_name\" = $3)) AS \"result\"",
+        "params": ["public", "session", "expiresAt"],
+        "expectation": {
+          "expects": "present",
+          "object": "column \"expiresAt\" on \"session\""
+        }
+      }
+    ],
+    "execute": [
+      {
+        "description": "alter type of \"expiresAt\" to timestamptz(3)",
+        "sql": "ALTER TABLE \"public\".\"session\" ALTER COLUMN \"expiresAt\" TYPE timestamptz(3) USING date_trunc('milliseconds', \"expiresAt\")",
+        "meta": {
+          "convertedColumn": {
+            "table": "session",
+            "column": "expiresAt",
+            "by": "conversion"
+          }
+        }
+      }
+    ],
+    "postcheck": [
+      {
+        "description": "verify column \"expiresAt\" has type \"timestamp(3) with time zone\"",
+        "sql": "SELECT EXISTS (SELECT 1 AS \"one\" FROM \"pg_attribute\" AS \"a\" INNER JOIN \"pg_class\" AS \"c\" ON \"c\".\"oid\" = \"a\".\"attrelid\" INNER JOIN \"pg_namespace\" AS \"n\" ON \"n\".\"oid\" = \"c\".\"relnamespace\" WHERE (\"n\".\"nspname\" = $1 AND \"c\".\"relname\" = $2 AND \"a\".\"attname\" = $3 AND (format_type(\"a\".\"atttypid\", \"a\".\"atttypmod\")) = $4 AND NOT (\"a\".\"attisdropped\"))) AS \"result\"",
+        "params": ["public", "session", "expiresAt", "timestamp(3) with time zone"]
+      }
+    ],
+    "meta": {
+      "warning": "TABLE_REWRITE"
+    }
+  },
+  {
+    "id": "alterType.session.updatedAt",
+    "label": "Alter type of \"session\".\"updatedAt\" to timestamptz(3)",
+    "operationClass": "data",
+    "target": {
+      "id": "postgres",
+      "details": {
+        "schema": "public",
+        "objectType": "column",
+        "name": "updatedAt",
+        "table": "session"
+      }
+    },
+    "precheck": [
+      {
+        "description": "ensure column \"updatedAt\" exists",
+        "sql": "SELECT EXISTS (SELECT 1 AS \"one\" FROM \"information_schema\".\"columns\" WHERE (\"table_schema\" = $1 AND \"table_name\" = $2 AND \"column_name\" = $3)) AS \"result\"",
+        "params": ["public", "session", "updatedAt"],
+        "expectation": {
+          "expects": "present",
+          "object": "column \"updatedAt\" on \"session\""
+        }
+      }
+    ],
+    "execute": [
+      {
+        "description": "alter type of \"updatedAt\" to timestamptz(3)",
+        "sql": "ALTER TABLE \"public\".\"session\" ALTER COLUMN \"updatedAt\" TYPE timestamptz(3) USING date_trunc('milliseconds', \"updatedAt\")",
+        "meta": {
+          "convertedColumn": {
+            "table": "session",
+            "column": "updatedAt",
+            "by": "conversion"
+          }
+        }
+      }
+    ],
+    "postcheck": [
+      {
+        "description": "verify column \"updatedAt\" has type \"timestamp(3) with time zone\"",
+        "sql": "SELECT EXISTS (SELECT 1 AS \"one\" FROM \"pg_attribute\" AS \"a\" INNER JOIN \"pg_class\" AS \"c\" ON \"c\".\"oid\" = \"a\".\"attrelid\" INNER JOIN \"pg_namespace\" AS \"n\" ON \"n\".\"oid\" = \"c\".\"relnamespace\" WHERE (\"n\".\"nspname\" = $1 AND \"c\".\"relname\" = $2 AND \"a\".\"attname\" = $3 AND (format_type(\"a\".\"atttypid\", \"a\".\"atttypmod\")) = $4 AND NOT (\"a\".\"attisdropped\"))) AS \"result\"",
+        "params": ["public", "session", "updatedAt", "timestamp(3) with time zone"]
+      }
+    ],
+    "meta": {
+      "warning": "TABLE_REWRITE"
+    }
+  },
+  {
+    "id": "alterType.user.createdAt",
+    "label": "Alter type of \"user\".\"createdAt\" to timestamptz(3)",
+    "operationClass": "data",
+    "target": {
+      "id": "postgres",
+      "details": {
+        "schema": "public",
+        "objectType": "column",
+        "name": "createdAt",
+        "table": "user"
+      }
+    },
+    "precheck": [
+      {
+        "description": "ensure column \"createdAt\" exists",
+        "sql": "SELECT EXISTS (SELECT 1 AS \"one\" FROM \"information_schema\".\"columns\" WHERE (\"table_schema\" = $1 AND \"table_name\" = $2 AND \"column_name\" = $3)) AS \"result\"",
+        "params": ["public", "user", "createdAt"],
+        "expectation": {
+          "expects": "present",
+          "object": "column \"createdAt\" on \"user\""
+        }
+      }
+    ],
+    "execute": [
+      {
+        "description": "alter type of \"createdAt\" to timestamptz(3)",
+        "sql": "ALTER TABLE \"public\".\"user\" ALTER COLUMN \"createdAt\" TYPE timestamptz(3) USING date_trunc('milliseconds', \"createdAt\")",
+        "meta": {
+          "convertedColumn": {
+            "table": "user",
+            "column": "createdAt",
+            "by": "conversion"
+          }
+        }
+      }
+    ],
+    "postcheck": [
+      {
+        "description": "verify column \"createdAt\" has type \"timestamp(3) with time zone\"",
+        "sql": "SELECT EXISTS (SELECT 1 AS \"one\" FROM \"pg_attribute\" AS \"a\" INNER JOIN \"pg_class\" AS \"c\" ON \"c\".\"oid\" = \"a\".\"attrelid\" INNER JOIN \"pg_namespace\" AS \"n\" ON \"n\".\"oid\" = \"c\".\"relnamespace\" WHERE (\"n\".\"nspname\" = $1 AND \"c\".\"relname\" = $2 AND \"a\".\"attname\" = $3 AND (format_type(\"a\".\"atttypid\", \"a\".\"atttypmod\")) = $4 AND NOT (\"a\".\"attisdropped\"))) AS \"result\"",
+        "params": ["public", "user", "createdAt", "timestamp(3) with time zone"]
+      }
+    ],
+    "meta": {
+      "warning": "TABLE_REWRITE"
+    }
+  },
+  {
+    "id": "alterType.user.updatedAt",
+    "label": "Alter type of \"user\".\"updatedAt\" to timestamptz(3)",
+    "operationClass": "data",
+    "target": {
+      "id": "postgres",
+      "details": {
+        "schema": "public",
+        "objectType": "column",
+        "name": "updatedAt",
+        "table": "user"
+      }
+    },
+    "precheck": [
+      {
+        "description": "ensure column \"updatedAt\" exists",
+        "sql": "SELECT EXISTS (SELECT 1 AS \"one\" FROM \"information_schema\".\"columns\" WHERE (\"table_schema\" = $1 AND \"table_name\" = $2 AND \"column_name\" = $3)) AS \"result\"",
+        "params": ["public", "user", "updatedAt"],
+        "expectation": {
+          "expects": "present",
+          "object": "column \"updatedAt\" on \"user\""
+        }
+      }
+    ],
+    "execute": [
+      {
+        "description": "alter type of \"updatedAt\" to timestamptz(3)",
+        "sql": "ALTER TABLE \"public\".\"user\" ALTER COLUMN \"updatedAt\" TYPE timestamptz(3) USING date_trunc('milliseconds', \"updatedAt\")",
+        "meta": {
+          "convertedColumn": {
+            "table": "user",
+            "column": "updatedAt",
+            "by": "conversion"
+          }
+        }
+      }
+    ],
+    "postcheck": [
+      {
+        "description": "verify column \"updatedAt\" has type \"timestamp(3) with time zone\"",
+        "sql": "SELECT EXISTS (SELECT 1 AS \"one\" FROM \"pg_attribute\" AS \"a\" INNER JOIN \"pg_class\" AS \"c\" ON \"c\".\"oid\" = \"a\".\"attrelid\" INNER JOIN \"pg_namespace\" AS \"n\" ON \"n\".\"oid\" = \"c\".\"relnamespace\" WHERE (\"n\".\"nspname\" = $1 AND \"c\".\"relname\" = $2 AND \"a\".\"attname\" = $3 AND (format_type(\"a\".\"atttypid\", \"a\".\"atttypmod\")) = $4 AND NOT (\"a\".\"attisdropped\"))) AS \"result\"",
+        "params": ["public", "user", "updatedAt", "timestamp(3) with time zone"]
+      }
+    ],
+    "meta": {
+      "warning": "TABLE_REWRITE"
+    }
+  },
+  {
+    "id": "alterType.verification.createdAt",
+    "label": "Alter type of \"verification\".\"createdAt\" to timestamptz(3)",
+    "operationClass": "data",
+    "target": {
+      "id": "postgres",
+      "details": {
+        "schema": "public",
+        "objectType": "column",
+        "name": "createdAt",
+        "table": "verification"
+      }
+    },
+    "precheck": [
+      {
+        "description": "ensure column \"createdAt\" exists",
+        "sql": "SELECT EXISTS (SELECT 1 AS \"one\" FROM \"information_schema\".\"columns\" WHERE (\"table_schema\" = $1 AND \"table_name\" = $2 AND \"column_name\" = $3)) AS \"result\"",
+        "params": ["public", "verification", "createdAt"],
+        "expectation": {
+          "expects": "present",
+          "object": "column \"createdAt\" on \"verification\""
+        }
+      }
+    ],
+    "execute": [
+      {
+        "description": "alter type of \"createdAt\" to timestamptz(3)",
+        "sql": "ALTER TABLE \"public\".\"verification\" ALTER COLUMN \"createdAt\" TYPE timestamptz(3) USING date_trunc('milliseconds', \"createdAt\")",
+        "meta": {
+          "convertedColumn": {
+            "table": "verification",
+            "column": "createdAt",
+            "by": "conversion"
+          }
+        }
+      }
+    ],
+    "postcheck": [
+      {
+        "description": "verify column \"createdAt\" has type \"timestamp(3) with time zone\"",
+        "sql": "SELECT EXISTS (SELECT 1 AS \"one\" FROM \"pg_attribute\" AS \"a\" INNER JOIN \"pg_class\" AS \"c\" ON \"c\".\"oid\" = \"a\".\"attrelid\" INNER JOIN \"pg_namespace\" AS \"n\" ON \"n\".\"oid\" = \"c\".\"relnamespace\" WHERE (\"n\".\"nspname\" = $1 AND \"c\".\"relname\" = $2 AND \"a\".\"attname\" = $3 AND (format_type(\"a\".\"atttypid\", \"a\".\"atttypmod\")) = $4 AND NOT (\"a\".\"attisdropped\"))) AS \"result\"",
+        "params": ["public", "verification", "createdAt", "timestamp(3) with time zone"]
+      }
+    ],
+    "meta": {
+      "warning": "TABLE_REWRITE"
+    }
+  },
+  {
+    "id": "alterType.verification.expiresAt",
+    "label": "Alter type of \"verification\".\"expiresAt\" to timestamptz(3)",
+    "operationClass": "data",
+    "target": {
+      "id": "postgres",
+      "details": {
+        "schema": "public",
+        "objectType": "column",
+        "name": "expiresAt",
+        "table": "verification"
+      }
+    },
+    "precheck": [
+      {
+        "description": "ensure column \"expiresAt\" exists",
+        "sql": "SELECT EXISTS (SELECT 1 AS \"one\" FROM \"information_schema\".\"columns\" WHERE (\"table_schema\" = $1 AND \"table_name\" = $2 AND \"column_name\" = $3)) AS \"result\"",
+        "params": ["public", "verification", "expiresAt"],
+        "expectation": {
+          "expects": "present",
+          "object": "column \"expiresAt\" on \"verification\""
+        }
+      }
+    ],
+    "execute": [
+      {
+        "description": "alter type of \"expiresAt\" to timestamptz(3)",
+        "sql": "ALTER TABLE \"public\".\"verification\" ALTER COLUMN \"expiresAt\" TYPE timestamptz(3) USING date_trunc('milliseconds', \"expiresAt\")",
+        "meta": {
+          "convertedColumn": {
+            "table": "verification",
+            "column": "expiresAt",
+            "by": "conversion"
+          }
+        }
+      }
+    ],
+    "postcheck": [
+      {
+        "description": "verify column \"expiresAt\" has type \"timestamp(3) with time zone\"",
+        "sql": "SELECT EXISTS (SELECT 1 AS \"one\" FROM \"pg_attribute\" AS \"a\" INNER JOIN \"pg_class\" AS \"c\" ON \"c\".\"oid\" = \"a\".\"attrelid\" INNER JOIN \"pg_namespace\" AS \"n\" ON \"n\".\"oid\" = \"c\".\"relnamespace\" WHERE (\"n\".\"nspname\" = $1 AND \"c\".\"relname\" = $2 AND \"a\".\"attname\" = $3 AND (format_type(\"a\".\"atttypid\", \"a\".\"atttypmod\")) = $4 AND NOT (\"a\".\"attisdropped\"))) AS \"result\"",
+        "params": ["public", "verification", "expiresAt", "timestamp(3) with time zone"]
+      }
+    ],
+    "meta": {
+      "warning": "TABLE_REWRITE"
+    }
+  },
+  {
+    "id": "alterType.verification.updatedAt",
+    "label": "Alter type of \"verification\".\"updatedAt\" to timestamptz(3)",
+    "operationClass": "data",
+    "target": {
+      "id": "postgres",
+      "details": {
+        "schema": "public",
+        "objectType": "column",
+        "name": "updatedAt",
+        "table": "verification"
+      }
+    },
+    "precheck": [
+      {
+        "description": "ensure column \"updatedAt\" exists",
+        "sql": "SELECT EXISTS (SELECT 1 AS \"one\" FROM \"information_schema\".\"columns\" WHERE (\"table_schema\" = $1 AND \"table_name\" = $2 AND \"column_name\" = $3)) AS \"result\"",
+        "params": ["public", "verification", "updatedAt"],
+        "expectation": {
+          "expects": "present",
+          "object": "column \"updatedAt\" on \"verification\""
+        }
+      }
+    ],
+    "execute": [
+      {
+        "description": "alter type of \"updatedAt\" to timestamptz(3)",
+        "sql": "ALTER TABLE \"public\".\"verification\" ALTER COLUMN \"updatedAt\" TYPE timestamptz(3) USING date_trunc('milliseconds', \"updatedAt\")",
+        "meta": {
+          "convertedColumn": {
+            "table": "verification",
+            "column": "updatedAt",
+            "by": "conversion"
+          }
+        }
+      }
+    ],
+    "postcheck": [
+      {
+        "description": "verify column \"updatedAt\" has type \"timestamp(3) with time zone\"",
+        "sql": "SELECT EXISTS (SELECT 1 AS \"one\" FROM \"pg_attribute\" AS \"a\" INNER JOIN \"pg_class\" AS \"c\" ON \"c\".\"oid\" = \"a\".\"attrelid\" INNER JOIN \"pg_namespace\" AS \"n\" ON \"n\".\"oid\" = \"c\".\"relnamespace\" WHERE (\"n\".\"nspname\" = $1 AND \"c\".\"relname\" = $2 AND \"a\".\"attname\" = $3 AND (format_type(\"a\".\"atttypid\", \"a\".\"atttypmod\")) = $4 AND NOT (\"a\".\"attisdropped\"))) AS \"result\"",
+        "params": ["public", "verification", "updatedAt", "timestamp(3) with time zone"]
+      }
+    ],
+    "meta": {
+      "warning": "TABLE_REWRITE"
+    }
+  },
+  {
+    "id": "column.public.Changelog.payloadHash",
+    "label": "Add column \"payloadHash\" to \"Changelog\"",
+    "operationClass": "additive",
+    "target": {
+      "id": "postgres",
+      "details": {
+        "schema": "public",
+        "objectType": "column",
+        "name": "payloadHash",
+        "table": "Changelog"
+      }
+    },
+    "precheck": [
+      {
+        "description": "ensure column \"payloadHash\" is missing",
+        "sql": "SELECT NOT EXISTS (SELECT 1 AS \"one\" FROM \"information_schema\".\"columns\" WHERE (\"table_schema\" = $1 AND \"table_name\" = $2 AND \"column_name\" = $3)) AS \"result\"",
+        "params": ["public", "Changelog", "payloadHash"],
+        "expectation": {
+          "expects": "absent",
+          "object": "column \"payloadHash\" on \"Changelog\""
+        }
+      }
+    ],
+    "execute": [
+      {
+        "description": "add column \"payloadHash\"",
+        "sql": "ALTER TABLE \"public\".\"Changelog\" ADD COLUMN \"payloadHash\" text"
+      }
+    ],
+    "postcheck": [
+      {
+        "description": "verify column \"payloadHash\" exists",
+        "sql": "SELECT EXISTS (SELECT 1 AS \"one\" FROM \"information_schema\".\"columns\" WHERE (\"table_schema\" = $1 AND \"table_name\" = $2 AND \"column_name\" = $3)) AS \"result\"",
+        "params": ["public", "Changelog", "payloadHash"],
+        "expectation": {
+          "expects": "present",
+          "object": "column \"payloadHash\" on \"Changelog\""
+        }
+      },
+      {
+        "description": "verify column \"payloadHash\" has type \"text\"",
+        "sql": "SELECT EXISTS (SELECT 1 AS \"one\" FROM \"pg_attribute\" AS \"a\" INNER JOIN \"pg_class\" AS \"c\" ON \"c\".\"oid\" = \"a\".\"attrelid\" INNER JOIN \"pg_namespace\" AS \"n\" ON \"n\".\"oid\" = \"c\".\"relnamespace\" WHERE (\"n\".\"nspname\" = $1 AND \"c\".\"relname\" = $2 AND \"a\".\"attname\" = $3 AND (format_type(\"a\".\"atttypid\", \"a\".\"atttypmod\")) = $4 AND NOT (\"a\".\"attisdropped\"))) AS \"result\"",
+        "params": ["public", "Changelog", "payloadHash", "text"]
+      }
+    ]
+  }
+]

@@ -208,6 +208,74 @@ describe("concurrent pushes on one scope", () => {
     }
   );
 
+  it.each(["u1", "u2"])("checks the committed identity after a scoped delete locks for %s", async (scopeKey) => {
+    const db = await testDb();
+    await seed(db, {
+      User: [
+        { id: "u1", name: "Ann" },
+        { id: "u2", name: "Bo" },
+      ],
+      Meal: [{ id: "meal", userId: "u2" }],
+      FoodEntry: [{ id: "entry", userId: "u1", mealId: "meal" }],
+    });
+
+    const input = {
+      scopeKey: "u1",
+      events: [{ id: "ea", entityType: "FoodEntry", operation: "delete" as const, payload: { key: "entry" } }],
+    };
+    const first = pausedAfterChangelogInsert(db);
+    const pushFirst = adapter.applyPush(first.db, input);
+    let lockStarted!: () => void;
+    const locking = new Promise<void>((resolve) => (lockStarted = resolve));
+    const retryDb = {
+      orm: db.orm,
+      raw: db.raw,
+      transaction: <T>(fn: (tx: unknown) => Promise<T>) =>
+        db.transaction((tx) =>
+          fn({
+            orm: tx.orm,
+            execute: tx.execute.bind(tx),
+            query: (plan: Parameters<typeof tx.query>[0]) => {
+              const result = tx.query(plan);
+              lockStarted();
+              return result;
+            },
+          })
+        ),
+    };
+    let retry: ReturnType<typeof adapter.applyPush>;
+    try {
+      await Promise.race([
+        first.inserted,
+        pushFirst.then(() => {
+          throw new Error("The first delete finished before inserting its changelog row");
+        }),
+      ]);
+      retry = adapter.applyPush(retryDb, { ...input, scopeKey });
+      await Promise.race([
+        locking,
+        retry.then(() => {
+          throw new Error("Retry finished before locking the deleted row");
+        }),
+      ]);
+    } finally {
+      first.release();
+    }
+
+    const expected = { ok: true, results: [{ id: "ea", success: true }] };
+    expect(await pushFirst).toEqual(expected);
+    expect(await retry).toEqual(
+      scopeKey === "u1"
+        ? expected
+        : {
+            ok: true,
+            results: [{ id: "ea", success: false, error: "Failed to apply event ea", retryable: false, record: null }],
+          }
+    );
+    expect(await db.orm.public.FoodEntry.all().toArray()).toEqual([]);
+    expect(await db.orm.public.Changelog.where({ outboxEventId: "ea" }).all().toArray()).toHaveLength(1);
+  });
+
   it("does not block pushes on a different scope", async () => {
     const db = await testDb();
     await seed(db, {

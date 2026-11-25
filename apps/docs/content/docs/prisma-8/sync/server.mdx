@@ -93,7 +93,7 @@ Returned pull and rejected-push records contain only top-level fields from the c
 | `pull(db, { scopeKey, clientStorageHash?, lastChangelogId?, limit? })`   | Reads the next page, checks current ownership and resolves each record. Returns `{ ok: true, logs, hasMore }`; `hasMore` is true if more changes follow the page. The default page size is 50. The cursor is exclusive. |
 | `getKeyField(model)`                                                     | The model's primary-key field.                                                                                                                                                                                          |
 | `toSyncPushPayload(operation, payload, keyField)`                        | Maps a decoded payload to the shape `validatePush` expects.                                                                                                                                                             |
-| `applyPushEvent(db, event, model, check, scopeKey)`                      | Checks ownership, writes the record and inserts its `Changelog` row in one transaction. Repeated event ids do not apply twice.                                                                                          |
+| `applyPushEvent(db, event, model, check, scopeKey)`                      | Checks ownership, writes the record and inserts its `Changelog` row in one transaction. A repeated id acknowledges the same write. Reusing the id for a different write is rejected.                                    |
 | `resolvePullRecord(db, model, check, keyPath, operation)`                | Returns the current record with only client-contract fields if the user still owns it, or `null`. Needs `syncServer`.                                                                                                   |
 
 `db` is your Prisma 8 SQL client. It must have `.transaction(fn)` and `.orm.public.<Model>`. Resolve `scopeKey` from the authenticated session, never the request body or query string.
@@ -213,9 +213,13 @@ Pass `contractCheck: "off"` to `createSqlSyncAdapter` only if your deploys alrea
 
 Push results include the first retryable failure and omit all later events. The worker keeps omitted events pending without counting a try against them. This ordering lets a Todo wait until its Board succeeds on retry.
 
-When a database write fails, `applyPushEvent` logs the real error on the server and returns a generic failure. Database details such as constraint names do not reach the browser. The failure is non-retryable when the database reports SQLSTATE class 22 (data exception) or class 23 (integrity constraint violation), such as a unique violation. Retrying the same write cannot succeed. Every other failure stays retryable, including lost connections, timeouts, deadlocks and errors with no SQLSTATE.
+When a database write fails, `applyPushEvent` logs the real error on the server and returns a generic failure. Database details such as constraint names do not reach the browser. For SQLSTATE class 22 (data exception) and class 23 (integrity constraint violation), the adapter checks the changelog before deciding whether to retry. A matching commit returns success. The failure is permanent if the changelog confirms there was no matching commit. A failed changelog read and other database failures, such as lost connections or deadlocks, stay retryable.
 
-If a retry hits a unique key of its own first request, which timed out but still committed, `applyPushEvent` returns `success: true`.
+A repeated push returns `success: true` without writing again when its scope, model, key, operation and normalized payload match the changelog entry for its event id. The adapter hashes decoded values with SHA-256. On create, explicit null and omission produce different hashes. Adding a nullable field to a queued create and filling it with null counts as a change. It hashes the update patch and key, or the delete key. Decimal strings keep their spelling, so `"1.0"` and `"1.00"` hash differently.
+
+A reused id for a different write fails as non-retryable. A model rename or an outbox transform that changes a create payload or update patch, such as a field rename or literal backfill, can cause this result even when the first push committed and its response was lost.
+
+Before deploying an upgrade that adds payload hashes, regenerate the PostgreSQL contract, scaffold a migration with `prisma migration new`, and add the nullable text column `Changelog.payloadHash` in the migration. Run the migration file to emit its operations, then apply it with `prisma db migrate`. Use the PostgreSQL config for these commands. The adapter refuses a server contract that lacks `Changelog.payloadHash`. Existing rows keep a null hash and replay based on scope, model, key and operation.
 
 ### Rejected events carry the server's row
 
@@ -247,13 +251,14 @@ model Changelog {
   operation     ChangeOperation
   scopeKey      String
   outboxEventId String          @unique
+  payloadHash   String?
   createdAt     DateTime        @default(now())
 
   @@index([scopeKey, id])
 }
 ```
 
-`outboxEventId` is unique, so pushing the same event twice writes it once. The `[scopeKey, id]` index serves the pull query. The id is a UUID v7, so it sorts correctly as a plain string and the client can treat it as an opaque cursor.
+`outboxEventId` is unique. A retry of the same write is acknowledged and a reused id for a different write is rejected. The `[scopeKey, id]` index serves the pull query. The id is a UUID v7, so it sorts correctly as a plain string and the client can treat it as an opaque cursor.
 
 Keep the server's migrations in their own folder, such as `migrations-postgres/`, separate from the browser's `migrations/`. They're separate histories for separate databases.
 

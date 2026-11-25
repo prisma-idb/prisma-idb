@@ -184,6 +184,10 @@ Returned pull and rejected-push records contain only top-level fields from the c
 
 `db` is your Prisma 8 SQL client; it needs `.transaction(fn)` and `.orm.public.<Model>`.
 
+Push replay matches scope, model, key, operation and the decoded payload. On create, explicit null and omission produce different hashes. Adding a nullable field to a queued create and filling it with null counts as a change. Decimal strings such as `"1.0"` and `"1.00"` hash differently. If a model rename, field rename, literal backfill, or other outbox transform changes the write between attempts, the retry is rejected as non-retryable even when the original write committed and its response was lost.
+
+Regenerate the PostgreSQL contract and apply the migration to add the nullable text column `Changelog.payloadHash` before deploying the adapter. The adapter refuses a contract without that field. Existing changelog rows with a null hash match on scope, model, key and operation.
+
 Malformed records and patches return `RECORD_VALIDATION_FAILURE`; malformed keys return `KEYPATH_VALIDATION_FAILURE`. These failures are non-retryable and open no transaction. The batch helper revives native dates, bigint and bytes from their JSON representations before validating against the server contract. Updates cannot change the primary key. The adapter's `applyPushEvent` accepts `validatePush`'s `validation-failure` check and returns its code directly.
 
 For required Postgres `Json` fields (`pg/json@1` and `pg/jsonb@1`), wire `null` is stored as JSON null on create and update. Nullable JSON fields retain the ORM's SQL NULL behavior. The required-field conversion happens only at the ORM write boundary, after validation and ownership checks.

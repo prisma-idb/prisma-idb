@@ -26,6 +26,7 @@ export interface NewChangelogRow {
   readonly keyPath: unknown;
   readonly operation: "create" | "update" | "delete";
   readonly outboxEventId: string;
+  readonly payloadHash: string;
 }
 
 /** The SQL query operations needed to read a scoped changelog page or its greatest id. */
@@ -38,9 +39,51 @@ interface ChangelogQuery {
   all(): Promise<ChangelogRow[]>;
 }
 
-/** Whether the push event with this outbox id already wrote its changelog row (pushes are idempotent on it). */
-export async function isEventApplied(tx: unknown, outboxEventId: string): Promise<boolean> {
-  return Boolean(await ormRootFor(tx, "Changelog").first({ outboxEventId }));
+/** The write a push event makes: who made it, and to which row. */
+export interface PushEventIdentity {
+  readonly scopeKey: string;
+  readonly model: string;
+  /** The wire-form key, as the changelog row stores it. */
+  readonly keyPath: unknown;
+  readonly operation: string;
+  readonly payloadHash: string;
+}
+
+/**
+ * `keyPath` is a text column, so a numeric wire key (`7`) comes back as its
+ * text (`"7"`). Compare keys by their text.
+ */
+function sameStoredKey(stored: unknown, key: unknown, normalize: (key: unknown) => unknown): boolean {
+  if (String(stored) === String(key)) return true;
+  try {
+    return String(normalize(stored)) === String(key);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Whether the push event with this outbox id already wrote its changelog row.
+ * Pushes are idempotent on the id, but only for the same write: `"other"`
+ * means the row records a different write. Historical rows have no payload
+ * hash and match if the other identity fields agree.
+ */
+export async function appliedEvent(
+  tx: unknown,
+  outboxEventId: string,
+  identity: PushEventIdentity,
+  normalizeStoredKey: (key: unknown) => unknown = (key) => key
+): Promise<"none" | "same" | "other"> {
+  const row = (await ormRootFor(tx, "Changelog").first({ outboxEventId })) as
+    (Omit<PushEventIdentity, "payloadHash"> & { payloadHash: string | null }) | null;
+  if (!row) return "none";
+  const same =
+    row.scopeKey === identity.scopeKey &&
+    row.model === identity.model &&
+    row.operation === identity.operation &&
+    sameStoredKey(row.keyPath, identity.keyPath, normalizeStoredKey) &&
+    (row.payloadHash == null || row.payloadHash === identity.payloadHash);
+  return same ? "same" : "other";
 }
 
 /** The highest changelog id `scopeKey` has, or `null` for an empty scope (an index seek on `(scopeKey, id)`). */

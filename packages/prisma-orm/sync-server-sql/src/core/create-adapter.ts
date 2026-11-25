@@ -82,7 +82,13 @@ export function createSqlSyncAdapter(options: CreateSqlSyncAdapterOptions): SqlS
     contractCheck = "required",
     writePolicies = {},
   } = options;
-  const models = new Set(Object.keys(domainModelsAtDefaultNamespace(contract.domain)));
+  const domainModels = domainModelsAtDefaultNamespace(contract.domain);
+  if (!Object.hasOwn(domainModels["Changelog"]?.fields ?? {}, "payloadHash")) {
+    throw new Error(
+      "createSqlSyncAdapter: missing Changelog.payloadHash. Regenerate the PostgreSQL contract and apply the migration that adds the nullable payloadHash column."
+    );
+  }
+  const models = new Set(Object.keys(domainModels));
   for (const model of Object.keys(writePolicies)) {
     if (!models.has(model)) {
       throw new Error(`createSqlSyncAdapter: write policy model "${model}" is not in the contract.`);

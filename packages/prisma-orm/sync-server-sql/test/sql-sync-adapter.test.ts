@@ -2,11 +2,12 @@ import { describe, expect, it } from "vitest";
 import type { OwnershipCheck } from "@prisma-idb/sync-server";
 import { sqlGetKeyField } from "../src/core/get-key-field";
 import { ormRootFor } from "../src/core/orm-root";
-import { toSyncPushPayload, applyPushEvent } from "../src/core/push";
+import { toSyncPushPayload, applyPushEvent, decodeWireEvent } from "../src/core/push";
 import { reviveWireValues } from "../src/core/wire-values";
 import { checkAuthorization, plainRowReader } from "../src/core/authorization";
 import { resolvePullRecord } from "../src/core/resolve-pull-record";
 import { createSqlSyncAdapter } from "../src/core/create-adapter";
+import { appliedEvent } from "../src/core/changelog";
 import { testContract, testDb, seed, testSyncServer } from "./helpers";
 
 describe("wire revival", () => {
@@ -45,6 +46,14 @@ describe("wire revival", () => {
       expect.objectContaining({ code: "KEYPATH_VALIDATION_FAILURE" })
     );
   });
+});
+
+it("requires a regenerated changelog contract even for a standalone SQL adapter", () => {
+  const contract = structuredClone(testContract);
+  delete contract.domain.namespaces["public"]!.models["Changelog"]!.fields["payloadHash"];
+  expect(() => createSqlSyncAdapter({ contract })).toThrow(
+    /Changelog\.payloadHash.*Regenerate the PostgreSQL contract.*apply the migration/
+  );
 });
 
 describe("sqlGetKeyField", () => {
@@ -276,6 +285,323 @@ describe("applyPushEvent", () => {
     );
     expect(result).toEqual({ id: "evt1", success: true });
     expect(await ormRootFor(db, "User").first({ id: "u1" })).toEqual({ id: "u1", name: "Ann" }); // untouched
+  });
+
+  it("compares the canonical payload of the original write on either push route", async () => {
+    const db = await testDb();
+    const adapter = createSqlSyncAdapter({ contract, syncServer: testSyncServer, contractCheck: "off" });
+    await seed(db, { User: [{ id: "u1", name: "Ann" }] });
+    const event = {
+      id: "evt1",
+      entityType: "User",
+      operation: "update" as const,
+      payload: { key: "u1", patch: { name: "Changed" } },
+    };
+    const expected = { id: "evt1", success: true };
+    expect(await adapter.applyPush(db, { scopeKey: "u1", events: [event] })).toEqual({ ok: true, results: [expected] });
+
+    const check: OwnershipCheck = { kind: "root", keyField: "id", key: "u1", scopeKey: "u1", authorized: true };
+    const reordered = { ...event, payload: { patch: { name: "Changed" }, key: "u1" } };
+    expect(await adapter.applyPushEvent(db, reordered, "User", check, "u1")).toEqual(expected);
+
+    const changed = { ...event, payload: { key: "u1", patch: { name: "Another change" } } };
+    expect(await adapter.applyPushEvent(db, changed, "User", check, "u1")).toEqual({
+      id: "evt1",
+      success: false,
+      error: "Failed to apply event evt1",
+      retryable: false,
+    });
+    expect(await db.orm.public.User.first({ id: "u1" })).toEqual({ id: "u1", name: "Changed" });
+  });
+
+  it("rejects creates that gain a null field and accepts updates with equivalent date spellings", async () => {
+    const db = await testDb();
+    const adapter = createSqlSyncAdapter({ contract, syncServer: testSyncServer, contractCheck: "off" });
+    await seed(db, { User: [{ id: "u1", name: "Ann" }], Board: [{ id: "b1", ownerId: "u1" }] });
+    const created = {
+      id: "create",
+      entityType: "Todo",
+      operation: "create" as const,
+      payload: { id: "t1", boardId: "b1" },
+    };
+    const updated = {
+      id: "update",
+      entityType: "Todo",
+      operation: "update" as const,
+      payload: { key: "t1", patch: { dueAt: "2026-01-02T03:04:05Z" } },
+    };
+    const send = (event: typeof created | typeof updated) => adapter.applyPush(db, { scopeKey: "u1", events: [event] });
+    const expected = (id: string) => ({ ok: true, results: [{ id, success: true }] });
+    expect(await send(created)).toEqual(expected(created.id));
+    expect(
+      await adapter.applyPush(db, {
+        scopeKey: "u1",
+        events: [{ ...created, payload: { ...created.payload, dueAt: null } }],
+      })
+    ).toMatchObject({
+      ok: true,
+      results: [{ id: created.id, success: false, error: "Failed to apply event create", retryable: false }],
+    });
+    expect(await send(updated)).toEqual(expected(updated.id));
+    const replay = {
+      ...updated,
+      payload: { ...updated.payload, clientMetadata: "ignored", patch: { dueAt: "2026-01-02T03:04:05.000Z" } },
+    };
+    expect(await send(replay)).toEqual(expected(updated.id));
+    expect(await db.orm.public.Changelog.all().toArray()).toHaveLength(2);
+  });
+
+  it("distinguishes null from omission without changing the hash when a default is added", () => {
+    const withDefault = structuredClone(contract);
+    const table = (
+      withDefault.storage as typeof contract.storage & {
+        namespaces: { public: { entries: { table: { Todo: { columns: { dueAt: { default?: unknown } } } } } } };
+      }
+    ).namespaces.public.entries.table.Todo;
+    table.columns.dueAt.default = { kind: "literal", value: "2026-01-02T03:04:05.000Z" };
+    const event = { id: "todo", operation: "create" as const, payload: { id: "t1", boardId: "b1" } };
+    const explicitNull = { ...event, payload: { ...event.payload, dueAt: null } };
+    const explicitNullHash = decodeWireEvent(withDefault, getKeyField, "Todo", explicitNull).payloadHash;
+    expect(explicitNullHash).not.toBe(decodeWireEvent(withDefault, getKeyField, "Todo", event).payloadHash);
+    expect(explicitNullHash).toBe(decodeWireEvent(contract, getKeyField, "Todo", explicitNull).payloadHash);
+  });
+
+  it("pins the persisted hash of decoded Date, BigInt, Bytes and nested Json values", () => {
+    const payload = {
+      id: "list-1",
+      dates: ["2026-01-02T03:04:05Z"],
+      bigs: ["9007199254740993"],
+      bytes: ["AQI="],
+      jsons: [{ z: [1, { y: "a", x: false }], a: null }],
+    };
+    const event = { id: "value-types", operation: "create" as const, payload };
+    const fingerprint = decodeWireEvent(contract, getKeyField, "ListItem", event).payloadHash;
+    expect(fingerprint).toBe("e2240ae18acd826d81c736a43e84ad27a5751959a9ccc130309f949a06464755");
+    expect(
+      decodeWireEvent(contract, getKeyField, "ListItem", {
+        ...event,
+        payload: {
+          bytes: [new Uint8Array([1, 2])],
+          dates: [new Date("2026-01-02T03:04:05.000Z")],
+          bigs: [9007199254740993n],
+          jsons: [{ a: null, z: [1, { x: false, y: "a" }] }],
+          id: "list-1",
+        },
+      }).payloadHash
+    ).toBe(fingerprint);
+    expect(
+      decodeWireEvent(contract, getKeyField, "ListItem", {
+        ...event,
+        payload: { ...payload, jsons: [{ z: [{ y: "a", x: false }, 1], a: null }] },
+      }).payloadHash
+    ).not.toBe(fingerprint);
+  });
+
+  it.each([
+    ["another scope", { scopeKey: "u2" }],
+    ["another model", { model: "Board" }],
+    ["another row", { keyPath: "u2" }],
+    ["another operation", { operation: "delete" }],
+  ])("refuses an event id already used by a write to %s instead of acknowledging it", async (_, other) => {
+    const db = await testDb();
+    await seed(db, {
+      User: [{ id: "u1", name: "Ann" }],
+      Changelog: [
+        { model: "User", keyPath: "u1", operation: "update", scopeKey: "u1", outboxEventId: "evt1", ...other },
+      ],
+    });
+    const check: OwnershipCheck = { kind: "root", keyField: "id", key: "u1", scopeKey: "u1", authorized: true };
+    const result = await applyPushEvent(
+      db,
+      contract,
+      getKeyField,
+      { id: "evt1", operation: "update", payload: { key: "u1", patch: { name: "Changed" } } },
+      "User",
+      check,
+      "u1"
+    );
+    expect(result).toEqual({ id: "evt1", success: false, error: "Failed to apply event evt1", retryable: false });
+    expect(await ormRootFor(db, "User").first({ id: "u1" })).toEqual({ id: "u1", name: "Ann" });
+  });
+
+  it("acknowledges an identical replay of a delete without deleting again", async () => {
+    const db = await testDb();
+    await seed(db, {
+      User: [{ id: "u1", name: "Ann" }],
+      Changelog: [{ model: "User", keyPath: "u1", operation: "delete", scopeKey: "u1", outboxEventId: "evt1" }],
+    });
+    const check: OwnershipCheck = { kind: "root", keyField: "id", key: "u1", scopeKey: "u1", authorized: true };
+    const result = await applyPushEvent(
+      db,
+      contract,
+      getKeyField,
+      { id: "evt1", operation: "delete", payload: { key: "u1" } },
+      "User",
+      check,
+      "u1"
+    );
+    expect(result).toEqual({ id: "evt1", success: true });
+    expect(await ormRootFor(db, "User").first({ id: "u1" })).toEqual({ id: "u1", name: "Ann" });
+  });
+
+  it.each([
+    ["a number", 7],
+    ["a bigint's digit string", "9007199254740993"],
+  ])("recognizes a replayed event whose root key is %s", async (_, keyPath) => {
+    const db = await testDb();
+    await seed(db, {
+      Changelog: [{ model: "Tenant", keyPath, operation: "update", scopeKey: "7", outboxEventId: "evt1" }],
+    });
+    const identity = { scopeKey: "7", model: "Tenant", keyPath, operation: "update", payloadHash: "new-payload-hash" };
+    expect(await appliedEvent(db, "evt1", identity)).toBe("same");
+    expect(await appliedEvent(db, "evt1", { ...identity, keyPath: String(keyPath) === "7" ? 8 : "1" })).toBe("other");
+    expect(await appliedEvent(db, "evt2", identity)).toBe("none");
+  });
+
+  describe("when a retry starts before the original event commits", () => {
+    /** The event's own transaction does not see the changelog row, as if the other request committed after its read. */
+    function blindToChangelog(db: Awaited<ReturnType<typeof testDb>>, missingReads = Infinity) {
+      const wrapTx = (tx: unknown) =>
+        new Proxy(tx as object, {
+          get(target, prop, receiver) {
+            if (prop !== "orm") return Reflect.get(target, prop, receiver);
+            const orm = Reflect.get(target, prop, receiver) as { public: Record<string, unknown> };
+            const hidden = new Proxy(orm.public, {
+              get(roots, model) {
+                const root = Reflect.get(roots, model) as object;
+                if (model !== "Changelog") return root;
+                return new Proxy(root, {
+                  get(r, method) {
+                    if (method !== "first") return Reflect.get(r, method);
+                    if (missingReads-- > 0) return async () => null;
+                    return (Reflect.get(r, method) as (...args: unknown[]) => unknown).bind(r);
+                  },
+                });
+              },
+            });
+            return { ...orm, public: hidden };
+          },
+        });
+      return new Proxy(db, {
+        get(target, prop, receiver) {
+          if (prop !== "transaction") return Reflect.get(target, prop, receiver);
+          return (fn: (tx: unknown) => Promise<unknown>) =>
+            (target.transaction as (f: typeof fn) => Promise<unknown>)((tx) => fn(wrapTx(tx)));
+        },
+      });
+    }
+
+    const pushCreate = async (db: unknown) => {
+      const check: OwnershipCheck = { kind: "root", keyField: "id", key: "u1", scopeKey: "u1", authorized: true };
+      return applyPushEvent(
+        db,
+        contract,
+        getKeyField,
+        { id: "evt1", operation: "create", payload: { id: "u1", name: "Again" } },
+        "User",
+        check,
+        "u1"
+      );
+    };
+
+    it("acknowledges a retry when ownership changes after the first changelog read", async () => {
+      const db = await testDb();
+      const adapter = createSqlSyncAdapter({ contract, syncServer: testSyncServer, contractCheck: "off" });
+      await seed(db, {
+        User: [
+          { id: "u1", name: "Ann" },
+          { id: "u2", name: "Bo" },
+        ],
+        Board: [{ id: "b1", ownerId: "u1" }],
+        Todo: [{ id: "t1", boardId: "b1" }],
+      });
+      const event = {
+        id: "todo",
+        entityType: "Todo",
+        operation: "update" as const,
+        payload: { key: "t1", patch: { dueAt: "2026-01-02T03:04:05.000Z" } },
+      };
+      const push = { scopeKey: "u1", events: [event] };
+      const success = { ok: true, results: [{ id: "todo", success: true }] };
+      expect(await adapter.applyPush(db, push)).toEqual(success);
+      await db.orm.public.Board.where({ id: "b1" }).update({ ownerId: "u2" });
+      expect(await adapter.applyPush(blindToChangelog(db, 1), push)).toEqual(success);
+      expect(await db.orm.public.Changelog.all().toArray()).toHaveLength(1);
+    });
+
+    it("acknowledges a retry whose original write committed before a lookup row was removed", async () => {
+      const db = await testDb();
+      const adapter = createSqlSyncAdapter({ contract, syncServer: testSyncServer, contractCheck: "off" });
+      await seed(db, {
+        User: [{ id: "u1", name: "Ann" }],
+        Lookup: [{ id: "lookup" }],
+        FoodEntry: [{ id: "food", userId: "u1" }],
+      });
+      const event = {
+        id: "food-update",
+        entityType: "FoodEntry",
+        operation: "update" as const,
+        payload: { key: "food", patch: { lookupId: "lookup" } },
+      };
+      const push = { scopeKey: "u1", events: [event] };
+      const success = { ok: true, results: [{ id: event.id, success: true }] };
+      expect(await adapter.applyPush(db, push)).toEqual(success);
+      await db.orm.public.FoodEntry.where({ id: "food" }).update({ lookupId: null });
+      await db.orm.public.Lookup.where({ id: "lookup" }).delete();
+      expect(await adapter.applyPush(blindToChangelog(db, 1), push)).toEqual(success);
+      expect(await db.orm.public.Changelog.all().toArray()).toHaveLength(1);
+    });
+
+    it.each([
+      ["matches", {}, { success: true }],
+      ["differs", { dueAt: null }, { success: false, error: "Failed to apply event todo", retryable: false }],
+    ])("checks a stored hash that %s after the retry hits a unique violation", async (_, patch, expected) => {
+      const db = await testDb();
+      const adapter = createSqlSyncAdapter({ contract, syncServer: testSyncServer, contractCheck: "off" });
+      await seed(db, { User: [{ id: "u1", name: "Ann" }], Board: [{ id: "b1", ownerId: "u1" }] });
+      const event = {
+        id: "todo",
+        entityType: "Todo",
+        operation: "create" as const,
+        payload: { id: "t1", boardId: "b1" },
+      };
+      expect(await adapter.applyPush(db, { scopeKey: "u1", events: [event] })).toEqual({
+        ok: true,
+        results: [{ id: "todo", success: true }],
+      });
+      const [check] = testSyncServer.validatePush(
+        [{ id: "todo", model: "Todo", operation: "create", payload: event.payload, wireKey: "t1" }],
+        { scopeKey: "u1" }
+      );
+      expect(
+        await adapter.applyPushEvent(
+          blindToChangelog(db),
+          { ...event, payload: { ...event.payload, ...patch } },
+          "Todo",
+          check!.check,
+          "u1"
+        )
+      ).toEqual({ id: "todo", ...expected });
+      expect((await db.orm.public.Changelog.first({ outboxEventId: "todo" }))?.payloadHash).toMatch(/^[a-f0-9]{64}$/);
+      expect((await db.orm.public.Todo.first({ id: "t1" }))?.dueAt).toBeNull();
+    });
+
+    it.each([
+      ["the same write", "create", { success: true }],
+      ["another write", "update", { success: false, retryable: false }],
+      ["no write", undefined, { success: false, retryable: false }],
+    ])("treats a changelog row for %s accordingly", async (_, operation, expected) => {
+      const db = await testDb();
+      await seed(db, {
+        User: [{ id: "u1", name: "Ann" }],
+        ...(operation
+          ? { Changelog: [{ model: "User", keyPath: "u1", operation, scopeKey: "u1", outboxEventId: "evt1" }] }
+          : {}),
+      });
+      const result = await pushCreate(blindToChangelog(db));
+      expect(result).toMatchObject({ id: "evt1", ...expected });
+      expect(await ormRootFor(db, "User").first({ id: "u1" })).toEqual({ id: "u1", name: "Ann" });
+    });
   });
 
   it("reports unknown-model without touching the database", async () => {
