@@ -339,6 +339,11 @@ describe("stripIdbExcludeAttributes", () => {
 
   it.each([
     [
+      "mixed CR and LF line endings",
+      "model A {\n  id String @id\n  @@idb.exclude // trailing\r  b String\r}\n",
+      "model A {\n  id String @id\n  // trailing\r  b String\r}\n",
+    ],
+    [
       "CRLF line endings",
       "model A {\r\n  id String @id\r\n  s String @idb.exclude\r\n  @@idb.exclude\r\n}\r\n",
       "model A {\r\n  id String @id\r\n  s String\r\n}\r\n",
@@ -362,6 +367,14 @@ describe("stripIdbExcludeAttributes", () => {
   ])("strips @idb.exclude with %s and keeps the rest of the line", (_, schema, expected) => {
     expect(stripIdbExcludeAttributes(schema)).toBe(expected);
   });
+
+  it.each(["@idb.exclude( @unique", "@idb.exclude.", "@idb:exclude", "@idb.exclude(1)"])(
+    "leaves a malformed exclusion marker untouched: %s",
+    (attribute) => {
+      const schema = `model A {\n  id String @id ${attribute}\n  other String @idb.exclude\n}\n`;
+      expect(stripIdbExcludeAttributes(schema)).toBe(schema.replace("other String @idb.exclude", "other String"));
+    }
+  );
 
   it.each([
     [
