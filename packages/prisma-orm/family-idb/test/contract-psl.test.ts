@@ -1456,7 +1456,7 @@ describe("interpretPslDocumentToIdbContract", () => {
       expect(result.ok).toBe(false);
       if (result.ok) return;
       expect(result.failure.diagnostics.map(({ message }) => message)).toEqual([
-        'Field "Post.updatedAt" uses unsupported attribute "@updatedAt"',
+        'Field "Post.updatedAt" uses unsupported attribute "@updatedAt".',
       ]);
     });
 
@@ -1501,8 +1501,7 @@ describe("interpretPslDocumentToIdbContract", () => {
       expect(result.failure.diagnostics).toContainEqual(
         expect.objectContaining({
           code: "PSL_UNSUPPORTED_FIELD_ATTRIBUTE",
-          message:
-            'Field "Post.author" uses unsupported attribute "@updatedAt". Use @onCreate(now()) @onUpdate(now()).',
+          message: 'Field "Post.author" uses unsupported attribute "@updatedAt".',
         })
       );
     });
@@ -2044,23 +2043,26 @@ describe("attributes IDB doesn't read", () => {
       );
     });
 
-    it.each(["@unique", "@id", '@default("x")'])("refuses %s on a relation field", (attribute) => {
-      const name = attribute.replace(/\(.*$/, "");
-      expect(
-        codes(
-          `model User {\n  id String @id\n  posts Post[]\n}\nmodel Post {\n  id String @id\n  authorId String\n  author User @relation(fields: [authorId], references: [id]) ${attribute}\n}`,
-          projection
-        )
-      ).toEqual(
-        // The backrelation then has no owning side, which is reported too.
-        expect.arrayContaining([
-          [
-            "PSL_UNSUPPORTED_FIELD_ATTRIBUTE",
-            `Field "Post.author" is a relation field and stores no value, so it can't take "${name}". Put it on the foreign-key field instead.`,
-          ],
-        ])
-      );
-    });
+    it.each(["@unique", "@id", '@default("x")', "@onCreate(uuid())", "@onUpdate(now())"])(
+      "refuses %s on a relation field",
+      (attribute) => {
+        const name = attribute.replace(/\(.*$/, "");
+        expect(
+          codes(
+            `model User {\n  id String @id\n  posts Post[]\n}\nmodel Post {\n  id String @id\n  authorId String\n  author User @relation(fields: [authorId], references: [id]) ${attribute}\n}`,
+            projection
+          )
+        ).toEqual(
+          // The backrelation then has no owning side, which is reported too.
+          expect.arrayContaining([
+            [
+              "PSL_UNSUPPORTED_FIELD_ATTRIBUTE",
+              `Field "Post.author" is a relation field and stores no value, so it can't take "${name}". Put it on the foreign-key field instead.`,
+            ],
+          ])
+        );
+      }
+    );
 
     it("refuses a second @@id instead of dropping it", () => {
       expect(codes("model Item {\n  id String\n  @@id([id])\n  @@id([id])\n}", projection)).toEqual([
@@ -2068,13 +2070,33 @@ describe("attributes IDB doesn't read", () => {
       ]);
     });
 
-    it("accepts @map, @db.* and @@schema from a schema shared with a SQL server", () => {
+    it("accepts @map and ignores legacy @db.* and @@schema attributes", () => {
       expect(
         codes(
           `model Item {\n  id String @id @db.Uuid\n  name String @map("item_name") @db.VarChar(20)\n  @@schema("public")\n}`,
           projection
         )
       ).toEqual([]);
+    });
+
+    it("reports a refused field attribute even when binding the model fails", () => {
+      expect(codes("model Item {\n id String @id\n name String @madeUp\n @@madeUp\n}", projection)).toEqual([
+        ["PSL_UNSUPPORTED_MODEL_ATTRIBUTE", 'Model "Item" uses unsupported attribute "@@madeUp".'],
+        ["PSL_UNSUPPORTED_FIELD_ATTRIBUTE", 'Field "Item.name" uses unsupported attribute "@madeUp".'],
+      ]);
+    });
+
+    it("refuses a malformed field exclusion inside an excluded model", () => {
+      const result = codes("model Item {\n id String @id\n name String @idb.exclude(1)\n @@idb.exclude\n}", projection);
+      expect(result).toEqual([["PSL_INVALID_ATTRIBUTE_SYNTAX", expect.stringContaining("idb.exclude")]]);
+    });
+
+    it.each(["onCreate", "onUpdate"] as const)("refuses @%s on a relation in an excluded model", (phase) => {
+      const result = codes(
+        `model Parent {\n id String @id\n}\nmodel Child {\n id String @id\n parentId String\n parent Parent @relation(fields: [parentId], references: [id]) @${phase}(uuid())\n @@idb.exclude\n}`,
+        projection
+      );
+      expect(result).toEqual([["PSL_UNSUPPORTED_FIELD_ATTRIBUTE", expect.stringContaining(`can't take "@${phase}"`)]]);
     });
   });
 

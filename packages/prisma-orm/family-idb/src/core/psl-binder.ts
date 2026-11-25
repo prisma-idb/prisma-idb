@@ -342,7 +342,7 @@ const SINGLE_FIELD_ATTRIBUTES = new Set([
 ]);
 
 /** Field attributes that describe a stored value, so a relation field, which stores none, can't take them. */
-const SCALAR_ONLY_FIELD_ATTRIBUTES = new Set(["id", "unique", "default"]);
+const SCALAR_ONLY_FIELD_ATTRIBUTES = new Set(["id", "unique", "default", "onCreate", "onUpdate"]);
 
 /**
  * Field attributes IDB accepts without reading, so a schema shared with a SQL
@@ -563,12 +563,14 @@ export function createIdbAttributeBinder(input: IdbAttributeBinderInput): IdbAtt
     for (const attribute of field.attributes) {
       const name = attribute.name;
       if (name === "updatedAt") {
-        // Prisma 8 removed `@updatedAt`; the hint names what to write unless the field already has `@onUpdate`.
-        const hasOnUpdate = field.attributes.some((other) => other.name === "onUpdate");
+        const canUseGenerators =
+          field.typeName === "DateTime" &&
+          !field.list &&
+          !field.attributes.some((other) => other.name === "onCreate" || other.name === "onUpdate");
         refuse(
           attribute,
           "PSL_UNSUPPORTED_FIELD_ATTRIBUTE",
-          `${label} uses unsupported attribute "@updatedAt"${hasOnUpdate ? "" : ". Use @onCreate(now()) @onUpdate(now())."}`
+          `${label} uses unsupported attribute "@updatedAt".${canUseGenerators ? " Use @onCreate(now()) @onUpdate(now())." : ""}`
         );
       } else if (SINGLE_FIELD_ATTRIBUTES.has(name) && seen.has(name)) {
         refuse(
@@ -610,6 +612,7 @@ export function createIdbAttributeBinder(input: IdbAttributeBinderInput): IdbAtt
     let id: BoundModelAttributes["id"];
     const indexes: BoundIndex[] = [];
     const refused = refusedModelAttributes(model);
+    for (const field of Object.values(model.fields)) refusedFieldAttributes(model, field);
     if (refused.size > 0) failed = true;
 
     for (const attribute of model.attributes) {
@@ -786,32 +789,34 @@ export function createIdbAttributeBinder(input: IdbAttributeBinderInput): IdbAtt
     return bound;
   }
 
+  function excludedField(model: ModelSymbol, field: FieldSymbol): ReturnType<IdbAttributeBinder["excludedField"]> {
+    checkExcludedFieldDefaults(field);
+    const refused = refusedFieldAttributes(model, field);
+    for (const marker of field.attributes.filter((a) => a.name === IDB_EXCLUDE_ATTR && !refused.has(a))) {
+      interpret(excludeFieldSpec, marker, { ...base, selfModel: model, field });
+    }
+    return {
+      id: field.attributes.find(({ name }) => name === "id")?.span,
+      unique: field.attributes.find(({ name }) => name === "unique")?.span,
+    };
+  }
+
   return {
     model: bindModel,
     field: bindField,
-    excludedField: (model, field) => {
-      checkExcludedFieldDefaults(field);
-      const refused = refusedFieldAttributes(model, field);
-      for (const marker of field.attributes.filter((a) => a.name === IDB_EXCLUDE_ATTR && !refused.has(a))) {
-        interpret(excludeFieldSpec, marker, { ...base, selfModel: model, field });
-      }
-      return {
-        id: field.attributes.find(({ name }) => name === "id")?.span,
-        unique: field.attributes.find(({ name }) => name === "unique")?.span,
-      };
-    },
+    excludedField,
     isModelExcluded: (model) => {
       // An excluded model's attributes go unread, but the schema still fails on the ones IDB refuses.
       const refused = refusedModelAttributes(model);
       for (const field of Object.values(model.fields)) refusedFieldAttributes(model, field);
       const markers = model.attributes.filter(({ name }) => name === IDB_EXCLUDE_ATTR);
       if (markers.length === 0) return false;
+      for (const field of Object.values(model.fields)) excludedField(model, field);
       // Validate every marker, not just the first, so a repeated malformed exclusion cannot hide in either projection.
       // The model stays excluded either way: a malformed exclusion fails the contract through its diagnostic.
       for (const marker of markers) {
         if (!refused.has(marker)) interpret(excludeModelSpec, marker, { ...base, selfModel: model });
       }
-      for (const field of Object.values(model.fields)) checkExcludedFieldDefaults(field);
       return true;
     },
     isFieldExcluded: (field) => field.attributes.some((attribute) => attribute.name === IDB_EXCLUDE_ATTR),
