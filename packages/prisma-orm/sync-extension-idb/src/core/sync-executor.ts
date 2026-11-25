@@ -83,7 +83,10 @@ function isMutationAst(ast: IdbQueryAst): ast is MutationAst {
  * parent's (the Board being deleted), and the server-side ownership check
  * for that child's delete walks Todo→Board→User, which only resolves while
  * the Board row still exists. Pushed out of order, the child's delete would
- * fail authorization once the parent is already gone.
+ * fail authorization once the parent is already gone. Updates go the other
+ * way: `updateRowWithReferentialActions` writes a row whose referenced key
+ * changes before the children its `onUpdate` actions rewrite, so the server
+ * has the new key before a child points at it.
  *
  * Plain `new Date()` has millisecond resolution; every op in one cascade
  * (or one batch plan) runs synchronously and can easily land in the same
