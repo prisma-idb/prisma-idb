@@ -231,6 +231,26 @@ function putMarkersInUpgrade(db: IDBDatabase, tx: IDBTransaction, markers: reado
 }
 
 /**
+ * The open reached `targetVersion` without running this upgrade: another
+ * connection upgraded the database to that version first. None of `ops` ran
+ * and no marker was written. Read the markers again and plan from there.
+ */
+export class IdbUpgradeSupersededError extends Error {
+  constructor(
+    readonly dbName: string,
+    readonly targetVersion: number,
+    cause?: DOMException
+  ) {
+    super(
+      `IDB: Another connection reached version ${targetVersion} or newer for "${dbName}". ` +
+        "This upgrade did not run. Read the markers again and plan the next upgrade from them.",
+      { cause }
+    );
+    this.name = "IdbUpgradeSupersededError";
+  }
+}
+
+/**
  * Open `dbName` at `targetVersion` and, inside `upgradeneeded`, apply `ops`
  * and then write `markers`. Then close the connection.
  *
@@ -269,7 +289,7 @@ export function openAndUpgrade(input: {
     // the blocking connection closes. Rejecting here would abandon a request
     // that would have succeeded, so we just warn and let it resolve naturally.
     // A stale connection from a previous same-page navigation (e.g. the
-    // openAndReadMarker call above us) closes within the same microtask flush;
+    // openAndReadMarkers call above us) closes within the same microtask flush;
     // another tab holding an open connection is the only scenario where this
     // would hang indefinitely, so we set a timeout as a last resort.
     let blockedTimer: ReturnType<typeof setTimeout> | undefined;
@@ -283,6 +303,10 @@ export function openAndUpgrade(input: {
     // the ops, or the transaction's own error when a request fails later,
     // such as a marker `put` hitting a quota or constraint error.
     let upgradeError: unknown;
+    // Set once `upgradeneeded` fires. An open that succeeds without it ran none of `ops`.
+    let upgraded = false;
+    // Set when the blocked timeout gave up. The request stays live, so its upgrade must not run later.
+    let abandoned = false;
 
     request.onupgradeneeded = (event) => {
       const target = event.target as IDBOpenDBRequest;
@@ -292,6 +316,14 @@ export function openAndUpgrade(input: {
         reject(new Error("IDB: upgradeneeded fired with null version-change transaction"));
         return;
       }
+      if (abandoned) {
+        tx.abort();
+        return;
+      }
+      // The open is no longer blocked. The upgrade may run longer than the blocked timeout, and the
+      // timer must not reject an upgrade that is running and will commit.
+      clearBlocked();
+      upgraded = true;
       tx.addEventListener("abort", () => {
         upgradeError ??= tx.error ?? undefined;
       });
@@ -362,12 +394,17 @@ export function openAndUpgrade(input: {
       clearBlocked();
       const db = (event.target as IDBOpenDBRequest).result;
       db.close();
-      resolve(input.ops.length);
+      if (upgraded) resolve(input.ops.length);
+      else reject(new IdbUpgradeSupersededError(input.dbName, input.targetVersion));
     };
 
     request.onerror = (event) => {
       clearBlocked();
       const err = upgradeError ?? (event.target as IDBOpenDBRequest).error;
+      if (!upgraded && upgradeError === undefined && request.error?.name === "VersionError") {
+        reject(new IdbUpgradeSupersededError(input.dbName, input.targetVersion, request.error));
+        return;
+      }
       reject(err ?? new Error("IDB: migration open request failed without an error object"));
     };
 
@@ -377,6 +414,7 @@ export function openAndUpgrade(input: {
           "If you have the app open in another tab, close it to proceed."
       );
       blockedTimer = setTimeout(() => {
+        abandoned = true;
         reject(
           new Error(
             `IDB: migration of "${input.dbName}" is blocked — another connection is open at an older ` +

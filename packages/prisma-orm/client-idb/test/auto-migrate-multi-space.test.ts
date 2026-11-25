@@ -10,8 +10,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { defineContract } from "@prisma-idb/family-idb/contract-ts";
 import idbFamilyPack from "@prisma-idb/family-idb/pack";
 import idbTargetPack from "@prisma-idb/target-idb/pack";
+import { writeMarkers } from "@prisma-idb/target-idb/runtime";
 import type { IdbExtensionSpace } from "@prisma-idb/family-idb/control";
 import { createAutoMigratingIdbClient } from "../src/exports/client-auto";
+import { autoMigrate } from "../src/core/auto-migrate";
 import type { IdbStoreAccessor } from "../src/exports/orm";
 import { buildContractSpaceFixture, buildExtensionContractSpaceFixture } from "./_contract-space-fixture";
 
@@ -149,7 +151,7 @@ describe("auto-migrate combined multi-space apply", () => {
     await client.close();
 
     const db = await openRawDb(name);
-    // A fresh DB's marker-read open (`openAndReadMarker`'s bare
+    // A fresh DB's marker-read open (`openAndReadMarkers`'s bare
     // `factory.open(dbName)`) implicitly creates it at version 1 before any
     // migration runs; the combined apply then bumps it to 2 — one bump
     // total, regardless of how many spaces had pending work (the old
@@ -380,5 +382,126 @@ describe("auto-migrate combined multi-space apply", () => {
     await expect(
       createAutoMigratingIdbClient({ contractSpace: appSpace, dbName: name, extensions: [first, duplicate] })
     ).rejects.toThrow(/duplicate or reserved/i);
+  });
+});
+
+describe("concurrent auto-migrating opens", () => {
+  it("brings every caller's spaces to their heads when two opens race for the same version", async () => {
+    const name = dbName();
+    const appSpace = buildContractSpaceFixture([appV1]);
+    // Both calls read version 0 and plan version 1; only the first one's upgrade can run at version 1.
+    const [plain, withSync] = await Promise.all([
+      createAutoMigratingIdbClient({ contractSpace: appSpace, dbName: name }),
+      createAutoMigratingIdbClient({ contractSpace: appSpace, dbName: name, extensions: [syncExtension()] }),
+    ]);
+    // The second upgrade closes the first client's connection with a versionchange; both clients still work.
+    await asRecord(plain.orm)["users"]!.create({ id: "u1", email: "plain@example.com" });
+    await asRecord(withSync.orm)["users"]!.create({ id: "u2", email: "sync@example.com" });
+    for (const client of [plain, withSync]) {
+      expect(await asRecord(client.orm)["users"]!.all().toArray()).toHaveLength(2);
+    }
+    await Promise.all([plain.close(), withSync.close()]);
+
+    const db = await openRawDb(name);
+    try {
+      expect([...db.objectStoreNames].sort()).toEqual([
+        "_idb_sync_outbox",
+        "_idb_sync_version_meta",
+        "_prisma_next_marker",
+        "users",
+      ]);
+      const [markers] = await readStores(db, ["_prisma_next_marker"]);
+      expect((markers as { space: string }[]).map((marker) => marker.space).sort()).toEqual(["app", "idb-sync"]);
+    } finally {
+      db.close();
+    }
+  });
+
+  /**
+   * A factory whose versioned opens all lose the race with VersionError. Before refusing the
+   * open on attempt `competeOn`, it lets `compete` run in full, as a competing upgrade would.
+   */
+  function losingFactory(
+    competeOn: number,
+    compete: () => Promise<void>
+  ): { factory: IDBFactory; attempts: () => number } {
+    let attempts = 0;
+    const factory = new Proxy(indexedDB, {
+      get(target, property) {
+        if (property !== "open") return Reflect.get(target, property, target);
+        return (name: string, version?: number) => {
+          if (version === undefined) return target.open(name);
+          const request = { error: new DOMException("Another connection upgraded first.", "VersionError") } as {
+            error: DOMException;
+            onerror?: (event: { target: unknown }) => void;
+          };
+          const before = ++attempts === competeOn ? compete() : Promise.resolve();
+          void before.then(() => request.onerror?.({ target: request }));
+          return request;
+        };
+      },
+    });
+    return { factory, attempts: () => attempts };
+  }
+
+  it("gives up after five lost races while a space is still behind its head", async () => {
+    const { factory, attempts } = losingFactory(0, async () => {});
+    await expect(
+      autoMigrate({ contractSpace: buildContractSpaceFixture([appV1]), dbName: dbName(), factory })
+    ).rejects.toThrow(/did not reach the head of space\(s\) app after 5 attempts/);
+    expect(attempts()).toBe(5);
+  });
+
+  it("succeeds when the upgrade that won its last attempt brought every space to its head", async () => {
+    const name = dbName();
+    const appSpace = buildContractSpaceFixture([appV1]);
+    const { factory, attempts } = losingFactory(5, async () => {
+      const winner = await createAutoMigratingIdbClient({ contractSpace: appSpace, dbName: name });
+      await winner.close();
+    });
+    await autoMigrate({ contractSpace: appSpace, dbName: name, factory });
+    expect(attempts()).toBe(5);
+  });
+
+  it("rejects when app and extension heads only match across different committed states", async () => {
+    const name = dbName();
+    const appSpace = buildContractSpaceFixture([appV1, appV2]);
+    const extension = syncExtension();
+    const initial = await createAutoMigratingIdbClient({
+      contractSpace: buildContractSpaceFixture([appV1]),
+      dbName: name,
+    });
+    await initial.close();
+
+    const writer = await openRawDb(name);
+    let afterLastRace = false;
+    let switched: Promise<void> | undefined;
+    const { factory } = losingFactory(5, async () => {
+      await writeMarkers(writer, [{ space: "app", storageHash: appSpace.headRef.hash }]);
+      afterLastRace = true;
+    });
+
+    // Queue a competing write after the first retry read is queued. It can
+    // commit between separate read transactions, but cannot split one snapshot.
+    const get = IDBObjectStore.prototype.get;
+    const getSpy = vi.spyOn(IDBObjectStore.prototype, "get").mockImplementation(function (this: IDBObjectStore, key) {
+      const request = get.call(this, key);
+      if (afterLastRace && !switched && this.name === "_prisma_next_marker") {
+        switched = writeMarkers(writer, [
+          { space: "app", storageHash: appV1.storage.storageHash },
+          { space: extension.spaceId, storageHash: extension.contractSpace.headRef.hash },
+        ]);
+      }
+      return request;
+    });
+    try {
+      await expect(
+        autoMigrate({ contractSpace: appSpace, dbName: name, factory, extensions: [extension] })
+      ).rejects.toThrow(/did not reach the head of space\(s\) idb-sync after 5 attempts/);
+    } finally {
+      getSpy.mockRestore();
+      writer.close();
+      await switched;
+    }
   });
 });

@@ -49,6 +49,14 @@ This includes a missing marker store. The migration chain should always create i
 
 When IndexedDB aborts an upgrade, the open request fails with a generic `AbortError`. `openAndUpgrade` keeps the original error and rejects with that instead.
 
+### Concurrent opens
+
+Two callers, in one page or in two tabs, can read the same version and plan the same next version. Only one `upgradeneeded` runs, and it carries only its own caller's operations. When an open reaches the target version without running its upgrade, `openAndUpgrade` rejects with `IdbUpgradeSupersededError` instead of reporting the operations as applied. After a lost race, the auto-migrating client reads every space's marker again, in one transaction, and returns if the winning upgrade already brought every space it asked for to its head. Otherwise it plans the next upgrade from those markers. It gives up after five lost races. An attempt whose own upgrade runs needs no second read: that upgrade writes the marker of every space that was behind.
+
+When the winning upgrade raises the version, IndexedDB fires `versionchange` on every other open connection, including the runtime connection of a client that opened a moment earlier. That connection closes so the upgrade can run, and the driver opens a new one at the upgraded version on its next query or transaction.
+
+When a blocked upgrade times out, `openAndUpgrade` rejects, but the open request stays queued in IndexedDB; there is no way to cancel it. If it is unblocked later, it aborts its upgrade instead of applying a migration its caller has already given up on.
+
 ### Schema operations still skip work that's already done
 
 `applyOneDdlOp` still checks for an existing store or index before creating one, and for a missing one before dropping it. IndexedDB itself would throw `ConstraintError` on an existing target and abort the upgrade. A normal run no longer replays anything, but a database can still have a schema ahead of its marker, for example one left by an older build that wrote the marker separately. The checks let those databases catch up.

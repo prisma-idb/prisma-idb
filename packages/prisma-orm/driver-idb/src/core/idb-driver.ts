@@ -4,25 +4,98 @@ import { registerEnvironment } from "./execute/environment";
 import { MARKER_STORE_NAME, type IdbMarkerRecord, type IdbPlanBody } from "./plan-body";
 import { createTransactionScope, type IdbTransactionScope } from "./transaction-scope";
 
+/** The connection a driver instance holds. Kept off the class so its type stays structural. */
+interface ConnectionState {
+  db: Promise<IDBDatabase> | undefined;
+  closed: boolean;
+  markers: Promise<ReadonlyMap<string, string> | null> | undefined;
+  readonly open: (markers?: ConnectionState["markers"]) => Promise<IDBDatabase>;
+}
+
+const connections = new WeakMap<IdbRuntimeDriverInstance, ConnectionState>();
+
 /** Own the database connection and execute driver plans after it opens. */
 export class IdbRuntimeDriverInstance implements RuntimeDriverInstance<"idb", "idb"> {
   readonly familyId = "idb" as const;
   readonly targetId = "idb" as const;
-  /**
-   * The live IDBDatabase connection. Resolves once `upgradeneeded` (if any)
-   * completes and the database is ready for use.
-   *
-   * `execute()` and `transaction()` await this before opening a transaction.
-   * The Promise is shared — all concurrent callers get the same database object.
-   */
-  readonly db: Promise<IDBDatabase>;
 
   constructor(dbName: string, version?: number, factory?: IDBFactory, keyRange?: typeof IDBKeyRange) {
-    this.db = openIdbDatabase(dbName, version, factory, keyRange);
+    const state: ConnectionState = {
+      db: undefined,
+      closed: false,
+      markers: undefined,
+      open: (markers) => {
+        let verified = false;
+        let deleted = false;
+        const opened = openIdbDatabase(
+          dbName,
+          markers === undefined ? version : undefined,
+          factory,
+          keyRange,
+          markers !== undefined,
+          (db, newVersion) => {
+            if (state.db !== opened || state.closed) return;
+            if (newVersion === null) {
+              deleted = true;
+              return;
+            }
+            // Start the marker read before closing. This transaction can finish
+            // against the old schema while the waiting upgrade is still blocked.
+            if (verified) state.markers = readContractHashes(db);
+            state.db = undefined;
+          }
+        ).then(async (db) => {
+          if (markers !== undefined) {
+            const [before, after] = await Promise.all([markers, readContractHashes(db)]);
+            if (state.closed) {
+              db.close();
+              throw new Error("IDB: driver is closed");
+            }
+            if (deleted) throw databaseDeletedError(dbName);
+            // A newer upgrade may have closed this connection during the marker read.
+            if (state.db !== opened) return this.db;
+            if (
+              !before ||
+              !after ||
+              before.get("app") !== after.get("app") ||
+              [...before].some(([space, hash]) => after.get(space) !== hash)
+            ) {
+              db.close();
+              throw new Error(`IDB: "${dbName}" contract markers changed. Create a client with the current contract.`);
+            }
+          }
+          verified = true;
+          return db;
+        });
+        return opened;
+      },
+    };
+    state.db = state.open();
+    connections.set(this, state);
+  }
+
+  /**
+   * The live IDBDatabase connection. Resolves once the database is open and
+   * ready for use.
+   *
+   * `execute()` and `transaction()` await this before opening a transaction.
+   * The Promise is shared, so concurrent callers get the same database object.
+   * When another connection upgrades the database, this connection closes so
+   * the upgrade can run. The next read may reconnect if the existing contract
+   * spaces still have their previous hashes.
+   */
+  get db(): Promise<IDBDatabase> {
+    const state = connections.get(this)!;
+    if (state.closed) return Promise.reject(new Error("IDB: driver is closed"));
+    state.db ??= state.open(state.markers);
+    return state.db;
   }
 
   async close(): Promise<void> {
-    (await this.db).close();
+    const state = connections.get(this)!;
+    state.closed = true;
+    const db = await state.db?.catch(() => undefined);
+    db?.close();
   }
 
   /**
@@ -77,18 +150,46 @@ export class IdbRuntimeDriverInstance implements RuntimeDriverInstance<"idb", "i
    * Called by `IdbRuntimeImpl.runDriver()` in `@prisma-idb/runtime-idb`.
    */
   execute(plan: IdbPlanBody): AsyncIterable<Record<string, unknown>> {
-    const dbPromise = this.db;
+    const connection = () => this.db;
     return {
       /** Wait for commit before exposing materialized rows to the runtime. */
       [Symbol.asyncIterator]() {
         return (async function* () {
-          const db = await dbPromise;
+          const db = await connection();
           const rows = await executeIdbPlan(db, plan);
           yield* rows;
         })();
       },
     };
   }
+}
+
+function databaseDeletedError(dbName: string): Error {
+  return new Error(`IDB: "${dbName}" was deleted while the driver was disconnected.`);
+}
+
+/** Read the markers from one connection without keeping the version change blocked. */
+function readContractHashes(db: IDBDatabase): Promise<ReadonlyMap<string, string> | null> {
+  if (!db.objectStoreNames.contains(MARKER_STORE_NAME)) return Promise.resolve(new Map());
+  return new Promise((resolve) => {
+    try {
+      const request = db.transaction(MARKER_STORE_NAME).objectStore(MARKER_STORE_NAME).getAll();
+      request.onerror = () => resolve(null);
+      request.onsuccess = () => {
+        const hashes = new Map<string, string>();
+        for (const marker of request.result as IdbMarkerRecord[]) {
+          if (typeof marker?.space !== "string" || typeof marker.storageHash !== "string") {
+            resolve(null);
+            return;
+          }
+          hashes.set(marker.space, marker.storageHash);
+        }
+        resolve(hashes);
+      };
+    } catch {
+      resolve(null);
+    }
+  });
 }
 
 /**
@@ -106,12 +207,21 @@ export class IdbRuntimeDriverInstance implements RuntimeDriverInstance<"idb", "i
  */
 function openIdbDatabase(
   dbName: string,
-  version?: number,
+  version: number | undefined,
   factory: IDBFactory = indexedDB,
-  keyRange: typeof IDBKeyRange | undefined = globalThis.IDBKeyRange
+  keyRange: typeof IDBKeyRange | undefined = globalThis.IDBKeyRange,
+  reopening: boolean,
+  onVersionChange: (db: IDBDatabase, newVersion: number | null) => void
 ): Promise<IDBDatabase> {
   return new Promise<IDBDatabase>((resolve, reject) => {
     const req = factory.open(dbName, version);
+
+    if (reopening) {
+      req.onupgradeneeded = () => {
+        req.transaction!.abort();
+        reject(databaseDeletedError(dbName));
+      };
+    }
 
     req.onerror = () => {
       reject(req.error);
@@ -125,13 +235,15 @@ function openIdbDatabase(
       const db = req.result;
       // Ops on this connection compare keys and build ranges with the factory it came from.
       registerEnvironment(db, { cmp: (a, b) => factory.cmp(a, b), keyRange });
-      // Multi-tab safety: when another tab opens this database at a higher
-      // version, the IDB spec fires `versionchange` on every other open
-      // connection. If we don't close, the new tab's open request hangs
-      // indefinitely on `blocked`. Closing here releases the lock; the
-      // application layer can listen for `db.onclose` to surface a
-      // "please reload" toast if it cares.
-      db.onversionchange = () => {
+      // Multi-tab safety: when another connection, in this tab or another one,
+      // opens this database at a higher version, the IDB spec fires
+      // `versionchange` on every other open connection. If we don't close, that
+      // open request waits on `blocked` until we do. Closing here releases the
+      // lock. After an upgrade, the driver opens a new connection on its next
+      // use. After a deletion (`newVersion` is null) it doesn't, so it never
+      // recreates an empty database.
+      db.onversionchange = (event) => {
+        onVersionChange(db, event.newVersion);
         db.close();
       };
       resolve(db);
