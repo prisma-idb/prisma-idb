@@ -1989,6 +1989,79 @@ describe("attributes IDB doesn't read", () => {
       expect(codes(`model Item {\n  id String @id\n  ${declaration}\n}`, projection)).toEqual([diagnostic]);
     });
 
+    it.each([
+      [
+        "@relation on an excluded scalar",
+        "name String @idb.exclude @relation(fields: [name], references: [id])",
+        [
+          "IDB_INVALID_RELATION",
+          'Field "Item.name" has type "String", which is not a model, so it can\'t declare @relation.',
+        ],
+      ],
+      [
+        "@relation on a scalar in an excluded model",
+        "name String @relation(fields: [name], references: [id])\n  @@idb.exclude",
+        [
+          "IDB_INVALID_RELATION",
+          'Field "Item.name" has type "String", which is not a model, so it can\'t declare @relation.',
+        ],
+      ],
+      [
+        "@updatedAt on an excluded field",
+        "stamp DateTime @idb.exclude @updatedAt",
+        [
+          "PSL_UNSUPPORTED_FIELD_ATTRIBUTE",
+          'Field "Item.stamp" uses unsupported attribute "@updatedAt". Use @onCreate(now()) @onUpdate(now()).',
+        ],
+      ],
+      [
+        "@updatedAt in an excluded model",
+        "stamp DateTime @updatedAt\n  @@idb.exclude",
+        [
+          "PSL_UNSUPPORTED_FIELD_ATTRIBUTE",
+          'Field "Item.stamp" uses unsupported attribute "@updatedAt". Use @onCreate(now()) @onUpdate(now()).',
+        ],
+      ],
+      [
+        "a second @onCreate on an excluded field",
+        "stamp DateTime @idb.exclude @onCreate(now()) @onCreate(now())",
+        ["PSL_DUPLICATE_ATTRIBUTE", '`@onCreate` declared more than once on field "Item.stamp".'],
+      ],
+      [
+        "a second @onUpdate in an excluded model",
+        "stamp DateTime @onUpdate(now()) @onUpdate(now())\n  @@idb.exclude",
+        ["PSL_DUPLICATE_ATTRIBUTE", '`@onUpdate` declared more than once on field "Item.stamp".'],
+      ],
+    ])("refuses %s instead of dropping it", (_, declaration, diagnostic) => {
+      expect(codes(`model Item {\n  id String @id\n  ${declaration}\n}`, projection)).toEqual([diagnostic]);
+    });
+
+    it("counts a repeated @onCreate even when the first one fails to bind", () => {
+      expect(
+        codes("model Item {\n  id String @id\n  s String @onCreate(bogus()) @onCreate(uuid())\n}", projection)
+      ).toEqual(
+        expect.arrayContaining([["PSL_DUPLICATE_ATTRIBUTE", '`@onCreate` declared more than once on field "Item.s".']])
+      );
+    });
+
+    it.each(["@unique", "@id", '@default("x")'])("refuses %s on a relation field", (attribute) => {
+      const name = attribute.replace(/\(.*$/, "");
+      expect(
+        codes(
+          `model User {\n  id String @id\n  posts Post[]\n}\nmodel Post {\n  id String @id\n  authorId String\n  author User @relation(fields: [authorId], references: [id]) ${attribute}\n}`,
+          projection
+        )
+      ).toEqual(
+        // The backrelation then has no owning side, which is reported too.
+        expect.arrayContaining([
+          [
+            "PSL_UNSUPPORTED_FIELD_ATTRIBUTE",
+            `Field "Post.author" is a relation field and stores no value, so it can't take "${name}". Put it on the foreign-key field instead.`,
+          ],
+        ])
+      );
+    });
+
     it("refuses a second @@id instead of dropping it", () => {
       expect(codes("model Item {\n  id String\n  @@id([id])\n  @@id([id])\n}", projection)).toEqual([
         ["PSL_DUPLICATE_ATTRIBUTE", '`@@id` declared more than once on model "Item".'],
