@@ -840,6 +840,31 @@ describe("first-use marker check", () => {
     }
   });
 
+  it("checks the marker even when a middleware answers the query from its own cache", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const readMarker = vi.fn(async () => makeMarker({ storageHash: "other" }));
+    const execute = vi.fn();
+    const cached: IdbMiddleware = {
+      name: "cached",
+      familyId: "idb",
+      intercept: { onQuery: async () => ({ rows: [{ id: 1 }] }) },
+    };
+    try {
+      const runtime = createIdbRuntime({
+        adapter: makeMockAdapter(),
+        driver: { ...makeMockDriver({ readMarker }), execute } as IdbRuntimeDriverInstance,
+        contract: TEST_CONTRACT,
+        middleware: [cached],
+      });
+      await run(runtime);
+      expect(execute).not.toHaveBeenCalled();
+      expect(readMarker).toHaveBeenCalledTimes(1);
+      expect(String(warn.mock.calls[0]![0])).toContain("CONTRACT.MARKER_MISMATCH");
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
   it("checks again on the first use after a newer version closed the connection", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     let generation = 0;

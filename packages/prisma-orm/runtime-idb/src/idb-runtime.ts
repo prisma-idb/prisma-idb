@@ -281,7 +281,13 @@ class IdbRuntimeImpl extends RuntimeCore<IdbQueryPlan, IdbPlanBody, IdbMiddlewar
    * codec encoding can resolve field→codec mappings from the contract's
    * storage schema.
    */
-  protected override lower(plan: IdbQueryPlan, ctx: CodecCallContext): Promise<IdbLoweredPlan> {
+  protected override async lower(plan: IdbQueryPlan, ctx: CodecCallContext): Promise<IdbLoweredPlan> {
+    // The marker check runs here rather than in `runDriver`, because lowering
+    // comes before middleware `intercept`. A middleware that answers from its
+    // own cache never reaches the driver, and would otherwise skip the check.
+    // Lowering starts when the result is first iterated, so a plan that is
+    // built and never run reads nothing.
+    await this.#ensureMarkerChecked();
     const lowererCtx: IdbLowererContext = {
       ...ctx,
       contract: this.#contract,
@@ -300,13 +306,7 @@ class IdbRuntimeImpl extends RuntimeCore<IdbQueryPlan, IdbPlanBody, IdbMiddlewar
    * output types), it wires up here.
    */
   protected override runDriver(exec: IdbPlanBody): AsyncIterable<Record<string, unknown>> {
-    const driver = this.#driver;
-    const ensureMarkerChecked = () => this.#ensureMarkerChecked();
-    // The check starts when the result is first iterated, so a plan that is built and never run reads nothing.
-    return (async function* () {
-      await ensureMarkerChecked();
-      yield* driver.execute(exec);
-    })();
+    return this.#driver.execute(exec);
   }
 
   /**
