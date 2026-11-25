@@ -1,0 +1,232 @@
+{
+  "contract": {
+    "capabilities": {
+      "idb": {
+        "ddlOnlyInUpgrade": true,
+        "transactionalDDL": true
+      }
+    },
+    "domain": {
+      "namespaces": {
+        "__unbound__": {
+          "enum": {
+            "Role": {
+              "codecId": "idb/string@1",
+              "members": [
+                {
+                  "name": "USER",
+                  "value": "USER"
+                },
+                {
+                  "name": "ADMIN",
+                  "value": "ADMIN"
+                }
+              ]
+            }
+          },
+          "models": {
+            "User": {
+              "fields": {
+                "id": {
+                  "nullable": false,
+                  "type": {
+                    "codecId": "idb/string@1",
+                    "kind": "scalar"
+                  }
+                },
+                "roles": {
+                  "many": {
+                    "elementNullable": false
+                  },
+                  "nullable": false,
+                  "type": {
+                    "codecId": "idb/string@1",
+                    "kind": "scalar"
+                  },
+                  "valueSet": {
+                    "entityKind": "enum",
+                    "entityName": "Role",
+                    "namespaceId": "__unbound__",
+                    "plane": "domain"
+                  }
+                },
+                "scores": {
+                  "many": {
+                    "elementNullable": false
+                  },
+                  "nullable": false,
+                  "type": {
+                    "codecId": "idb/decimal@1",
+                    "kind": "scalar"
+                  }
+                },
+                "tags": {
+                  "many": {
+                    "elementNullable": false
+                  },
+                  "nullable": false,
+                  "type": {
+                    "codecId": "idb/string@1",
+                    "kind": "scalar"
+                  }
+                }
+              },
+              "relations": {},
+              "storage": {
+                "keyPath": "id",
+                "storeName": "user"
+              }
+            }
+          }
+        }
+      }
+    },
+    "execution": {
+      "executionHash": "78ce99c750a976823db07489374cd62e493c7664c4b0520c9e21ae062f66ec78",
+      "mutations": {
+        "defaults": [
+          {
+            "onCreate": {
+              "id": "literal",
+              "kind": "generator",
+              "params": {
+                "value": [
+                  "new",
+                  "unverified"
+                ]
+              }
+            },
+            "ref": {
+              "entry": "user",
+              "field": "tags",
+              "namespace": "__unbound__"
+            }
+          },
+          {
+            "onCreate": {
+              "id": "literal",
+              "kind": "generator",
+              "params": {
+                "value": [
+                  "1.10"
+                ]
+              }
+            },
+            "ref": {
+              "entry": "user",
+              "field": "scores",
+              "namespace": "__unbound__"
+            }
+          },
+          {
+            "onCreate": {
+              "id": "literal",
+              "kind": "generator",
+              "params": {
+                "value": [
+                  "USER"
+                ]
+              }
+            },
+            "ref": {
+              "entry": "user",
+              "field": "roles",
+              "namespace": "__unbound__"
+            }
+          }
+        ]
+      }
+    },
+    "extensions": {},
+    "meta": {},
+    "profileHash": "40329830af4e39e0774683fbebcdc24dcf983a5da02c5fe6079a2a57579f861c",
+    "roots": {
+      "user": {
+        "model": "User",
+        "namespace": "__unbound__"
+      }
+    },
+    "storage": {
+      "namespaces": {
+        "__unbound__": {
+          "entries": {},
+          "id": "__unbound__"
+        }
+      },
+      "storageHash": "bfd803e3cc9806491a7c08aa269ecf627a93adb6df574f5154e52be140758e58",
+      "stores": {
+        "user": {
+          "keyPath": "id",
+          "record": {
+            "fields": {
+              "id": {
+                "nullable": false,
+                "type": {
+                  "codecId": "idb/string@1",
+                  "kind": "scalar"
+                }
+              },
+              "roles": {
+                "many": {
+                  "elementNullable": false
+                },
+                "nullable": false,
+                "type": {
+                  "codecId": "idb/string@1",
+                  "kind": "scalar"
+                },
+                "valueSet": {
+                  "codecId": "idb/string@1",
+                  "members": [
+                    {
+                      "name": "ADMIN",
+                      "value": "ADMIN"
+                    },
+                    {
+                      "name": "USER",
+                      "value": "USER"
+                    }
+                  ],
+                  "name": "Role"
+                }
+              },
+              "scores": {
+                "many": {
+                  "elementNullable": false
+                },
+                "nullable": false,
+                "type": {
+                  "codecId": "idb/decimal@1",
+                  "kind": "scalar"
+                }
+              },
+              "tags": {
+                "many": {
+                  "elementNullable": false
+                },
+                "nullable": false,
+                "type": {
+                  "codecId": "idb/string@1",
+                  "kind": "scalar"
+                }
+              }
+            },
+            "model": "User"
+          }
+        }
+      }
+    },
+    "target": "idb",
+    "targetFamily": "idb"
+  },
+  "diagnostics": {
+    "interpretation": [],
+    "parse": [],
+    "symbols": []
+  },
+  "hashes": {
+    "executionHash": "78ce99c750a976823db07489374cd62e493c7664c4b0520c9e21ae062f66ec78",
+    "profileHash": "40329830af4e39e0774683fbebcdc24dcf983a5da02c5fe6079a2a57579f861c",
+    "storageHash": "bfd803e3cc9806491a7c08aa269ecf627a93adb6df574f5154e52be140758e58"
+  }
+}

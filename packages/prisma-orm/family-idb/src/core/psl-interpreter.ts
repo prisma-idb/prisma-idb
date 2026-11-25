@@ -508,12 +508,71 @@ function interpretModel(
       const enumMember = enumType === undefined ? undefined : enumType.members.find((member) => raw === member.name);
 
       if (form.kind === "list") {
-        if (!field.list || raw.replace(/\s/g, "") !== "[]") {
+        if (!field.list) {
           diagnostics.push({
-            code: field.list ? "IDB_LIST_DEFAULT_UNSUPPORTED" : "IDB_INVALID_DEFAULT_VALUE",
-            message: field.list
-              ? `Field "${model.name}.${field.name}": Only an empty list default ([]) is supported.`
-              : `Field "${model.name}.${field.name}": A scalar field cannot have a list default.`,
+            code: "IDB_INVALID_DEFAULT_VALUE",
+            message: `Field "${model.name}.${field.name}": A scalar field cannot have a list default.`,
+            sourceId,
+            span: defaultAttr.span,
+          });
+          continue;
+        }
+        // Each element is read as the field's element type, the way a scalar default is.
+        // The shared definition check then refuses elements the type can't hold.
+        const values: (string | number | boolean)[] = [];
+        let invalidElement: string | undefined;
+        let invalidInt: { readonly index: number; readonly text: string } | undefined;
+        for (const [index, element] of form.elements.entries()) {
+          if (enumType !== undefined) {
+            // A member named `true` or `false` is written like a boolean, as in a scalar enum default.
+            const name =
+              element.kind === "identifier"
+                ? element.name
+                : element.kind === "boolean"
+                  ? String(element.value)
+                  : undefined;
+            const member = name === undefined ? undefined : enumType.members.find((m) => m.name === name);
+            if (member === undefined) {
+              invalidElement =
+                element.kind === "identifier"
+                  ? element.name
+                  : element.kind === "number"
+                    ? element.text
+                    : JSON.stringify(element.value);
+              break;
+            }
+            values.push(member.value);
+          } else if (element.kind === "identifier") {
+            invalidElement = element.name;
+            break;
+          } else if (element.kind === "number" && codecId === INT_CODEC_ID && !isIntNumeralText(element.text)) {
+            // Read the digits as written: converting first would round 2147483647.00000001 to a valid Int.
+            invalidInt = { index, text: element.text };
+            break;
+          } else {
+            // A Decimal keeps the digits as written; a JS number would round them.
+            values.push(element.kind === "number" && codecId === DECIMAL_CODEC_ID ? element.text : element.value);
+          }
+        }
+        if (invalidInt !== undefined) {
+          diagnostics.push({
+            code: "IDB_INVALID_DEFAULT_VALUE",
+            message: intDefaultMessage(
+              `Field "${model.name}.${field.name}"`,
+              `element ${invalidInt.index} (${invalidInt.text})`
+            ),
+            sourceId,
+            span: defaultAttr.span,
+          });
+          continue;
+        }
+        if (invalidElement !== undefined) {
+          diagnostics.push({
+            code: enumType !== undefined ? "IDB_INVALID_ENUM_DEFAULT" : "IDB_INVALID_DEFAULT_VALUE",
+            message:
+              enumType !== undefined
+                ? `Field "${model.name}.${field.name}" default element ${invalidElement} is not a declared value of enum "${enumType.name}".`
+                : `Field "${model.name}.${field.name}" has unsupported list default element "${invalidElement}".`,
             sourceId,
             span: defaultAttr.span,
           });
@@ -521,7 +580,7 @@ function interpretModel(
         }
         fieldExecutionDefaults.push({
           fieldName: field.name,
-          onCreate: { id: LITERAL_GENERATOR_ID, params: { value: [] } },
+          onCreate: { id: LITERAL_GENERATOR_ID, params: { value: values } },
         });
       } else if (form.kind === "tagged") {
         // The field's codec reads the tagged literal: its data type says which

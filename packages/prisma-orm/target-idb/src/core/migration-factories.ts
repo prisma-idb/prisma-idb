@@ -43,8 +43,8 @@ export type DropIndexOp = MigrationPlanOperation & {
   readonly indexName: string;
 };
 
-/** Scalar constants and the empty-list default serialized in a migration package. */
-export type IdbJsonLiteral = string | number | boolean | null | readonly [];
+/** Scalar constants and scalar-list defaults serialized in a migration package. */
+export type IdbJsonLiteral = string | number | boolean | null | readonly (string | number | boolean)[];
 
 /** Declarative steps applied to one field's value. */
 export type IdbValueTransform =

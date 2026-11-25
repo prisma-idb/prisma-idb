@@ -91,7 +91,7 @@ describe("defineContract — enums", () => {
           },
         },
       })
-    ).toThrow(/Only an empty list default/);
+    ).toThrow(/fieldDefaults holds only scalar values/);
   });
 
   it("accepts scalar lists and rejects optional lists", () => {

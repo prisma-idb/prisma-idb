@@ -129,7 +129,7 @@ function validateField(
     report("IDB_OPTIONAL_LIST", `${label}: A list field cannot be optional.`, at);
   }
   validateLiteralDefault(model, field, definition, report);
-  validateExecutionDefault(model, field, report);
+  validateExecutionDefault(model, field, definition, report);
 }
 
 /** Validate defaults against enum membership and stored scalar types. */
@@ -144,7 +144,11 @@ function validateLiteralDefault(
   if (field.literalDefault !== undefined) {
     const defaultAt = [...at, "literalDefault"];
     if (field.list) {
-      report("IDB_LIST_DEFAULT_UNSUPPORTED", `${label}: Only an empty list default ([]) is supported.`, defaultAt);
+      report(
+        "IDB_LIST_DEFAULT_UNSUPPORTED",
+        `${label} is a list, and fieldDefaults holds only scalar values. Declare the list's default in defaults instead.`,
+        defaultAt
+      );
     } else if (field.enumName !== undefined) {
       if (
         !definition.enums
@@ -175,20 +179,92 @@ function validateLiteralDefault(
   }
 }
 
+/**
+ * Describes a default value for an error message. Defaults come from untyped
+ * callers too, so this never serializes the value: `JSON.stringify` prints
+ * `NaN` and the infinities as `null`, and throws on a bigint or a cycle.
+ */
+function describeDefaultValue(value: unknown): string {
+  switch (typeof value) {
+    case "string":
+      return JSON.stringify(value);
+    case "number":
+    case "boolean":
+      return String(value);
+    case "bigint":
+      return `${value}n`;
+    case "undefined":
+      return "undefined";
+    case "object":
+      return value === null ? "null" : Array.isArray(value) ? "an array" : "an object";
+    default:
+      return `a ${typeof value}`;
+  }
+}
+
+/**
+ * Checks a list's create default: an array whose elements each pass the rule a
+ * scalar default of the element type passes, so `@default(["a", "b"])` on a
+ * `String[]` is accepted and `@default([1])` on it is not.
+ */
+function validateListDefault(
+  field: IdbFieldNode,
+  definition: IdbContractDefinition,
+  label: string,
+  value: unknown,
+  report: Report,
+  at: IdbDefinitionPath
+): void {
+  if (!Array.isArray(value)) {
+    report("IDB_INVALID_DEFAULT_VALUE", `${label} is a list, so its default must be a list.`, at);
+    return;
+  }
+  const members =
+    field.enumName === undefined
+      ? undefined
+      : definition.enums.find((node) => node.name === field.enumName)?.members.map((member) => member.value);
+  for (const [index, element] of value.entries()) {
+    if (members !== undefined) {
+      if (!members.includes(element as string)) {
+        report(
+          "IDB_INVALID_ENUM_DEFAULT",
+          `${label} default element ${index} is not a declared value of enum "${field.enumName}".`,
+          at
+        );
+        return;
+      }
+    } else if (
+      (typeof element !== "string" && typeof element !== "number" && typeof element !== "boolean") ||
+      // JSON has no NaN or Infinity, so the emitted contract would store null instead.
+      (typeof element === "number" && !Number.isFinite(element)) ||
+      !literalValueMatchesCodec(element, field.codecId)
+    ) {
+      report(
+        "IDB_INVALID_DEFAULT_VALUE",
+        `${label} has codec "${field.codecId}", and its default element ${index} (${describeDefaultValue(element)}) is not a value of that type.`,
+        at
+      );
+      return;
+    }
+  }
+}
+
 /** Validate generated defaults without depending on either surface's syntax. */
-function validateExecutionDefault(model: IdbModelNode, field: IdbFieldNode, report: Report): void {
+function validateExecutionDefault(
+  model: IdbModelNode,
+  field: IdbFieldNode,
+  definition: IdbContractDefinition,
+  report: Report
+): void {
   const at = ["models", model.modelName, "fields", field.name];
   const label = `Field "${model.modelName}.${field.name}"`;
   const execution = field.executionDefault;
   if (!execution) return;
   if (field.list && field.literalDefault === undefined && execution.onCreate?.id === "literal") {
-    const value = execution.onCreate.params?.["value"];
-    if (!Array.isArray(value) || value.length !== 0) {
-      report("IDB_LIST_DEFAULT_UNSUPPORTED", `${label}: Only an empty list default ([]) is supported.`, [
-        ...at,
-        "literalDefault",
-      ]);
-    }
+    validateListDefault(field, definition, label, execution.onCreate.params?.["value"], report, [
+      ...at,
+      "literalDefault",
+    ]);
   }
   if (!field.list && execution.onCreate?.id === "literal" && Array.isArray(execution.onCreate.params?.["value"])) {
     report("IDB_INVALID_DEFAULT_VALUE", `${label}: A scalar field cannot have a list default.`, [

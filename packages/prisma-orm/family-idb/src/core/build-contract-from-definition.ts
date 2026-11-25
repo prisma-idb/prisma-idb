@@ -193,14 +193,15 @@ function buildExecutionDefault(
   };
 }
 
-/** A literal `onCreate` value in its stored form; generator defaults are unchanged. */
+/** A literal `onCreate` value in its stored form, element by element for a list; generator defaults are unchanged. */
 function decimalLiteralDefault(field: IdbFieldNode, node: IdbExecutionDefaultNode): IdbExecutionDefaultNode {
   const onCreate = node.onCreate;
   if (onCreate?.id !== "literal" || onCreate.params === undefined) return node;
-  return {
-    ...node,
-    onCreate: { ...onCreate, params: { ...onCreate.params, value: storedLiteral(field, onCreate.params["value"]) } },
-  };
+  const value: unknown = onCreate.params["value"];
+  const stored = Array.isArray(value)
+    ? value.map((element: unknown) => storedLiteral(field, element))
+    : storedLiteral(field, value);
+  return { ...node, onCreate: { ...onCreate, params: { ...onCreate.params, value: stored } } };
 }
 
 /** Collect the execution-plane defaults of every model, in model then field order. */
