@@ -340,8 +340,19 @@ function isPortableModelAttribute(name: string): boolean {
   return name === "index" || name === "unique" || name === "schema";
 }
 
-/** Field attributes IDB reads, each at most once per field. `@onCreate`/`@onUpdate` report their own repeats. */
-const SINGLE_FIELD_ATTRIBUTES = new Set(["id", "unique", "default", "relation", "updatedAt", IDB_EXCLUDE_ATTR]);
+/** Field attributes IDB reads, each at most once per field. */
+const SINGLE_FIELD_ATTRIBUTES = new Set([
+  "id",
+  "unique",
+  "default",
+  "onCreate",
+  "onUpdate",
+  "relation",
+  IDB_EXCLUDE_ATTR,
+]);
+
+/** Field attributes that describe a stored value, so a relation field, which stores none, can't take them. */
+const SCALAR_ONLY_FIELD_ATTRIBUTES = new Set(["id", "unique", "default"]);
 
 /**
  * Field attributes IDB accepts without reading, so a schema shared with a SQL
@@ -389,11 +400,10 @@ export interface BoundGeneratorCall extends TypedFuncCall {
   readonly text: string;
 }
 
-/** The attributes of one field that the interpreter reads. `id`, `unique` and `updatedAt` carry only their span. */
+/** The attributes of one field that the interpreter reads. `id` and `unique` carry only their span. */
 export interface BoundFieldAttributes {
   readonly id: PslSpan | undefined;
   readonly unique: PslSpan | undefined;
-  readonly updatedAt: PslSpan | undefined;
   readonly default: BoundAttribute<IdbDefaultValue> | undefined;
   /** The generator function call of `@onCreate(fn())`, checked against the field's codec. */
   readonly onCreate: BoundAttribute<BoundGeneratorCall> | undefined;
@@ -408,7 +418,7 @@ export interface BoundFieldAttributes {
 export interface IdbAttributeBinder {
   /** Binds a model's `@@map`, `@@id`, `@@index` and `@@unique`, reporting failures once. */
   model(model: ModelSymbol): BoundModelAttributes;
-  /** Binds a field's `@id`, `@unique`, `@updatedAt`, `@default`, `@onCreate`, `@onUpdate` and `@relation`, reporting failures once. */
+  /** Binds a field's `@id`, `@unique`, `@default`, `@onCreate`, `@onUpdate` and `@relation`, reporting failures once. */
   field(model: ModelSymbol, field: FieldSymbol): BoundFieldAttributes;
   /** Validates exclusion markers and retains only key/index presence for a projected-out scalar. */
   excludedField(model: ModelSymbol, field: FieldSymbol): Pick<BoundFieldAttributes, "id" | "unique">;
@@ -538,13 +548,65 @@ export function createIdbAttributeBinder(input: IdbAttributeBinderInput): IdbAtt
     });
   }
 
+  const modelNames = new Set(
+    Object.values(table.namespaces).flatMap((namespace) => Object.values(namespace.models).map((model) => model.name))
+  );
+
+  /**
+   * Reports the field attributes IDB would otherwise drop or misread, without
+   * binding their arguments: an unsupported attribute (with what to write for
+   * `@updatedAt`), a repeat of a single-use attribute, `@relation` on a field
+   * whose type isn't a model, and a value attribute such as `@unique` on a
+   * relation field. Excluded fields run this scan too.
+   */
   function refusedFieldAttributes(model: ModelSymbol, field: FieldSymbol): ReadonlySet<AttributeSymbol> {
-    return refuseAttributes(field, field.attributes, SINGLE_FIELD_ATTRIBUTES, isPortableFieldAttribute, {
-      prefix: "@",
-      subject: `field "${model.name}.${field.name}"`,
-      unsupportedCode: "PSL_UNSUPPORTED_FIELD_ATTRIBUTE",
-      unsupportedMessage: (name) => `Field "${model.name}.${field.name}" uses unsupported attribute "@${name}".`,
-    });
+    const cached = refusedByOwner.get(field);
+    if (cached !== undefined) return cached;
+    const label = `Field "${model.name}.${field.name}"`;
+    const isRelationField = modelNames.has(field.typeName);
+    const refused = new Set<AttributeSymbol>();
+    const seen = new Set<string>();
+    const refuse = (attribute: AttributeSymbol, code: string, message: string) => {
+      refused.add(attribute);
+      diagnostics.push({ code, message, sourceId, span: attribute.span });
+    };
+    for (const attribute of field.attributes) {
+      const name = attribute.name;
+      if (name === "updatedAt") {
+        // Prisma 8 removed `@updatedAt`; the hint names what to write unless the field already has `@onUpdate`.
+        const hasOnUpdate = field.attributes.some((other) => other.name === "onUpdate");
+        refuse(
+          attribute,
+          "PSL_UNSUPPORTED_FIELD_ATTRIBUTE",
+          `${label} uses unsupported attribute "@updatedAt"${hasOnUpdate ? "" : ". Use @onCreate(now()) @onUpdate(now())."}`
+        );
+      } else if (SINGLE_FIELD_ATTRIBUTES.has(name) && seen.has(name)) {
+        refuse(
+          attribute,
+          "PSL_DUPLICATE_ATTRIBUTE",
+          `\`@${name}\` declared more than once on field "${model.name}.${field.name}".`
+        );
+      } else if (!SINGLE_FIELD_ATTRIBUTES.has(name) && !isPortableFieldAttribute(name)) {
+        refuse(attribute, "PSL_UNSUPPORTED_FIELD_ATTRIBUTE", `${label} uses unsupported attribute "@${name}".`);
+      } else {
+        seen.add(name);
+        if (name === "relation" && !isRelationField) {
+          refuse(
+            attribute,
+            "IDB_INVALID_RELATION",
+            `${label} has type "${field.typeName}", which is not a model, so it can't declare @relation.`
+          );
+        } else if (isRelationField && SCALAR_ONLY_FIELD_ATTRIBUTES.has(name)) {
+          refuse(
+            attribute,
+            "PSL_UNSUPPORTED_FIELD_ATTRIBUTE",
+            `${label} is a relation field and stores no value, so it can't take "@${name}". Put it on the foreign-key field instead.`
+          );
+        }
+      }
+    }
+    refusedByOwner.set(field, refused);
+    return refused;
   }
 
   /** Binds one model's attributes. */
@@ -635,7 +697,6 @@ export function createIdbAttributeBinder(input: IdbAttributeBinderInput): IdbAtt
     let failed = false;
     let id: PslSpan | undefined;
     let unique: PslSpan | undefined;
-    let updatedAt: PslSpan | undefined;
     let defaultValue: BoundFieldAttributes["default"];
     const generators: { onCreate?: BoundAttribute<BoundGeneratorCall>; onUpdate?: BoundAttribute<BoundGeneratorCall> } =
       {};
@@ -655,11 +716,6 @@ export function createIdbAttributeBinder(input: IdbAttributeBinderInput): IdbAtt
           if (interpret(uniqueFieldSpec, attribute, ctx) === undefined) failed = true;
           else unique ??= span;
           break;
-        case "updatedAt":
-          // Prisma 8 removed `@updatedAt`. Only its span is kept, so the
-          // interpreter can refuse it with what to write instead.
-          updatedAt ??= span;
-          break;
         case "default": {
           const value = interpret(defaultFieldSpec, attribute, ctx);
           if (value === undefined) failed = true;
@@ -669,16 +725,6 @@ export function createIdbAttributeBinder(input: IdbAttributeBinderInput): IdbAtt
         case "onCreate":
         case "onUpdate": {
           const phase: GeneratorPhase = attribute.name;
-          if (generators[phase] !== undefined) {
-            failed = true;
-            diagnostics.push({
-              code: "PSL_DUPLICATE_ATTRIBUTE",
-              message: `\`@${phase}\` declared more than once on field "${model.name}.${field.name}".`,
-              sourceId,
-              span,
-            });
-            break;
-          }
           const value = interpret(
             typeGeneratorAttributeSpec(phase, generatorSpecContext(model, field)),
             attribute,
@@ -702,7 +748,6 @@ export function createIdbAttributeBinder(input: IdbAttributeBinderInput): IdbAtt
     const bound = {
       id,
       unique,
-      updatedAt,
       default: defaultValue,
       onCreate: generators.onCreate,
       onUpdate: generators.onUpdate,

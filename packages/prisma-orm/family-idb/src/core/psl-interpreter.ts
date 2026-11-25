@@ -302,21 +302,6 @@ function interpretModel(
     const fieldAttributes = attributes.field(model, field);
     if (fieldAttributes.failed) continue;
 
-    // `@updatedAt` is a Prisma 6 attribute that Prisma 8 removed. It is refused on
-    // every field, relation fields included, with upstream's hint unless the field
-    // already writes `@onUpdate(...)`.
-    if (fieldAttributes.updatedAt !== undefined) {
-      const message = `Field "${model.name}.${field.name}" uses unsupported attribute "@updatedAt"`;
-      diagnostics.push({
-        code: "PSL_UNSUPPORTED_FIELD_ATTRIBUTE",
-        message:
-          fieldAttributes.onUpdate === undefined ? `${message}. Use @onCreate(now()) @onUpdate(now()).` : message,
-        sourceId,
-        span: fieldAttributes.updatedAt,
-      });
-      continue;
-    }
-
     // Relation list field (backrelation) — skip for now, resolved in second pass
     if (field.list && modelNames.has(field.typeName)) {
       if (excludedModelNames.has(field.typeName)) {
@@ -329,15 +314,6 @@ function interpretModel(
 
     // FK-side relation field: non-list, type is a model, has @relation
     const relationAttr = fieldAttributes.relation;
-    if (relationAttr && !modelNames.has(field.typeName)) {
-      diagnostics.push({
-        code: "IDB_INVALID_RELATION",
-        message: `Field "${model.name}.${field.name}" has type "${field.typeName}", which is not a model, so it can't declare @relation.`,
-        sourceId,
-        span: relationAttr.span,
-      });
-      continue;
-    }
     if (!field.list && modelNames.has(field.typeName) && relationAttr) {
       if (excludedModelNames.has(field.typeName)) {
         // Same reasoning as the backrelation case above: drop the relation
