@@ -170,6 +170,67 @@ it("uses updated preimages for later rows in a bulk cascade", async () => {
   }
 });
 
+it("uses current referenced fields when a recursive delete rewrote a selected sibling", async () => {
+  const client = await open(
+    defineContract({
+      family,
+      target,
+      models: {
+        Group: { store: "groups", key: "id", fields: { id: "String" } },
+        Node: {
+          store: "nodes",
+          key: "id",
+          fields: { id: "String", groupId: "String", peerId: "String?" },
+          indexes: { idPeer: { keyPath: ["id", "peerId"], unique: true } },
+          fieldDefaults: { peerId: "fallback" },
+          relations: {
+            group: {
+              to: "Group",
+              cardinality: "N:1",
+              onDelete: "cascade",
+              on: { local: ["groupId"], target: ["id"] },
+            },
+            peer: {
+              to: "Node",
+              cardinality: "N:1",
+              onDelete: "setDefault",
+              on: { local: ["peerId"], target: ["id"] },
+            },
+          },
+        },
+        Leaf: {
+          store: "leaves",
+          key: "id",
+          fields: { id: "String", nodeId: "String", peerKey: "String?" },
+          relations: {
+            node: {
+              to: "Node",
+              cardinality: "N:1",
+              onUpdate: "cascade",
+              onDelete: "cascade",
+              on: { local: ["nodeId", "peerKey"], target: ["id", "peerId"] },
+            },
+          },
+        },
+      },
+    })
+  );
+  try {
+    await client.orm["groups"]!.createAll([{ id: "g" }, { id: "other" }]).toArray();
+    await client.orm["nodes"]!.createAll([
+      { id: "a", groupId: "g", peerId: null },
+      { id: "b", groupId: "g", peerId: "a" },
+      { id: "fallback", groupId: "other", peerId: null },
+    ]).toArray();
+    await client.orm["leaves"]!.create({ id: "l", nodeId: "b", peerKey: "a" });
+    await client.orm["groups"]!.delete("g");
+    expect(await client.orm["leaves"]!.findUnique("l")).toBeNull();
+    expect(await client.orm["nodes"]!.findUnique("fallback")).toMatchObject({ groupId: "other" });
+  } finally {
+    await client.close();
+  }
+});
+
 it("does not validate a cascade patch when there are no matching descendants", async () => {
   const client = await open(
     defineContract({
