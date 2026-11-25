@@ -1714,7 +1714,7 @@ function collectDeleteActionScope(
  * deeper hop throws). `setNull` and `setDefault` leave a child row in place and run its
  * `onUpdate` actions for changed fields.
  *
- * `visited` (keyed by `storeName::key`) guards against row-level cycles — two
+ * `visited` records keys scheduled for deletion by store and guards against row-level cycles. Two
  * specific rows whose FKs point at each other through a self-referential or
  * mutually-cascading relation graph. Callers should leave it at its default
  * (a fresh `Set` per top-level call) so independent rows deleted in the same
@@ -1728,16 +1728,18 @@ export async function applyReferentialActionsForRow(
   modelName: string,
   row: Record<string, unknown>,
   root?: ReferentialRoot,
-  visited: Set<string> = new Set(),
+  visited: Map<string, Set<string>> = new Map(),
   via?: string
 ): Promise<void> {
   const keyPath = getKeyPath(contract, modelName);
   const key = extractKeyFromRow(row, keyPath);
   root ??= { operation: "delete", modelName, key, decimalParents: new Map() };
   const storeName = getStoreName(contract, modelName);
-  const rowKey = keyToken([storeName, key]);
-  if (visited.has(rowKey)) return;
-  visited.add(rowKey);
+  const rowKey = keyToken([key]);
+  let visitedKeys = visited.get(storeName);
+  if (!visitedKeys) visited.set(storeName, (visitedKeys = new Set()));
+  if (visitedKeys.has(rowKey)) return;
+  visitedKeys.add(rowKey);
 
   const meta = makePlanMeta(contract);
   const edges = getChildEnforcementEdges(contract, modelName);
@@ -1762,10 +1764,14 @@ export async function applyReferentialActionsForRow(
       continue;
 
     if (action === "restrict") {
-      const key = extractKeyFromRow(row, keyPath);
-      const excludesSelf: IdbRowFilter | undefined =
-        def.relatedModelName === modelName ? (child) => !keyEquals(extractKeyFromRow(child, keyPath), key) : undefined;
-      if (await rowExists(scope, contract, meta, def.relatedModelName, def.targetFields, values, excludesSelf)) {
+      const deleting = visited.get(def.relatedStoreName);
+      const filter: IdbRowFilter | undefined =
+        deleting &&
+        ((child) => {
+          const childKey = extractKeyFromRow(child, getKeyPath(contract, def.relatedModelName));
+          return !deleting.has(keyToken([childKey]));
+        });
+      if (await rowExists(scope, contract, meta, def.relatedModelName, def.targetFields, values, filter)) {
         throw new Error(
           via === undefined
             ? `Cannot delete ${modelName} '${keyToken(extractKeyFromRow(row, keyPath))}': child records exist on relation '${def.relationName}'. ` +
@@ -1786,7 +1792,7 @@ export async function applyReferentialActionsForRow(
       for (const [index, candidate] of children.entries()) {
         const childKey = extractKeyFromRow(candidate, childKeyPath);
         // The ancestor still needs to run its remaining actions before its original caller deletes it.
-        if (visited.has(keyToken([def.relatedStoreName, childKey]))) continue;
+        if (visited.get(def.relatedStoreName)?.has(keyToken([childKey]))) continue;
         const child =
           rewritesSiblings && index > 0
             ? (await scope.execute({ meta, kind: "key-get", storeName: def.relatedStoreName, key: childKey }))[0]

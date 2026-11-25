@@ -298,6 +298,68 @@ it.each(["setDefault", "cascade"] as const)(
   }
 );
 
+it.each([false, true])(
+  "restrict ignores only rows already being deleted (surviving reference: %s)",
+  async (survives) => {
+    const client = await open(
+      defineContract({
+        family,
+        target,
+        models: {
+          Group: {
+            store: "groups",
+            key: "id",
+            fields: { id: "String", leaderId: "String?", guardId: "String?" },
+            relations: {
+              nodes: {
+                to: "Node",
+                cardinality: "1:N",
+                onDelete: "cascade",
+                on: { local: ["id"], target: ["groupId"] },
+              },
+              aLeader: {
+                to: "Node",
+                cardinality: "N:1",
+                onDelete: "cascade",
+                on: { local: ["leaderId"], target: ["id"] },
+              },
+              zGuard: {
+                to: "Node",
+                cardinality: "N:1",
+                onDelete: "restrict",
+                on: { local: ["guardId"], target: ["id"] },
+              },
+            },
+          },
+          Node: {
+            store: "nodes",
+            key: "id",
+            fields: { id: "String", groupId: "String" },
+            relations: { group: { to: "Group", cardinality: "N:1", on: { local: ["groupId"], target: ["id"] } } },
+          },
+        },
+      })
+    );
+    try {
+      await client.orm["groups"]!.create({ id: "g", leaderId: null, guardId: null });
+      await client.orm["nodes"]!.create({ id: "a", groupId: "g" });
+      await client.orm["groups"]!.where({ id: "g" }).update({ leaderId: "a", guardId: "a" });
+      if (survives) {
+        await client.orm["groups"]!.create({ id: "other", leaderId: null, guardId: "a" });
+        await expect(client.orm["groups"]!.delete("g")).rejects.toThrow(/zGuard/);
+        expect(await client.orm["groups"]!.findUnique("g")).toMatchObject({ guardId: "a" });
+        expect(await client.orm["nodes"]!.findUnique("a")).toMatchObject({ groupId: "g" });
+      } else {
+        await client.orm["groups"]!.delete("g");
+        expect(await client.orm["groups"]!.findUnique("g")).toBeNull();
+        expect(await client.orm["nodes"]!.findUnique("a")).toBeNull();
+      }
+    } finally {
+      await client.close();
+    }
+  }
+);
+
 it("does not validate a cascade patch when there are no matching descendants", async () => {
   const client = await open(
     defineContract({
