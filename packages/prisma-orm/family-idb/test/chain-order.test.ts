@@ -53,4 +53,8 @@ describe("chainOrderByMetadata", () => {
       order(pkg("0001_baseline", null, "A"), pkg("0002_loop", "A", "B"), pkg("0003_back", "B", "A"))
     ).toThrow(/cycle/i);
   });
+
+  it("rejects a package from a hash back to itself, such as a data fix at the head", () => {
+    expect(() => order(pkg("0001_baseline", null, "A"), pkg("0002_fix", "A", "A"))).toThrow(/cycle.*0002_fix/i);
+  });
 });

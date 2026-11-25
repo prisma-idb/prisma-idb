@@ -3,9 +3,9 @@
  *
  * `createAutoMigratingIdbClient` consumes a bundled `ContractSpace`
  * (assembled at design time by `prisma-idb migration contract-space`)
- * and walks its `migrations` array from the current marker to `headRef.hash`.
+ * and plans a path through its `migrations` from the current marker to `headRef.hash`.
  * The browser-side path never re-runs the planner — it just applies the
- * pre-computed `ops.json` blobs in chain order.
+ * pre-computed `ops.json` blobs along that path.
  *
  * These tests construct the contract space in-memory via
  * {@link buildContractSpaceFixture}, simulating what the codegen would emit
@@ -255,7 +255,7 @@ describe("auto-migrate across contract evolution", () => {
     // `from === v1 hash`.
     const broken = buildContractSpaceFixture([v2, v3]);
     await expect(createAutoMigratingIdbClient({ contractSpace: broken, dbName: name })).rejects.toThrow(
-      /chain broken/i
+      /found no migrations from "[0-9a-f]+" to its head/
     );
   });
 });

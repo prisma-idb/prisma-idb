@@ -43,7 +43,7 @@ describe("auto-migrate chain validation", () => {
       migrations: [{ ...baseline, metadata: { ...baseline.metadata, migrationHash: "wrong" } }],
       error: /failed integrity check/,
     },
-    { name: "cycle", migrations: [loop, repeated], error: /contains a cycle/ },
+    { name: "cycle that never reaches the head", migrations: [loop, repeated], error: /found no migrations from null/ },
     { name: "non-IDB operation", migrations: [nonIdb], error: /Non-IDB operation/ },
   ])("rejects $name without applying pending schema", async ({ migrations, error }) => {
     const dbName = `auto-migrate-validation-${++dbCounter}`;
