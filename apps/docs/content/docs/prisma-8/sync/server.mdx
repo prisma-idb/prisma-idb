@@ -67,6 +67,10 @@ On the wire, `BigInt` is a decimal string, `Bytes` is base64 and `DateTime` is a
 
 For a numeric root key, use its string representation as the scope key. For example, key `7` matches scope `"7"`. The adapter restores numeric keys from changelog text and returns them as numbers on pull. A push with a PostgreSQL `float4` primary key must supply a number exactly representable at that precision. When deriving a scope key from a `float4` database value, use `String(Math.fround(value))`.
 
+Pull and rejected-push records use the same exact `float4` value for a primary key and foreign keys referencing it. For example, PostgreSQL may return both as `0.1`, but the adapter sends each as `0.10000000149011612` so IndexedDB can resolve the reference.
+
+When upgrading, check for historical `float4` changelog keys that would round to another number. An older push may have stored a row at `0.10000000149011612` and logged `"0.1"`. Pull emits `KEYPATH_VALIDATION_FAILURE` for that log and the client advances its cursor without applying the change. Reconcile affected changelog keys with the actual server keys, using the original writes for deleted rows. If a rounded key identified the scope root, reconcile the affected changelog scope keys too. For clients that already advanced past those entries, reconcile affected IndexedDB keys and references from current PostgreSQL data or rebuild the clients from corrected history.
+
 ## `buildPullQueries(logs, { scopeKey })`
 
 Takes changelog rows, each `{ changelogId, model, key }`, and returns one `{ changelogId, model, check }` per row, with `"unknown-model"`, `"root"` or `"scoped"` ownership checks. The SQL adapter validates each key when it resolves the record.

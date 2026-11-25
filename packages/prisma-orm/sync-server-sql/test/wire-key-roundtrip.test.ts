@@ -398,11 +398,143 @@ it("rejects float4 keys that would identify a different row after PostgreSQL rou
     ok: true,
     results: [{ id: "invalid-delete", success: false, error: "KEYPATH_VALIDATION_FAILURE", retryable: false }],
   });
-  expect(await adapter.pull(db, { scopeKey: "u1" })).toMatchObject({
+  await seed(db, {
+    Changelog: [
+      {
+        id: "00000000-0000-7000-8000-000000000001",
+        model: "FloatItem",
+        keyPath: "0.1",
+        operation: "create",
+        scopeKey: "u1",
+        outboxEventId: "rounded-legacy",
+      },
+    ],
+  });
+  const pulled = await adapter.pull(db, { scopeKey: "u1" });
+  expect(pulled).toMatchObject({
     ok: true,
     logs: [
+      { keyPath: "0.1", validationError: "KEYPATH_VALIDATION_FAILURE" },
       { keyPath: exact.id, record: exact },
       { keyPath: fraction.id, record: fraction },
     ],
   });
+  if (!pulled.ok) throw new Error("pull failed");
+  expect(pulled.logs[0]).not.toHaveProperty("record");
+});
+
+it("keeps float4 parent keys and child references equal on pull and rejected pushes", async () => {
+  const db = await testDb();
+  const contract = defineContract({
+    family: idbFamilyPack,
+    target: idbTargetPack,
+    models: {
+      User: { store: "users", key: "id", fields: { id: "String", name: "String" } },
+      FloatItem: { store: "floatItems", key: "id", fields: { id: "Float", ownerId: "String", name: "String" } },
+      FloatChild: {
+        store: "floatChildren",
+        key: "id",
+        fields: {
+          id: "String",
+          parentId: "Float",
+          preferredId: "Float?",
+          measurement: "Float",
+        },
+      },
+    },
+  }) as unknown as IdbContract;
+  const scopeKey = "u1";
+  const storageHash = contract.storage.storageHash;
+  const serverContract = structuredClone(testContract);
+  // The SQL fixture emits the owning unique FK as N:1. Exercise an explicit 1:1 contract against the same FK.
+  const relations = serverContract.domain.namespaces["public"]!.models["FloatChild"]!.relations;
+  const preferred = relations["preferred"];
+  if (preferred?.cardinality === "N:1") relations["preferred"] = { ...preferred, cardinality: "1:1" };
+  const handlers = createSqlSync({
+    contract: serverContract,
+    clientContract: contract,
+    rootModel: "User",
+    db,
+    scopeKey,
+  });
+  const parent = { id: Math.fround(0.1), ownerId: scopeKey, name: "parent" };
+  const child = { id: "child", parentId: parent.id, preferredId: parent.id, measurement: 0.1 };
+  await seed(db, {
+    User: [
+      { id: scopeKey, name: "Ann" },
+      { id: "u2", name: "Other owner" },
+    ],
+  });
+  const otherParent = Math.fround(0.2);
+  await db.orm.public.FloatItem.select("id").create({ id: otherParent, ownerId: "u2", name: "other" });
+
+  async function push(events: unknown[]) {
+    const response = await handlers.push(
+      new Request("https://sync.test/push", {
+        method: "POST",
+        body: JSON.stringify({ storageHash, events }),
+      })
+    );
+    expect(response.status).toBe(200);
+    return response.json();
+  }
+
+  expect(
+    await push([
+      { id: "parent-create", entityType: "FloatItem", operation: "create", payload: parent },
+      { id: "child-create", entityType: "FloatChild", operation: "create", payload: child },
+    ])
+  ).toEqual([
+    { id: "parent-create", success: true },
+    { id: "child-create", success: true },
+  ]);
+
+  const client = await openSyncClient(contract, ["users", "floatItems", "floatChildren"]);
+  try {
+    const url = new URL("https://sync.test/pull");
+    url.searchParams.set("storageHash", storageHash);
+    const response = await handlers.pull(new Request(url));
+    expect(response.status).toBe(200);
+    const { logs } = await response.json();
+    expect(await applyPull(client, logWithRecordSchema.array().parse(logs))).toMatchObject({
+      applied: 2,
+      skipped: 0,
+      validationFailed: 0,
+    });
+    const [storedChild] = (await client.withTransaction(["floatChildren"], (scope) =>
+      scope.execute({ kind: "key-get", storeName: "floatChildren", key: child.id } as never)
+    )) as (typeof child)[];
+    expect(storedChild).toBeDefined();
+    expect.soft(storedChild).toEqual(child);
+    expect
+      .soft(
+        await client.withTransaction(["floatItems"], (scope) =>
+          scope.execute({ kind: "key-get", storeName: "floatItems", key: storedChild!.parentId } as never)
+        )
+      )
+      .toEqual([parent]);
+
+    expect
+      .soft(
+        await push([
+          {
+            id: "wrong-parent",
+            entityType: "FloatChild",
+            operation: "update",
+            payload: { key: child.id, patch: { parentId: otherParent } },
+          },
+        ])
+      )
+      .toEqual([
+        {
+          id: "wrong-parent",
+          success: false,
+          error: "SCOPE_VIOLATION",
+          retryable: false,
+          record: child,
+        },
+      ]);
+  } finally {
+    await client.close();
+  }
 });
