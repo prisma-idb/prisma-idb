@@ -18,6 +18,8 @@ import idbFamilyPack from "@prisma-idb/family-idb/pack";
 import idbTargetPack from "@prisma-idb/target-idb/pack";
 import { createIDBRuntimeDriver, type IdbRuntimeDriverInstance } from "@prisma-idb/driver-idb/runtime";
 import type { IdbQueryPlan } from "@prisma-idb/adapter-idb/runtime";
+import { createAutoMigratingIdbClient } from "../src/exports/client-auto";
+import { buildContractSpaceFixture } from "./_contract-space-fixture";
 import { idbOrm, IdbRecordValidationError } from "../src/exports/orm";
 import type { IdbQueryExecutor, IdbQueryExecutorWithTransaction } from "../src/exports/orm";
 
@@ -2084,6 +2086,303 @@ describe("restrict — shared-primary-key 1:1 (child's own PK is the FK)", () =>
   });
 });
 
+// ── foreign keys that a referential action changes ────────────────────────────
+
+type Orm = {
+  create(data: unknown): Promise<unknown>;
+  delete(key: unknown): Promise<unknown>;
+  findUnique(key: unknown): Promise<unknown>;
+  upsert(args: { where: unknown; create: unknown; update: unknown }): Promise<unknown>;
+  updateAll(patch: unknown): { toArray(): Promise<unknown[]> };
+  where(filter: unknown): {
+    update(patch: unknown): Promise<unknown>;
+    deleteAll(): { toArray(): Promise<unknown[]> };
+  };
+};
+
+/** A client with the contract's indexes, which the planner uses for foreign-key lookups. */
+async function open(contract: ReturnType<typeof defineContract>) {
+  const client = await createAutoMigratingIdbClient({
+    contractSpace: buildContractSpaceFixture([contract]),
+    dbName: nextDbName(),
+  });
+  return { client, orm: client.orm as unknown as Record<string, Orm> };
+}
+
+// A one-to-one relation declared on the foreign-key side holds a foreign key,
+// whether or not the referenced model declares the inverse.
+describe("one-to-one declared only on the foreign-key side", () => {
+  function contractFor(onDelete?: "setNull") {
+    return defineContract({
+      family: idbFamilyPack,
+      target: idbTargetPack,
+      models: {
+        User: { store: "users", key: "id", fields: { id: "String" } },
+        Profile: {
+          store: "profiles",
+          key: "id",
+          fields: { id: "String", userId: "String?" },
+          indexes: { userId: { keyPath: "userId", unique: true } },
+          relations: {
+            user: {
+              to: "User",
+              cardinality: "1:1",
+              on: { local: ["userId"], target: ["id"] },
+              ...(onDelete === undefined ? {} : { onDelete }),
+            },
+          },
+        },
+        Badge: {
+          store: "badges",
+          key: "id",
+          fields: { id: "String", profileUserId: "String" },
+          relations: {
+            profile: {
+              to: "Profile",
+              cardinality: "N:1",
+              onUpdate: "cascade",
+              on: { local: ["profileUserId"], target: ["userId"] },
+            },
+          },
+        },
+      },
+    });
+  }
+
+  it("refuses a foreign key that points at no row", async () => {
+    const { client, orm } = await open(contractFor());
+    try {
+      await expect(orm["profiles"]!.create({ id: "p1", userId: "missing" })).rejects.toThrow(
+        "FK violation on relation 'user': no User with id='missing'"
+      );
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("restricts deleting the referenced row by default", async () => {
+    const { client, orm } = await open(contractFor());
+    try {
+      await orm["users"]!.create({ id: "u1" });
+      await orm["profiles"]!.create({ id: "p1", userId: "u1" });
+      await expect(orm["users"]!.delete("u1")).rejects.toThrow("Cannot delete User 'u1': child records exist");
+      expect(await orm["users"]!.findUnique("u1")).toEqual({ id: "u1" });
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("sets the foreign key through a nested connect", async () => {
+    const { client, orm } = await open(contractFor());
+    try {
+      await orm["users"]!.create({ id: "u1" });
+      await orm["profiles"]!.create({
+        id: "p1",
+        user: (rel: { connect(w: unknown): unknown }) => rel.connect({ id: "u1" }),
+      });
+      expect(await orm["profiles"]!.findUnique("p1")).toEqual({ id: "p1", userId: "u1" });
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("refuses an empty connect on an owning one-to-one instead of choosing a row", async () => {
+    const { client, orm } = await open(contractFor());
+    try {
+      await orm["users"]!.create({ id: "u1" });
+      await expect(
+        orm["profiles"]!.create({
+          id: "p1",
+          user: (rel: { connect(w: unknown): unknown }) => rel.connect([]),
+        })
+      ).rejects.toThrow(/connect\(\).*requires a criterion/);
+      expect(await orm["profiles"]!.findUnique("p1")).toBeNull();
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("opens a nested model's foreign key target in an explicit transaction", async () => {
+    const { client, orm } = await open(
+      defineContract({
+        family: idbFamilyPack,
+        target: idbTargetPack,
+        models: {
+          Team: { store: "teams", key: "id", fields: { id: "String" } },
+          Employee: {
+            store: "employees",
+            key: "id",
+            fields: { id: "String" },
+            relations: {
+              profiles: { to: "Profile", cardinality: "1:N", on: { local: ["id"], target: ["employeeId"] } },
+            },
+          },
+          Profile: {
+            store: "profiles",
+            key: "id",
+            fields: { id: "String", teamId: "String?", employeeId: "String" },
+            indexes: { teamId: { keyPath: "teamId", unique: true } },
+            relations: {
+              team: { to: "Team", cardinality: "1:1", on: { local: ["teamId"], target: ["id"] } },
+            },
+          },
+        },
+      })
+    );
+    try {
+      await orm["teams"]!.create({ id: "t1" });
+      await client.transaction(["employees"], async (tx) => {
+        await tx["employees"]!.create({
+          id: "e1",
+          profiles: (rel: { create(data: unknown): unknown }) =>
+            rel.create([
+              { id: "p1", teamId: "t1" },
+              { id: "p2", teamId: null },
+            ]),
+        } as never);
+      });
+      expect(await orm["profiles"]!.findUnique("p1")).toMatchObject({ teamId: "t1", employeeId: "e1" });
+      expect(await orm["profiles"]!.findUnique("p2")).toMatchObject({ teamId: null, employeeId: "e1" });
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("does not cascade through a nonunique parent key in a legacy one-to-one contract", async () => {
+    const contract = defineContract({
+      family: idbFamilyPack,
+      target: idbTargetPack,
+      models: {
+        User: {
+          store: "users",
+          key: "id",
+          fields: { id: "String", email: "String" },
+          indexes: { email: { keyPath: "email", unique: true } },
+          relations: {
+            profile: { to: "Profile", cardinality: "1:1", on: { local: ["email"], target: ["userEmail"] } },
+          },
+        },
+        Profile: {
+          store: "profiles",
+          key: "id",
+          fields: { id: "String", userEmail: "String" },
+          indexes: { userEmail: { keyPath: "userEmail", unique: true } },
+          relations: {
+            user: {
+              to: "User",
+              cardinality: "N:1",
+              onDelete: "cascade",
+              on: { local: ["userEmail"], target: ["email"] },
+            },
+          },
+        },
+      },
+    });
+    // Emulate a contract emitted before the authoring requirement for a unique referenced tuple.
+    const legacyContract = {
+      ...contract,
+      storage: {
+        ...contract.storage,
+        stores: { ...contract.storage.stores, users: { ...contract.storage.stores["users"]!, indexes: {} } },
+      },
+    };
+    const { client, orm } = await open(legacyContract);
+    try {
+      await orm["users"]!.create({ id: "u1", email: "shared" });
+      await orm["users"]!.create({ id: "u2", email: "shared" });
+      await orm["profiles"]!.create({ id: "p1", userEmail: "shared" });
+      await expect(orm["users"]!.delete("u1")).rejects.toThrow(/referenced fields must be unique/);
+      expect(await orm["users"]!.findUnique("u1")).toMatchObject({ email: "shared" });
+      expect(await orm["profiles"]!.findUnique("p1")).toMatchObject({ userEmail: "shared" });
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("runs the declared action when the referenced row is deleted", async () => {
+    const { client, orm } = await open(contractFor("setNull"));
+    try {
+      await orm["users"]!.create({ id: "u1" });
+      await orm["profiles"]!.create({ id: "p1", userId: "u1" });
+      await orm["users"]!.delete("u1");
+      expect(await orm["profiles"]!.findUnique("p1")).toEqual({ id: "p1", userId: null });
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("opens stores needed by a cascade from the foreign key supplied by a callback", async () => {
+    const { client, orm } = await open(contractFor());
+    try {
+      await orm["users"]!.create({ id: "u1" });
+      await orm["users"]!.create({ id: "u2" });
+      await orm["profiles"]!.create({ id: "p1", userId: "u1" });
+      await orm["badges"]!.create({ id: "b1", profileUserId: "u1" });
+      await orm["profiles"]!.where({ id: "p1" }).update({
+        user: (rel: { connect(w: unknown): unknown }) => rel.connect({ id: "u2" }),
+      });
+      expect(await orm["badges"]!.findUnique("b1")).toMatchObject({ profileUserId: "u2" });
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("opens stores for cascades from a nested connect through an inverse one-to-one", async () => {
+    const { client, orm } = await open(
+      defineContract({
+        family: idbFamilyPack,
+        target: idbTargetPack,
+        models: {
+          User: {
+            store: "users",
+            key: "id",
+            fields: { id: "String", code: "String" },
+            indexes: { code: { keyPath: "code", unique: true } },
+            relations: {
+              profile: { to: "Profile", cardinality: "1:1", on: { local: ["code"], target: ["userCode"] } },
+            },
+          },
+          Profile: {
+            store: "profiles",
+            key: "id",
+            fields: { id: "String", userCode: "String" },
+            indexes: { userCode: { keyPath: "userCode", unique: true } },
+            relations: { user: { to: "User", cardinality: "N:1", on: { local: ["userCode"], target: ["code"] } } },
+          },
+          Badge: {
+            store: "badges",
+            key: "id",
+            fields: { id: "String", profileCode: "String" },
+            relations: {
+              profile: {
+                to: "Profile",
+                cardinality: "N:1",
+                onUpdate: "cascade",
+                on: { local: ["profileCode"], target: ["userCode"] },
+              },
+            },
+          },
+        },
+      })
+    );
+    try {
+      await orm["users"]!.create({ id: "u1", code: "old" });
+      await orm["users"]!.create({ id: "u2", code: "new" });
+      await orm["profiles"]!.create({ id: "p", userCode: "old" });
+      await orm["badges"]!.create({ id: "b", profileCode: "old" });
+      await client.transaction(["users"], async (tx) => {
+        await tx["users"]!.where({ id: "u2" }).update({
+          profile: (rel: { connect(w: unknown): unknown }) => rel.connect({ id: "p" }),
+        } as never);
+      });
+      expect(await orm["profiles"]!.findUnique("p")).toMatchObject({ userCode: "new" });
+      expect(await orm["badges"]!.findUnique("b")).toMatchObject({ profileCode: "new" });
+    } finally {
+      await client.close();
+    }
+  });
+});
+
 // ── restrict and cascade on a 1:N ─────────────────────────────────────────────
 
 // ── restrict with a null referenced value ─────────────────────────────────────
@@ -2380,6 +2679,102 @@ describe("referential actions — foreign key without a declared inverse relatio
       await orm["posts"]!.create({ id: "p1", tenant: "t1", authorEmail: "a" });
       await orm["users"]!.delete(["t1", "a"]);
       expect(await getAllRows(db, "posts")).toEqual([]);
+    } finally {
+      db.close();
+    }
+  });
+});
+
+describe("shared-primary-key one-to-one with a compound key", () => {
+  it("follows the explicit inverse when both sides join on their primary key", async () => {
+    const { client, orm } = await open(
+      defineContract({
+        family: idbFamilyPack,
+        target: idbTargetPack,
+        models: {
+          User: {
+            store: "users",
+            key: "id",
+            fields: { id: "String" },
+            relations: {
+              profiles: { to: "Profile", cardinality: "1:N", on: { local: ["id"], target: ["id"] } },
+            },
+          },
+          Profile: {
+            store: "profiles",
+            key: "id",
+            fields: { id: "String" },
+            relations: {
+              user: {
+                to: "User",
+                cardinality: "1:1",
+                on: { local: ["id"], target: ["id"] },
+                onDelete: "cascade",
+              },
+            },
+          },
+        },
+      })
+    );
+    try {
+      await expect(orm["profiles"]!.create({ id: "missing" })).rejects.toThrow(/FK violation.*no User/);
+      await orm["users"]!.create({ id: "u1" });
+      await orm["profiles"]!.create({ id: "u1" });
+      await orm["profiles"]!.delete("u1");
+      expect(await orm["users"]!.findUnique("u1")).toEqual({ id: "u1" });
+      await orm["profiles"]!.create({ id: "u1" });
+      await orm["users"]!.delete("u1");
+      expect(await orm["profiles"]!.findUnique("u1")).toBeNull();
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("cascades a delete when the parent's 1:1 lists its key fields in another order", async () => {
+    const contract = defineContract({
+      family: idbFamilyPack,
+      target: idbTargetPack,
+      models: {
+        User: {
+          store: "users",
+          key: ["tenant", "id"],
+          fields: { tenant: "String", id: "String" },
+          relations: {
+            profile: {
+              to: "Profile",
+              cardinality: "1:1",
+              on: { local: ["id", "tenant"], target: ["userId", "tenant"] },
+              onDelete: "cascade",
+            },
+          },
+        },
+        Profile: {
+          store: "profiles",
+          key: ["tenant", "userId"],
+          fields: { tenant: "String", userId: "String" },
+        },
+      },
+    });
+    const name = nextDbName();
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const req = indexedDB.open(name, 1);
+      req.onupgradeneeded = () => {
+        req.result.createObjectStore("users", { keyPath: ["tenant", "id"] });
+        req.result.createObjectStore("profiles", { keyPath: ["tenant", "userId"] });
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+    const executor = new TestExecutorWithTransaction(createIDBRuntimeDriver(name).create());
+    const orm = idbOrm({ contract, executor }) as unknown as Record<
+      string,
+      { create(d: unknown): Promise<unknown>; delete(k: unknown): Promise<unknown> }
+    >;
+    try {
+      await orm["users"]!.create({ tenant: "t1", id: "u1" });
+      await orm["profiles"]!.create({ tenant: "t1", userId: "u1" });
+      await orm["users"]!.delete(["t1", "u1"]);
+      expect(await getAllRows(db, "profiles")).toEqual([]);
     } finally {
       db.close();
     }

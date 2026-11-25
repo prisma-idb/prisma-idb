@@ -238,9 +238,14 @@ function collectStoreNames(
   kind: "create" | "update"
 ): string[] {
   const stores = new Set([getStoreName(contract, modelName), ...fkParentStoreNames(contract, modelName)]);
+  // A relation callback on a foreign key writes that key, which other rows may reference.
+  const scalarData: Record<string, unknown> = { ...parsed.scalarData };
   for (const { relation } of parsed.relationMutations) {
     stores.add(relation.relatedStoreName);
     for (const store of fkParentStoreNames(contract, relation.relatedModelName)) stores.add(store);
+    if (kind === "update" && isForeignKeyRelation(contract, modelName, relation)) {
+      for (const field of relation.localFields) scalarData[field] = null;
+    }
     // A connect or disconnect of children writes their foreign key and their
     // `onUpdate` defaults, whose referential actions may reach further stores.
     if (!isDeclaredChildRelation(contract, modelName, relation)) continue;
@@ -259,7 +264,7 @@ function collectStoreNames(
     const patch = applyUpdateDefaults(
       contract.execution?.mutations.defaults,
       getStoreName(contract, modelName),
-      parsed.scalarData,
+      scalarData,
       createMutationDefaultsCache()
     );
     for (const store of collectOnUpdateEnforcementStoreNames(contract, modelName, patch).storeNames) stores.add(store);
@@ -269,9 +274,7 @@ function collectStoreNames(
 
 /** The stores of every parent `modelName` has a foreign key to. */
 function fkParentStoreNames(contract: IdbContract, modelName: string): string[] {
-  return getRelationDefinitions(contract, modelName)
-    .filter((def) => def.cardinality === "N:1")
-    .map((def) => def.relatedStoreName);
+  return getForeignKeyRelations(contract, modelName).map((def) => def.relatedStoreName);
 }
 
 // ── Graph operations ──────────────────────────────────────────────────────────
@@ -284,7 +287,7 @@ async function createGraph(
   parsed: ParsedMutationInput,
   defaultsCache: MutationDefaultsCache
 ): Promise<Record<string, unknown>> {
-  const { parentOwned, childOwned } = partitionByOwnership(parsed.relationMutations);
+  const { parentOwned, childOwned } = partitionByOwnership(contract, modelName, parsed.relationMutations);
 
   const scalarData = { ...parsed.scalarData };
 
@@ -313,7 +316,7 @@ async function updateFirstGraph(
   const existingRow = await findFirstByFilters(scope, contract, modelName, filters);
   if (!existingRow) return null;
 
-  const { parentOwned, childOwned } = partitionByOwnership(parsed.relationMutations);
+  const { parentOwned, childOwned } = partitionByOwnership(contract, modelName, parsed.relationMutations);
 
   const scalarData = { ...parsed.scalarData };
 
@@ -379,7 +382,7 @@ function parseMutationInput(
       throw new Error("disconnect() is only supported in update() nested mutations");
     }
     if (relation.cardinality === "M:N") throw new Error("M:N nested mutations are not supported");
-    relationMutations.push({ relation, mutation: prepareRelationOperation(contract, relation, mutation) });
+    relationMutations.push({ relation, mutation: prepareRelationOperation(contract, modelName, relation, mutation) });
   }
 
   return { scalarData, relationMutations };
@@ -388,12 +391,13 @@ function parseMutationInput(
 /** Prepare and validate the filters used by the relation write. */
 function prepareRelationOperation(
   contract: IdbContract,
+  modelName: string,
   relation: RelationDefinition,
   mutation: IdbRelationMutation<IdbContract, string>
 ): ParsedRelationOperation {
   if (mutation.kind === "create") return mutation;
   const { kind } = mutation;
-  const parentOwned = relation.cardinality === "N:1";
+  const parentOwned = isForeignKeyRelation(contract, modelName, relation);
   if (parentOwned && kind === "disconnect") return { kind, criteria: [] };
 
   let criteria = kind === "disconnect" ? (mutation.criteria ?? []) : mutation.criteria;
@@ -417,7 +421,11 @@ function prepareRelationOperation(
 // ── Ownership partitioning ────────────────────────────────────────────────────
 
 /** Separate relations whose foreign keys belong to the parent from those owned by children. */
-function partitionByOwnership(mutations: readonly ParsedRelationMutation[]): {
+function partitionByOwnership(
+  contract: IdbContract,
+  modelName: string,
+  mutations: readonly ParsedRelationMutation[]
+): {
   parentOwned: ParsedRelationMutation[];
   childOwned: ParsedRelationMutation[];
 } {
@@ -425,7 +433,8 @@ function partitionByOwnership(mutations: readonly ParsedRelationMutation[]): {
   const childOwned: ParsedRelationMutation[] = [];
 
   for (const item of mutations) {
-    if (item.relation.cardinality === "N:1") {
+    // A foreign key on this model, including a `1:1` declared on the foreign-key side.
+    if (isForeignKeyRelation(contract, modelName, item.relation)) {
       parentOwned.push(item);
       continue;
     }
@@ -435,7 +444,7 @@ function partitionByOwnership(mutations: readonly ParsedRelationMutation[]): {
   return { parentOwned, childOwned };
 }
 
-// ── Parent-owned (N:1) mutations ──────────────────────────────────────────────
+// ── Parent-owned (foreign-key) mutations ──────────────────────────────────────
 
 /** Resolve a to-one mutation into scalar foreign-key values on the parent. */
 async function applyParentOwnedMutation(
@@ -745,10 +754,6 @@ function getStoredAction(
   return storage?.relations?.[relationName]?.[kind] as IdbReferentialAction | undefined;
 }
 
-function sameFields(a: readonly string[], b: readonly string[]): boolean {
-  return a.length === b.length && a.every((field, index) => field === b[index]);
-}
-
 /** Find an action declared on the parent-side relation or on its matching foreign-key relation. */
 function findDeclaredAction(
   contract: IdbContract,
@@ -811,7 +816,7 @@ const childEdgesCache = new WeakMap<object, Map<string, ChildEnforcementEdge[]>>
 
 /**
  * Every reference to `modelName` whose actions a delete or key change must
- * enforce. The edges come from each model's foreign keys (`N:1` relations), so
+ * enforce. The edges come from each model's foreign keys, so
  * a reference is enforced whether or not `modelName` declares the inverse
  * relation. Parent-side relations that no foreign key covers, such as a
  * shared-primary-key `1:1`, are enforced from their own declaration.
@@ -833,26 +838,33 @@ function getChildEnforcementEdges(contract: IdbContract, modelName: string): Chi
   const withActions = (
     def: RelationDefinition,
     action: (kind: ReferentialActionKind) => IdbReferentialAction | undefined,
-    oneSided = false
+    requiresUnambiguousParent: boolean
   ) =>
     edges.push({
       ...def,
       onDelete: enforcedAction(action("onDelete")),
       onUpdate: enforcedAction(action("onUpdate")),
-      needsUniqueParent: oneSided && !uniqueSources.some((source) => sameFieldSet(source.fields, def.localFields)),
+      needsUniqueParent:
+        requiresUnambiguousParent && !uniqueSources.some((source) => sameFieldSet(source.fields, def.localFields)),
       checksDecimalParent:
-        oneSided && def.localFields.some((field) => catalog.fields[field]?.codecId === "idb/decimal@1"),
+        requiresUnambiguousParent &&
+        def.localFields.some((field) => catalog.fields[field]?.codecId === "idb/decimal@1"),
     });
 
   const declared = getRelationDefinitions(contract, modelName).filter((def) =>
     isDeclaredChildRelation(contract, modelName, def)
   );
   for (const def of declared) {
-    withActions(def, (kind) => findDeclaredAction(contract, modelName, def, kind));
+    const singular =
+      def.cardinality === "1:1" ||
+      getForeignKeyRelations(contract, def.relatedModelName).some(
+        (owner) => owner.cardinality === "1:1" && isInverseOf(owner, modelName, def)
+      );
+    withActions(def, (kind) => findDeclaredAction(contract, modelName, def, kind), singular);
   }
   for (const childModelName of Object.keys(domainModelsAtDefaultNamespace(contract.domain))) {
-    for (const fk of getRelationDefinitions(contract, childModelName)) {
-      if (fk.cardinality !== "N:1" || fk.relatedModelName !== modelName) continue;
+    for (const fk of getForeignKeyRelations(contract, childModelName)) {
+      if (fk.relatedModelName !== modelName) continue;
       // A declared parent edge already checks this join with its own action.
       if (declared.some((inverse) => isInverseOf(inverse, childModelName, fk))) continue;
       const def: RelationDefinition = {
@@ -871,18 +883,65 @@ function getChildEnforcementEdges(contract: IdbContract, modelName: string): Chi
   return edges;
 }
 
+const foreignKeyRelationsCache = new WeakMap<object, Map<string, RelationDefinition[]>>();
+
+/** The relations of `modelName` that hold a foreign key. */
+function getForeignKeyRelations(contract: IdbContract, modelName: string): RelationDefinition[] {
+  let perContract = foreignKeyRelationsCache.get(contract);
+  if (!perContract) {
+    perContract = new Map();
+    foreignKeyRelationsCache.set(contract, perContract);
+  }
+  let relations = perContract.get(modelName);
+  if (!relations) {
+    relations = getRelationDefinitions(contract, modelName).filter((def) =>
+      isForeignKeyRelation(contract, modelName, def)
+    );
+    perContract.set(modelName, relations);
+  }
+  return relations;
+}
+
+/**
+ * `true` for a relation that holds a foreign key: every `N:1`, and a `1:1`
+ * declared on the foreign-key side, which isn't the parent side of its join
+ * and either points at the other model's primary key or pairs with a `1:N`
+ * there. Authoring classifies relations the same way. The foreign key is
+ * checked on writes and its actions run whether or not the parent declares
+ * the inverse, as with a SQL foreign-key constraint.
+ */
+function isForeignKeyRelation(contract: IdbContract, modelName: string, def: RelationDefinition): boolean {
+  return def.cardinality === "N:1" || (def.cardinality === "1:1" && oneToOneSide(contract, modelName, def) === "owner");
+}
+
 /** Identify parent-side relations declared on this model that need child checks when it changes. */
 function isDeclaredChildRelation(contract: IdbContract, modelName: string, def: RelationDefinition): boolean {
-  if (def.cardinality === "1:N") return true;
-  if (def.cardinality === "1:1") {
-    // Shared-PK 1:1: the non-owning side is the one whose *own* primary key
-    // IS the FK (localFields === the model's own keyPath, field-for-field,
-    // in order — a compound key must match the whole ordered field list, not
-    // just its first member).
-    const keyPath = getKeyPath(contract, modelName);
-    return sameFields(def.localFields, keyPathFields(keyPath));
+  return (
+    def.cardinality === "1:N" || (def.cardinality === "1:1" && oneToOneSide(contract, modelName, def) === "inverse")
+  );
+}
+
+/** Honor a declared direction before inferring the side from a legacy primary-key join. */
+function oneToOneSide(
+  contract: IdbContract,
+  modelName: string,
+  def: RelationDefinition
+): "owner" | "inverse" | undefined {
+  if (
+    def.localFields.length !== def.targetFields.length ||
+    new Set(def.localFields).size !== def.localFields.length ||
+    new Set(def.targetFields).size !== def.targetFields.length
+  ) {
+    return undefined;
   }
-  return false;
+  const inverses = getRelationDefinitions(contract, def.relatedModelName).filter((other) =>
+    isInverseOf(other, modelName, def)
+  );
+  if (inverses.some((other) => other.cardinality === "N:1")) return "inverse";
+  if (inverses.some((other) => other.cardinality === "1:N")) return "owner";
+  if (sameFieldSet(def.localFields, keyPathFields(getKeyPath(contract, modelName)))) return "inverse";
+  if (sameFieldSet(def.targetFields, keyPathFields(getKeyPath(contract, def.relatedModelName)))) return "owner";
+  return undefined;
 }
 
 // ── Existence lookups ─────────────────────────────────────────────────────────
@@ -1227,12 +1286,11 @@ export async function applyReferentialActionsForRowOnUpdate(
 // ── Scalar FK validation ──────────────────────────────────────────────────────
 
 /**
- * Returns true if `data` contains at least one non-null value for a localField
- * of a N:1 relation — indicating scalar FK fields that need existence validation.
+ * Returns true if `data` contains at least one non-null value for a field of
+ * a foreign key, which then needs existence validation.
  */
 export function hasScalarFkFields(contract: IdbContract, modelName: string, data: Record<string, unknown>): boolean {
-  for (const def of getRelationDefinitions(contract, modelName)) {
-    if (def.cardinality !== "N:1") continue;
+  for (const def of getForeignKeyRelations(contract, modelName)) {
     for (const localField of def.localFields) {
       if (localField in data && data[localField] !== null && data[localField] !== undefined) return true;
     }
@@ -1247,8 +1305,7 @@ export function collectScalarFkStoreNames(
   data: Record<string, unknown>
 ): string[] {
   const stores = new Set([getStoreName(contract, modelName)]);
-  for (const def of getRelationDefinitions(contract, modelName)) {
-    if (def.cardinality !== "N:1") continue;
+  for (const def of getForeignKeyRelations(contract, modelName)) {
     const hasFkField = def.localFields.some((f) => f in data && data[f] !== null && data[f] !== undefined);
     if (hasFkField) stores.add(def.relatedStoreName);
   }
@@ -1275,8 +1332,7 @@ export async function validateScalarFks(
   existingRow?: Record<string, unknown>
 ): Promise<void> {
   const meta = makePlanMeta(contract);
-  for (const def of getRelationDefinitions(contract, modelName)) {
-    if (def.cardinality !== "N:1") continue;
+  for (const def of getForeignKeyRelations(contract, modelName)) {
     if (!def.localFields.some((f) => f in data)) continue;
     const values = def.localFields.map((f) => (f in data ? data[f] : existingRow?.[f]));
     if (values.some((v) => v === null || v === undefined)) continue;
@@ -1296,8 +1352,7 @@ export async function validateScalarFks(
  * updated, so the update has to read each row before writing it.
  */
 function fkCheckNeedsExistingRow(contract: IdbContract, modelName: string, data: Record<string, unknown>): boolean {
-  return getRelationDefinitions(contract, modelName).some((def) => {
-    if (def.cardinality !== "N:1") return false;
+  return getForeignKeyRelations(contract, modelName).some((def) => {
     const set = def.localFields.filter((f) => f in data).length;
     return set > 0 && set < def.localFields.length;
   });
@@ -1405,7 +1460,7 @@ export function collectOnUpdateClosureStoreNames(contract: IdbContract, modelNam
 }
 
 /**
- * Combines FK-existence store scope (this model's own N:1 relations) with
+ * Combines the stores needed for this model's foreign-key checks with
  * `onUpdate` enforcement store scope (this model's child relations) for a
  * single write. Returns the union alongside whether `onUpdate` enforcement
  * actually applies, including self-relations that touch only this model's
@@ -1541,10 +1596,16 @@ export function hasEnforceableChildRelations(contract: IdbContract, modelName: s
   return getChildEnforcementEdges(contract, modelName).length > 0;
 }
 
-/** The store of `modelName` plus the store of every model it has a relation to, in either direction. */
+/** Stores for direct relations and the foreign keys on rows nested writes can create. */
 export function collectRelatedStoreNames(contract: IdbContract, modelName: string): string[] {
   const stores = new Set([getStoreName(contract, modelName)]);
-  for (const def of getRelationDefinitions(contract, modelName)) stores.add(def.relatedStoreName);
+  for (const def of getRelationDefinitions(contract, modelName)) {
+    stores.add(def.relatedStoreName);
+    for (const parentStore of fkParentStoreNames(contract, def.relatedModelName)) stores.add(parentStore);
+    if (isDeclaredChildRelation(contract, modelName, def)) {
+      for (const downstream of collectOnUpdateClosureStoreNames(contract, def.relatedModelName)) stores.add(downstream);
+    }
+  }
   return [...stores];
 }
 
