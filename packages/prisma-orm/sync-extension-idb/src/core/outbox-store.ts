@@ -42,7 +42,12 @@ const isPending = (event: OutboxEvent) => !event.synced && event.retryable;
 // A scope can change several rows; its owner publishes one notification after commit.
 const changedScopes = new WeakSet<IdbTransactionScope>();
 
-/** Whether markSynced or markFailed changed an outbox row in this scope. */
+/** Records that `scope` changed an outbox row, so its owner announces `outboxchange` after commit. */
+export function markOutboxChanged(scope: IdbTransactionScope): void {
+  changedScopes.add(scope);
+}
+
+/** Whether markSynced, markFailed or a pull's discard changed an outbox row in this scope. */
 export function hasOutboxChanges(scope: IdbTransactionScope): boolean {
   return changedScopes.has(scope);
 }
@@ -233,7 +238,7 @@ export async function markSynced(scope: IdbTransactionScope, id: string): Promis
   if (!existing) return;
   await putRecord(scope, OUTBOX_STORE, { ...existing, synced: true, syncedAt: new Date() });
   await clearLocalChangePending(scope, existing.versionMetaId ?? null);
-  changedScopes.add(scope);
+  markOutboxChanged(scope);
 }
 
 /**
@@ -268,5 +273,5 @@ export async function markFailed(
     retryable,
   });
   if (!retryable) await clearLocalChangePending(scope, existing.versionMetaId ?? null);
-  changedScopes.add(scope);
+  markOutboxChanged(scope);
 }

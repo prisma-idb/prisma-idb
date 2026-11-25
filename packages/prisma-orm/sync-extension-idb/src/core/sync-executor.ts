@@ -53,8 +53,8 @@ import type { IdbKeyPath } from "@prisma-idb/client-idb/orm";
 import { domainModelsAtDefaultNamespace } from "@prisma/orm-framework/contract/types";
 import type { OutboxEvent, OutboxWriteEntry, VersionMetaRecord } from "../types";
 import { OUTBOX_ORDER_STORE, OUTBOX_STORE } from "./outbox-store";
-import { scanStore } from "./raw-store";
-import { getModelNameForStore } from "./store-models";
+import { getRecord, scanStore } from "./raw-store";
+import { foreignKeyFieldsIn, getModelNameForStore } from "./store-models";
 import { VERSION_META_STORE, versionMetaKey, resolveVersionMeta } from "./version-meta";
 import { hasDecimalPrimaryKey, preserveDecimalKeySpelling } from "@prisma-idb/client-idb/internal";
 
@@ -496,9 +496,52 @@ class SyncInterceptingTransactionScope implements IdbTransactionScope {
       const previous = await this.#resolveVersionMeta(model, key);
       if (previous) plan = { ...plan, record: preserveDecimalKeySpelling(contract, model, plan.record, previous.key) };
     }
+    const previous =
+      model && isTrackedModel(this.#config, model) ? await this.#foreignKeysBefore(model, plan) : undefined;
     const rows = await this.#inner.execute(plan);
-    await this.#maybeTrack(plan, rows);
+    await this.#maybeTrack(plan, rows, previous);
     return rows;
+  }
+
+  /**
+   * The values the foreign-key fields an update's patch lists had before it,
+   * by the row's version-meta id. The rows are read first, with the same key,
+   * range and filter the update uses, and only when the patch lists a foreign
+   * key. A pulled delete uses them to tell an update that moved the row onto
+   * another parent from one that only repeated the parent it had.
+   */
+  async #foreignKeysBefore(
+    model: string,
+    plan: IdbAtomicPlan
+  ): Promise<Map<string, Record<string, unknown>> | undefined> {
+    const { contract } = this.#config;
+    let before: Record<string, unknown>[];
+    if (plan.kind === "update") {
+      if (foreignKeyFieldsIn(contract, model, plan.patch).length === 0 || plan.key instanceof IDBKeyRange) return;
+      const row = await getRecord<Record<string, unknown>>(this.#inner, plan.storeName, plan.key as IDBValidKey);
+      before = row ? [row] : [];
+    } else if (plan.kind === "scan-write" && plan.write === "put-merged" && plan.patch) {
+      if (foreignKeyFieldsIn(contract, model, plan.patch).length === 0) return;
+      const { storeName, indexName, range, filter, take } = plan;
+      before = await this.#inner.execute({
+        kind: "cursor-scan",
+        storeName,
+        indexName,
+        range,
+        filter,
+        take,
+      } as IdbAtomicPlan);
+    } else {
+      return;
+    }
+    const fields = foreignKeyFieldsIn(contract, model, (plan as { patch: Record<string, unknown> }).patch);
+    const keyPath = getKeyPath(contract, model);
+    return new Map(
+      before.map((row) => [
+        versionMetaKey(model, extractKeyFromRow(row, keyPath)),
+        Object.fromEntries(fields.map((field) => [field, row[field] ?? null])),
+      ])
+    );
   }
 
   /**
@@ -529,7 +572,11 @@ class SyncInterceptingTransactionScope implements IdbTransactionScope {
   }
 
   /** Translates written rows into per-record outbox events for tracked stores. */
-  async #maybeTrack(plan: IdbAtomicPlan, rows: Record<string, unknown>[]): Promise<void> {
+  async #maybeTrack(
+    plan: IdbAtomicPlan,
+    rows: Record<string, unknown>[],
+    previous?: ReadonlyMap<string, Record<string, unknown>>
+  ): Promise<void> {
     const { contract } = this.#config;
     const modelName = getModelNameForStore(contract, plan.storeName);
     if (!modelName || !isTrackedModel(this.#config, modelName)) return;
@@ -558,12 +605,17 @@ class SyncInterceptingTransactionScope implements IdbTransactionScope {
       case "update": {
         const merged = rows[0];
         if (!merged) return;
+        const key = extractKeyFromRow(merged, keyPath);
+        const before = previous?.get(versionMetaKey(modelName, key));
         await this.#writeOutboxAndMeta([
           {
             modelName,
             operation: "update",
-            payload: { patch: plan.patch, key: plan.key },
-            key: extractKeyFromRow(merged, keyPath),
+            // The server reads only `patch` and `key`; `previous` stays for local bookkeeping.
+            payload: before
+              ? { patch: plan.patch, key: plan.key, previous: before }
+              : { patch: plan.patch, key: plan.key },
+            key,
           },
         ]);
         return;
@@ -572,7 +624,14 @@ class SyncInterceptingTransactionScope implements IdbTransactionScope {
         const operation = plan.write === "delete" ? "delete" : "update";
         const entries: OutboxWriteEntry[] = rows.map((row) => {
           const key = extractKeyFromRow(row, keyPath);
-          const payload = plan.write === "delete" ? { key } : { patch: plan.patch, key };
+          const before = previous?.get(versionMetaKey(modelName, key));
+          // The server reads only `patch` and `key`; `previous` stays for local bookkeeping.
+          const payload =
+            plan.write === "delete"
+              ? { key }
+              : before
+                ? { patch: plan.patch, key, previous: before }
+                : { patch: plan.patch, key };
           return { modelName, operation, payload, key };
         });
         await this.#writeOutboxAndMeta(entries);

@@ -64,7 +64,7 @@ import {
 } from "@prisma-idb/target-idb/runtime";
 import type { SyncIdbClient } from "./sync-client";
 import { deleteRecord, putRecord, scanStore } from "./raw-store";
-import { OUTBOX_STORE } from "./outbox-store";
+import { markOutboxChanged, OUTBOX_STORE } from "./outbox-store";
 import { getModelNameForStore } from "./store-models";
 import { domainModelsAtDefaultNamespace } from "@prisma/orm-framework/contract/types";
 import { VERSION_META_STORE, versionMetaKey, resolveVersionMeta, nativeVersionMetaKey } from "./version-meta";
@@ -272,12 +272,16 @@ export const DISCARDED_BY_PULL = "Discarded: a change pulled from the server del
  * marked non-retryable, and its row's pending flag is cleared, in the pull's
  * transaction, so the local rows and the queue agree.
  *
- * The cascade follows the local foreign keys. An unsent update that moved a row
- * onto a deleted parent, matched through the relation's referenced fields
- * against the values the deleted rows had, changed that key only locally: the server still has the
- * row under its old parent and did not delete it. Those events stay retryable and
- * the row stays pending, so the push is rejected and reconciliation restores the
- * row from the server, instead of the client losing it for good.
+ * The cascade follows the local foreign keys. An unsent update that moved a
+ * row onto a deleted parent changed that key only locally: the server still has
+ * the row under its old parent and did not delete it. Such a move is matched
+ * through the relation's referenced fields against the values the deleted rows
+ * had. The row's events stay retryable and the row stays pending, so the push
+ * is rejected and reconciliation restores the row from the server, instead of
+ * the client losing it for good.
+ *
+ * Discarding an event changes the pending count, so the scope is marked for an
+ * `outboxchange` notification after the pull's transaction commits.
  */
 async function discardPendingEdits(
   scope: IdbTransactionScope,
@@ -321,6 +325,7 @@ async function discardPendingEdits(
   for (const event of events) {
     if (moved.has(event.versionMetaId)) continue;
     await putRecord(scope, OUTBOX_STORE, { ...event, retryable: false, lastError: DISCARDED_BY_PULL });
+    markOutboxChanged(scope);
   }
   for (const { meta } of pending.values()) {
     if (moved.has(meta.id)) continue;
@@ -336,6 +341,12 @@ async function discardPendingEdits(
  * whose patch changed only some of its fields is matched too. They are compared
  * with the fields the key references, which can be a unique field rather than
  * the primary key, in the relation's order.
+ *
+ * A patch can list a foreign key without changing it. An update records the
+ * values its listed foreign keys had before it in `payload.previous`, and a
+ * relation whose listed fields all kept their values is not a move. An event
+ * without `previous`, such as one from `updateAll` or an earlier version, is
+ * treated as a move, which keeps its edit instead of losing it.
  */
 function movesOntoDeletedRow(
   contract: IdbContract,
@@ -344,14 +355,24 @@ function movesOntoDeletedRow(
   deletedRows: ReadonlyMap<string, readonly Record<string, unknown>[]>
 ): boolean {
   if (event.operation !== "update") return false;
-  const patch = (event.payload as { patch?: Record<string, unknown> } | null)?.patch;
+  const payload = event.payload as { patch?: Record<string, unknown>; previous?: Record<string, unknown> } | null;
+  const patch = payload?.patch;
   if (patch === undefined || patch === null) return false;
+  const previous = payload?.previous;
   const models = domainModelsAtDefaultNamespace(contract.domain) as Record<string, DomainModel | undefined>;
+  const ownFields = models[event.entityType]?.fields ?? {};
   for (const relation of Object.values(models[event.entityType]?.relations ?? {})) {
     if (relation.cardinality !== "N:1") continue;
     const { localFields, targetFields } = relation.on;
     if (localFields.length === 0 || localFields.length !== targetFields.length) continue;
-    if (!localFields.some((field) => field in patch)) continue;
+    const listed = localFields.filter((field) => field in patch);
+    if (listed.length === 0) continue;
+    const changed =
+      previous === undefined ||
+      listed.some(
+        (field) => !(field in previous) || !fieldValuesEqual(ownFields[field], previous[field], patch[field])
+      );
+    if (!changed) continue;
     const targetModel = typeof relation.to === "string" ? relation.to : relation.to.model;
     const fields = models[targetModel]?.fields ?? {};
     const isTarget = (target: Record<string, unknown>) =>
@@ -374,12 +395,17 @@ interface DomainModel {
   >;
 }
 
-/** Decimal values compare numerically, so `"1.5"` and `"1.50"` are one value; other values compare as IndexedDB keys. */
+/**
+ * Decimal values compare numerically, so `"1.5"` and `"1.50"` are one value;
+ * other values compare as IndexedDB keys. A null or missing value equals nothing,
+ * as a null foreign key points at no row.
+ */
 function fieldValuesEqual(
   field: { readonly type?: { readonly codecId?: string } } | undefined,
   stored: unknown,
   patched: unknown
 ): boolean {
+  if (stored === null || stored === undefined || patched === null || patched === undefined) return false;
   if (field?.type?.codecId === "idb/decimal@1") {
     return typeof stored === "string" && typeof patched === "string" && compareDecimalValues(stored, patched) === 0;
   }

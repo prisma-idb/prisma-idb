@@ -123,7 +123,8 @@ export interface SyncIdbClient<TContract extends IdbContract> {
 
   /**
    * Subscribe to committed outbox changes. `outboxwrite` carries appended entries;
-   * `outboxchange` has no payload and also fires after mark-synced/mark-failed.
+   * `outboxchange` has no payload and also fires after mark-synced/mark-failed
+   * and after a pull discards unsent edits.
    * Each tracked write or transaction emits once, including bulk operations.
    * Nested or cascading ORM writes can use several transactions and notifications.
    * Rolled-back writes emit neither event. Returns an unsubscribe function.

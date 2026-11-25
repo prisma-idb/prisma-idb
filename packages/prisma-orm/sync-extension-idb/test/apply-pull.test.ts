@@ -887,6 +887,38 @@ describe("applyPull keeping an unsent move onto a deleted parent, whatever the r
     }
   });
 
+  it("discards an edit whose patch repeats the parent the row already had, and announces it", async () => {
+    const client = await createClient();
+    try {
+      await seedChild(client, { parentSlug: "one" });
+      // Lists the foreign key without changing it: the server has the row under the same parent.
+      await asAccessors(client.orm)["children"]!.where({ id: "k1" }).update({ parentSlug: "one", title: "edited" });
+      const [queued] = (await scanAll(client, "_idb_sync_outbox")).filter((e) => e["entityType"] === "Child");
+      expect(queued).toMatchObject({ payload: { previous: { parentSlug: "one" } } });
+      let changes = 0;
+      const off = client.on("outboxchange", () => changes++);
+      expect(await client.outbox.pendingCount()).toBe(1);
+
+      await applyPull(client, [
+        { changelogId: changelogId(6), model: "Parent", operation: "delete", keyPath: "p1", record: null },
+      ]);
+      off();
+
+      expect(await scanAll(client, "children")).toEqual([]);
+      expect((await scanAll(client, "_idb_sync_outbox")).find((e) => e["entityType"] === "Child")).toMatchObject({
+        retryable: false,
+        lastError: DISCARDED_BY_PULL,
+      });
+      expect(await keyGet(client, "_idb_sync_version_meta", 'Child::"k1"')).toMatchObject({
+        localChangePending: false,
+      });
+      expect(await client.outbox.pendingCount()).toBe(0);
+      expect(changes).toBe(1);
+    } finally {
+      await client.close();
+    }
+  });
+
   it("discards the unsent edit of a row the delete cascaded to without a move", async () => {
     const client = await createClient();
     try {
