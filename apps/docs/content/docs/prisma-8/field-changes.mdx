@@ -121,7 +121,7 @@ transformRecordsOp("Todo", {
 });
 ```
 
-For a supported type conversion, use `coerce(...)`. Its targets are `int`, `string`, `boolean`, and `isoDateString`. `int` accepts a value only if it converts to a whole number that fits an `Int`, from -2147483648 to 2147483647, so `"1.5"` and `""` abort the upgrade. Use `setLiteral(...)` only when you intend to overwrite every old value with a supported primitive literal. Neither transform can write `Date`, `BigInt`, `Bytes`, list, or object values, or generate a value per record.
+For a supported type conversion, use `coerce(...)`. Its targets are `int`, `string`, `boolean`, and `isoDateString`. `int` accepts a number, a boolean, or decimal text such as `"42"` or `" -7 "`, and only if it converts to a whole number that fits an `Int`, from -2147483648 to 2147483647. `"1.5"`, `""`, `"0x10"` and `"1e3"` abort the upgrade. Use `setLiteral(...)` only when you intend to overwrite every old value with a supported primitive literal. Neither transform can write `Date`, `BigInt`, `Bytes`, list, or object values, or generate a value per record.
 
 The DSL also has no transform that fills only `null`. `defaultIfMissing(...)` preserves `null`. Changing a nullable field to required therefore has no supported transform that fills null values while preserving other values. Keep the field nullable when existing records can contain `null`. For an unsupported required-field addition, add the field as nullable so it needs no backfill, as shown above.
 

@@ -1,3 +1,4 @@
+import { INT32_RANGE, isIntegerIn } from "@prisma/orm-framework/components/codec";
 import { errorUnfilledPlaceholder } from "@prisma/orm-framework/errors/migration";
 import type { IdbValueTransform, TransformRecordsOp } from "./migration-factories";
 
@@ -43,8 +44,12 @@ export function transformRecord(
   return result;
 }
 
-const INT32_MIN = -2_147_483_648;
-const INT32_MAX = 2_147_483_647;
+/**
+ * Decimal text `coerce("int")` reads, such as `"42"`, `" -7 "` or `"3.0"`.
+ * `Number()` alone would also read `"0x10"`, `"0b11"` and `"1e3"`, which a
+ * stored `Int` written as text never looks like.
+ */
+const DECIMAL_TEXT = /^[+-]?\d+(\.\d+)?$/;
 
 /** Applies one value transform; an unfilled placeholder throws, wherever it sits in a pipe. */
 function transformValue(transform: IdbValueTransform, value: unknown, mode: RecordTransformMode): unknown {
@@ -67,10 +72,10 @@ function transformValue(transform: IdbValueTransform, value: unknown, mode: Reco
               ? value
               : typeof value === "boolean"
                 ? Number(value)
-                : typeof value === "string" && value.trim() !== ""
+                : typeof value === "string" && DECIMAL_TEXT.test(value.trim())
                   ? Number(value)
                   : Number.NaN;
-          if (Number.isInteger(n) && n >= INT32_MIN && n <= INT32_MAX) return n;
+          if (isIntegerIn(n, INT32_RANGE)) return n;
           break;
         }
         case "string":
