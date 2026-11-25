@@ -2187,6 +2187,19 @@ describe("referential actions — null in the parent's referenced fields", () =>
     db.close();
   });
 
+  it.each([false, true])("disconnect: ignores a partially null parent key (with criteria: %s)", async (withFilter) => {
+    const { db, orm, members } = await seed();
+    try {
+      await orm["orgs"]!.where({ id: "partial" }).update({
+        members: (rel: { disconnect(criteria?: { id: string }[]): unknown }) =>
+          withFilter ? rel.disconnect([{ id: "m-partial" }]) : rel.disconnect(),
+      });
+      expect(await getAllRows(db, "members")).toEqual(members);
+    } finally {
+      db.close();
+    }
+  });
+
   it("update: changes a field of a whole-null tuple and leaves the children alone", async () => {
     const { db, orm, members } = await seed();
     await orm["orgs"]!.where({ id: "empty" }).update({ orgId: "B" });
