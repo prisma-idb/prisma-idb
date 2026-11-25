@@ -525,14 +525,17 @@ type JoinPairs<Local extends readonly string[], Target extends readonly string[]
   [I in keyof Local]: readonly [Local[I], Target[I & keyof Target]];
 }[number];
 
-type HasRepeatedJoinField<Fields extends readonly string[], Seen = never> = Fields extends readonly [
-  infer First extends string,
-  ...infer Rest extends readonly string[],
-]
-  ? First extends Seen
-    ? true
-    : HasRepeatedJoinField<Rest, Seen | First>
-  : false;
+type HasRepeatedJoinField<
+  Fields extends readonly string[],
+  Seen = never,
+  Index extends unknown[] = [],
+> = number extends Fields["length"]
+  ? false
+  : Index["length"] extends Fields["length"]
+    ? false
+    : Fields[Index["length"]] extends Seen
+      ? true
+      : HasRepeatedJoinField<Fields, Seen | Fields[Index["length"]], [...Index, unknown]>;
 
 type ReciprocalCardinality<
   TContract,
