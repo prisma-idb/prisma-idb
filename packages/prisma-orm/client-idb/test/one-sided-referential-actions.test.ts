@@ -163,6 +163,52 @@ it("preserves the action on each parent alias of the same join", async () => {
   expect(await rows("posts")).toEqual([{ id: "p1", authorId: "u1" }]);
 });
 
+it("preserves the rows when a one-sided action targets an ambiguous legacy Decimal key", async () => {
+  const db = await open(
+    defineContract({
+      family: idbFamilyPack,
+      target: idbTargetPack,
+      models: {
+        User: {
+          store: "users",
+          key: "id",
+          fields: { id: "String", code: "Decimal" },
+          indexes: { byCode: { keyPath: "code", unique: true } },
+        },
+        Post: {
+          store: "posts",
+          key: "id",
+          fields: { id: "String", authorCode: "Decimal" },
+          relations: {
+            author: {
+              to: "User",
+              cardinality: "N:1",
+              on: { local: ["authorCode"], target: ["code"] },
+              onDelete: "cascade",
+              onUpdate: "cascade",
+            },
+          },
+        },
+      },
+    })
+  );
+  const users = [
+    { id: "u1", code: "1" },
+    { id: "u2", code: "1.00" },
+  ];
+  const post = { id: "p1", authorCode: "1.00" };
+  await db.withTransaction(["users", "posts"], async (scope) => {
+    for (const record of users) await scope.execute({ kind: "put", storeName: "users", record } as never);
+    await scope.execute({ kind: "put", storeName: "posts", record: post } as never);
+  });
+  await expect(db.orm["users"]!.delete("u1")).rejects.toMatchObject({ code: "DECIMAL_IDENTITY_CONFLICT" });
+  await expect(db.orm["users"]!.where({ id: "u2" }).update({ code: "2" })).rejects.toMatchObject({
+    code: "DECIMAL_IDENTITY_CONFLICT",
+  });
+  expect(await rows("users")).toEqual(users);
+  expect(await rows("posts")).toEqual([post]);
+});
+
 describe("one-sided foreign key: actions that keep the child", () => {
   it.each([
     { action: "setNull", contract: oneSided({ onDelete: "setNull", onUpdate: "setNull" }, "String?"), value: null },

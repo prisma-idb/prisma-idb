@@ -44,9 +44,9 @@ import {
   createMutationDefaultsCache,
   type MutationDefaultsCache,
 } from "./mutation-defaults";
-import { absentAsNull } from "@prisma-idb/target-idb/runtime";
+import { absentAsNull, decimalIdentityToken, isValidIdbKey } from "@prisma-idb/target-idb/runtime";
 import { buildCatalog } from "./planner/catalog";
-import { fieldValueChanged, preserveDecimalKeySpelling } from "./decimal-identity";
+import { fieldValueChanged, IdbDecimalIdentityConflictError, preserveDecimalKeySpelling } from "./decimal-identity";
 import { lowerExists, lowerRows, lowerWrite, type WriteRequest } from "./planner/lower";
 import { planQuery } from "./planner/plan";
 import { withMutationScope, type IdbQueryExecutorWithTransaction } from "./mutation-scope";
@@ -703,13 +703,14 @@ async function writeChildRows(
   // into or out of the match set.
   const meta = makePlanMeta(contract);
   const keyPath = getKeyPath(contract, modelName);
+  const decimalParents: DecimalParentConflicts = new Map();
   for (const row of await readMutationRows(scope, contract, modelName, where)) {
     const patch = applyUpdateDefaults(defaults, storeName, setValues, defaultsCache);
     assertValidRecord(contract, modelName, "update", patch);
     // A generated value can be a foreign key, or a field other rows reference,
     // so each row's patch gets the checks and actions of any other update.
     await validateScalarFks(scope, contract, modelName, patch, row);
-    await applyReferentialActionsForRowOnUpdate(scope, contract, modelName, row, patch);
+    await applyReferentialActionsForRowOnUpdate(scope, contract, modelName, row, patch, undefined, decimalParents);
     const key = extractKeyFromRow(row, keyPath);
     await scope.execute({ meta, kind: "update", storeName, key, patch } as IdbAtomicPlan);
   }
@@ -801,6 +802,7 @@ interface ChildEnforcementEdge extends RelationDefinition {
   readonly onDelete: EnforcedReferentialAction;
   readonly onUpdate: EnforcedReferentialAction;
   readonly needsUniqueParent: boolean;
+  readonly checksDecimalParent: boolean;
 }
 
 const childEdgesCache = new WeakMap<object, Map<string, ChildEnforcementEdge[]>>();
@@ -836,6 +838,8 @@ function getChildEnforcementEdges(contract: IdbContract, modelName: string): Chi
       onDelete: enforcedAction(action("onDelete")),
       onUpdate: enforcedAction(action("onUpdate")),
       needsUniqueParent: oneSided && !uniqueSources.some((source) => sameFieldSet(source.fields, def.localFields)),
+      checksDecimalParent:
+        oneSided && def.localFields.some((field) => catalog.fields[field]?.codecId === "idb/decimal@1"),
     });
 
   const declared = getRelationDefinitions(contract, modelName).filter((def) =>
@@ -910,6 +914,46 @@ async function refuseNonUniqueAction(
     throw new Error(
       `Cannot apply referential action on relation '${def.relationName}': the referenced fields must be unique.`
     );
+  }
+}
+
+type DecimalParentConflicts = Map<string, Set<string>>;
+
+/** A native unique index can contain legacy spellings of the same Decimal tuple. */
+async function checkDecimalParent(
+  scope: IdbTransactionScope,
+  contract: IdbContract,
+  meta: PlanMeta,
+  modelName: string,
+  def: ChildEnforcementEdge,
+  row: Record<string, unknown>,
+  cache: DecimalParentConflicts
+): Promise<void> {
+  const catalog = buildCatalog(contract, getStoreName(contract, modelName), modelName);
+  const tokenFor = (record: Record<string, unknown>) => {
+    const keys = def.localFields.map((field) =>
+      catalog.fields[field]?.codecId === "idb/decimal@1" ? decimalIdentityToken(record[field]) : record[field]
+    );
+    return isValidIdbKey(keys) ? keyToken(keys) : undefined;
+  };
+  const token = tokenFor(row);
+  if (token === undefined) return;
+
+  const cacheKey = JSON.stringify([modelName, ...def.localFields]);
+  let duplicates = cache.get(cacheKey);
+  if (duplicates === undefined) {
+    duplicates = new Set();
+    const seen = new Set<string>();
+    for (const parent of await readMutationRows(scope, contract, modelName, undefined)) {
+      const key = tokenFor(parent);
+      if (key === undefined) continue;
+      if (seen.has(key)) duplicates.add(key);
+      else seen.add(key);
+    }
+    cache.set(cacheKey, duplicates);
+  }
+  if (duplicates.has(token) && (await childExists(scope, contract, meta, def, row))) {
+    throw new IdbDecimalIdentityConflictError(modelName);
   }
 }
 
@@ -1090,7 +1134,8 @@ export async function applyReferentialActionsForRowOnUpdate(
   modelName: string,
   oldRow: Record<string, unknown>,
   patch: Record<string, unknown>,
-  visited: Set<string> = new Set()
+  visited: Set<string> = new Set(),
+  decimalParents: DecimalParentConflicts = new Map()
 ): Promise<void> {
   const keyPath = getKeyPath(contract, modelName);
   patch = preserveDecimalKeySpelling(contract, modelName, patch, extractKeyFromRow(oldRow, keyPath));
@@ -1109,6 +1154,9 @@ export async function applyReferentialActionsForRowOnUpdate(
     if (def.needsUniqueParent && action !== "restrict") {
       await refuseNonUniqueAction(scope, contract, meta, def, oldRow);
       continue;
+    }
+    if (def.checksDecimalParent && action !== "restrict") {
+      await checkDecimalParent(scope, contract, meta, modelName, def, oldRow, decimalParents);
     }
 
     const childWhere = buildChildWhereFromRow(def, oldRow);
@@ -1133,7 +1181,15 @@ export async function applyReferentialActionsForRowOnUpdate(
       }
       const children = await readMutationRows(scope, contract, def.relatedModelName, childWhere);
       for (const child of children) {
-        await applyReferentialActionsForRowOnUpdate(scope, contract, def.relatedModelName, child, childPatch, visited);
+        await applyReferentialActionsForRowOnUpdate(
+          scope,
+          contract,
+          def.relatedModelName,
+          child,
+          childPatch,
+          visited,
+          decimalParents
+        );
       }
       await writeMutationRows(scope, contract, def.relatedModelName, {
         write: "put-merged",
@@ -1439,6 +1495,7 @@ async function executeScalarUpdates(options: ScalarUpdateOptions, take?: 1): Pro
     const oldRows = await readMutationRows(scope, contract, modelName, where, take);
     const keyPath = getKeyPath(contract, modelName);
     const results: Record<string, unknown>[] = [];
+    const decimalParents: DecimalParentConflicts = new Map();
     for (const oldRow of oldRows) {
       const rowData = defaultsPerRow ? applyUpdateDefaults(defaults, storeName, data, defaultsCache) : patch;
       const rowPatch = applyFieldUpdates(
@@ -1450,7 +1507,17 @@ async function executeScalarUpdates(options: ScalarUpdateOptions, take?: 1): Pro
       assertEnumValues(contract, modelName, rowPatch);
       assertValidRecord(contract, modelName, "update", rowPatch);
       if (needsRowForFks || defaultsPerRow) await validateScalarFks(scope, contract, modelName, rowPatch, oldRow);
-      if (enforcesOnUpdate) await applyReferentialActionsForRowOnUpdate(scope, contract, modelName, oldRow, rowPatch);
+      if (enforcesOnUpdate) {
+        await applyReferentialActionsForRowOnUpdate(
+          scope,
+          contract,
+          modelName,
+          oldRow,
+          rowPatch,
+          undefined,
+          decimalParents
+        );
+      }
       const key = extractKeyFromRow(oldRow, keyPath);
       const rows = await scope.execute({ meta, kind: "update", storeName, key, patch: rowPatch } as IdbAtomicPlan);
       const updated = rows[0];
@@ -1534,7 +1601,8 @@ export async function applyReferentialActionsForRow(
   contract: IdbContract,
   modelName: string,
   row: Record<string, unknown>,
-  visited: Set<string> = new Set()
+  visited: Set<string> = new Set(),
+  decimalParents: DecimalParentConflicts = new Map()
 ): Promise<void> {
   const keyPath = getKeyPath(contract, modelName);
   const rowKey = `${getStoreName(contract, modelName)}::${keyToken(extractKeyFromRow(row, keyPath))}`;
@@ -1547,6 +1615,9 @@ export async function applyReferentialActionsForRow(
     if (def.needsUniqueParent && action !== "restrict") {
       await refuseNonUniqueAction(scope, contract, meta, def, row);
       continue;
+    }
+    if (def.checksDecimalParent && action !== "restrict") {
+      await checkDecimalParent(scope, contract, meta, modelName, def, row, decimalParents);
     }
 
     const childWhere = buildChildWhereFromRow(def, row);
@@ -1568,7 +1639,7 @@ export async function applyReferentialActionsForRow(
       const childKeyPath = getKeyPath(contract, def.relatedModelName);
       const children = await readMutationRows(scope, contract, def.relatedModelName, childWhere);
       for (const child of children) {
-        await applyReferentialActionsForRow(scope, contract, def.relatedModelName, child, visited);
+        await applyReferentialActionsForRow(scope, contract, def.relatedModelName, child, visited, decimalParents);
         await scope.execute({
           meta,
           kind: "delete",
@@ -1649,8 +1720,9 @@ export async function executeDeleteAllWithReferentialActions(options: {
       return deleted.map(absentAsNull(contract, modelName));
     }
     const rows = await readMutationRows(scope, contract, modelName, where);
+    const decimalParents: DecimalParentConflicts = new Map();
     for (const row of rows) {
-      await applyReferentialActionsForRow(scope, contract, modelName, row);
+      await applyReferentialActionsForRow(scope, contract, modelName, row, undefined, decimalParents);
       const key = extractKeyFromRow(row, keyPath);
       await scope.execute({ meta, kind: "delete", storeName, key } as IdbAtomicPlan);
     }
