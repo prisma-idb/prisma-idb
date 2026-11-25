@@ -13,6 +13,13 @@ interface DecimalParts {
   readonly position: bigint;
 }
 
+/** Drop trailing zeros in one pass; a `/0+$/` regex backtracks quadratically on long zero runs. */
+function trimTrailingZeros(digits: string): string {
+  let end = digits.length;
+  while (end > 0 && digits.charCodeAt(end - 1) === 48) end--;
+  return digits.slice(0, end);
+}
+
 /** Parse finite decimal text without expanding exponents or losing significant digits. */
 function decimalParts(value: unknown): DecimalParts {
   if (!isDecimalString(value)) throw new TypeError("Expected finite Decimal text");
@@ -23,7 +30,7 @@ function decimalParts(value: unknown): DecimalParts {
   const significant = unsigned.replace(".", "").replace(/^0+/, "");
   return {
     negative: value.startsWith("-") && significant.length > 0,
-    digits: significant.replace(/0+$/, ""),
+    digits: trimTrailingZeros(significant),
     position: significant.length === 0 ? 0n : BigInt(exponent) - BigInt(fractionLength) + BigInt(significant.length),
   };
 }
@@ -45,4 +52,16 @@ export function compareDecimalValues(a: unknown, b: unknown): number {
     comparison = l === r ? 0 : l < r ? -1 : 1;
   }
   return comparison === 0 ? 0 : left.negative ? -comparison : comparison;
+}
+
+/**
+ * One spelling per numeric value, for using Decimal text as a `Map` key:
+ * `"1"`, `"1.00"` and `"1e0"` all give the same token, as `compareDecimalValues`
+ * finds them equal. The token is an identity, not a display form. Text that
+ * isn't a valid Decimal is returned unchanged.
+ */
+export function decimalIdentityToken(value: unknown): unknown {
+  if (!isDecimalString(value)) return value;
+  const { negative, digits, position } = decimalParts(value);
+  return digits.length === 0 ? "0" : `${negative ? "-" : ""}0.${digits}e${position}`;
 }
