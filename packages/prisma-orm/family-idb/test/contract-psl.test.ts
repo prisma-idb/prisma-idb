@@ -1040,6 +1040,75 @@ describe("interpretPslDocumentToIdbContract", () => {
       ]);
     });
 
+    it("drops a malformed list backrelation to an excluded model only in client projection", () => {
+      const schema = `
+        model User {
+          id    String @id
+          posts Post[] @relation(fields: [id], references: [authorId])
+        }
+        model Post {
+          id       String @id
+          authorId String
+          @@idb.exclude
+        }
+      `;
+      expect(interpret(schema, "client").ok).toBe(true);
+      expect(warnSpy).toHaveBeenCalled();
+      const full = interpret(schema, "full");
+      expect(full.ok).toBe(false);
+      if (!full.ok) expect(full.failure.diagnostics).toMatchObject([{ code: "IDB_INVALID_RELATION" }]);
+    });
+
+    it.each(["client", "full"] as const)("rejects unknown fields on a named join in %s projection", (projection) => {
+      const result = interpret(
+        `
+          model User {
+            id    String @id
+            posts Post[] @relation("Written")
+          }
+          model Post {
+            id       String @id
+            authorId String
+            author   User   @relation("Written", fields: [authorId], references: [misspelled])
+          }
+        `,
+        projection
+      );
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.failure.diagnostics).toMatchObject([
+        {
+          code: "IDB_INVALID_RELATION",
+          message: expect.stringContaining('unknown referenced field "User.misspelled"'),
+        },
+      ]);
+    });
+
+    it.each([
+      ["onDelete", "__proto__"],
+      ["onUpdate", "constructor"],
+    ])("rejects inherited names in %s: %s on a paired relation", (action, value) => {
+      const result = interpret(`
+        model User {
+          id   String @id
+          post Post?  @relation("Written")
+        }
+        model Post {
+          id       String @id
+          authorId String @unique
+          author   User   @relation("Written", fields: [authorId], references: [id], ${action}: ${value})
+        }
+      `);
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.failure.diagnostics).toMatchObject([
+        {
+          code: "IDB_UNKNOWN_REFERENTIAL_ACTION",
+          message: expect.stringContaining(`unknown ${action} value "${value}"`),
+        },
+      ]);
+    });
+
     it.each([
       ["a list", "posts Post[]"],
       ["a singular", "post Post?"],

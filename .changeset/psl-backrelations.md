@@ -7,7 +7,7 @@ PSL pairs backrelations with their foreign keys as upstream Prisma does.
 - A backrelation pairs with the foreign key that has the same `@relation("...")` name. Before, the name was ignored and every backrelation between two models joined through the last foreign key declared, so with `written Post[] @relation("Written")` and `edited Post[] @relation("Edited")` both relations joined on `editorId`. An empty name, `@relation("")`, counts as no name.
 - PSL accepts the other side of a one-to-one as a singular backrelation. `profile Profile?` on `User` pairs with `user User @relation(fields: [userId], references: [id])` on `Profile` and lowers to the same `1:1` relation as TypeScript. Before, it failed with `IDB_MISSING_RELATION_ATTRIBUTE`, or with `IDB_INVALID_RELATION` when it had `@relation("...")`. A singular backrelation follows the rules for the referenced side of a one-to-one in TypeScript: it must be optional, and its foreign key must be unique, or it fails with `IDB_INVALID_RELATION`. Several singular backrelations can point to the same unambiguous foreign key, as list backrelations already could.
 - A named backrelation that matches no relation name reports `IDB_UNRESOLVED_BACKRELATION` with the names it found, instead of asking for an `@relation(fields: [...])` that already exists.
-- A backrelation whose foreign key was refused, for example for missing `references`, is no longer reported a second time as unresolved.
+- If the owning relation omits `fields` or `references`, or names an unknown referenced field, the diagnostic identifies the owning relation without a second unresolved diagnostic for its matching backrelation.
 
 Breaking:
 

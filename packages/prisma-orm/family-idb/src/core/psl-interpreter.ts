@@ -86,6 +86,10 @@ const REFERENTIAL_ACTION_MAP: Record<string, IdbReferentialAction> = {
   NoAction: "noAction",
 };
 
+function referentialAction(name: string | undefined): IdbReferentialAction | undefined {
+  return name !== undefined && Object.hasOwn(REFERENTIAL_ACTION_MAP, name) ? REFERENTIAL_ACTION_MAP[name] : undefined;
+}
+
 // ── Client contract projection (ADR 012) ───────────────────────────────────────
 
 /**
@@ -200,7 +204,7 @@ interface InterpretedModel {
 /** Resolve one model into IDB fields, indexes, defaults, and reference relations. */
 function interpretModel(
   model: ModelSymbol,
-  modelNames: ReadonlySet<string>,
+  modelsByName: ReadonlyMap<string, ModelSymbol>,
   enums: Readonly<Record<string, IdbEnumNode>>,
   sourceId: string,
   diagnostics: ContractSourceDiagnostic[],
@@ -223,7 +227,7 @@ function interpretModel(
   // Retain key/index markers so projection cannot hide an invalid exclusion.
   const excludedScalarAttributes = new Map(
     modelFields
-      .filter((field) => excludedFieldNames.has(field.name) && !modelNames.has(field.typeName))
+      .filter((field) => excludedFieldNames.has(field.name) && !modelsByName.has(field.typeName))
       .map((field) => [field, attributes.excludedField(model, field)])
   );
   // Derive store name from @@map or lowerFirst(modelName)
@@ -334,11 +338,17 @@ function interpretModel(
     // A relation field without `fields` or `references` is a backrelation, a
     // list or a singular one. The second pass pairs it with the foreign key.
     const relationAttr = fieldAttributes.relation;
+    const relatedModel = modelsByName.get(field.typeName);
+    // In the client projection, a dropped relation leaves its independent scalar fields in place.
+    if (relatedModel && excludedModelNames.has(field.typeName)) {
+      warnDroppedRelation(model.name, field.name, field.typeName);
+      continue;
+    }
     const holdsForeignKey =
       relationAttr !== undefined &&
       (relationAttr.value.fields !== undefined || relationAttr.value.references !== undefined);
     // Upstream refuses fields and references on a list: the foreign key belongs to the other side.
-    if (field.list && modelNames.has(field.typeName) && holdsForeignKey) {
+    if (field.list && relatedModel && holdsForeignKey) {
       diagnostics.push({
         code: "IDB_INVALID_RELATION",
         message: `Backrelation list field "${model.name}.${field.name}" cannot declare fields or references. Define them on the relation field in "${field.typeName}" that holds the foreign key.`,
@@ -347,32 +357,22 @@ function interpretModel(
       });
       continue;
     }
-    if (modelNames.has(field.typeName) && !holdsForeignKey) {
-      if (excludedModelNames.has(field.typeName)) {
-        // The model itself is never excluded because of a relation (ADR
-        // 013) — just drop this backrelation and keep the model.
-        warnDroppedRelation(model.name, field.name, field.typeName);
-      }
-      continue;
-    }
+    if (relatedModel && !holdsForeignKey) continue;
 
     // FK-side relation field: non-list, type is a model, has @relation with fields or references
-    if (!field.list && modelNames.has(field.typeName) && relationAttr) {
-      if (excludedModelNames.has(field.typeName)) {
-        // Same reasoning as the backrelation case above: drop the relation
-        // (required or not), keep the model, keep the FK scalar field (it's
-        // processed independently, below, as a plain scalar).
-        warnDroppedRelation(model.name, field.name, field.typeName);
-        continue;
-      }
+    if (!field.list && relatedModel && relationAttr) {
       const { references, onDelete: onDeleteRaw, onUpdate: onUpdateRaw } = relationAttr.value;
       const localFields = relationAttr.value.fields?.slice();
       const targetFields = references?.slice();
+      const unknownReference = targetFields?.find((name) => !Object.hasOwn(relatedModel.fields, name));
 
-      if (!localFields || !targetFields) {
+      if (!localFields || !targetFields || unknownReference !== undefined) {
         diagnostics.push({
           code: "IDB_INVALID_RELATION",
-          message: `Relation field "${model.name}.${field.name}" must declare both fields and references in @relation.`,
+          message:
+            unknownReference === undefined
+              ? `Relation field "${model.name}.${field.name}" must declare both fields and references in @relation.`
+              : `Relation field "${model.name}.${field.name}" has unknown referenced field "${relatedModel.name}.${unknownReference}".`,
           sourceId,
           span: field.span,
         });
@@ -381,9 +381,9 @@ function interpretModel(
         rejectedFksByTarget.set(field.typeName, rejected);
         continue;
       }
-      const onDelete = onDeleteRaw ? REFERENTIAL_ACTION_MAP[onDeleteRaw] : undefined;
+      const onDelete = referentialAction(onDeleteRaw);
 
-      if (onDeleteRaw && onDelete === undefined) {
+      if (onDeleteRaw !== undefined && onDelete === undefined) {
         diagnostics.push({
           code: "IDB_UNKNOWN_REFERENTIAL_ACTION",
           message: `Relation field "${model.name}.${field.name}" has unknown onDelete value "${onDeleteRaw}". Valid values: ${Object.keys(REFERENTIAL_ACTION_MAP).join(", ")}.`,
@@ -392,9 +392,9 @@ function interpretModel(
         });
       }
 
-      const onUpdate = onUpdateRaw ? REFERENTIAL_ACTION_MAP[onUpdateRaw] : undefined;
+      const onUpdate = referentialAction(onUpdateRaw);
 
-      if (onUpdateRaw && onUpdate === undefined) {
+      if (onUpdateRaw !== undefined && onUpdate === undefined) {
         diagnostics.push({
           code: "IDB_UNKNOWN_REFERENTIAL_ACTION",
           message: `Relation field "${model.name}.${field.name}" has unknown onUpdate value "${onUpdateRaw}". Valid values: ${Object.keys(REFERENTIAL_ACTION_MAP).join(", ")}.`,
@@ -708,7 +708,9 @@ function interpretModel(
             exclusions: {
               fields: [...excludedFieldNames],
               declaredFields: modelFields.map((field) => field.name),
-              relationFields: modelFields.filter((field) => modelNames.has(field.typeName)).map((field) => field.name),
+              relationFields: modelFields
+                .filter((field) => modelsByName.has(field.typeName))
+                .map((field) => field.name),
             },
           }
         : {}),
@@ -798,7 +800,7 @@ export function lowerPslDocumentToIdbContractDefinition(
   // Full set, including excluded models — needed so field-type checks below
   // still recognize a reference to an excluded model as "a relation", not an
   // unsupported scalar type.
-  const modelNames = new Set(allModelsUnprojected.map((m) => m.name));
+  const modelsByName = new Map(allModelsUnprojected.map((m) => [m.name, m]));
 
   // Models marked `@@idb.exclude`. Empty (no-op) in "full" projection. This
   // is the *only* way a model ends up excluded — relations never add to this
@@ -821,7 +823,7 @@ export function lowerPslDocumentToIdbContractDefinition(
   for (const model of allModels) {
     const result = interpretModel(
       model,
-      modelNames,
+      modelsByName,
       enums,
       sourceId,
       diagnostics,
@@ -841,7 +843,7 @@ export function lowerPslDocumentToIdbContractDefinition(
     if (!interp) continue;
 
     for (const field of Object.values(model.fields)) {
-      if (!modelNames.has(field.typeName)) continue;
+      if (!modelsByName.has(field.typeName)) continue;
       const fieldAttributes = attributes.field(model, field);
       if (fieldAttributes.failed || fieldAttributes.updatedAt !== undefined) continue;
       const relationAttr = fieldAttributes.relation;
