@@ -2123,6 +2123,32 @@ describe("@ignore and @@ignore", () => {
       expect(hidden(models["Profile"]!)).toEqual(["user"]);
     });
 
+    it("hides an unnamed backrelation of a named @ignore owner, which it resolves to", () => {
+      const { models } = modelsOf(
+        'model User {\n  id String @id\n  posts Post[]\n}\nmodel Post {\n  id String @id\n  authorId String\n  author User @relation("Authored", fields: [authorId], references: [id]) @ignore\n}'
+      );
+      expect(models["User"]!.relations["posts"]).toMatchObject({ on: { targetFields: ["authorId"] } });
+      expect(hidden(models["User"]!)).toEqual(["posts"]);
+      expect(hidden(models["Post"]!)).toEqual(["author"]);
+    });
+
+    it("leaves out an unnamed singular backrelation of a named @ignore owner", () => {
+      const { models } = modelsOf(
+        'model User {\n  id String @id\n  profile Profile?\n}\nmodel Profile {\n  id String @id\n  userId String @unique\n  user User @relation("Owns", fields: [userId], references: [id]) @ignore\n}'
+      );
+      expect(models["User"]!.relations).toEqual({});
+      expect(hidden(models["Profile"]!)).toEqual(["user"]);
+    });
+
+    it("refuses an @@ignore model without a key, because its object store stays", () => {
+      expect(codes("model Log {\n  msg String\n  @@ignore\n}", projection)).toEqual([
+        [
+          "IDB_MISSING_ID",
+          'Model "Log" has no @id field. It is marked @@ignore, but an ignored model keeps its object store, which needs a key. Add @id to exactly one scalar field, or @@id([...]) for a compound key.',
+        ],
+      ]);
+    });
+
     it("treats an empty relation name as no name when it pairs an @ignore owner with its backrelation", () => {
       const { models } = modelsOf(
         'model User {\n  id String @id\n  posts Post[]\n}\nmodel Post {\n  id String @id\n  authorId String\n  author User @relation("", fields: [authorId], references: [id]) @ignore\n}'

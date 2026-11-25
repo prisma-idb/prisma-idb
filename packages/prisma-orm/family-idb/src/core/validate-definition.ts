@@ -191,9 +191,14 @@ function validateKeys(model: IdbModelNode, report: Report): void {
   const excluded = new Set(model.exclusions?.fields);
   const keys = keyPathFields(model.key);
   if (keys.length === 0) {
+    // An ignored model keeps its object store, and a store needs a key path.
+    const ignoredReason =
+      model.ignored === true
+        ? " It is marked @@ignore, but an ignored model keeps its object store, which needs a key."
+        : "";
     report(
       "IDB_MISSING_ID",
-      `Model "${model.modelName}" has no @id field. Add @id to exactly one scalar field, or @@id([...]) for a compound key.`,
+      `Model "${model.modelName}" has no @id field.${ignoredReason} Add @id to exactly one scalar field, or @@id([...]) for a compound key.`,
       [...at, "key"]
     );
   } else if (!isWellFormedKeyPath(model.key)) {

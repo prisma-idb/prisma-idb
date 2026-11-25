@@ -192,8 +192,13 @@ interface IgnoredDeclarations {
   readonly models: ReadonlySet<string>;
   /** The `@ignore` fields of each model. */
   readonly fieldsByModel: ReadonlyMap<string, ReadonlySet<string>>;
-  /** Relations with an ignored owning field, keyed by {@link relationPairKey}. Their backrelations are hidden too. */
-  readonly relationPairs: ReadonlySet<string>;
+  /**
+   * Whether the owning relation a backrelation resolves to is `@ignore`, so
+   * the backrelation is hidden too. It resolves the owner the way backrelation
+   * pairing does: the owning field with the same relation name, or else the
+   * last owning field in `owningModel` that points to `targetModel`.
+   */
+  readonly isOwnerIgnored: (owningModel: string, targetModel: string, name: string | undefined) => boolean;
 }
 
 /**
@@ -212,22 +217,28 @@ function collectIgnoredDeclarations(
   attributes: IdbAttributeBinder
 ): IgnoredDeclarations {
   const fieldsByModel = new Map<string, ReadonlySet<string>>();
-  const relationPairs = new Set<string>();
+  // Whether each owning relation is `@ignore`, by name and by target model, as backrelations pair.
+  const ownerIgnoredByPair = new Map<string, boolean>();
+  const ownerIgnoredByTarget = new Map<string, boolean>();
   for (const model of models) {
     const fields = Object.values(model.fields).filter((field) => attributes.isFieldIgnored(field));
     fieldsByModel.set(model.name, new Set(fields.map((field) => field.name)));
-    for (const field of fields) {
+    for (const field of Object.values(model.fields)) {
       if (field.list || !modelNames.has(field.typeName)) continue;
       const relation = attributes.field(model, field).relation?.value;
-      if (relation?.fields !== undefined) {
-        relationPairs.add(relationPairKey(model.name, field.typeName, relation.name));
-      }
+      if (relation?.fields === undefined) continue;
+      const fieldIgnored = attributes.isFieldIgnored(field);
+      ownerIgnoredByPair.set(relationPairKey(model.name, field.typeName, relation.name), fieldIgnored);
+      ownerIgnoredByTarget.set(JSON.stringify([model.name, field.typeName]), fieldIgnored);
     }
   }
   return {
     models: new Set(models.filter((model) => attributes.isModelIgnored(model)).map((model) => model.name)),
     fieldsByModel,
-    relationPairs,
+    isOwnerIgnored: (owningModel, targetModel, name) =>
+      ownerIgnoredByPair.get(relationPairKey(owningModel, targetModel, name)) ??
+      ownerIgnoredByTarget.get(JSON.stringify([owningModel, targetModel])) ??
+      false,
   };
 }
 
@@ -399,8 +410,9 @@ function interpretModel(
     // representation here. When it or its owning relation is `@ignore`, the
     // client would hide it anyway, so it is left out instead of refused.
     if (!field.list && modelNames.has(field.typeName) && fieldAttributes.relation?.value.fields === undefined) {
-      const pair = relationPairKey(field.typeName, model.name, fieldAttributes.relation?.value.name);
-      if (ignoredFieldNames.has(field.name) || ignored.relationPairs.has(pair)) continue;
+      const relationName = fieldAttributes.relation?.value.name;
+      if (ignoredFieldNames.has(field.name) || ignored.isOwnerIgnored(field.typeName, model.name, relationName))
+        continue;
     }
 
     // Relation list field (backrelation) — skip for now, resolved in second pass
@@ -925,7 +937,9 @@ export function lowerPslDocumentToIdbContractDefinition(
       const relation = attributes.field(model, field).relation?.value;
       const pair = relationPairKey(field.typeName, model.name, relation?.name);
       // An ignored owner hides its backrelation too. Ignoring the backrelation alone leaves the owner visible.
-      const hidden = ignored.fieldsByModel.get(model.name)?.has(field.name) === true || ignored.relationPairs.has(pair);
+      const hidden =
+        ignored.fieldsByModel.get(model.name)?.has(field.name) === true ||
+        ignored.isOwnerIgnored(field.typeName, model.name, relation?.name);
 
       const targetInterp = interpretedByName.get(field.typeName);
       if (!targetInterp) continue;
