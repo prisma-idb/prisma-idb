@@ -7,6 +7,7 @@ model User {
   id               String            @id
   name             String
   listItems        ListItem[]
+  floatItems       FloatItem[]
   privateNotes     PrivateNote[]
   boards           Board[]
   jsonItems        JsonItem[]
@@ -173,4 +174,11 @@ model ListItem {
   bytes Bytes[]
   decimals Decimal[]
   jsons Json[]
+}
+
+model FloatItem {
+  id Float @id
+  ownerId String
+  owner User @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  readings Float[]
 }
