@@ -99,7 +99,7 @@ The client records each chain's progress in the `_prisma_next_marker` store unde
 
 Older releases could finish creating stores before writing their markers. When recovering such a database, keep every installed extension in the client configuration. The browser can replay an already-applied store creation when the configured histories agree on one owner. A store left by an omitted extension that never wrote its marker is indistinguishable from a completed create by the app. Pending packages still require the current migration hash format. Applied packages can keep their historical `sha256:` prefix.
 
-For an existing database with older markers, verify which space owns the rows before reusing a store name. If the original space still owns the store, release the name in one upgrade and claim it in a later upgrade. If the live store may already contain the new owner's rows, back them up and reconcile the migration state before continuing.
+For an existing database with older markers, verify which space owns the rows before reusing a store name. When the original space still owns the store and its release comes first in full-chain replay, apply the release in one upgrade and claim the name in a later upgrade. Every affected device with older markers must apply the intermediate release before installing the claiming build. If the live store may already contain the new owner's rows, back them up and reconcile the migration state before continuing.
 
 If you're writing an extension, pass `--space <id>` to `migration plan` to write its packages under `migrations/<id>/` instead of `migrations/app/`.
 

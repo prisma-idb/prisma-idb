@@ -68,7 +68,7 @@ Combining the spaces fixes both, and removes the app-first rule as a side effect
 - **Applying several spaces is atomic.** Every space's schema changes and markers commit together, or nothing does.
 - **One upgrade cycle.** A first launch causes exactly one upgrade, and at most one `blocked` cycle, however many spaces need migrating.
 - **`openAndUpgrade` takes a `markers` array**, not a single `marker`.
-- **A handoff depends on apply order.** The releasing space must run before the claiming space. For a verified legacy database, ship the release and claim as separate upgrades.
+- **A handoff depends on apply order.** The releasing space must run before the claiming space. For a verified legacy database, apply the release on every affected device before the claiming upgrade. Fresh databases still need the full migration chains to release the name before claiming it.
 
 ## Related
 
