@@ -1,5 +1,6 @@
 import type { Contract } from "@prisma/orm-framework/contract/types";
 import { domainModelsAtDefaultNamespace } from "@prisma/orm-framework/contract/types";
+import { isIgnoredModel } from "@prisma-idb/target-idb/runtime";
 
 /**
  * The contract shape `sync-server` operates on — any family's `Contract`
@@ -21,7 +22,7 @@ export type SyncServerContract = Contract;
 export interface OwnershipDag {
   readonly rootModel: string;
   readonly edges: ReadonlyMap<string, ReadonlySet<string>>;
-  /** Model names present in the client-projected contract (ADR 012). */
+  /** Model names present in the client-projected contract (ADR 012), without `@@ignore` models, which never sync. */
   readonly clientModels: ReadonlySet<string>;
 }
 
@@ -36,6 +37,12 @@ export interface OwnershipDag {
  * outbox event or a pull scope check, so there's nothing to authorize. They
  * still count as graph nodes, since a client model's authorization chain
  * may legitimately pass through one (see ADR 014's "why the full graph").
+ *
+ * `@@ignore` models, as `clientContract` marks them, are left out of the
+ * synced models too: their rows stay in the browser and never reach the
+ * outbox. The edges come from `contract`, the server's own contract (the SQL
+ * contract for a SQL server). The SQL family keeps an `@ignore` owning
+ * relation there, so it stays an edge.
  */
 export function buildOwnershipDag(
   contract: SyncServerContract,
@@ -43,10 +50,17 @@ export function buildOwnershipDag(
   rootModel: string
 ): OwnershipDag {
   const models = domainModelsAtDefaultNamespace(contract.domain);
-  const clientModels = new Set(Object.keys(domainModelsAtDefaultNamespace(clientContract.domain)));
+  const clientModels = new Set(
+    Object.keys(domainModelsAtDefaultNamespace(clientContract.domain)).filter(
+      (modelName) => !isIgnoredModel(clientContract, modelName)
+    )
+  );
 
   if (!(rootModel in models)) {
     throw new Error(`Root model "${rootModel}" is not present in the contract's domain models.`);
+  }
+  if (isIgnoredModel(clientContract, rootModel)) {
+    throw new Error(`Root model "${rootModel}" is marked @@ignore, so it never syncs and can't own synced rows.`);
   }
   if (!clientModels.has(rootModel)) {
     throw new Error(`Root model "${rootModel}" is not present in the client contract's domain models.`);
