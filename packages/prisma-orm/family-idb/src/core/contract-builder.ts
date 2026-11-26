@@ -160,13 +160,13 @@ function projectModelsForClient(models: Record<string, ModelDef<string>>): Recor
       .map(([name]) => name)
   );
 
-  const result: Record<string, ProjectedModelDef> = {};
+  const result: Record<string, ProjectedModelDef> = Object.create(null);
 
   for (const [modelName, def] of Object.entries(models)) {
     if (excludedModelNames.has(modelName)) continue;
 
     const excludedFields = new Set(def.excludeFields ?? []);
-    const relations: Record<string, RelationDef> = {};
+    const relations: Record<string, RelationDef> = Object.create(null);
     for (const [relName, rel] of Object.entries(def.relations ?? {})) {
       if (excludedModelNames.has(rel.to)) {
         warnDroppedRelation(modelName, relName, rel.to);
@@ -175,7 +175,7 @@ function projectModelsForClient(models: Record<string, ModelDef<string>>): Recor
       relations[relName] = rel;
     }
 
-    const fields: Record<string, FieldSpec<string>> = {};
+    const fields: Record<string, FieldSpec<string>> = Object.create(null);
     for (const [fieldName, spec] of Object.entries(def.fields)) {
       if (excludedFields.has(fieldName)) continue;
       fields[fieldName] = spec;
@@ -224,7 +224,8 @@ function parseFieldSpec(spec: string): ParsedFieldSpec {
 function lowerEnums(enums: EnumDefs): IdbEnumNode[] {
   return Object.entries(enums).map(([name, values]) => {
     // Preserve the existing TS input restriction on inherited object keys.
-    if (name in SCALAR_TO_CODEC_ID && !Object.hasOwn(SCALAR_TO_CODEC_ID, name)) {
+    // Validation refuses `__proto__` with `IDB_RESERVED_NAME`, as in PSL.
+    if (name !== "__proto__" && name in SCALAR_TO_CODEC_ID && !Object.hasOwn(SCALAR_TO_CODEC_ID, name)) {
       throw new Error(`defineContract: enum "${name}" conflicts with the built-in scalar type of the same name.`);
     }
     if (!Array.isArray(values)) new Set(values);

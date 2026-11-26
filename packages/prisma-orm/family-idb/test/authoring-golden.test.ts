@@ -102,6 +102,7 @@ const sharedInvalidScenarios = new Set([
   "enum list as @id",
   "enum named like a scalar",
   "index with a name lost during contract emission",
+  "excluded fields with reserved names",
   "index on unknown field",
   "id on unknown field",
   "exclude back-relation list",

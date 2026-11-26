@@ -557,6 +557,27 @@ export const authoringScenarios: AuthoringScenario[] = [
     },
   },
   {
+    name: "excluded fields with reserved names",
+    clientProjection: true,
+    psl: `
+      model User {
+        id String @id
+        __proto__ String @idb.exclude
+        _generated String @idb.exclude
+      }
+    `,
+    ts: {
+      models: {
+        User: {
+          store: "user",
+          key: "id",
+          fields: { id: "String", ["__proto__"]: "String", _generated: "String" },
+          excludeFields: ["__proto__", "_generated"],
+        },
+      },
+    },
+  },
+  {
     name: "index on unknown field",
     psl: `
       model User {

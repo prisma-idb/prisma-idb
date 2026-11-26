@@ -390,6 +390,47 @@ describe("interpretPslDocumentToIdbContract", () => {
       expect(Object.entries(store.indexes ?? {})).toEqual([[name, { keyPath: "email", unique: true }]]);
     });
 
+    describe.each([
+      ["__proto__", "JavaScript reads it as an object's prototype rather than as a key"],
+      ["_generated", "contract emission drops every key with that name"],
+    ])("the reserved name %s", (name, reason) => {
+      it.each([
+        [
+          "an index",
+          `model User {\n id String @id\n email String\n @@unique([email], name: "${name}")\n}`,
+          `Model "User" index name`,
+        ],
+        ["a field", `model User {\n id String @id\n ${name} String\n}`, `Model "User" field name`],
+        ["a store", `model User {\n id String @id\n @@map("${name}")\n}`, `Model "User" store name`],
+        ["a model", `model ${name} {\n id String @id\n}`, "Model name"],
+        [
+          "a relation",
+          `model User {\n id String @id\n}\nmodel Post {\n id String @id\n authorId String\n ${name} User @relation(fields: [authorId], references: [id])\n}`,
+          `Model "Post" relation name`,
+        ],
+        ["an enum", `enum ${name} {\n A\n}\nmodel User {\n id String @id\n}`, "Enum name"],
+        ["an enum member", `enum Role {\n ${name}\n}\nmodel User {\n id String @id\n}`, `Enum "Role" member name`],
+      ])("refuses %s with that name", (_, schema, label) => {
+        const result = interpret(schema);
+        expect(result.ok).toBe(false);
+        if (result.ok) return;
+        expect(result.failure.diagnostics.map(({ code, message }) => [code, message])).toContainEqual([
+          "IDB_RESERVED_NAME",
+          `${label} "${name}" can't be used: ${reason}. Rename it.`,
+        ]);
+      });
+    });
+
+    it("refuses the store that holds the contract marker", () => {
+      const result = interpret(`model User {\n id String @id\n @@map("_prisma_next_marker")\n}`);
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.failure.diagnostics.map(({ code, message }) => [code, message])).toContainEqual([
+        "IDB_RESERVED_NAME",
+        `Model "User" store name "_prisma_next_marker" can't be used: the client keeps its contract marker in a store with that name. Rename it.`,
+      ]);
+    });
+
     it("creates unique index from @unique field attribute", () => {
       const result = interpret(`
         model User {

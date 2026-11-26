@@ -3,8 +3,8 @@
   "diagnostics": {
     "interpretation": [
       {
-        "code": "IDB_INVALID_INDEX",
-        "message": "Model \"User\" index name \"__proto__\" is lost during contract emission. Choose a different index name.",
+        "code": "IDB_RESERVED_NAME",
+        "message": "Model \"User\" index name \"__proto__\" can't be used: JavaScript reads it as an object's prototype rather than as a key. Rename it.",
         "sourceId": "authoring.prisma",
         "span": {
           "end": {
