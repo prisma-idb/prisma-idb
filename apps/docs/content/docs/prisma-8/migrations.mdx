@@ -95,7 +95,7 @@ Each package records the contract hash it starts from and the one it ends at, so
 
 An extension, such as [sync](/docs/prisma-8/sync), ships its own object stores and its own chain of migrations. You don't plan or edit them. When you pass the extension to `createAutoMigratingIdbClient({ extensions })`, its pending migrations run in the same upgrade as yours, so the database changes once, not once per chain.
 
-The client records each chain's progress in the `_prisma_next_marker` store under its own ID (`"app"` for yours, `"idb-sync"` for sync). Keep object-store names unique across the app and its extensions because they share one IndexedDB database.
+The client records each chain's progress in the `_prisma_next_marker` store under its own ID (`"app"` for yours, `"idb-sync"` for sync). Each store has one owner at a time. The browser applies extension migrations in space-ID order, then app migrations. A space can create a store under a name an earlier space drops during the upgrade. The browser checks the live stores and applied markers before running any operation, and rejects an operation that would touch a store still owned by another space.
 
 If you're writing an extension, pass `--space <id>` to `migration plan` to write its packages under `migrations/<id>/` instead of `migrations/app/`.
 

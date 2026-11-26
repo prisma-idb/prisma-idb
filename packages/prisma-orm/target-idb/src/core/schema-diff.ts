@@ -18,6 +18,8 @@ import {
  */
 export type IdbSchemaDiffInput = {
   readonly stores: Record<string, IdbStoreDefinition>;
+  /** Model bindings from the contract domain, including snapshots without record shapes. */
+  readonly domainModelStores?: ReadonlyMap<string, string>;
 };
 
 /**
@@ -46,6 +48,17 @@ export class IdbStoreMoveConflictError extends Error {
   }
 }
 
+/** Read model bindings from the domain and fill in any bindings supplied only by record shapes. */
+function storesByModel(schema: IdbSchemaDiffInput | null): ReadonlyMap<string, string> {
+  const stores = new Map(schema?.domainModelStores);
+  for (const [storeName, store] of Object.entries(schema?.stores ?? {})) {
+    if (store.record !== undefined && !schema?.domainModelStores?.has(store.record.model)) {
+      stores.set(store.record.model, storeName);
+    }
+  }
+  return stores;
+}
+
 /**
  * Compute an ordered set of DDL operations to migrate from `from` to `to`.
  *
@@ -70,24 +83,29 @@ export class IdbStoreMoveConflictError extends Error {
  *
  * A model can move to an unused store name if its old name is removed.
  * When both contracts identify the model, reject a move that would reuse
- * an existing store at either name, since that would retain unrelated rows.
+ * an existing store with a different owner. One original model can keep a
+ * store that the prior contract shared between models.
  */
 export function diffIdbSchema(from: IdbSchemaDiffInput | null, to: IdbSchemaDiffInput): IdbDdlOp[] {
   const fromStores = new Map(Object.entries(from?.stores ?? {}));
   const toStores = new Map(Object.entries(to.stores));
   const ops: IdbDdlOp[] = [];
 
-  const fromStoreByModel = new Map<string, string>();
-  for (const [storeName, store] of fromStores) {
-    if (store.record !== undefined) fromStoreByModel.set(store.record.model, storeName);
+  const fromStoreByModel = storesByModel(from);
+  const toStoreByModel = storesByModel(to);
+  const retainedStores = new Set<string>();
+  for (const [model, storeName] of toStoreByModel) {
+    if (fromStoreByModel.get(model) === storeName || fromStores.get(storeName)?.record?.model === model) {
+      retainedStores.add(storeName);
+    }
   }
-  for (const [storeName, store] of toStores) {
-    const model = store.record?.model;
-    if (model === undefined || fromStores.get(storeName)?.record?.model === model) continue;
+  for (const [model, storeName] of toStoreByModel) {
     const oldName = fromStoreByModel.get(model);
-    if (oldName === undefined) continue;
-    const collision = toStores.has(oldName) ? oldName : fromStores.has(storeName) ? storeName : undefined;
-    if (collision !== undefined) throw new IdbStoreMoveConflictError(model, collision);
+    if (oldName === undefined || oldName === storeName || fromStores.get(storeName)?.record?.model === model) continue;
+    const sourceReassigned = toStores.has(oldName) && !retainedStores.has(oldName);
+    if (sourceReassigned || fromStores.has(storeName)) {
+      throw new IdbStoreMoveConflictError(model, sourceReassigned ? oldName : storeName);
+    }
   }
 
   // 0. Store-level mutation guard. IDB has no in-place alter for store

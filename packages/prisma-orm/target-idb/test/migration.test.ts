@@ -124,6 +124,24 @@ describe("diffIdbSchema", () => {
     );
   });
 
+  it("allows an original model to keep a legacy shared store while another moves to a new store", () => {
+    const from = {
+      stores: { shared: { keyPath: "id" } },
+      domainModelStores: new Map([
+        ["Note", "shared"],
+        ["Audit", "shared"],
+      ]),
+    };
+    const to = {
+      stores: {
+        shared: { keyPath: "id", record: { model: "Note", fields: {} } },
+        audit: { keyPath: "id", record: { model: "Audit", fields: {} } },
+      },
+    };
+
+    expect(diffIdbSchema(from, to)).toMatchObject([{ kind: "createObjectStore", storeName: "audit" }]);
+  });
+
   it("allows a model rename that keeps its store", () => {
     const from = { stores: { users: { keyPath: "id", record: { model: "User", fields: {} } } } };
     const to = { stores: { users: { keyPath: "id", record: { model: "Member", fields: {} } } } };

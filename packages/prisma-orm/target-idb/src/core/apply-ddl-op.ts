@@ -254,6 +254,8 @@ export function openAndUpgrade(input: {
   readonly targetVersion: number;
   readonly ops: readonly IdbDdlOp[];
   readonly markers?: readonly MarkerWriteInput[];
+  /** Validates the live store names before any writes in the version-change transaction. */
+  readonly onUpgradeStart?: (storeNames: DOMStringList, previousVersion: number) => void;
   readonly onOperationStart?: (op: IdbDdlOp) => void;
   readonly onOperationComplete?: (op: IdbDdlOp) => void;
   /**
@@ -358,6 +360,12 @@ export function openAndUpgrade(input: {
           onDone();
         }
       };
+      try {
+        input.onUpgradeStart?.(db.objectStoreNames, event.oldVersion);
+      } catch (error) {
+        failUpgrade(error);
+        return;
+      }
       runNext(0);
     };
 

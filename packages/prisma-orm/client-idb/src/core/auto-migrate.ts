@@ -129,8 +129,6 @@ export async function createAutoMigratingIdbClient<TContract extends IdbContract
 export async function autoMigrate(input: {
   // `ContractSpace<Contract>` instead of `<unknown>` so the generic
   // constraint `TContract extends Contract` from the framework is satisfied.
-  // The internal apply path only reads `headRef.hash` and `migrations`, so
-  // the precise contract shape inside `contractJson` doesn't matter here.
   readonly contractSpace: ContractSpace<Contract>;
   readonly dbName: string;
   readonly factory: IDBFactory;
@@ -139,28 +137,24 @@ export async function autoMigrate(input: {
   const { dbName, factory } = input;
 
   const spaces = resolveContractSpaces(input.contractSpace, input.extensions ?? []);
-  const storeOwners = new Map<string, string>([[IDB_MARKER_STORE, APP_SPACE_ID]]);
+  const destinationOwners = new Map<string, string>([[IDB_MARKER_STORE, APP_SPACE_ID]]);
   for (const { spaceId, contractSpace } of spaces) {
-    const { stores } = contractSpace.contractJson.storage as IdbContract["storage"];
-    for (const storeName of Object.keys(stores ?? {})) recordStoreOwner(storeOwners, storeName, spaceId);
+    for (const storeName of declaredStores(contractSpace)) recordStoreOwner(destinationOwners, storeName, spaceId);
   }
 
-  // Read current DB version once (all spaces share the same IDB database).
-  const { currentVersion: initialVersion } = await openAndReadMarker(dbName, factory, APP_SPACE_ID);
-
-  // Collect pending work per space without applying yet, so a broken chain in
-  // any space fails before the database is touched.
+  const spaceIds = spaces.map(({ spaceId }) => spaceId);
+  const { currentVersion, markerHashes } = await openAndReadMarkers(dbName, factory, spaceIds);
   const pendingPerSpace: Array<{ spaceId: string; ops: IdbDdlOp[]; storageHash: string }> = [];
 
-  for (const space of spaces) {
-    const targetHash = space.contractSpace.headRef.hash;
-    const { markerHash } = await openAndReadMarker(dbName, factory, space.spaceId);
+  for (const { spaceId, contractSpace } of spaces) {
+    const targetHash = contractSpace.headRef.hash;
+    const markerHash = markerHashes.get(spaceId) ?? null;
     if (markerHash === targetHash) continue;
 
     const pendingOps = await walkChain({
       markerHash,
       headHash: targetHash,
-      migrations: space.contractSpace.migrations,
+      migrations: contractSpace.migrations,
     });
     // Push whenever the marker is behind `targetHash` — even if every package
     // walked had zero ops (a hash-only "bridge" migration, e.g. re-emitting
@@ -170,14 +164,20 @@ export async function autoMigrate(input: {
     // retry either, the marker gets stuck at the old hash forever — the
     // space never converges to `targetHash`, even though there was never
     // any actual work to do.
-    pendingPerSpace.push({ spaceId: space.spaceId, ops: pendingOps, storageHash: targetHash });
+    pendingPerSpace.push({ spaceId, ops: pendingOps, storageHash: targetHash });
   }
 
   if (pendingPerSpace.length === 0) return;
 
-  // A pending operation can touch a store absent from its space's final contract.
-  for (const { spaceId, ops } of pendingPerSpace) {
-    for (const op of ops) recordStoreOwner(storeOwners, op.storeName, spaceId);
+  const appliedOwners = new Map<string, string>([[IDB_MARKER_STORE, APP_SPACE_ID]]);
+  for (const { spaceId, contractSpace } of spaces) {
+    const markerHash = markerHashes.get(spaceId);
+    if (markerHash === undefined || markerHash === null) continue;
+    const storeNames =
+      markerHash === contractSpace.headRef.hash
+        ? declaredStores(contractSpace)
+        : await storesAtMarker(contractSpace, markerHash);
+    for (const storeName of storeNames) recordStoreOwner(appliedOwners, storeName, spaceId);
   }
 
   // Combine every pending space into ONE upgradeneeded transaction (one IDB
@@ -196,20 +196,43 @@ export async function autoMigrate(input: {
     return a.spaceId.localeCompare(b.spaceId);
   });
 
+  const schedule = orderedPending.flatMap(({ spaceId, ops }) => ops.map((op) => ({ spaceId, op })));
+  const onAppTransform = createTransformRecordsCallback(input.contractSpace.contractJson, input.extensions ?? []);
+  let operationIndex = -1;
+  let upgraded = false;
   await openAndUpgrade({
     factory,
     dbName,
-    targetVersion: initialVersion + 1,
-    ops: orderedPending.flatMap((space) => space.ops),
+    targetVersion: currentVersion + 1,
+    ops: schedule.map(({ op }) => op),
     markers: orderedPending.map((space) => ({ space: space.spaceId, storageHash: space.storageHash })),
-    onTransformRecords: createTransformRecordsCallback(input.contractSpace.contractJson, input.extensions ?? []),
+    onUpgradeStart(storeNames, previousVersion) {
+      if (previousVersion !== currentVersion) {
+        throw new Error("The IndexedDB version changed while planning an upgrade. Open the client again.");
+      }
+      validateStoreOwnership(new Set(Array.from(storeNames)), appliedOwners, destinationOwners, schedule);
+      upgraded = true;
+    },
+    onOperationStart() {
+      operationIndex += 1;
+    },
+    onTransformRecords(tx, op, onDone) {
+      if (schedule[operationIndex]?.spaceId === APP_SPACE_ID) onAppTransform(tx, op, onDone);
+      else onDone();
+    },
   });
+  if (!upgraded) {
+    // Another opener can reach the requested version before this request runs.
+    const { markerHashes: applied } = await openAndReadMarkers(dbName, factory, spaceIds);
+    if (spaces.some(({ spaceId, contractSpace }) => applied.get(spaceId) !== contractSpace.headRef.hash)) {
+      throw new Error("Another client upgraded IndexedDB to different contract spaces. Open the client again.");
+    }
+  }
 }
 
 /**
  * Build the `openAndUpgrade` callback that runs extension hooks after a `transformRecords` op.
- * Hooks see app model names, so they never learn the app's store naming. A store with no app
- * model, such as an extension's own store, skips the hooks.
+ * Hooks see app model names. App operations on stores absent from the destination contract skip the hooks.
  */
 function createTransformRecordsCallback(contract: Contract, extensions: ReadonlyArray<IdbExtensionSpace>) {
   const models = Object.keys(domainModelsAtDefaultNamespace(contract.domain));
@@ -243,6 +266,56 @@ function createTransformRecordsCallback(contract: Contract, extensions: Readonly
     };
     runHook(0);
   };
+}
+
+function declaredStores(contractSpace: ContractSpace<Contract>): string[] {
+  const { stores } = contractSpace.contractJson.storage as IdbContract["storage"];
+  return Object.keys(stores ?? {});
+}
+
+/** Recover a space's store names by replaying the structural ops up to its marker. */
+async function storesAtMarker(contractSpace: ContractSpace<Contract>, markerHash: string): Promise<Set<string>> {
+  const stores = new Set<string>();
+  const applied = await walkChain({ markerHash: null, headHash: markerHash, migrations: contractSpace.migrations });
+  for (const op of applied) {
+    if (op.kind === "createObjectStore") stores.add(op.storeName);
+    if (op.kind === "dropObjectStore") stores.delete(op.storeName);
+  }
+  return stores;
+}
+
+/** Follow ownership in apply order before any operation can read or change a store. */
+function validateStoreOwnership(
+  liveStores: Set<string>,
+  owners: Map<string, string>,
+  destinationOwners: ReadonlyMap<string, string>,
+  schedule: readonly { spaceId: string; op: IdbDdlOp }[]
+): void {
+  for (const {
+    spaceId,
+    op: { kind, storeName },
+  } of schedule) {
+    const owner = owners.get(storeName);
+    if (owner === undefined && liveStores.has(storeName)) {
+      throw new Error(
+        `Cannot migrate contract space ${JSON.stringify(spaceId)}: existing store ${JSON.stringify(storeName)} has no owner at the applied migration markers.`
+      );
+    }
+    if (owner !== undefined || kind === "createObjectStore") recordStoreOwner(owners, storeName, spaceId);
+    if (kind === "createObjectStore") liveStores.add(storeName);
+    if (kind === "dropObjectStore") {
+      owners.delete(storeName);
+      liveStores.delete(storeName);
+    }
+  }
+
+  for (const [storeName, spaceId] of destinationOwners) {
+    if (owners.get(storeName) !== spaceId || !liveStores.has(storeName)) {
+      throw new Error(
+        `Migration for contract space ${JSON.stringify(spaceId)} would leave its declared store ${JSON.stringify(storeName)} missing or owned by another space.`
+      );
+    }
+  }
 }
 
 /** Stores belong to one space because every space shares the same IndexedDB database. */
@@ -363,41 +436,32 @@ async function walkChain(input: {
   return pendingOps;
 }
 
-/**
- * Open the database at its current local version (no version arg), read the
- * marker for `spaceId`, then close the connection. Returns the current integer
- * version so the caller can compute `currentVersion + 1` for the upgrade re-open.
- */
-function openAndReadMarker(
+/** Read all spaces' markers while holding one connection at the same database version. */
+function openAndReadMarkers(
   dbName: string,
   factory: IDBFactory,
-  spaceId: string
-): Promise<{ currentVersion: number; markerHash: string | null }> {
+  spaceIds: readonly string[]
+): Promise<{ currentVersion: number; markerHashes: ReadonlyMap<string, string | null> }> {
   return new Promise((resolve, reject) => {
-    let req: IDBOpenDBRequest;
-    try {
-      req = factory.open(dbName);
-    } catch (err) {
-      reject(err);
-      return;
-    }
-
+    const req = factory.open(dbName);
     req.onsuccess = () => {
       const db = req.result;
       const currentVersion = db.version;
       void (async () => {
         try {
-          const record = await readMarker(db, spaceId);
-          resolve({ currentVersion, markerHash: record?.storageHash ?? null });
-        } catch (err) {
-          reject(err);
+          const markers = await Promise.all(
+            spaceIds.map(async (spaceId) => [spaceId, (await readMarker(db, spaceId))?.storageHash ?? null] as const)
+          );
+          resolve({ currentVersion, markerHashes: new Map(markers) });
+        } catch (error) {
+          reject(error);
         } finally {
           db.close();
         }
       })();
     };
     req.onerror = () => {
-      reject(req.error ?? new Error(`IDB open failed while reading marker for "${dbName}"`));
+      reject(req.error ?? new Error(`IDB open failed while reading markers for "${dbName}"`));
     };
   });
 }

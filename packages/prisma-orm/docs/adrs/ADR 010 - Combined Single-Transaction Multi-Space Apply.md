@@ -17,7 +17,8 @@ An app and its extensions, such as the sync extension, each have their own migra
 The browser collects the pending operations for the app space and for each extension space, then:
 
 1. Opens the database once, at `db.version + 1`, and applies every space's operations in that one `upgradeneeded` transaction.
-2. Writes every migrated space's marker in the same transaction, after all the operations.
+2. Checks store ownership in apply order against the live stores and the spaces' applied markers before running any operations.
+3. Writes every migrated space's marker in the same transaction, after all the operations.
 
 ```text
 autoMigrate: pending spaces "app" and "idb-sync"
@@ -42,7 +43,7 @@ The order is safe for two reasons:
 ## Why combining is safe
 
 - **Scope.** A version-change transaction already covers every store in the database. Combining several spaces' operations only saves extra calls to `indexedDB.open`.
-- **No overlap.** Each extension uses its own store-name prefix, such as `_idb_sync_` for the sync extension. Operations from different spaces never touch the same store, so their order can't cause a `ConstraintError`.
+- **One owner at a time.** Extension prefixes such as `_idb_sync_` keep names disjoint. A space can create a store under a name released by a previous space in apply order. The client starts from ownership at the applied markers, applies each create and drop to that ownership map, and checks that the result matches the destination contracts. It rejects overlapping claims and operations on existing stores whose owner cannot be determined.
 - **Failure rolls everything back.** If anything throws, the whole transaction aborts, every space's schema changes and markers with it, and the next open tries again ([ADR 002](ADR%20002%20-%20Two-Phase%20Migration.md)).
 
 ## Alternatives considered

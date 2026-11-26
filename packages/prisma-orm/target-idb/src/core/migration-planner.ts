@@ -12,6 +12,7 @@ import type {
 } from "@prisma/orm-framework/components/control";
 import type {
   IdbIndexDefinition,
+  IdbModelStorage,
   IdbRecordField,
   IdbRecordFieldType,
   IdbRecordShape,
@@ -63,9 +64,19 @@ function contractStorage(contract: unknown): Record<string, unknown> | null {
  * Returns `null` for a null contract (fresh database — no prior schema).
  */
 export function contractToIdbSchema(contract: unknown): IdbSchemaDiffInput | null {
-  const stores = contractStorage(contract)?.["stores"];
-  if (stores === null || typeof stores !== "object") return null;
-  return { stores: stores as Record<string, IdbStoreDefinition> };
+  const rawStores = contractStorage(contract)?.["stores"];
+  if (rawStores === null || typeof rawStores !== "object") return null;
+  const stores = rawStores as Record<string, IdbStoreDefinition>;
+  const namespaces = Object.values((contract as Partial<Contract>).domain?.namespaces ?? {});
+  const models = namespaces.length === 1 ? namespaces[0]?.models : undefined;
+  const domainModelStores = new Map<string, string>();
+  for (const [model, definition] of Object.entries(models ?? {})) {
+    const storeName = (definition?.storage as Partial<IdbModelStorage> | undefined)?.storeName;
+    if (typeof storeName === "string" && Object.hasOwn(stores, storeName)) {
+      domainModelStores.set(model, storeName);
+    }
+  }
+  return domainModelStores.size === 0 ? { stores } : { stores, domainModelStores };
 }
 
 /** Reads the storage identity used by migration endpoints and marker checks. */

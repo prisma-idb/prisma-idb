@@ -47,9 +47,11 @@ PSL uses a model name with its first letter lowercased as the default store name
 
 PSL decodes escape sequences in `@@map`, `name:` and `map:` strings, as upstream Prisma does. In a quoted string, `@@map("a\nb")` names the store `a`, a newline, then `b`, and `map: "by\u0041"` names the index `byA`. Write `\\` for a literal backslash. An unknown or incomplete escape, such as `\q` or `\u12`, stays as written. A backtick string decodes only `` \` `` and `\\`, as upstream does.
 
-If a model moves to an unused store name and its old name is removed, the migration creates an empty store and drops the old store and its records. When both contracts identify the moving model, planning rejects the move if the previous contract uses the destination name or the new contract still uses the source name.
+If a model moves to an unused store name and its old name is removed, the migration creates an empty store and drops the old store and its records. When both contracts identify the moving model, planning rejects the move if the previous contract uses the destination name or the new contract assigns the source name to a different model. When splitting a legacy shared store, one of its original models can keep the store.
 
-For older snapshots without model metadata, the planner matches stores by name. If a decoded name matches another model's old store, the migration can reuse that store and expose its records through the other model. When upgrading a schema with escaped `@@map` names, keep each existing store by writing its name so it decodes to the original. For example, `@@map("a\\nb")` keeps a store named `a\nb`. Compare each model's emitted store name with the previous contract before applying the migration.
+Planning reads model bindings from the previous contract's domain when its stores lack record shapes. If a snapshot has neither source of model bindings, the planner compares stores by name.
+
+When upgrading a schema with escaped `@@map` names, keep each existing store by writing its name so it decodes to the original. For example, `@@map("a\\nb")` keeps a store named `a\nb`. Compare each model's emitted store name with the previous contract before applying the migration.
 
 Index names default to the joined field names, with `_unique` for unique indexes. TypeScript uses the keys of `indexes` as names.
 
@@ -63,7 +65,7 @@ Scalar and enum fields can be lists. Lists cannot be optional. An empty-list def
 
 Neither authoring path accepts `__proto__` or `_generated` as the name of a model, store, field, relation, index, enum or enum member. Both report `IDB_RESERVED_NAME`. JavaScript reads `__proto__` as an object's prototype rather than as a key, and contract emission drops every key named `_generated`. Both paths also refuse `_prisma_next_marker` as a store name, because the client always creates that store for the contract marker.
 
-Use a distinct store name in each contract space. For example, the sync extension uses names that start with `_idb_sync_`. When opening the client, the browser rejects stores declared or touched by pending migrations in multiple configured spaces. The `prisma-idb migration preflight` command checks the app chain on its own.
+Each store name can belong to one contract space at a time. The sync extension uses names that start with `_idb_sync_`. During an upgrade, an earlier space can drop a store and release the name for a later space. The client checks that each migration operates on its own stores before any operations run. The `prisma-idb migration preflight` command checks the app chain on its own.
 
 ## Equivalent contracts
 

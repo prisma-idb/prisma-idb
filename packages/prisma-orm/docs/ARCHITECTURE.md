@@ -257,7 +257,7 @@ The ORM carries immutable query state through the accessor chain. Reads shape a 
 | `mutation-executor.ts` and `mutation-scope.ts`    | Nested writes, foreign-key checks and referential actions in one transaction.                 |
 | `mutation-defaults.ts`                            | Literal and generated create/update defaults, cached for each mutation.                       |
 | `relation-mutator.ts`                             | Descriptors for relation create, connect and disconnect callbacks.                            |
-| `auto-migrate.ts` and `migration-hash.ts`         | Migration-chain validation, operation hashes and combined apply.                              |
+| `auto-migrate.ts` and `migration-hash.ts`         | Validates migration chains and store ownership, then applies all spaces together.             |
 | `managed-client.ts` and `managed-auto-migrate.ts` | Shared client lifetime and reset coordination.                                                |
 
 Depends on `target-idb`, `adapter-idb`, `driver-idb` and `runtime-idb`.

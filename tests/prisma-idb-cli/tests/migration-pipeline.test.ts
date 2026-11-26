@@ -198,3 +198,36 @@ it("reports a decoded store collision as a migration planning failure", async ()
   expect(result.stderr).toContain('Cannot move model "User": store name "notes" is in use.');
   expect(await getMigrationDirs(cwd)).toHaveLength(1);
 });
+
+it("rejects a decoded store collision using the model bindings from a legacy snapshot", async () => {
+  const cwd = await setupTmpProject("legacy-store-name-collision");
+  const noteBefore = String.raw`no\\u0074es`;
+  const auditBefore = String.raw`no\u0074es`;
+  const models = {
+    Note: { storage: { storeName: noteBefore } },
+    Audit: { storage: { storeName: auditBefore } },
+  };
+  await writeRawContractJson(cwd, {
+    domain: { namespaces: { __unbound__: { models } } },
+    storage: {
+      storageHash: "before",
+      stores: { [noteBefore]: { keyPath: "id" }, [auditBefore]: { keyPath: "id" } },
+    },
+  });
+  expect((await cli(["migration", "plan"], { cwd })).exitCode).toBe(0);
+
+  await writeRawContractJson(cwd, {
+    storage: {
+      storageHash: "after",
+      stores: {
+        [auditBefore]: { keyPath: "id", record: { model: "Note", fields: {} } },
+        notes: { keyPath: "id", record: { model: "Audit", fields: {} } },
+      },
+    },
+  });
+  const result = await cli(["migration", "plan", "--name", "decoded"], { cwd });
+  expect(result.exitCode, result.stderr).toBe(2);
+  expect(result.stderr).toContain("IDB-CLI.MIGRATION_PLAN_FAILED");
+  expect(result.stderr).toContain("Cannot move model");
+  expect(await getMigrationDirs(cwd)).toHaveLength(1);
+});

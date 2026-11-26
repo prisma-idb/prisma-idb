@@ -6,6 +6,7 @@
  * `upgradeneeded` transaction, which also writes every space's marker.
  */
 import "fake-indexeddb/auto";
+import { readMarker } from "@prisma-idb/target-idb/runtime";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { defineContract } from "@prisma-idb/family-idb/contract-ts";
 import idbFamilyPack from "@prisma-idb/family-idb/pack";
@@ -380,7 +381,84 @@ describe("auto-migrate combined multi-space apply", () => {
     }
   });
 
-  it("rejects pending app operations on a store declared by an extension", async () => {
+  it.each(["fresh database", "extension at an earlier marker", "extension already at head"])(
+    "allows the app to claim a store released by an extension on %s",
+    async (initialState) => {
+      const name = dbName();
+      const extensionBefore = defineContract({
+        family: idbFamilyPack,
+        target: idbTargetPack,
+        models: { ExtensionNote: { store: "notes", key: "id", fields: { id: "String", legacyLabel: "String?" } } },
+      });
+      const extensionWithoutLabel = defineContract({
+        family: idbFamilyPack,
+        target: idbTargetPack,
+        models: { ExtensionNote: { store: "notes", key: "id", fields: { id: "String" } } },
+      });
+      const extensionAfter = defineContract({
+        family: idbFamilyPack,
+        target: idbTargetPack,
+        models: { ExtensionNote: { store: "extensionNotes", key: "id", fields: { id: "String" } } },
+      });
+      const appAfter = defineContract({
+        family: idbFamilyPack,
+        target: idbTargetPack,
+        models: {
+          User: { store: "users", key: "id", fields: { id: "String", email: "String" } },
+          Note: { store: "notes", key: "id", fields: { id: "String" } },
+        },
+      });
+      const spaceId = "ext-notes";
+      const onTransformRecords = vi.fn(() => {
+        throw new Error("The extension's transform reached an app hook");
+      });
+      const extensionHistory = [extensionBefore, extensionWithoutLabel, extensionAfter];
+      function extensions(versionCount: number) {
+        return [
+          {
+            spaceId,
+            onTransformRecords,
+            contractSpace: buildExtensionContractSpaceFixture(spaceId, extensionHistory.slice(0, versionCount)),
+          },
+        ];
+      }
+      if (initialState !== "fresh database") {
+        const initialVersions = initialState === "extension already at head" ? extensionHistory.length : 1;
+        const before = await createAutoMigratingIdbClient({
+          contractSpace: buildContractSpaceFixture([appV1]),
+          dbName: name,
+          extensions: extensions(initialVersions),
+        });
+        await before.close();
+      }
+      const finalApp =
+        initialState === "fresh database"
+          ? buildContractSpaceFixture([appAfter])
+          : buildContractSpaceFixture([appV1, appAfter]);
+      const client = await createAutoMigratingIdbClient({
+        contractSpace: finalApp,
+        dbName: name,
+        extensions: extensions(extensionHistory.length),
+      });
+      try {
+        await asRecord(client.orm)["notes"]!.create({ id: "app-note" });
+      } finally {
+        await client.close();
+      }
+
+      expect(onTransformRecords).not.toHaveBeenCalled();
+      const db = await openRawDb(name);
+      try {
+        expect(await readStores(db, ["notes", "extensionNotes"])).toEqual([[{ id: "app-note" }], []]);
+        expect(await readMarker(db, "app")).toMatchObject({ storageHash: appAfter.storage.storageHash });
+        expect(await readMarker(db, spaceId)).toMatchObject({ storageHash: extensionAfter.storage.storageHash });
+      } finally {
+        db.close();
+      }
+    }
+  );
+
+  it("rejects an extension claiming a store before the app releases it", async () => {
     const name = dbName();
     const extensionContract = defineContract({
       family: idbFamilyPack,
@@ -409,12 +487,44 @@ describe("auto-migrate combined multi-space apply", () => {
         dbName: name,
         extensions,
       })
-    ).rejects.toThrow('Store "users" is used by contract spaces "ext-users" and "app".');
+    ).rejects.toThrow('Store "users" is used by contract spaces "app" and "ext-users".');
 
     const db = await openRawDb(name);
     try {
       expect(await readStores(db, ["users"])).toEqual([[row]]);
       expect(db.objectStoreNames.contains("newUsers")).toBe(false);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("rejects taking over an installed store whose extension is no longer configured", async () => {
+    const name = dbName();
+    const extension = otherExtension();
+    const before = buildContractSpaceFixture([appV1]);
+    const client = await createAutoMigratingIdbClient({ contractSpace: before, dbName: name, extensions: [extension] });
+    await client.close();
+
+    const store = "_other_ext_widgets";
+    const after = defineContract({
+      family: idbFamilyPack,
+      target: idbTargetPack,
+      models: {
+        User: { store: "users", key: "id", fields: { id: "String", email: "String" } },
+        Widget: { store, key: "id", fields: { id: "String" } },
+      },
+    });
+    await expect(
+      createAutoMigratingIdbClient({ contractSpace: buildContractSpaceFixture([appV1, after]), dbName: name })
+    ).rejects.toThrow('existing store "_other_ext_widgets" has no owner at the applied migration markers');
+
+    const db = await openRawDb(name);
+    try {
+      expect(db.objectStoreNames.contains(store)).toBe(true);
+      expect(await readMarker(db, "app")).toMatchObject({ storageHash: before.headRef.hash });
+      expect(await readMarker(db, extension.spaceId)).toMatchObject({
+        storageHash: extension.contractSpace.headRef.hash,
+      });
     } finally {
       db.close();
     }
