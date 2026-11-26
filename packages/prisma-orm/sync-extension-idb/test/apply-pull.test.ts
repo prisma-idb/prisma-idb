@@ -9,7 +9,9 @@ import { createSyncIdbClient } from "../src/exports/client";
 import {
   OUTBOX_STORE,
   OUTBOX_ORDER_STORE,
+  SYNC_META_STORE,
   VERSION_META_STORE,
+  asAccessors,
   changelogId,
   createTestSyncClient,
   keyGet,
@@ -672,5 +674,164 @@ describe("applyPull with a compound key", () => {
     });
     expect(await scanAll(client, "memberships")).toEqual([]);
     expect(await scanAll(client, "_idb_sync_version_meta")).toEqual([]);
+  });
+});
+
+describe("a pull after a local write to a Bytes-key row", () => {
+  // Every local write path records its pending flag under the id a pull looks up: the base64 form of the key.
+  type Accessors = ReturnType<typeof asAccessors>;
+  type Write = (client: Awaited<ReturnType<typeof openBytesClient>>, tables: Accessors) => Promise<unknown>;
+
+  const bytes = new Uint8Array([1, 2, 255]);
+  const wireBytes = "AQL/";
+
+  async function openBytesClient(compound: boolean, related: boolean) {
+    const keyPath = compound ? ["tenant", "id"] : "id";
+    const dbName = testDbName();
+    (
+      await openTestDb(dbName, [
+        { name: "owners", keyPath: "id" },
+        { name: "assets", keyPath },
+        OUTBOX_STORE,
+        OUTBOX_ORDER_STORE,
+        VERSION_META_STORE,
+        SYNC_META_STORE,
+      ])
+    ).close();
+    // A related `Asset` makes every write run through a transaction scope, and allows nested writes. An
+    // unrelated one runs its plain create, createAll and delete as one batch plan.
+    const contract = defineContract({
+      family: idbFamilyPack,
+      target: idbTargetPack,
+      models: {
+        Owner: {
+          store: "owners",
+          key: "id",
+          fields: { id: "Bytes", name: "String" },
+          relations: related
+            ? { assets: { to: "Asset", cardinality: "1:N", on: { local: ["id"], target: ["ownerId"] } } }
+            : {},
+        },
+        Asset: {
+          store: "assets",
+          key: keyPath,
+          fields: { tenant: "String", id: "Bytes", ownerId: "Bytes", name: "String" },
+          relations: related
+            ? { owner: { to: "Owner", cardinality: "N:1", on: { local: ["ownerId"], target: ["id"] } } }
+            : {},
+        },
+      },
+    }) as unknown as IdbContract;
+    return createSyncIdbClient({ contract, dbName, trackedModels: "*" });
+  }
+
+  const row = { tenant: "t1", id: bytes, ownerId: new Uint8Array([9]), name: "Before" };
+  const owner = { id: row.ownerId, name: "Owner" };
+
+  const writes: Record<string, { seedRow: boolean; write: (compound: boolean) => Write }> = {
+    create: { seedRow: false, write: () => (_client, t) => t["assets"]!.create(row) },
+    createAll: { seedRow: false, write: () => (_client, t) => t["assets"]!.createAll([row]).toArray() },
+    update: {
+      seedRow: true,
+      write: (compound) => (_client, t) =>
+        t["assets"]!.where(compound ? { tenant: "t1", id: bytes } : { id: bytes }).update({ name: "After" }),
+    },
+    updateAll: {
+      seedRow: true,
+      write: () => (_client, t) => t["assets"]!.where({ name: "Before" }).updateAll({ name: "After" }).toArray(),
+    },
+    delete: {
+      seedRow: true,
+      write: (compound) => (_client, t) => t["assets"]!.delete(compound ? ["t1", bytes] : bytes),
+    },
+    deleteAll: {
+      seedRow: true,
+      write: () => (_client, t) => t["assets"]!.where({ name: "Before" }).deleteAll().toArray(),
+    },
+    "upsert, create branch": {
+      seedRow: false,
+      write: (compound) => (_client, t) =>
+        t["assets"]!.upsert({
+          where: compound ? { tenant: "t1", id: bytes } : { id: bytes },
+          create: row,
+          update: { name: "After" },
+        }),
+    },
+    "upsert, update branch": {
+      seedRow: true,
+      write: (compound) => (_client, t) =>
+        t["assets"]!.upsert({
+          where: compound ? { tenant: "t1", id: bytes } : { id: bytes },
+          create: row,
+          update: { name: "After" },
+        }),
+    },
+    "nested create": {
+      seedRow: false,
+      write: () => async (_client, t) => {
+        const other = { id: new Uint8Array([7]), name: "Other owner" };
+        await t["owners"]!.create({
+          ...other,
+          assets: (rel: { create(data: Record<string, unknown>[]): unknown }) =>
+            rel.create([{ ...row, ownerId: other.id }]),
+        });
+      },
+    },
+    "explicit transaction": {
+      seedRow: true,
+      write: (compound) => (client, _t) =>
+        client.transaction(["assets"], (tx) =>
+          tx["assets"]!.where(compound ? { tenant: "t1", id: bytes } : { id: bytes }).update({ name: "After" })
+        ),
+    },
+  };
+
+  describe.each([true, false])("with relations: %s", (related) => {
+    describe.each(Object.keys(writes).filter((name) => related || name !== "nested create"))("%s", (name) => {
+      it.each([false, true])(
+        "keeps the row's pending flag under one id that a pull finds (compound: %s)",
+        async (compound) => {
+          const { seedRow, write } = writes[name]!;
+          const client = await openBytesClient(compound, related);
+          try {
+            const tables = asAccessors(client.orm);
+            await client.withoutTracking(async (orm) => {
+              await asAccessors(orm)["owners"]!.create(owner);
+              if (seedRow) await asAccessors(orm)["assets"]!.create(row);
+            });
+            await write(compound)(client, tables);
+
+            const wireKey = compound ? ["t1", wireBytes] : wireBytes;
+            const metaId = `Asset::${JSON.stringify(wireKey)}`;
+            const metas = await scanAll(client, "_idb_sync_version_meta");
+            const assetMetas = metas.filter((meta) => meta["model"] === "Asset");
+            expect(assetMetas).toMatchObject([{ id: metaId, localChangePending: true }]);
+            const events = await scanAll(client, "_idb_sync_outbox");
+            expect(events.filter((event) => event["entityType"] === "Asset")).toMatchObject([
+              { versionMetaId: metaId },
+            ]);
+
+            const before = await scanAll(client, "assets");
+            const result = await applyPull(client, [
+              {
+                changelogId: changelogId(1),
+                model: "Asset",
+                operation: "update",
+                keyPath: wireKey,
+                record: { tenant: "t1", id: wireBytes, ownerId: "CQ==", name: "Server" },
+              },
+            ]);
+
+            expect(result).toMatchObject({ applied: 0, halted: true, lastChangelogId: null });
+            expect(await scanAll(client, "assets")).toEqual(before);
+            expect(
+              (await scanAll(client, "_idb_sync_version_meta")).filter((meta) => meta["model"] === "Asset")
+            ).toHaveLength(1);
+          } finally {
+            await client.close();
+          }
+        }
+      );
+    });
   });
 });

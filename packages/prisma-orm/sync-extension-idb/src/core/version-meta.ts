@@ -15,14 +15,24 @@ import {
 } from "@prisma-idb/client-idb/internal";
 import type { IdbTransactionScope } from "@prisma-idb/driver-idb/runtime";
 import type { VersionMetaRecord } from "../types";
-import { decodeJsonRecord, validateKeyPath } from "@prisma-idb/target-idb/runtime";
+import { codecValueToJson, decodeJsonRecord, idbCodecLookup, validateKeyPath } from "@prisma-idb/target-idb/runtime";
 import { getRecord, scanStore } from "./raw-store";
 
 export const VERSION_META_STORE = "_idb_sync_version_meta";
 
-/** The `_idb_sync_version_meta` id for the record of `modelName` stored under `key`. */
+const bytesCodec = idbCodecLookup.get("idb/bytes@1")!;
+
+/**
+ * The `_idb_sync_version_meta` id for the record of `modelName` stored under `key`.
+ * A local write passes the native key and a pull passes the wire key, so both
+ * must give one id: `Bytes` parts are written as base64, their wire form.
+ * `Date` parts already match, as `JSON.stringify` writes their wire form.
+ */
 export function versionMetaKey(modelName: string, key: unknown): string {
-  return `${modelName}::${JSON.stringify(key)}`;
+  const json = JSON.stringify(key, (_name, value: unknown) =>
+    value instanceof Uint8Array ? codecValueToJson(bytesCodec, value) : value
+  );
+  return `${modelName}::${json}`;
 }
 
 /** Find metadata aliases even after a local delete removed the application row. */
