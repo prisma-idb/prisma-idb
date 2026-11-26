@@ -14,7 +14,7 @@ import type { IdbStorage } from "@prisma-idb/target-idb/pack";
 import { createIDBRuntimeDriver, type IdbRuntimeDriverInstance } from "@prisma-idb/driver-idb/runtime";
 import type { IdbQueryPlan } from "@prisma-idb/adapter-idb/runtime";
 import type { Contract } from "@prisma/orm-framework/contract/types";
-import { idbOrm } from "../src/exports/orm";
+import { idbOrm, runOrmTransaction } from "../src/exports/orm";
 import type { IdbQueryExecutor, IdbQueryExecutorWithTransaction } from "../src/exports/orm";
 
 class TestExecutor implements IdbQueryExecutor, IdbQueryExecutorWithTransaction {
@@ -90,6 +90,7 @@ const contract = defineContract({
         bySlug: { to: "BySlug", cardinality: "1:N", on: { local: ["slug"], target: ["slug"] } },
         tags: { to: "Tag", cardinality: "1:N", on: { local: ["id"], target: ["userId"] } },
         restricted: { to: "Restricted", cardinality: "1:N", on: { local: ["id"], target: ["userId"] } },
+        nodes: { to: "Node", cardinality: "1:N", on: { local: ["id"], target: ["userId"] } },
       },
     },
     // No key: the store generates out-of-line keys.
@@ -136,6 +137,41 @@ const contract = defineContract({
         tag: { to: "Tag", cardinality: "N:1", on: { local: ["tagCode"], target: ["code"] } },
       },
     },
+    // Keyless, with a self-relation that cascades deletes from parent to child rows.
+    Node: {
+      store: "nodes",
+      fields: { code: "String", parentCode: "String?", userId: "String?" },
+      indexes: { code: { keyPath: "code", unique: true } },
+      relations: {
+        user: { to: "User", cardinality: "N:1", on: { local: ["userId"], target: ["id"] }, onDelete: "cascade" },
+        parent: {
+          to: "Node",
+          cardinality: "N:1",
+          on: { local: ["parentCode"], target: ["code"] },
+          onDelete: "cascade",
+        },
+        children: { to: "Node", cardinality: "1:N", on: { local: ["code"], target: ["parentCode"] } },
+      },
+      ignored: true,
+    },
+    // A separate parent, because setDefault checks that its default exists on every delete.
+    Owner: {
+      store: "owners",
+      key: "id",
+      fields: { id: "String" },
+      relations: {
+        defaulted: { to: "Defaulted", cardinality: "1:N", on: { local: ["id"], target: ["ownerId"] } },
+      },
+    },
+    Defaulted: {
+      store: "defaulted",
+      fields: { ownerId: "String", note: "String" },
+      fieldDefaults: { ownerId: "anon" },
+      relations: {
+        owner: { to: "Owner", cardinality: "N:1", on: { local: ["ownerId"], target: ["id"] }, onDelete: "setDefault" },
+      },
+      ignored: true,
+    },
     Restricted: {
       store: "restricted",
       fields: { userId: "String" },
@@ -150,6 +186,7 @@ type Accessor = {
   delete(key: unknown): Promise<unknown>;
   where(filter: Record<string, unknown>): {
     update(patch: Record<string, unknown>): Promise<unknown>;
+    updateAll(patch: Record<string, unknown>): PromiseLike<unknown>;
     deleteAll(): Promise<unknown>;
   };
 };
@@ -158,15 +195,14 @@ let counter = 0;
 
 describe("@@ignore model without a primary key", () => {
   let db: IDBDatabase;
+  let executor: TestExecutor;
   let orm: Record<string, Accessor | undefined>;
 
   beforeEach(async () => {
     const name = `keyless-ignored-${++counter}`;
     db = await openDb(name, contract);
-    orm = idbOrm({ contract, executor: new TestExecutor(createIDBRuntimeDriver(name).create()) }) as unknown as Record<
-      string,
-      Accessor | undefined
-    >;
+    executor = new TestExecutor(createIDBRuntimeDriver(name).create());
+    orm = idbOrm({ contract, executor }) as unknown as Record<string, Accessor | undefined>;
   });
   afterEach(() => db.close());
 
@@ -221,6 +257,67 @@ describe("@@ignore model without a primary key", () => {
       [2, { slug: "other" }],
       [3, { slug: "b" }],
     ]);
+  });
+
+  it("cascades updateAll() of the field its foreign-key index walks, keeping each row's key", async () => {
+    await orm["users"]!.create({ id: "u1", slug: "a" });
+    await orm["users"]!.create({ id: "u2", slug: "other" });
+    await addRows(db, "bySlug", [{ slug: "a" }, { slug: "other" }, { slug: "a" }]);
+    await orm["users"]!.where({ id: "u1" }).updateAll({ slug: "b" });
+    expect(await entries(db, "bySlug")).toEqual([
+      [1, { slug: "b" }],
+      [2, { slug: "other" }],
+      [3, { slug: "b" }],
+    ]);
+  });
+
+  it("cascades a delete through its own self-relation", async () => {
+    await orm["users"]!.create({ id: "u1", slug: "a" });
+    await addRows(db, "nodes", [
+      { code: "root", parentCode: null, userId: "u1" },
+      { code: "other", parentCode: null, userId: null },
+      { code: "kid", parentCode: "root", userId: null },
+      { code: "grandkid", parentCode: "kid", userId: null },
+      { code: "sibling", parentCode: "other", userId: null },
+    ]);
+    await orm["users"]!.delete("u1");
+    expect(await entries(db, "nodes")).toEqual([
+      [2, { code: "other", parentCode: null, userId: null }],
+      [5, { code: "sibling", parentCode: "other", userId: null }],
+    ]);
+  });
+
+  it("sets its foreign key to the field's default on delete and keeps each row's key", async () => {
+    for (const id of ["anon", "o1", "o2"]) await orm["owners"]!.create({ id });
+    await addRows(db, "defaulted", [
+      { ownerId: "o1", note: "x" },
+      { ownerId: "o2", note: "y" },
+      { ownerId: "o1", note: "z" },
+    ]);
+    await orm["owners"]!.delete("o1");
+    expect(await entries(db, "defaulted")).toEqual([
+      [1, { ownerId: "anon", note: "x" }],
+      [2, { ownerId: "o2", note: "y" }],
+      [3, { ownerId: "anon", note: "z" }],
+    ]);
+  });
+
+  it("cascades into its rows inside an explicit transaction", async () => {
+    await orm["users"]!.create({ id: "u1", slug: "a" });
+    await orm["users"]!.create({ id: "u2", slug: "b" });
+    await addRows(db, "loose", [
+      { userId: "u1", note: "x" },
+      { userId: "u2", note: "y" },
+    ]);
+    await addRows(db, "nodes", [
+      { code: "root", parentCode: null, userId: "u1" },
+      { code: "kid", parentCode: "root", userId: null },
+    ]);
+    await runOrmTransaction({ contract, executor }, ["users"], async (tx) => {
+      await (tx as unknown as Record<string, Accessor>)["users"]!.delete("u1");
+    });
+    expect(await entries(db, "loose")).toEqual([[2, { userId: "u2", note: "y" }]]);
+    expect(await entries(db, "nodes")).toEqual([]);
   });
 
   it("restricts a delete while its rows reference the parent", async () => {
