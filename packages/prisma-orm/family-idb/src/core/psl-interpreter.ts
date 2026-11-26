@@ -265,9 +265,57 @@ function interpretModel(
   sourceMap.set(["models", model.name, "storeName"], mapAttr?.span ?? model.span);
 
   // ── Build indexes ────────────────────────────────────────────────────────────
-  const indexes: Record<string, Omit<IdbIndexNode, "name">> = {};
+  // Keep every declared name until collision and contract validation have run.
+  const indexes: Record<string, Omit<IdbIndexNode, "name">> = Object.create(null);
   // Foreign-key fields of the relations seen so far. The builder indexes them (it has no opt-out in PSL).
   const foreignKeyFields = new Set<string>();
+
+  /**
+   * Add an index. A second index with a name already taken is merged into the
+   * first when it covers the same fields with the same options, keeping it
+   * unique when either is, as upstream Prisma's Mongo authoring merges
+   * redundant indexes. Otherwise the name is refused, instead of one index
+   * replacing the other.
+   */
+  // For each index name the attribute that generated it, or undefined when the schema wrote the name.
+  const generatedFrom = new Map<string, string | undefined>();
+  const addIndex = (
+    name: string,
+    node: Omit<IdbIndexNode, "name">,
+    span: ModelSymbol["span"],
+    origin: string | undefined
+  ): void => {
+    const existing = Object.hasOwn(indexes, name) ? indexes[name] : undefined;
+    if (
+      existing !== undefined &&
+      JSON.stringify(existing.keyPath) === JSON.stringify(node.keyPath) &&
+      (existing.multiEntry ?? false) === (node.multiEntry ?? false)
+    ) {
+      if (node.unique && !existing.unique) {
+        indexes[name] = { ...existing, unique: true };
+        sourceMap.set(["models", model.name, "indexes", name], span);
+      }
+      return;
+    }
+    if (existing !== undefined) {
+      const firstOrigin = generatedFrom.get(name);
+      const describe = (from: string | undefined) =>
+        from === undefined ? "one declared with that name" : `one generated from ${from}`;
+      diagnostics.push({
+        code: "IDB_INVALID_INDEX",
+        message:
+          firstOrigin === undefined && origin === undefined
+            ? `Model "${model.name}" declares index name "${name}" more than once. Give each index its own name.`
+            : `Model "${model.name}" has two different indexes named "${name}": ${describe(firstOrigin)} and ${describe(origin)}. Give the declared index another name, or name a generated one with name: on @@index or @@unique.`,
+        sourceId,
+        span,
+      });
+      return;
+    }
+    generatedFrom.set(name, origin);
+    indexes[name] = node;
+    sourceMap.set(["models", model.name, "indexes", name], span);
+  };
 
   // @@index([fields]) / @@unique([fields]) model attribute — `fields` may be
   // a single field or an ordered list for a compound (multi-field) index.
@@ -276,8 +324,13 @@ function interpretModel(
     const defaultName = fields.length === 1 ? fields[0]! : fields.join("_");
     const indexName = index.name ?? (index.unique ? `${defaultName}_unique` : defaultName);
     const keyPath: IdbKeyPath = fields.length === 1 ? fields[0]! : fields;
-    indexes[indexName] = { keyPath, unique: index.unique };
-    sourceMap.set(["models", model.name, "indexes", indexName], index.span);
+    const attribute = `${index.unique ? "@@unique" : "@@index"}([${fields.join(", ")}])`;
+    addIndex(
+      indexName,
+      { keyPath, unique: index.unique },
+      index.span,
+      index.name === undefined ? attribute : undefined
+    );
   }
 
   // ── Walk fields ──────────────────────────────────────────────────────────────
@@ -293,8 +346,12 @@ function interpretModel(
     const excludedAttributes = excludedScalarAttributes.get(field);
     if (excludedAttributes) {
       if (excludedAttributes.unique) {
-        indexes[`${field.name}_unique`] = { keyPath: field.name, unique: true };
-        sourceMap.set(["models", model.name, "indexes", `${field.name}_unique`], excludedAttributes.unique);
+        addIndex(
+          `${field.name}_unique`,
+          { keyPath: field.name, unique: true },
+          excludedAttributes.unique,
+          `@unique on "${field.name}"`
+        );
       }
       // Its type and other attributes belong to the server projection.
       continue;
@@ -659,8 +716,12 @@ function interpretModel(
         // builder adds no plain duplicate. Changing this changes `storageHash`.
         const takesForeignKeyIndexName = foreignKeyFields.has(field.name) && !Object.hasOwn(indexes, field.name);
         const indexName = takesForeignKeyIndexName ? field.name : `${field.name}_unique`;
-        indexes[indexName] = { keyPath: field.name, unique: true };
-        sourceMap.set(["models", model.name, "indexes", indexName], fieldAttributes.unique);
+        addIndex(
+          indexName,
+          { keyPath: field.name, unique: true },
+          fieldAttributes.unique,
+          `@unique on "${field.name}"`
+        );
       }
     }
   }

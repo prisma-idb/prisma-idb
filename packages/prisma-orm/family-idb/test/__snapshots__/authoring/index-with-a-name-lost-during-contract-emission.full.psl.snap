@@ -1,0 +1,27 @@
+{
+  "contract": null,
+  "diagnostics": {
+    "interpretation": [
+      {
+        "code": "IDB_INVALID_INDEX",
+        "message": "Model \"User\" index name \"__proto__\" is lost during contract emission. Choose a different index name.",
+        "sourceId": "authoring.prisma",
+        "span": {
+          "end": {
+            "column": 45,
+            "line": 5,
+            "offset": 110
+          },
+          "start": {
+            "column": 9,
+            "line": 5,
+            "offset": 74
+          }
+        }
+      }
+    ],
+    "parse": [],
+    "symbols": []
+  },
+  "hashes": null
+}

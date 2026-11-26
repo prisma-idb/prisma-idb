@@ -520,6 +520,26 @@ export const authoringScenarios: AuthoringScenario[] = [
     },
   },
   {
+    name: "index with a name lost during contract emission",
+    psl: `
+      model User {
+        id    String @id
+        email String
+        @@unique([email], name: "__proto__")
+      }
+    `,
+    ts: {
+      models: {
+        User: {
+          store: "user",
+          key: "id",
+          fields: { id: "String", email: "String" },
+          indexes: { ["__proto__"]: { keyPath: "email", unique: true } },
+        },
+      },
+    },
+  },
+  {
     name: "index on unknown field",
     psl: `
       model User {

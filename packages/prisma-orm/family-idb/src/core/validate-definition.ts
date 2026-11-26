@@ -247,6 +247,13 @@ function validateIndexes(model: IdbModelNode, report: Report): void {
   const seen = new Set<string>();
   for (const index of [...model.indexes, ...foreignKeyIndexes(model)]) {
     const indexAt = [...at, "indexes", index.name];
+    if (index.name === "__proto__") {
+      report(
+        "IDB_INVALID_INDEX",
+        `Model "${model.modelName}" index name "__proto__" is lost during contract emission. Choose a different index name.`,
+        indexAt
+      );
+    }
     if (seen.has(index.name)) {
       report(
         "IDB_INVALID_INDEX",
