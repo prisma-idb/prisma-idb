@@ -265,7 +265,8 @@ function interpretModel(
   sourceMap.set(["models", model.name, "storeName"], mapAttr?.span ?? model.span);
 
   // ── Build indexes ────────────────────────────────────────────────────────────
-  const indexes: Record<string, Omit<IdbIndexNode, "name">> = {};
+  // Keep every declared name until collision and contract validation have run.
+  const indexes: Record<string, Omit<IdbIndexNode, "name">> = Object.create(null);
   // Foreign-key fields of the relations seen so far. The builder indexes them (it has no opt-out in PSL).
   const foreignKeyFields = new Set<string>();
 

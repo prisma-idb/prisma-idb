@@ -1,0 +1,5 @@
+{
+  "contract": null,
+  "error": "IDB_INVALID_INDEX: Model \"User\" index name \"__proto__\" is lost during contract emission. Choose a different index name.",
+  "hashes": null
+}

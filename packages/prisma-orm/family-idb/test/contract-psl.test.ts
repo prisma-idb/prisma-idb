@@ -851,7 +851,7 @@ describe("interpretPslDocumentToIdbContract", () => {
       expect(result.failure.diagnostics[0]!.code).toBe("IDB_UNRESOLVED_BACKRELATION");
     });
 
-    it.each(["both", "constructor"])("rejects two indexes with the name %s", (name) => {
+    it.each(["both", "constructor", "__proto__"])("rejects two indexes with the name %s", (name) => {
       const result = interpret(`
         model Item {
           id String @id
