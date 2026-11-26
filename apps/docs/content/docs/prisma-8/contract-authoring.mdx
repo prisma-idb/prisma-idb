@@ -43,7 +43,7 @@ The TypeScript input contains `family`, `target`, optional `enums`, and `models`
 | `@idb.exclude` on a scalar field                | `excludeFields: ["secret"]` on the model                                                             |
 | `@@idb.exclude`                                 | `exclude: true` on the model                                                                         |
 
-PSL uses a model name with its first letter lowercased as the default store name. TypeScript requires an explicit `store`. Index names default to the joined field names, with `_unique` for unique indexes. TypeScript uses the keys of `indexes` as names.
+PSL uses a model name with its first letter lowercased as the default store name. TypeScript requires an explicit `store`. Each model needs its own store: two models with the same store name, such as `model Todo` and `model todo` without `@@map`, produce `IDB_DUPLICATE_STORE_NAME`. Index names default to the joined field names, with `_unique` for unique indexes. TypeScript uses the keys of `indexes` as names.
 
 Both `onDelete` and `onUpdate` default to `Restrict` in PSL and `"restrict"` in TypeScript. The other actions are `SetDefault` / `"setDefault"` and `NoAction` / `"noAction"`. `NoAction` behaves like `Restrict`.
 
@@ -184,6 +184,7 @@ export function buildContract(input: DefineContractInput) {
 | `IDB_AUTOINCREMENT_NOT_ON_KEY_FIELD` | A non-key field requests autoincrement.                                                                  |
 | `IDB_AUTOINCREMENT_ON_COMPOUND_KEY`  | A compound key requests autoincrement.                                                                   |
 | `IDB_AUTOINCREMENT_NOT_INT`          | An autoincrement key is not `Int`.                                                                       |
+| `IDB_DUPLICATE_STORE_NAME`           | Two models use the same store name, for example `Todo` and `todo` without `@@map`.                       |
 
 ### Fields, enums, and defaults
 

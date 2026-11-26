@@ -1444,3 +1444,23 @@ describe("defineContract — execution defaults", () => {
     expect(() => rowContract(undefined, { fieldDefaults: { s: value as never } })).toThrow(/IDB_INVALID_DEFAULT_VALUE/);
   });
 });
+
+describe("defineContract — store names", () => {
+  it.each(["full", "client"] as const)("refuses two models that share a store (%s projection)", (projection) => {
+    expect(() =>
+      defineContract(
+        {
+          family: idbFamilyPack,
+          target: idbTargetPack,
+          models: {
+            Todo: { store: "todo", key: "id", fields: { id: "String" } },
+            Task: { store: "todo", key: "id", fields: { id: "String" } },
+          },
+        },
+        { projection }
+      )
+    ).toThrow(
+      'IDB_DUPLICATE_STORE_NAME: Models "Todo" and "Task" both use store "todo". Give one of them another store name.'
+    );
+  });
+});

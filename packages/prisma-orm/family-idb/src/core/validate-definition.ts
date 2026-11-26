@@ -184,6 +184,23 @@ function validateExecutionDefault(model: IdbModelNode, field: IdbFieldNode, repo
   }
 }
 
+/** Each model needs its own store: the contract keys stores and roots by store name, so a second model would replace the first. */
+function validateStoreNames(definition: IdbContractDefinition, report: Report): void {
+  const owners = new Map<string, string>();
+  for (const model of definition.models) {
+    const owner = owners.get(model.storeName);
+    if (owner === undefined) {
+      owners.set(model.storeName, model.modelName);
+      continue;
+    }
+    report(
+      "IDB_DUPLICATE_STORE_NAME",
+      `Models "${owner}" and "${model.modelName}" both use store "${model.storeName}". Give one of them another store name.`,
+      ["models", model.modelName, "storeName"]
+    );
+  }
+}
+
 /** Validate the primary key against the fields that survive projection. */
 function validateKeys(model: IdbModelNode, report: Report): void {
   const at = ["models", model.modelName];
@@ -467,5 +484,6 @@ export function validateIdbContractDefinition(definition: IdbContractDefinition)
     validateRelations(model, definition, report);
   }
   for (const model of definition.models) validateBackrelations(model, definition, report);
+  validateStoreNames(definition, report);
   return diagnostics;
 }
