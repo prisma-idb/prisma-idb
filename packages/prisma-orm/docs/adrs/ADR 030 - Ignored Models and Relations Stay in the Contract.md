@@ -2,7 +2,7 @@
 
 - **Status:** Accepted
 - **Date:** 2026-11-25
-- **Area:** Contract, client, sync
+- **Area:** Contract, client
 
 PSL `@@ignore` and `@ignore` on a relation field hide the model or relation from the client, but leave it in the IDB contract. An ignored model keeps its object store, indexes, records, foreign keys and referential actions. An ignored relation keeps enforcing its foreign key and its `onDelete`/`onUpdate` actions. The contract marks them with `ignored: true` in `storage`: on the model's `storage` for an `@@ignore` model, and on the relation's `storage.relations` entry for every hidden relation. `@ignore` on a scalar field still leaves the field out of the contract.
 
@@ -22,7 +22,6 @@ Upstream Prisma keeps an ignored model's table and an ignored relation's foreign
 ## Consequences
 
 - **Client.** An ignored model has no accessor. `include()` and nested writes refuse a hidden relation with an error that names it. Writes through visible models still check foreign keys and run cascades, `restrict`, `setNull`, `setDefault` and `onUpdate` actions through hidden relations, including into an ignored model's store.
-- **Sync.** An `@@ignore` model never syncs. The browser never queues outbox events for its rows, even when `trackedModels` lists it or a cascade changes them. The sync server leaves it out of the synced models, so a push for it is an unknown model and it need not reach the root model. An `@@ignore` root model is refused when the server starts. The ownership graph comes from the server's contract, the SQL contract for a SQL server. The pinned SQL family keeps `@ignore` owning relations and `@@ignore` models there, so an `@ignore` owning relation stays an ownership path.
 - **Restrictions.** A relation that joins on an `@ignore` scalar field is refused with `IDB_IGNORED_FIELD_REFERENCED` even when the relation is `@ignore`, because the relation still enforces its foreign key and needs the field. Upstream accepts this, because the column stays in the SQL table. A singular backrelation that is `@ignore`, or whose owning relation is, is left out, because this contract has no singular backrelation to keep. An `@@ignore` model still needs a primary key, because its object store needs a key path; without one it fails with `IDB_MISSING_ID`, whose message says so. Upstream accepts an `@@ignore` model without a key, because a SQL table needs none. The other model checks, such as field types and indexes, apply to an ignored model as to any other, for the same reason.
 
 ## Alternatives considered

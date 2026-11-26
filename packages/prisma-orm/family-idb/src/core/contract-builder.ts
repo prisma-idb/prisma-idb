@@ -130,7 +130,7 @@ export type ModelDef<EnumName extends string = never> = {
   /**
    * Hides the model from the client, like PSL `@@ignore`. Its store, records,
    * foreign keys and referential actions stay, but the client has no accessor
-   * for it, its relations are hidden, and sync never sends its rows.
+   * for it and its relations are hidden.
    */
   readonly ignored?: boolean;
 };
