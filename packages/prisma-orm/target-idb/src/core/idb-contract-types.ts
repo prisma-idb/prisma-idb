@@ -180,7 +180,8 @@ export type IdbModelStorage = {
   readonly fieldDefaults?: Record<string, string | number | boolean>;
   /**
    * `true` for a PSL `@@ignore` model. Its store, records, foreign keys and
-   * referential actions stay, but the client has no accessor for it.
+   * referential actions stay, but the client has no accessor for it and sync
+   * never sends its rows.
    */
   readonly ignored?: true;
 };

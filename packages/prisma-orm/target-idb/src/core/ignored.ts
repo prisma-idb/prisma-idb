@@ -9,7 +9,8 @@ function modelStorage(contract: ContractWithDomain, modelName: string): IdbModel
 
 /**
  * `true` for an `@@ignore` model. The model keeps its store, records, foreign
- * keys and referential actions, but the client has no accessor for it.
+ * keys and referential actions, but the client has no accessor for it and sync
+ * never sends its rows.
  */
 export function isIgnoredModel(contract: ContractWithDomain, modelName: string): boolean {
   return modelStorage(contract, modelName)?.ignored === true;
