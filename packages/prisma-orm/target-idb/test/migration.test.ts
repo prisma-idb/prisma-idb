@@ -100,15 +100,34 @@ describe("diffIdbSchema", () => {
     expect(diffIdbSchema(schema, schema)).toHaveLength(0);
   });
 
-  it("places creates before drops (ordering invariant)", () => {
-    const from: IdbSchemaDiffInput = { stores: { old: { keyPath: "id" } } };
-    const to: IdbSchemaDiffInput = { stores: { newStore: { keyPath: "id" } } };
-    const ops = diffIdbSchema(from, to);
-    // createObjectStore must come before dropObjectStore
-    const createIdx = ops.findIndex((o) => o.kind === "createObjectStore");
-    const dropIdx = ops.findIndex((o) => o.kind === "dropObjectStore");
-    expect(createIdx).toBeGreaterThanOrEqual(0);
-    expect(dropIdx).toBeGreaterThan(createIdx);
+  it("creates an unused decoded store before dropping the old store", () => {
+    const store = { keyPath: "id", record: { model: "User", fields: {} } };
+    const from = { stores: { "to\\u0053tring": store } };
+    const to = { stores: { toString: store } };
+    expect(diffIdbSchema(from, to)).toMatchObject([
+      { kind: "createObjectStore", storeName: "toString" },
+      { kind: "dropObjectStore", storeName: "to\\u0053tring" },
+    ]);
+  });
+
+  it.each(["source", "destination"])("rejects a decoded store move with a %s name collision", (collision) => {
+    const oldName = "a\\nb";
+    const decodedName = "a\nb";
+    const moved = { keyPath: "id", record: { model: "Moved", fields: {} } };
+    const other = { keyPath: "id", record: { model: "Other", fields: {} } };
+    const from = { stores: { [oldName]: moved, ...(collision === "destination" ? { [decodedName]: other } : {}) } };
+    const to = { stores: { [decodedName]: moved, ...(collision === "source" ? { [oldName]: other } : {}) } };
+    const conflictingName = collision === "source" ? oldName : decodedName;
+
+    expect(() => diffIdbSchema(from, to)).toThrow(
+      `Cannot move model "Moved": store name ${JSON.stringify(conflictingName)} is in use.`
+    );
+  });
+
+  it("allows a model rename that keeps its store", () => {
+    const from = { stores: { users: { keyPath: "id", record: { model: "User", fields: {} } } } };
+    const to = { stores: { users: { keyPath: "id", record: { model: "Member", fields: {} } } } };
+    expect(diffIdbSchema(from, to)).toEqual([]);
   });
 
   it("op ids and labels are stable and descriptive", () => {

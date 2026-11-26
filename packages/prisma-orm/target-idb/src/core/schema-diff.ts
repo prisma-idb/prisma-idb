@@ -56,18 +56,40 @@ function indexDefinitionsDiffer(a: IdbIndexDefinition, b: IdbIndexDefinition): b
  * no-op is worse than an explicit error. The recovery path is a manual
  * migration that drops the store and re-creates it (with whatever data
  * preservation strategy the caller wants).
+ *
+ * A model can move to an unused store name if its old name is removed.
+ * When both contracts identify the model, reject a move that would reuse
+ * an existing store at either name, since that would retain unrelated rows.
  */
 export function diffIdbSchema(from: IdbSchemaDiffInput | null, to: IdbSchemaDiffInput): IdbDdlOp[] {
-  const fromStores = from?.stores ?? {};
-  const toStores = to.stores;
+  const fromStores = new Map(Object.entries(from?.stores ?? {}));
+  const toStores = new Map(Object.entries(to.stores));
   const ops: IdbDdlOp[] = [];
+
+  const fromStoreByModel = new Map<string, string>();
+  for (const [storeName, store] of fromStores) {
+    if (store.record !== undefined) fromStoreByModel.set(store.record.model, storeName);
+  }
+  for (const [storeName, store] of toStores) {
+    const model = store.record?.model;
+    if (model === undefined || fromStores.get(storeName)?.record?.model === model) continue;
+    const oldName = fromStoreByModel.get(model);
+    if (oldName === undefined) continue;
+    const collision = toStores.has(oldName) ? oldName : fromStores.has(storeName) ? storeName : undefined;
+    if (collision !== undefined) {
+      throw new Error(
+        `Cannot move model ${JSON.stringify(model)}: store name ${JSON.stringify(collision)} is in use. ` +
+          `Choose a different store name or author a manual migration to handle the existing records.`
+      );
+    }
+  }
 
   // 0. Store-level mutation guard. IDB has no in-place alter for store
   // structure — keyPath / autoIncrement changes are unrecoverable without
   // dropping the store. Fail loudly so the caller can author a manual
   // migration rather than silently misbehaving at runtime.
-  for (const [storeName, toDef] of Object.entries(toStores)) {
-    const fromDef = fromStores[storeName];
+  for (const [storeName, toDef] of toStores) {
+    const fromDef = fromStores.get(storeName);
     if (fromDef === undefined) continue;
     if (!keyPathEquals(fromDef.keyPath, toDef.keyPath)) {
       throw new Error(
@@ -86,8 +108,8 @@ export function diffIdbSchema(from: IdbSchemaDiffInput | null, to: IdbSchemaDiff
   }
 
   // 1 + 2. New stores and their indexes (additive)
-  for (const [storeName, toDef] of Object.entries(toStores)) {
-    if (storeName in fromStores) continue;
+  for (const [storeName, toDef] of toStores) {
+    if (fromStores.has(storeName)) continue;
     // Record shape belongs to contract identity, not DDL. Keep only the
     // properties that the migration authoring surface can round-trip.
     const ddlDef: IdbStoreDefinition = {
@@ -102,8 +124,8 @@ export function diffIdbSchema(from: IdbSchemaDiffInput | null, to: IdbSchemaDiff
   }
 
   // 3. New indexes on existing stores (additive)
-  for (const [storeName, toDef] of Object.entries(toStores)) {
-    const fromDef = fromStores[storeName];
+  for (const [storeName, toDef] of toStores) {
+    const fromDef = fromStores.get(storeName);
     if (fromDef === undefined) continue; // new store — handled above
     const fromIndexes = fromDef.indexes ?? {};
     for (const [indexName, indexDef] of Object.entries(toDef.indexes ?? {})) {
@@ -117,8 +139,8 @@ export function diffIdbSchema(from: IdbSchemaDiffInput | null, to: IdbSchemaDiff
   // Emit the drop first so the createIndex in the same upgradeneeded
   // transaction sees an available slot. Operation class is "widening"
   // for the drop (policy may filter it) and "additive" for the create.
-  for (const [storeName, toDef] of Object.entries(toStores)) {
-    const fromDef = fromStores[storeName];
+  for (const [storeName, toDef] of toStores) {
+    const fromDef = fromStores.get(storeName);
     if (fromDef === undefined) continue;
     const fromIndexes = fromDef.indexes ?? {};
     const toIndexes = toDef.indexes ?? {};
@@ -133,9 +155,9 @@ export function diffIdbSchema(from: IdbSchemaDiffInput | null, to: IdbSchemaDiff
   }
 
   // 5. Drop removed indexes from surviving stores (widening)
-  for (const [storeName, fromDef] of Object.entries(fromStores)) {
-    if (!(storeName in toStores)) continue; // whole store gone — handled below
-    const toStoreDef = toStores[storeName];
+  for (const [storeName, fromDef] of fromStores) {
+    if (!toStores.has(storeName)) continue; // whole store gone — handled below
+    const toStoreDef = toStores.get(storeName);
     const toIndexes = toStoreDef?.indexes ?? {};
     for (const indexName of Object.keys(fromDef.indexes ?? {})) {
       if (!(indexName in toIndexes)) {
@@ -145,8 +167,8 @@ export function diffIdbSchema(from: IdbSchemaDiffInput | null, to: IdbSchemaDiff
   }
 
   // 6. Drop removed stores (destructive)
-  for (const storeName of Object.keys(fromStores)) {
-    if (!(storeName in toStores)) {
+  for (const storeName of fromStores.keys()) {
+    if (!toStores.has(storeName)) {
       ops.push(dropObjectStoreOp(storeName));
     }
   }

@@ -45,7 +45,9 @@ The TypeScript input contains `family`, `target`, optional `enums`, and `models`
 
 PSL uses a model name with its first letter lowercased as the default store name. TypeScript requires an explicit `store`. Each model needs its own store: two models with the same store name, such as `model Todo` and `model todo` without `@@map`, produce `IDB_DUPLICATE_STORE_NAME`.
 
-PSL decodes escape sequences in `@@map`, `name:` and `map:` strings, as upstream Prisma does. In a quoted string, `@@map("a\nb")` names the store `a`, a newline, then `b`, and `map: "by\u0041"` names the index `byA`. Write `\\` for a literal backslash. An unknown or incomplete escape, such as `\q` or `\u12`, stays as written. A backtick string decodes only `` \` `` and `\\`, as upstream does. A store name that decodes differently from before refers to a different store. The migration drops the old store with its records and creates an empty one.
+PSL decodes escape sequences in `@@map`, `name:` and `map:` strings, as upstream Prisma does. In a quoted string, `@@map("a\nb")` names the store `a`, a newline, then `b`, and `map: "by\u0041"` names the index `byA`. Write `\\` for a literal backslash. An unknown or incomplete escape, such as `\q` or `\u12`, stays as written. A backtick string decodes only `` \` `` and `\\`, as upstream does.
+
+If a model's store name decodes differently, the planned migration creates an empty store under the decoded name and drops the old store. Applying the migration deletes the old store's records. If the previous contract already uses the decoded name, or the new contract still uses the old name for another model, planning rejects the move. The existing stores and their records are untouched.
 
 Index names default to the joined field names, with `_unique` for unique indexes. TypeScript uses the keys of `indexes` as names.
 
