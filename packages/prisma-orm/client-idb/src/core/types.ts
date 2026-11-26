@@ -1,5 +1,6 @@
 import type { Contract, ContractModelBase, ContractReferenceRelation } from "@prisma/orm-framework/contract/types";
 import { domainModelsAtDefaultNamespace } from "@prisma/orm-framework/contract/types";
+import { OUT_OF_LINE_KEY } from "@prisma-idb/driver-idb/runtime";
 import type {
   ExtractIdbFieldInputTypes,
   ExtractIdbFieldOutputTypes,
@@ -679,20 +680,22 @@ export function getStoreName(contract: IdbContract, modelName: string): string {
 /**
  * Extract the `keyPath` from a model's storage metadata at runtime.
  * A single field name for the common case; an ordered array of field names
- * for a compound primary key.
+ * for a compound primary key; `undefined` for an `@@ignore` model without
+ * `@id` or `@@id`, whose store keeps generated keys out of line. Pass the
+ * result to {@link extractKeyFromRow}, which handles all three.
  *
- * @throws if the model is unknown or its storage has no `keyPath` — a
- * validated contract always has one, so this only fires on a malformed or
- * hand-built contract, where guessing a key name would silently read/write
- * the wrong key.
+ * @throws if the model is unknown, or a model that is not ignored has no
+ * `keyPath` — a validated contract always has one, so this only fires on a
+ * malformed or hand-built contract, where guessing a key name would silently
+ * read/write the wrong key.
  */
-export function getKeyPath(contract: IdbContract, modelName: string): IdbKeyPath {
+export function getKeyPath(contract: IdbContract, modelName: string): IdbKeyPath | undefined {
   const model = domainModelsAtDefaultNamespace(contract.domain)[modelName];
-  const keyPath = (model?.storage as IdbModelStorage | undefined)?.keyPath;
-  if (keyPath === undefined) {
+  const storage = model?.storage as IdbModelStorage | undefined;
+  if (storage?.keyPath === undefined && storage?.ignored !== true) {
     throw new Error(`Model "${modelName}" has no storage.keyPath in the contract.`);
   }
-  return keyPath;
+  return storage.keyPath;
 }
 
 /**
@@ -702,8 +705,18 @@ export function getKeyPath(contract: IdbContract, modelName: string): IdbKeyPath
  * expects for a compound `keyPath`). The one construction site every
  * key-get/put/delete/update call should route through, so compound-key field
  * order stays consistent everywhere.
+ *
+ * Without a `keyPath` the store keeps its keys out of line, and the driver
+ * attaches each read row's key under `OUT_OF_LINE_KEY`.
  */
-export function extractKeyFromRow(row: Record<string, unknown>, keyPath: IdbKeyPath): IDBValidKey {
+export function extractKeyFromRow(row: Record<string, unknown>, keyPath: IdbKeyPath | undefined): IDBValidKey {
+  if (keyPath === undefined) {
+    const key = (row as { [OUT_OF_LINE_KEY]?: IDBValidKey })[OUT_OF_LINE_KEY];
+    if (key === undefined) {
+      throw new Error("A row of a store without a key path was read without its primary key.");
+    }
+    return key;
+  }
   if (typeof keyPath === "string") return row[keyPath] as IDBValidKey;
   return keyPath.map((field) => row[field]) as IDBValidKey;
 }

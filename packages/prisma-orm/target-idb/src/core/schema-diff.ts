@@ -1,4 +1,4 @@
-import type { IdbIndexDefinition, IdbStoreDefinition } from "./idb-contract-types";
+import type { IdbIndexDefinition, IdbKeyPath, IdbStoreDefinition } from "./idb-contract-types";
 import { keyPathEquals } from "./idb-contract-types";
 import {
   createIndexOp,
@@ -7,6 +7,47 @@ import {
   dropObjectStoreOp,
   type IdbDdlOp,
 } from "./migration-factories";
+
+/** A key path for an error message; a store without one generates out-of-line keys. */
+function describeKeyPath(keyPath: IdbKeyPath | undefined): string {
+  return keyPath === undefined ? "none (generated out-of-line keys)" : JSON.stringify(keyPath);
+}
+
+/** A store whose key path or key generator differs between two schemas. */
+export type IdbStoreKeyChange = { readonly storeName: string; readonly message: string };
+
+/**
+ * Lists the stores present in both schemas whose `keyPath` or `autoIncrement`
+ * differs. IndexedDB cannot change either on an existing store, so each one
+ * needs a hand-written migration that drops and re-creates the store. Gaining
+ * or losing `@id` on an `@@ignore` model changes both.
+ */
+export function storeKeyChanges(from: IdbSchemaDiffInput | null, to: IdbSchemaDiffInput): IdbStoreKeyChange[] {
+  const fromStores = from?.stores ?? {};
+  const changes: IdbStoreKeyChange[] = [];
+  for (const [storeName, toDef] of Object.entries(to.stores)) {
+    const fromDef = fromStores[storeName];
+    if (fromDef === undefined) continue;
+    if (!keyPathEquals(fromDef.keyPath, toDef.keyPath)) {
+      changes.push({
+        storeName,
+        message:
+          `IDB does not support altering an existing store's keyPath. ` +
+          `Store "${storeName}" keyPath changed from ${describeKeyPath(fromDef.keyPath)} to ${describeKeyPath(toDef.keyPath)}. ` +
+          `Author a manual migration that drops and re-creates the store with the desired data flow.`,
+      });
+    } else if ((fromDef.autoIncrement ?? false) !== (toDef.autoIncrement ?? false)) {
+      changes.push({
+        storeName,
+        message:
+          `IDB does not support altering an existing store's autoIncrement flag. ` +
+          `Store "${storeName}" autoIncrement changed from ${fromDef.autoIncrement ?? false} ` +
+          `to ${toDef.autoIncrement ?? false}. Author a manual migration that drops and re-creates the store.`,
+      });
+    }
+  }
+  return changes;
+}
 
 /**
  * Minimal schema shape used for diffing.
@@ -66,24 +107,8 @@ export function diffIdbSchema(from: IdbSchemaDiffInput | null, to: IdbSchemaDiff
   // structure — keyPath / autoIncrement changes are unrecoverable without
   // dropping the store. Fail loudly so the caller can author a manual
   // migration rather than silently misbehaving at runtime.
-  for (const [storeName, toDef] of Object.entries(toStores)) {
-    const fromDef = fromStores[storeName];
-    if (fromDef === undefined) continue;
-    if (!keyPathEquals(fromDef.keyPath, toDef.keyPath)) {
-      throw new Error(
-        `IDB does not support altering an existing store's keyPath. ` +
-          `Store "${storeName}" keyPath changed from ${JSON.stringify(fromDef.keyPath)} to ${JSON.stringify(toDef.keyPath)}. ` +
-          `Author a manual migration that drops and re-creates the store with the desired data flow.`
-      );
-    }
-    if ((fromDef.autoIncrement ?? false) !== (toDef.autoIncrement ?? false)) {
-      throw new Error(
-        `IDB does not support altering an existing store's autoIncrement flag. ` +
-          `Store "${storeName}" autoIncrement changed from ${fromDef.autoIncrement ?? false} ` +
-          `to ${toDef.autoIncrement ?? false}. Author a manual migration that drops and re-creates the store.`
-      );
-    }
-  }
+  const keyChange = storeKeyChanges(from, to)[0];
+  if (keyChange !== undefined) throw new Error(keyChange.message);
 
   // 1 + 2. New stores and their indexes (additive)
   for (const [storeName, toDef] of Object.entries(toStores)) {
@@ -91,7 +116,7 @@ export function diffIdbSchema(from: IdbSchemaDiffInput | null, to: IdbSchemaDiff
     // Record shape belongs to contract identity, not DDL. Keep only the
     // properties that the migration authoring surface can round-trip.
     const ddlDef: IdbStoreDefinition = {
-      keyPath: toDef.keyPath,
+      ...(toDef.keyPath !== undefined ? { keyPath: toDef.keyPath } : {}),
       ...(toDef.autoIncrement !== undefined ? { autoIncrement: toDef.autoIncrement } : {}),
       ...(toDef.indexes !== undefined ? { indexes: toDef.indexes } : {}),
     };

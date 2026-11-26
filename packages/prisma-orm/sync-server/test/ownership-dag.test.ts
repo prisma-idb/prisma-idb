@@ -43,6 +43,15 @@ describe("createSyncServer ownership graph", () => {
     expect(result?.check).toEqual({ kind: "unknown-model" });
   });
 
+  it("starts with an @@ignore model that has no key and refuses its events", () => {
+    const server = createSyncServer({ ...kanbanContractWithIgnored(), rootModel: "User" });
+    const [result] = server.validatePush(
+      [{ id: "e1", model: "Trail", operation: "create", payload: { note: "n", boardId: "b1" }, wireKey: 1 }],
+      { scopeKey: "u1" }
+    );
+    expect(result?.check).toEqual({ kind: "unknown-model" });
+  });
+
   it("counts an @ignore owning relation as an ownership path", () => {
     const server = createSyncServer({ ...kanbanContractWithIgnored(), rootModel: "User" });
     const [result] = server.validatePush(

@@ -26,6 +26,7 @@
  *   delete      — existing key, non-existent key, key range
  *   batch       — multi-op single-tx, multi-store
  *   errors      — unknown store → IdbExecuteError.STORE_NOT_FOUND
+ *   out-of-line — rows of a store without a key path carry their key
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { IdbExecuteError } from "../src/core/execute/error";
@@ -43,6 +44,7 @@ import type {
   IdbScanWritePlan,
   IdbUpdatePlan,
 } from "../src/core/plan-body";
+import { OUT_OF_LINE_KEY } from "../src/core/plan-body";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -1061,5 +1063,79 @@ describe("scan-write (delete)", () => {
 
     const all = await executeIdbPlan(db, { meta: META, kind: "cursor-scan", storeName: "users" });
     expect(all).toHaveLength(0);
+  });
+});
+
+// ── out-of-line keys ──────────────────────────────────────────────────────────
+
+describe("store without a key path", () => {
+  let db: IDBDatabase;
+
+  beforeEach(async () => {
+    db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const req = indexedDB.open(dbName(), 1);
+      req.onupgradeneeded = () => {
+        req.result.createObjectStore("loose", { autoIncrement: true }).createIndex("by-owner", "owner");
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+    await seedStore(db, "loose", [{ owner: "a" }, { owner: "b" }, { owner: "a" }]);
+  });
+
+  afterEach(() => db.close());
+
+  const keyOf = (row: Record<string, unknown>) => (row as { [OUT_OF_LINE_KEY]?: IDBValidKey })[OUT_OF_LINE_KEY];
+  const range = { kind: "only", key: "a" } as const;
+
+  it("attaches each row's key on every read", async () => {
+    const scan = await executeIdbPlan(db, { meta: META, kind: "cursor-scan", storeName: "loose" });
+    expect(scan.map(keyOf)).toEqual([1, 2, 3]);
+    const byIndex = await executeIdbPlan(db, {
+      meta: META,
+      kind: "get-all",
+      storeName: "loose",
+      indexName: "by-owner",
+      range,
+    });
+    expect(byIndex.map((row) => [keyOf(row), row["owner"]])).toEqual([
+      [1, "a"],
+      [3, "a"],
+    ]);
+    const capped = await executeIdbPlan(db, { meta: META, kind: "get-all", storeName: "loose", count: 2 });
+    expect(capped.map(keyOf)).toEqual([1, 2]);
+    const one = await executeIdbPlan(db, { meta: META, kind: "key-get", storeName: "loose", key: 2 });
+    expect(one.map(keyOf)).toEqual([2]);
+  });
+
+  it("echoes keys from writes and never stores the key property", async () => {
+    const added = await executeIdbPlan(db, { meta: META, kind: "add", storeName: "loose", record: { owner: "c" } });
+    expect(added.map(keyOf)).toEqual([4]);
+    const updated = await executeIdbPlan(db, {
+      meta: META,
+      kind: "update",
+      storeName: "loose",
+      key: 4,
+      patch: { owner: "d" },
+    });
+    expect(updated.map(keyOf)).toEqual([4]);
+    const written = await executeIdbPlan(db, {
+      meta: META,
+      kind: "scan-write",
+      storeName: "loose",
+      indexName: "by-owner",
+      range,
+      write: "put-merged",
+      patch: { owner: "e" },
+    });
+    expect(written.map(keyOf)).toEqual([1, 3]);
+    const deleted = await executeIdbPlan(db, { meta: META, kind: "delete", storeName: "loose", key: 2 });
+    expect(deleted.map(keyOf)).toEqual([2]);
+    const stored = await new Promise<unknown[]>((resolve) => {
+      const req = db.transaction(["loose"], "readonly").objectStore("loose").getAll();
+      req.onsuccess = () => resolve(req.result);
+    });
+    expect(stored.map((row) => Object.getOwnPropertySymbols(row))).toEqual([[], [], []]);
+    expect(stored).toEqual([{ owner: "e" }, { owner: "e" }, { owner: "d" }]);
   });
 });

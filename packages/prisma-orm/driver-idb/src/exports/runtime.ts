@@ -22,7 +22,7 @@ export type {
   IdbRowComparator,
   IdbMarkerRecord,
 } from "../core/plan-body";
-export { MARKER_STORE_NAME } from "../core/plan-body";
+export { MARKER_STORE_NAME, OUT_OF_LINE_KEY } from "../core/plan-body";
 export type { IdbRuntimeDriverInstance } from "../core/idb-driver";
 export { IdbExecuteError } from "../core/execute/error";
 export type { IdbExecuteErrorCode } from "../core/execute/error";

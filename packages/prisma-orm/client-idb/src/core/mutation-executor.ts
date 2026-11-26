@@ -826,7 +826,7 @@ function isChildEnforcementRelation(contract: IdbContract, modelName: string, de
     // in order — a compound key must match the whole ordered field list, not
     // just its first member).
     const keyPath = getKeyPath(contract, modelName);
-    return sameFields(def.localFields, keyPathFields(keyPath));
+    return keyPath !== undefined && sameFields(def.localFields, keyPathFields(keyPath));
   }
   return false;
 }
@@ -1546,6 +1546,7 @@ export async function executeDeleteWithReferentialActions(options: {
     const storeName = getStoreName(contract, modelName);
     const meta = makePlanMeta(contract);
     const keyPath = getKeyPath(contract, modelName);
+    if (keyPath === undefined) throw new Error(`Model "${modelName}" has no primary key to delete a row by.`);
     const fields = keyPathFields(keyPath);
     const values = typeof keyPath === "string" ? [key] : (key as IDBValidKey[]);
     const where = andExpr(fields.map((field, i) => fieldFilter(field, "eq", values[i])));

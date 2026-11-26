@@ -42,7 +42,7 @@ The TypeScript input contains `family`, `target`, optional `enums`, and `models`
 | `role Role`, `roles Role[]`                     | `fields: { role: "Role", roles: "Role[]" }`                                                          |
 | `@idb.exclude` on a scalar field                | `excludeFields: ["secret"]` on the model                                                             |
 | `@@idb.exclude`                                 | `exclude: true` on the model                                                                         |
-| `@@ignore`                                      | `ignored: true` on the model                                                                         |
+| `@@ignore`                                      | `ignored: true` on the model (an ignored model may omit `key`)                                       |
 | `@ignore` on a relation field                   | `ignored: true` on the relation (on both sides to hide both)                                         |
 | `@ignore` on a scalar field                     | Leave the field out of `fields`                                                                      |
 
@@ -174,7 +174,7 @@ export function buildContract(input: DefineContractInput) {
 
 | Code                                 | Meaning                                                                                                  |
 | ------------------------------------ | -------------------------------------------------------------------------------------------------------- |
-| `IDB_MISSING_ID`                     | A model has no primary key.                                                                              |
+| `IDB_MISSING_ID`                     | A model that isn't ignored has no primary key. A `@unique` field doesn't count as one.                   |
 | `IDB_MULTIPLE_ID_FIELDS`             | A PSL model declares more than one field-level `@id`.                                                    |
 | `IDB_INVALID_ID`                     | A primary-key declaration is malformed or references an unknown field.                                   |
 | `IDB_NULLABLE_ID`                    | A primary-key field is optional.                                                                         |

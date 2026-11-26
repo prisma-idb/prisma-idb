@@ -49,8 +49,12 @@ export function keyPathFields(keyPath: IdbKeyPath): readonly string[] {
  * (`store.get(["x"])`, not `store.get("x")`) — so a migration/schema-verify
  * diff between them is a real, actionable mismatch, not a false positive to
  * suppress.
+ *
+ * `undefined` stands for a store without a key path (out-of-line keys). It
+ * equals only another `undefined`.
  */
-export function keyPathEquals(a: IdbKeyPath, b: IdbKeyPath): boolean {
+export function keyPathEquals(a: IdbKeyPath | undefined, b: IdbKeyPath | undefined): boolean {
+  if (a === undefined || b === undefined) return a === b;
   if (Array.isArray(a) !== Array.isArray(b)) return false;
   const af = keyPathFields(a);
   const bf = keyPathFields(b);
@@ -68,9 +72,13 @@ export function keyPathEquals(a: IdbKeyPath, b: IdbKeyPath): boolean {
  *   Native IDB rejects `autoIncrement: true` combined with an array `keyPath`
  *   (`InvalidAccessError`) — a compound key can never be auto-generated.
  * - `indexes` — named secondary indexes on this store.
+ *
+ * A store without `keyPath` keeps its keys out of line: IndexedDB generates
+ * them (`autoIncrement: true`) and they are not part of the stored record. Only
+ * an `@@ignore` model without `@id` or `@@id` has such a store.
  */
 export type IdbStoreDefinition = {
-  readonly keyPath: IdbKeyPath;
+  readonly keyPath?: IdbKeyPath;
   readonly autoIncrement?: boolean;
   readonly indexes?: Record<string, IdbIndexDefinition>;
   /** Stored record metadata. Absent in DDL-only definitions and legacy contracts. */
@@ -175,7 +183,11 @@ export type IdbRelationStorage = {
  */
 export type IdbModelStorage = {
   readonly storeName: string;
-  readonly keyPath: IdbKeyPath;
+  /**
+   * The primary key field or fields. Absent for an `@@ignore` model without
+   * `@id` or `@@id`, whose store generates out-of-line keys.
+   */
+  readonly keyPath?: IdbKeyPath;
   readonly relations?: Record<string, IdbRelationStorage>;
   readonly fieldDefaults?: Record<string, string | number | boolean>;
   /**

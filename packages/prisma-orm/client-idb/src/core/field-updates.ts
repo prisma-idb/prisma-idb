@@ -87,7 +87,7 @@ export function resolveFieldUpdates(contract: IdbContract, modelName: string, in
   const operations: unknown = input(accessor);
   if (!Array.isArray(operations)) throw new TypeError("An update callback must return field operations");
   const fields = domainModelsAtDefaultNamespace(contract.domain)[modelName]!.fields;
-  const keys = keyPathFields(getKeyPath(contract, modelName)).map((key) => key.split(".")[0]);
+  const keys = keyPathFields(getKeyPath(contract, modelName) ?? []).map((key) => key.split(".")[0]);
   const patch: Record<string, unknown> = Object.create(null);
   const pending: IdbFieldOperation[] = [];
   for (const operation of operations as IdbFieldOperation[]) {

@@ -16,8 +16,10 @@ export type IdbContract = Contract<IdbStorage>;
  *
  * 1. `storage.stores` is present and is an object.
  * 2. Every store has a well-formed `keyPath` (a non-empty field name, or a
- *    non-empty array of distinct field names for a compound key).
- * 3. Every model's `storage.storeName` references an existing store.
+ *    non-empty array of distinct field names for a compound key), or no
+ *    `keyPath` and `autoIncrement: true` (generated out-of-line keys).
+ * 3. Every model's `storage.storeName` references an existing store, and
+ *    only an ignored model has no `keyPath`.
  *
  * @throws {@link ContractValidationError} with phase `'storage'` on failure.
  */
@@ -31,10 +33,12 @@ function validateIdbStorage(contract: Contract): void {
   // Validate each store has a well-formed keyPath (a non-empty string, or a
   // non-empty array of distinct non-empty field names for a compound key).
   for (const [storeName, store] of Object.entries(storage.stores)) {
+    // A store without a key path must generate its keys, or no record could be written.
+    if (store?.keyPath === undefined && store?.autoIncrement === true) continue;
     if (!store || !isWellFormedKeyPath(store.keyPath)) {
       throw new ContractValidationError(
         `Store "${storeName}" is missing a required keyPath (a non-empty field name, or a non-empty array of ` +
-          "distinct field names for a compound key)",
+          "distinct field names for a compound key). Only a store with autoIncrement: true may omit it.",
         "storage"
       );
     }
@@ -55,6 +59,20 @@ function validateIdbStorage(contract: Contract): void {
     }
     if (!storeNames.has(storeName)) {
       throw new ContractValidationError(`Model "${modelName}" references non-existent store "${storeName}"`, "storage");
+    }
+    // The client reads and writes rows by primary key, so only a model it has
+    // no accessor for may leave the key out.
+    if (model.storage?.keyPath === undefined && model.storage?.ignored !== true) {
+      throw new ContractValidationError(
+        `Model "${modelName}" has no storage.keyPath. Only an ignored model may omit it.`,
+        "storage"
+      );
+    }
+    if ((model.storage?.keyPath === undefined) !== (storage.stores[storeName]?.keyPath === undefined)) {
+      throw new ContractValidationError(
+        `Model "${modelName}" and its store "${storeName}" disagree on whether the store has a keyPath.`,
+        "storage"
+      );
     }
   }
 }

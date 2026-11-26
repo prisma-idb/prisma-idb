@@ -80,7 +80,9 @@ export const idbEmission = {
     const stores: string[] = [];
 
     for (const [storeName, store] of Object.entries(storage.stores).sort(([a], [b]) => a.localeCompare(b))) {
-      const storeParts: string[] = [`readonly keyPath: ${serializeValue(store.keyPath)}`];
+      // A store without a key path keeps generated keys out of line.
+      const storeParts: string[] =
+        store.keyPath === undefined ? [] : [`readonly keyPath: ${serializeValue(store.keyPath)}`];
 
       if (store.record !== undefined) {
         storeParts.push(`readonly record: ${serializeValue(store.record)}`);
@@ -151,10 +153,11 @@ export const idbEmission = {
    */
   generateModelStorageType(_modelName: string, model: ContractModel): string {
     const idbModel = model as ContractModel<IdbModelStorage>;
-    const parts = [
-      `readonly storeName: ${serializeValue(idbModel.storage.storeName)}`,
-      `readonly keyPath: ${serializeValue(idbModel.storage.keyPath)}`,
-    ];
+    const parts = [`readonly storeName: ${serializeValue(idbModel.storage.storeName)}`];
+    // An `@@ignore` model without `@id` or `@@id` has no key path.
+    if (idbModel.storage.keyPath !== undefined) {
+      parts.push(`readonly keyPath: ${serializeValue(idbModel.storage.keyPath)}`);
+    }
     // The typed client reads these flags to hide ignored relations, so they are
     // the only relation storage the type carries.
     if (idbModel.storage.ignored === true) parts.push("readonly ignored: true");

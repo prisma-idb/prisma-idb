@@ -302,6 +302,33 @@ describe("runPreflight", () => {
     expect(errors.join("")).toContain(message);
   });
 
+  it("passes a store that keeps generated keys out of line", async () => {
+    const head = await writeSnapshot({ trail: { autoIncrement: true } });
+    const createTrail = { ...createUsers, id: "object-store.trail.create", storeName: "trail" };
+    await writePackage({
+      dirName: "0001_baseline",
+      from: null,
+      to: head,
+      ops: [createMarker, { ...createTrail, def: { autoIncrement: true } }],
+    });
+    expect(await runPreflight({ migrationsDir: join(cwd, "migrations") })).toBe(0);
+  });
+
+  it("fails when a store that should keep keys out of line has a key path", async () => {
+    const head = await writeSnapshot({ trail: { autoIncrement: true } });
+    const createTrail = { ...createUsers, id: "object-store.trail.create", storeName: "trail" };
+    await writePackage({
+      dirName: "0001_baseline",
+      from: null,
+      to: head,
+      ops: [createMarker, { ...createTrail, def: { keyPath: "id", autoIncrement: true } }],
+    });
+    const errors: string[] = [];
+
+    expect(await runPreflight({ migrationsDir: join(cwd, "migrations"), err: (line) => errors.push(line) })).toBe(1);
+    expect(errors.join("")).toContain('keyPath mismatch: expected null, got "id"');
+  });
+
   it("rejects extra stores and indexes but excludes the runtime marker", async () => {
     const head = await writeSnapshot({ users: { keyPath: "id" } });
     await writePackage({

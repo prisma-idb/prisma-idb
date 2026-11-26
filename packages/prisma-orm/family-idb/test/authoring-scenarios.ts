@@ -29,6 +29,7 @@ export const authoringScenarios: AuthoringScenario[] = [
         audits Audit[] @ignore
         notes  Note[]
         tags   Tag[]   @ignore
+        trails Trail[]
       }
       model Tag {
         id      String @id
@@ -52,6 +53,12 @@ export const authoringScenarios: AuthoringScenario[] = [
         user   User   @relation(fields: [userId], references: [id])
         @@ignore
       }
+      model Trail {
+        code   String @unique
+        userId String
+        user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+        @@ignore
+      }
     `,
     ts: {
       models: {
@@ -64,6 +71,7 @@ export const authoringScenarios: AuthoringScenario[] = [
             audits: { to: "Audit", cardinality: "1:N", on: { local: ["id"], target: ["userId"] } },
             notes: { to: "Note", cardinality: "1:N", on: { local: ["id"], target: ["userId"] } },
             tags: { to: "Tag", cardinality: "1:N", on: { local: ["id"], target: ["ownerId"] }, ignored: true },
+            trails: { to: "Trail", cardinality: "1:N", on: { local: ["id"], target: ["userId"] } },
           },
         },
         Tag: {
@@ -91,6 +99,21 @@ export const authoringScenarios: AuthoringScenario[] = [
           key: "id",
           fields: { id: "String", userId: "String" },
           relations: { user: { to: "User", cardinality: "N:1", on: { local: ["userId"], target: ["id"] } } },
+          ignored: true,
+        },
+        // No key: an ignored model without @id keeps a store with generated keys.
+        Trail: {
+          store: "trail",
+          fields: { code: "String", userId: "String" },
+          indexes: { code_unique: { keyPath: "code", unique: true } },
+          relations: {
+            user: {
+              to: "User",
+              cardinality: "N:1",
+              on: { local: ["userId"], target: ["id"] },
+              onDelete: "cascade",
+            },
+          },
           ignored: true,
         },
       },

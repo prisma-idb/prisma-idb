@@ -195,6 +195,18 @@ describe("diffIdbSchema", () => {
     expect(() => diffIdbSchema(from, to)).toThrow(/keyPath/);
   });
 
+  it("names a missing key path when a store gains or loses one", () => {
+    const keyless: IdbSchemaDiffInput = { stores: { trail: { autoIncrement: true } } };
+    const keyed: IdbSchemaDiffInput = { stores: { trail: { keyPath: "id", autoIncrement: true } } };
+    expect(() => diffIdbSchema(keyless, keyed)).toThrow(
+      'Store "trail" keyPath changed from none (generated out-of-line keys) to "id".'
+    );
+    expect(() => diffIdbSchema(keyed, keyless)).toThrow(
+      'Store "trail" keyPath changed from "id" to none (generated out-of-line keys).'
+    );
+    expect(diffIdbSchema(keyless, keyless)).toEqual([]);
+  });
+
   it("throws when autoIncrement toggles on an existing store", () => {
     const from: IdbSchemaDiffInput = { stores: { users: { keyPath: "id", autoIncrement: false } } };
     const to: IdbSchemaDiffInput = { stores: { users: { keyPath: "id", autoIncrement: true } } };
@@ -508,6 +520,23 @@ describe("openAndUpgrade", () => {
       req.onerror = (e) => rej((e.target as IDBOpenDBRequest).error);
     });
     expect(db.objectStoreNames.contains("users")).toBe(true);
+    db.close();
+  });
+
+  it("creates a store without a key path that generates out-of-line keys", async () => {
+    const name = dbName();
+    const ops = diffIdbSchema(null, { stores: { trail: { autoIncrement: true } } });
+    expect(ops).toEqual([createObjectStoreOp("trail", { autoIncrement: true })]);
+    await openAndUpgrade({ factory: indexedDB, dbName: name, targetVersion: 1, ops });
+
+    const db = await new Promise<IDBDatabase>((res, rej) => {
+      const req = indexedDB.open(name);
+      req.onsuccess = (e) => res((e.target as IDBOpenDBRequest).result);
+      req.onerror = (e) => rej((e.target as IDBOpenDBRequest).error);
+    });
+    const store = db.transaction("trail", "readonly").objectStore("trail");
+    expect(store.keyPath).toBeNull();
+    expect(store.autoIncrement).toBe(true);
     db.close();
   });
 

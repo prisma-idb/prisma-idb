@@ -1444,3 +1444,15 @@ describe("defineContract — execution defaults", () => {
     expect(() => rowContract(undefined, { fieldDefaults: { s: value as never } })).toThrow(/IDB_INVALID_DEFAULT_VALUE/);
   });
 });
+
+describe("ModelDef — key", () => {
+  it("requires a key unless the model is ignored", () => {
+    const keyed: ModelDef = { store: "user", key: "id", fields: { id: "String" } };
+    const keyless: ModelDef = { store: "trail", ignored: true, fields: { note: "String" } };
+    // @ts-expect-error A model that isn't ignored needs a key.
+    const missing: ModelDef = { store: "log", fields: { msg: "String" } };
+    // @ts-expect-error `ignored: false` doesn't make the key optional.
+    const notIgnored: ModelDef = { store: "log", ignored: false, fields: { msg: "String" } };
+    expect([keyed, keyless, missing, notIgnored].map((def) => def.store)).toEqual(["user", "trail", "log", "log"]);
+  });
+});

@@ -28,6 +28,7 @@ import type {
   IdbScanWritePlan,
   IdbUpdatePlan,
 } from "../plan-body";
+import { OUT_OF_LINE_KEY } from "../plan-body";
 import {
   IdbExecuteError,
   isTransactionInactiveError,
@@ -43,6 +44,15 @@ type Row = Record<string, unknown>;
 type OnComplete = (rows: Row[]) => void;
 /** Route operation failures to the transaction owner. */
 type OnError = (err: unknown) => void;
+
+/**
+ * Attach `key` to `row` under {@link OUT_OF_LINE_KEY} when `store` keeps its
+ * keys out of line. Rows of a store with a key path already hold their key.
+ */
+function withRowKey(store: IDBObjectStore, row: Row, key: IDBValidKey): Row {
+  if (store.keyPath === null) (row as { [OUT_OF_LINE_KEY]?: IDBValidKey })[OUT_OF_LINE_KEY] = key;
+  return row;
+}
 
 /**
  * The error for a failed request: `IDB <what> failed on <target>: <cause>`.
@@ -182,7 +192,7 @@ function execKeyGet(store: IDBObjectStore, plan: IdbKeyGetPlan, onComplete: OnCo
   const req = store.get(plan.key);
   req.onsuccess = () => {
     const value = req.result as Row | undefined;
-    onComplete(value !== undefined ? [value] : []);
+    onComplete(value !== undefined ? [withRowKey(store, value, plan.key)] : []);
   };
   req.onerror = () => onError(opError("KEY_GET_FAILED", plan, "key-get", req.error));
 }
@@ -193,9 +203,31 @@ function execGetAll(store: IDBObjectStore, plan: IdbGetAllPlan, onComplete: OnCo
   if (plan.count === 0) return onComplete([]);
 
   const source = plan.indexName !== undefined ? store.index(plan.indexName) : store;
-  const req = source.getAll(toOptionalIdbKeyRange(plan.range), plan.count);
-  req.onsuccess = () => onComplete(req.result as Row[]);
-  req.onerror = () => onError(opError("GET_ALL_FAILED", plan, "get-all", req.error, storeTarget(plan)));
+  const range = toOptionalIdbKeyRange(plan.range);
+  const req = source.getAll(range, plan.count);
+  if (store.keyPath !== null) {
+    req.onerror = () => onError(opError("GET_ALL_FAILED", plan, "get-all", req.error, storeTarget(plan)));
+    req.onsuccess = () => onComplete(req.result as Row[]);
+    return;
+  }
+  // Out-of-line keys are not in the records, so read them over the same
+  // range. Both requests walk the same entries in the same order. A failed
+  // request aborts the transaction, which fails the other one too, so only
+  // the first failure is reported.
+  const keysReq = source.getAllKeys(range, plan.count);
+  let failed = false;
+  const fail = (what: string, cause: unknown) => {
+    if (failed) return;
+    failed = true;
+    onError(opError("GET_ALL_FAILED", plan, what, cause, storeTarget(plan)));
+  };
+  req.onerror = () => fail("get-all", req.error);
+  keysReq.onerror = () => fail("get-all keys", keysReq.error);
+  keysReq.onsuccess = () => {
+    const rows = req.result as Row[];
+    const keys = keysReq.result;
+    onComplete(rows.map((row, i) => withRowKey(store, row, keys[i]!)));
+  };
 }
 
 /** Count a store or index range without materializing record values. */
@@ -271,7 +303,7 @@ function execCursorScan(
       return;
     }
 
-    const row = cursor.value as Row;
+    const row = withRowKey(store, cursor.value as Row, cursor.primaryKey);
 
     if (filter === undefined || filter(row)) {
       if (comparator !== undefined) {
@@ -306,13 +338,15 @@ function execCursorScan(
  * The record as stored: `record` itself, plus the generated key when an
  * `autoIncrement` store with an inline `keyPath` filled it in. IDB writes the
  * generated key into its own stored copy, never into the caller's object, so
- * the echo needs it set from `req.result`.
+ * the echo needs it set from `req.result`. A store without a key path gets a
+ * copy with the key under {@link OUT_OF_LINE_KEY}.
  */
 function withGeneratedKey(
   store: IDBObjectStore,
   record: Record<string, unknown>,
   key: IDBValidKey
 ): Record<string, unknown> {
+  if (store.keyPath === null) return withRowKey(store, { ...record }, key);
   if (!store.autoIncrement || typeof store.keyPath !== "string" || record[store.keyPath] !== undefined) return record;
   return { ...record, [store.keyPath]: key };
 }
@@ -348,7 +382,7 @@ function execUpdate(store: IDBObjectStore, plan: IdbUpdatePlan, onComplete: OnCo
     // Step 3: write the merged record back.
     assertUnchangedPrimaryKey(store, plan, plan.key, merged);
     const putReq = store.keyPath === null ? store.put(merged, plan.key) : store.put(merged);
-    putReq.onsuccess = () => onComplete([merged]);
+    putReq.onsuccess = () => onComplete([withRowKey(store, merged, plan.key)]);
     putReq.onerror = () => onError(opError("PUT_FAILED", plan, "update (put phase)", putReq.error));
   });
   getReq.onerror = () => onError(opError("KEY_GET_FAILED", plan, "update (get phase)", getReq.error));
@@ -371,7 +405,7 @@ function execDelete(store: IDBObjectStore, plan: IdbDeletePlan, onComplete: OnCo
       onComplete(collected);
       return;
     }
-    collected.push(cursor.value as Row);
+    collected.push(withRowKey(store, cursor.value as Row, cursor.primaryKey));
     const delReq = cursor.delete();
     delReq.onsuccess = guardCallback(plan, "DELETE_FAILED", "delete callback", onError, () => cursor.continue());
     delReq.onerror = () => onError(opError("DELETE_FAILED", plan, "delete", delReq.error));
@@ -401,7 +435,7 @@ function execScanWrite(store: IDBObjectStore, plan: IdbScanWritePlan, onComplete
       return;
     }
 
-    const row = cursor.value as Row;
+    const row = withRowKey(store, cursor.value as Row, cursor.primaryKey);
 
     // Skip rows that don't match the filter.
     if (plan.filter !== undefined && !plan.filter(row)) {

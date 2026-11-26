@@ -7,6 +7,7 @@
 
 import type { IdbContract } from "@prisma-idb/client-idb/orm";
 import { getKeyPath, extractKeyFromRow } from "@prisma-idb/client-idb/orm";
+import type { IdbKeyPath } from "@prisma-idb/target-idb/pack";
 import {
   decimalKeysEqual,
   hasDecimalPrimaryKey,
@@ -46,10 +47,23 @@ export async function resolveVersionMeta(
   return matches[0];
 }
 
+/**
+ * The key path of a model sync sends. Only an `@@ignore` model can lack one,
+ * and sync never sends its rows, so a missing key path means the event or log
+ * names a model sync does not handle.
+ */
+export function syncedKeyPath(contract: IdbContract, model: string): IdbKeyPath {
+  const keyPath = getKeyPath(contract, model);
+  if (keyPath === undefined) {
+    throw new Error(`Model "${model}" is marked @@ignore and has no primary key. Sync never sends its rows.`);
+  }
+  return keyPath;
+}
+
 /** Older pull metadata can hold wire-form Date/Bytes parts beside native local keys. */
 export function nativeVersionMetaKey(contract: IdbContract, model: string, key: unknown): unknown {
   if (validateKeyPath(contract, model, key).ok) return key;
-  const path = getKeyPath(contract, model);
+  const path = syncedKeyPath(contract, model);
   const fields = typeof path === "string" ? [path] : path;
   const parts = typeof path === "string" ? [key] : key;
   if (!Array.isArray(parts) || parts.length !== fields.length) return undefined;
@@ -62,7 +76,7 @@ export function versionMetaMatches(contract: IdbContract, model: string, id: str
   if (versionMetaKey(model, key) === id) return true;
   if (!hasDecimalPrimaryKey(contract, model) || !id.startsWith(`${model}::`)) return false;
   const storedKey: unknown = JSON.parse(id.slice(model.length + 2));
-  const path = getKeyPath(contract, model);
+  const path = syncedKeyPath(contract, model);
   const fields = typeof path === "string" ? [path] : path;
   const parts = typeof path === "string" ? [key] : key;
   if (!Array.isArray(parts)) return false;

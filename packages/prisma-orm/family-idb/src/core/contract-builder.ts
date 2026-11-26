@@ -93,10 +93,36 @@ export type IndexDef = {
 };
 
 /** The fields, storage layout, relations, and projection rules of one model. */
-export type ModelDef<EnumName extends string = never> = {
+export type ModelDef<EnumName extends string = never> = ModelDefBody<EnumName> &
+  (
+    | {
+        /** The primary key field, or an ordered list of fields for a compound primary key. */
+        readonly key: IdbKeyPath;
+        /**
+         * Hides the model from the client, like PSL `@@ignore`. Its store, records,
+         * foreign keys and referential actions stay, but the client has no accessor
+         * for it, its relations are hidden, and sync never sends its rows.
+         */
+        readonly ignored?: boolean;
+      }
+    | {
+        /**
+         * An `ignored: true` model may omit its key, like a PSL `@@ignore` model without
+         * `@id` or `@@id`. Its store then keeps rows under keys IndexedDB generates.
+         */
+        readonly key?: IdbKeyPath;
+        /**
+         * Hides the model from the client, like PSL `@@ignore`. Its store, records,
+         * foreign keys and referential actions stay, but the client has no accessor
+         * for it, its relations are hidden, and sync never sends its rows.
+         */
+        readonly ignored: true;
+      }
+  );
+
+/** Everything in a {@link ModelDef} except its key and `ignored` flag. */
+type ModelDefBody<EnumName extends string> = {
   readonly store: string;
-  /** The primary key field, or an ordered list of fields for a compound primary key. */
-  readonly key: IdbKeyPath;
   /** All scalar fields on the model. Use `"Type"` for non-nullable, `"Type?"` for nullable. */
   readonly fields: Record<string, FieldSpec<EnumName>>;
   readonly indexes?: Record<string, IndexDef>;
@@ -127,12 +153,6 @@ export type ModelDef<EnumName extends string = never> = {
   readonly exclude?: boolean;
   /** Server-only fields on an otherwise-synced model — dropped in client projection. See ADR 012. */
   readonly excludeFields?: readonly string[];
-  /**
-   * Hides the model from the client, like PSL `@@ignore`. Its store, records,
-   * foreign keys and referential actions stay, but the client has no accessor
-   * for it, its relations are hidden, and sync never sends its rows.
-   */
-  readonly ignored?: boolean;
 };
 
 /** Family and target metadata together with the models and enums to build. */
@@ -511,7 +531,7 @@ function lowerModel(modelName: string, def: ProjectedModelDef, enums: EnumDefs):
           },
         }
       : {}),
-    key: def.key,
+    key: def.key ?? [],
     // Same as PSL: the request is retained so validation can reject a misplaced one.
     autoIncrement: autoIncrementFields.length > 0,
     ...(autoIncrementFields.length > 0 ? { autoIncrementFields } : {}),

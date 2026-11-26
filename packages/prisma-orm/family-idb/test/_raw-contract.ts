@@ -5,7 +5,8 @@ import type { IdbStorage } from "@prisma-idb/target-idb/pack";
 
 /** Storage metadata used to build schema verification fixtures. */
 type RawStoreSpec = {
-  keyPath: string | readonly string[];
+  /** Omit, with `autoIncrement: true`, for a store that keeps generated keys out of line. */
+  keyPath?: string | readonly string[];
   autoIncrement?: boolean;
   indexes?: Record<string, { keyPath: string | readonly string[]; unique: boolean; multiEntry?: boolean }>;
 };

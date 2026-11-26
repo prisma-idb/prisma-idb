@@ -19,7 +19,13 @@ import type { IdbContract } from "@prisma-idb/client-idb/orm";
 import { getKeyPath, getStoreName, extractKeyFromRow } from "@prisma-idb/client-idb/orm";
 import { decodePullLog } from "./apply-pull";
 import { deleteRecord, getRecord, putRecord } from "./raw-store";
-import { VERSION_META_STORE, versionMetaMatches, nativeVersionMetaKey, resolveVersionMeta } from "./version-meta";
+import {
+  VERSION_META_STORE,
+  versionMetaMatches,
+  nativeVersionMetaKey,
+  resolveVersionMeta,
+  syncedKeyPath,
+} from "./version-meta";
 import { preserveDecimalKeySpelling } from "@prisma-idb/client-idb/internal";
 import type { OutboxEvent, PushResult, VersionMetaRecord } from "../types";
 
@@ -61,7 +67,7 @@ export function planReconciliation<TContract extends IdbContract>(
         changelogId: event.id,
         model: event.entityType,
         operation: "update",
-        keyPath: wireKeyOf(getKeyPath(contract, event.entityType), record),
+        keyPath: wireKeyOf(syncedKeyPath(contract, event.entityType), record),
         record,
       },
       false
