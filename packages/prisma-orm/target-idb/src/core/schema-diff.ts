@@ -129,7 +129,7 @@ export function diffIdbSchema(from: IdbSchemaDiffInput | null, to: IdbSchemaDiff
     if (fromDef === undefined) continue; // new store — handled above
     const fromIndexes = fromDef.indexes ?? {};
     for (const [indexName, indexDef] of Object.entries(toDef.indexes ?? {})) {
-      if (!(indexName in fromIndexes)) {
+      if (!Object.hasOwn(fromIndexes, indexName)) {
         ops.push(createIndexOp(storeName, indexName, indexDef));
       }
     }
@@ -145,7 +145,7 @@ export function diffIdbSchema(from: IdbSchemaDiffInput | null, to: IdbSchemaDiff
     const fromIndexes = fromDef.indexes ?? {};
     const toIndexes = toDef.indexes ?? {};
     for (const [indexName, toIndexDef] of Object.entries(toIndexes)) {
-      const fromIndexDef = fromIndexes[indexName];
+      const fromIndexDef = Object.hasOwn(fromIndexes, indexName) ? fromIndexes[indexName] : undefined;
       if (fromIndexDef === undefined) continue; // new index — already covered by step 3
       if (indexDefinitionsDiffer(fromIndexDef, toIndexDef)) {
         ops.push(dropIndexOp(storeName, indexName));
@@ -160,7 +160,7 @@ export function diffIdbSchema(from: IdbSchemaDiffInput | null, to: IdbSchemaDiff
     const toStoreDef = toStores.get(storeName);
     const toIndexes = toStoreDef?.indexes ?? {};
     for (const indexName of Object.keys(fromDef.indexes ?? {})) {
-      if (!(indexName in toIndexes)) {
+      if (!Object.hasOwn(toIndexes, indexName)) {
         ops.push(dropIndexOp(storeName, indexName));
       }
     }

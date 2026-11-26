@@ -202,7 +202,7 @@ describe("migrationPlan — auto-detection", () => {
   });
 });
 
-describe("migrationPlan — record field changes", () => {
+describe("migrationPlan — incremental schema changes", () => {
   function psl(fields: string) {
     const { document, sources } = parse(`model User {\n id String @id\n ${fields}\n @@map("users")\n}`, "test.prisma");
     const { symbolTable } = buildSymbolTable({ documents: [document], sources, defaultNamespaceId: "__unbound__" });
@@ -210,6 +210,26 @@ describe("migrationPlan — record field changes", () => {
     if (!result.ok) throw new Error(JSON.stringify(result));
     return result.value;
   }
+
+  it("recreates an escaped index under its decoded toString name", async () => {
+    const legacyName = String.raw`to\x53tring`;
+    await writeContract(
+      cwd,
+      psl(String.raw`email String
+      @@index([email], name: "to\\x53tring")`)
+    );
+    expect(await migrationPlan(defaultPaths(cwd))).toBe(0);
+
+    await writeContract(cwd, psl(`email String\n @@index([email], name: "${legacyName}")`));
+    expect(await migrationPlan({ ...defaultPaths(cwd), name: "decode_index_name" })).toBe(0);
+
+    const dir = (await listMigrationDirs(cwd)).find((name) => name.endsWith("_decode_index_name"))!;
+    expect(await readOps(cwd, dir)).toMatchObject([
+      { kind: "createIndex", storeName: "users", indexName: "toString", def: { keyPath: "email" } },
+      { kind: "dropIndex", storeName: "users", indexName: legacyName },
+    ]);
+    expect(await runPreflight(defaultPaths(cwd))).toBe(0);
+  });
 
   it("scaffolds missing backfills, rejects unfilled emit and preflight, and accepts a filled scaffold", async () => {
     await writeContract(cwd, psl(""));
