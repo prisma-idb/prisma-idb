@@ -76,6 +76,12 @@ export type RelationDef = {
    * Ignored for `1:N`.
    */
   readonly index?: boolean;
+  /**
+   * Hides the relation from the client, like PSL `@ignore` on a relation field.
+   * It keeps enforcing its foreign key and referential actions, but `include()`
+   * and nested writes refuse it.
+   */
+  readonly ignored?: boolean;
 };
 
 /** The key fields and flags of one secondary index. */
@@ -121,6 +127,12 @@ export type ModelDef<EnumName extends string = never> = {
   readonly exclude?: boolean;
   /** Server-only fields on an otherwise-synced model — dropped in client projection. See ADR 012. */
   readonly excludeFields?: readonly string[];
+  /**
+   * Hides the model from the client, like PSL `@@ignore`. Its store, records,
+   * foreign keys and referential actions stay, but the client has no accessor
+   * for it and its relations are hidden.
+   */
+  readonly ignored?: boolean;
 };
 
 /** Family and target metadata together with the models and enums to build. */
@@ -281,6 +293,7 @@ function lowerRelation(name: string, rel: RelationDef, def: ModelDef<string>): I
     ...(rel.onDelete !== undefined ? { onDelete: rel.onDelete } : {}),
     ...(rel.onUpdate !== undefined ? { onUpdate: rel.onUpdate } : {}),
     ...(rel.index !== undefined ? { index: rel.index } : {}),
+    ...(rel.ignored === true ? { ignored: true } : {}),
   };
 }
 
@@ -512,6 +525,7 @@ function lowerModel(modelName: string, def: ProjectedModelDef, enums: EnumDefs):
     }),
     indexes: Object.entries(def.indexes ?? {}).map(([name, idx]) => lowerIndex(name, idx)),
     relations: Object.entries(def.relations ?? {}).map(([name, rel]) => lowerRelation(name, rel, def)),
+    ...(def.ignored === true ? { ignored: true } : {}),
   };
 }
 

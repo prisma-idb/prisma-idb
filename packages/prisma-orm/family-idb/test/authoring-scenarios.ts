@@ -18,7 +18,7 @@ export type AuthoringScenario = {
 // Casts below deliberately exercise declarations outside the TS type system.
 export const authoringScenarios: AuthoringScenario[] = [
   {
-    name: "ignore leaves fields, relations and models out in every projection",
+    name: "ignore hides relations and models from the client and leaves ignored scalars out",
     clientProjection: true,
     psl: `
       model User {
@@ -59,20 +59,39 @@ export const authoringScenarios: AuthoringScenario[] = [
           store: "user",
           key: "id",
           fields: { id: "String", email: "String" },
-          relations: { notes: { to: "Note", cardinality: "1:N", on: { local: ["id"], target: ["userId"] } } },
+          relations: {
+            posts: { to: "Post", cardinality: "1:N", on: { local: ["id"], target: ["authorId"] }, ignored: true },
+            audits: { to: "Audit", cardinality: "1:N", on: { local: ["id"], target: ["userId"] } },
+            notes: { to: "Note", cardinality: "1:N", on: { local: ["id"], target: ["userId"] } },
+            tags: { to: "Tag", cardinality: "1:N", on: { local: ["id"], target: ["ownerId"] }, ignored: true },
+          },
         },
-        Post: { store: "post", key: "id", fields: { id: "String", authorId: "String" } },
         Tag: {
           store: "tag",
           key: "id",
           fields: { id: "String", ownerId: "String" },
           relations: { owner: { to: "User", cardinality: "N:1", on: { local: ["ownerId"], target: ["id"] } } },
         },
+        Post: {
+          store: "post",
+          key: "id",
+          fields: { id: "String", authorId: "String" },
+          relations: {
+            author: { to: "User", cardinality: "N:1", on: { local: ["authorId"], target: ["id"] }, ignored: true },
+          },
+        },
         Note: {
           store: "note",
           key: "id",
           fields: { id: "String", userId: "String" },
           relations: { user: { to: "User", cardinality: "N:1", on: { local: ["userId"], target: ["id"] } } },
+        },
+        Audit: {
+          store: "audit",
+          key: "id",
+          fields: { id: "String", userId: "String" },
+          relations: { user: { to: "User", cardinality: "N:1", on: { local: ["userId"], target: ["id"] } } },
+          ignored: true,
         },
       },
     },

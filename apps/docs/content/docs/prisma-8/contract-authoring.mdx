@@ -42,6 +42,9 @@ The TypeScript input contains `family`, `target`, optional `enums`, and `models`
 | `role Role`, `roles Role[]`                     | `fields: { role: "Role", roles: "Role[]" }`                                                          |
 | `@idb.exclude` on a scalar field                | `excludeFields: ["secret"]` on the model                                                             |
 | `@@idb.exclude`                                 | `exclude: true` on the model                                                                         |
+| `@@ignore`                                      | `ignored: true` on the model                                                                         |
+| `@ignore` on a relation field                   | `ignored: true` on the relation (on both sides to hide both)                                         |
+| `@ignore` on a scalar field                     | Leave the field out of `fields`                                                                      |
 
 PSL uses a model name with its first letter lowercased as the default store name. TypeScript requires an explicit `store`. Index names default to the joined field names, with `_unique` for unique indexes. TypeScript uses the keys of `indexes` as names.
 
@@ -214,7 +217,7 @@ export function buildContract(input: DefineContractInput) {
 | Code                                        | Meaning                                                                                                        |
 | ------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
 | `IDB_INVALID_RELATION`                      | A relation declaration is malformed, references an unknown model, or sits on a field whose type isn't a model. |
-| `IDB_IGNORED_FIELD_REFERENCED`              | A primary key, an index or a relation that isn't ignored uses an `@ignore` field.                              |
+| `IDB_IGNORED_FIELD_REFERENCED`              | A primary key, an index, `@id`/`@unique` or a relation, `@ignore` or not, uses an `@ignore` scalar field.      |
 | `IDB_MISSING_RELATION_ATTRIBUTE`            | A PSL to-one relation has no `@relation` declaration.                                                          |
 | `IDB_UNKNOWN_REFERENTIAL_ACTION`            | A PSL relation names an unsupported referential action.                                                        |
 | `IDB_CONFLICTING_RELATION_ACTIONS`          | Reciprocal relations both declare the same referential action.                                                 |

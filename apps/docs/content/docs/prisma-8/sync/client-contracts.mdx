@@ -29,13 +29,15 @@ model Session {
 }
 ```
 
-Use `@idb.exclude` or `@@idb.exclude` for server-only data. `@ignore` and `@@ignore` don't mark data as server-only. The IndexedDB family leaves an `@ignore` field or `@@ignore` model out of the contract in every projection, as Prisma does. The sync server removes only the `idb` attributes, so the SQL family reads `@ignore` and `@@ignore` as you wrote them, and the Prisma 8 SQL family that the sync server uses (`8.0.0-rc.24`) treats them differently:
+Use `@idb.exclude` or `@@idb.exclude` for server-only data. `@ignore` and `@@ignore` don't mark data as server-only. In the IndexedDB contracts, both projections, an `@ignore` scalar field is left out, and an `@@ignore` model or `@ignore` relation stays but is hidden from the client, as [Ignored fields, relations and models](/docs/prisma-8/schema#ignored-fields-relations-and-models) explains.
+
+The sync server removes only the `idb` attributes, so the SQL family reads `@ignore` and `@@ignore` as you wrote them. The Prisma 8 SQL family that the sync server uses (`8.0.0-rc.24`) treats them like this:
 
 - It keeps an `@ignore` scalar field and an `@@ignore` model in the server's contract.
 - It accepts `@ignore` on the relation field that holds the foreign key and keeps that relation in the server's contract.
 - It refuses `@ignore` on a list backrelation field with `PSL_UNSUPPORTED_FIELD_ATTRIBUTE`, so a schema the sync server reads can't use it there.
 
-The browser never writes an `@ignore` field, so the server receives creates without it. In a synced model, make every `@ignore` field optional or give it a default, or the server can't insert the rows the browser creates. The sync server builds its ownership graph from the IndexedDB contracts, not the SQL one. An `@ignore` owning relation isn't in them, so it is no ownership path: a synced model that reaches the root model only through such a relation fails the reachability check when the sync server starts.
+The browser never writes an `@ignore` scalar field, so the server receives creates without it. In a synced model, make every `@ignore` scalar field optional or give it a default, or the server can't insert the rows the browser creates.
 
 Each side reads the schema differently:
 

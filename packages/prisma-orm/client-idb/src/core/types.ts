@@ -307,11 +307,19 @@ export type CreateInput<TContract, ModelName extends string> = Omit<
 
 // ── Relations ─────────────────────────────────────────────────────────────────
 
-/** Extract the relations record for a model. */
+/**
+ * Names of the relations a model's storage marks `ignored`. The client hides
+ * them: PSL `@ignore` on either side, or a relation of or to an `@@ignore` model.
+ */
+type IgnoredRelationKeys<Model> = Model extends { readonly storage: { readonly relations: infer SR } }
+  ? { [K in keyof SR]: SR[K] extends { readonly ignored: true } ? K : never }[keyof SR]
+  : never;
+
+/** Extract the relations record for a model, without the relations the client hides. */
 type ModelRelations<TContract, ModelName extends string> = ModelName extends keyof ModelsOf<TContract>
   ? ModelsOf<TContract>[ModelName] extends { relations: infer R }
     ? R extends Record<string, unknown>
-      ? R
+      ? Omit<R, IgnoredRelationKeys<ModelsOf<TContract>[ModelName]>>
       : Record<string, never>
     : Record<string, never>
   : Record<string, never>;

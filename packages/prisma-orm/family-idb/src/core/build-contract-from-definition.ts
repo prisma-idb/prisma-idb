@@ -23,6 +23,7 @@ import type {
   IdbGeneratorNode,
   IdbIndexNode,
   IdbModelNode,
+  IdbRelationNode,
 } from "./contract-definition";
 import { foreignKeyIndexes } from "./foreign-key-indexes";
 import { buildRecordShape } from "./record-shape";
@@ -83,13 +84,22 @@ function buildFields(fields: readonly IdbFieldNode[]): Record<string, ContractFi
   return Object.fromEntries(fields.map((node) => [node.name, buildField(node)]));
 }
 
+/** Referential actions and the client-visibility flag of one relation, as stored in `storage.relations`. */
+type RelationStorageEntry = { onDelete?: IdbReferentialAction; onUpdate?: IdbReferentialAction; ignored?: true };
+
 /**
  * Build a model's domain relations. Referential actions are IDB storage
  * metadata, so they go to `storage.relations` and not to the domain relation.
+ * A relation the client hides gets `ignored: true` there: its own flag, or one
+ * of the two models is ignored. It stays in the domain so its foreign key and
+ * referential actions are still enforced.
  */
-function buildRelations(model: IdbModelNode): {
+function buildRelations(
+  model: IdbModelNode,
+  ignoredModels: ReadonlySet<string>
+): {
   relations: BuiltModel["relations"];
-  relationActions: Record<string, { onDelete?: IdbReferentialAction; onUpdate?: IdbReferentialAction }>;
+  relationActions: Record<string, RelationStorageEntry>;
 } {
   const relations: BuiltModel["relations"] = Object.fromEntries(
     model.relations.map((node) => [
@@ -102,18 +112,20 @@ function buildRelations(model: IdbModelNode): {
       },
     ])
   );
-  const relationActions: Record<string, { onDelete?: IdbReferentialAction; onUpdate?: IdbReferentialAction }> =
-    Object.fromEntries(
-      model.relations
-        .filter((node) => node.onDelete !== undefined || node.onUpdate !== undefined)
-        .map((node) => [
-          node.name,
-          {
-            ...(node.onDelete !== undefined ? { onDelete: node.onDelete } : {}),
-            ...(node.onUpdate !== undefined ? { onUpdate: node.onUpdate } : {}),
-          },
-        ])
-    );
+  const isHidden = (node: IdbRelationNode) =>
+    node.ignored === true || model.ignored === true || ignoredModels.has(node.to);
+  const relationActions: Record<string, RelationStorageEntry> = Object.fromEntries(
+    model.relations
+      .filter((node) => node.onDelete !== undefined || node.onUpdate !== undefined || isHidden(node))
+      .map((node) => [
+        node.name,
+        {
+          ...(node.onDelete !== undefined ? { onDelete: node.onDelete } : {}),
+          ...(node.onUpdate !== undefined ? { onUpdate: node.onUpdate } : {}),
+          ...(isHidden(node) ? { ignored: true as const } : {}),
+        },
+      ])
+  );
   return { relations, relationActions };
 }
 
@@ -125,8 +137,8 @@ function buildFieldDefaults(fields: readonly IdbFieldNode[]): Record<string, str
 }
 
 /** Build a model's domain entry from its node. */
-function buildModel(model: IdbModelNode): BuiltModel {
-  const { relations, relationActions } = buildRelations(model);
+function buildModel(model: IdbModelNode, ignoredModels: ReadonlySet<string>): BuiltModel {
+  const { relations, relationActions } = buildRelations(model, ignoredModels);
   const fieldDefaults = buildFieldDefaults(model.fields);
   return {
     fields: buildFields(model.fields),
@@ -136,6 +148,7 @@ function buildModel(model: IdbModelNode): BuiltModel {
       keyPath: model.key,
       ...(Object.keys(relationActions).length > 0 ? { relations: relationActions } : {}),
       ...(Object.keys(fieldDefaults).length > 0 ? { fieldDefaults } : {}),
+      ...(model.ignored === true ? { ignored: true as const } : {}),
     },
   };
 }
@@ -206,13 +219,18 @@ function buildExecutionDefaults(models: readonly IdbModelNode[]): ExecutionMutat
 export function buildIdbContractFromDefinition(definition: IdbContractDefinition): Contract<IdbStorage> {
   const ns = UNBOUND_DOMAIN_NAMESPACE_ID;
   const enums = buildEnums(definition.enums);
-  const builtModels = definition.models.map((model) => [model, buildModel(model)] as const);
+  const ignoredModels = new Set(definition.models.filter((model) => model.ignored === true).map((m) => m.modelName));
+  const builtModels = definition.models.map((model) => [model, buildModel(model, ignoredModels)] as const);
 
   const stores: Record<string, IdbStoreDefinition> = Object.fromEntries(
     builtModels.map(([model, built]) => [model.storeName, buildStore(model, built, enums)])
   );
+  // An ignored model has no root, so the client has no accessor for it, as an
+  // upstream `@@ignore` model has none.
   const roots: Record<string, CrossReference> = Object.fromEntries(
-    builtModels.map(([model]) => [model.storeName, crossRef(model.modelName)])
+    builtModels
+      .filter(([model]) => model.ignored !== true)
+      .map(([model]) => [model.storeName, crossRef(model.modelName)])
   );
   const domainModels: Record<string, BuiltModel> = Object.fromEntries(
     builtModels.map(([model, built]) => [model.modelName, built])

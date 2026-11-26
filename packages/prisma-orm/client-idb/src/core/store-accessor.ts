@@ -2,7 +2,7 @@ import { type IdbUpdateCallback, resolveFieldUpdates, applyFieldUpdates } from "
 import { AsyncIterableResult } from "@prisma/orm-framework/components/runtime";
 import type { PlanMeta } from "@prisma/orm-framework/contract/types";
 import type { IdbFilterExpr, IdbQueryPlan } from "@prisma-idb/adapter-idb/runtime";
-import { absentAsNull, isValidIdbKey } from "@prisma-idb/target-idb/runtime";
+import { absentAsNull, isIgnoredRelation, isValidIdbKey } from "@prisma-idb/target-idb/runtime";
 import type {
   IdbAggregateAst,
   IdbCountAst,
@@ -514,6 +514,11 @@ export class IdbStoreAccessorImpl<
       IdbIncludeRefinementAccessor<TContract, RelatedModelOf<TContract, ModelName, K>> | IdbIncludeScalar
     >
   ): IdbStoreAccessor<TContract, ModelName, IncludeSpec<TContract, ModelName>, TSelected, TFiltered> {
+    if (isIgnoredRelation(this.#contract, this.#modelName, relation)) {
+      throw new Error(
+        `include('${relation}'): relation "${this.#modelName}.${relation}" is hidden by @ignore or @@ignore, so the client can't read it.`
+      );
+    }
     const entry = this.#resolveIncludeEntry(relation, refineFn);
     const newState = mergeAccessorState(this.#state, {
       includes: { ...this.#state.includes, [relation]: entry },

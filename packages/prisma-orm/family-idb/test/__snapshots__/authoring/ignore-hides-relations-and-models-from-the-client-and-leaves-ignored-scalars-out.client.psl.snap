@@ -10,6 +10,52 @@
       "namespaces": {
         "__unbound__": {
           "models": {
+            "Audit": {
+              "fields": {
+                "id": {
+                  "nullable": false,
+                  "type": {
+                    "codecId": "idb/string@1",
+                    "kind": "scalar"
+                  }
+                },
+                "userId": {
+                  "nullable": false,
+                  "type": {
+                    "codecId": "idb/string@1",
+                    "kind": "scalar"
+                  }
+                }
+              },
+              "relations": {
+                "user": {
+                  "cardinality": "N:1",
+                  "nullable": false,
+                  "on": {
+                    "localFields": [
+                      "userId"
+                    ],
+                    "targetFields": [
+                      "id"
+                    ]
+                  },
+                  "to": {
+                    "model": "User",
+                    "namespace": "__unbound__"
+                  }
+                }
+              },
+              "storage": {
+                "ignored": true,
+                "keyPath": "id",
+                "relations": {
+                  "user": {
+                    "ignored": true
+                  }
+                },
+                "storeName": "audit"
+              }
+            },
             "Note": {
               "fields": {
                 "id": {
@@ -67,9 +113,31 @@
                   }
                 }
               },
-              "relations": {},
+              "relations": {
+                "author": {
+                  "cardinality": "N:1",
+                  "nullable": false,
+                  "on": {
+                    "localFields": [
+                      "authorId"
+                    ],
+                    "targetFields": [
+                      "id"
+                    ]
+                  },
+                  "to": {
+                    "model": "User",
+                    "namespace": "__unbound__"
+                  }
+                }
+              },
               "storage": {
                 "keyPath": "id",
+                "relations": {
+                  "author": {
+                    "ignored": true
+                  }
+                },
                 "storeName": "post"
               }
             },
@@ -131,6 +199,21 @@
                 }
               },
               "relations": {
+                "audits": {
+                  "cardinality": "1:N",
+                  "on": {
+                    "localFields": [
+                      "id"
+                    ],
+                    "targetFields": [
+                      "userId"
+                    ]
+                  },
+                  "to": {
+                    "model": "Audit",
+                    "namespace": "__unbound__"
+                  }
+                },
                 "notes": {
                   "cardinality": "1:N",
                   "on": {
@@ -145,10 +228,51 @@
                     "model": "Note",
                     "namespace": "__unbound__"
                   }
+                },
+                "posts": {
+                  "cardinality": "1:N",
+                  "on": {
+                    "localFields": [
+                      "id"
+                    ],
+                    "targetFields": [
+                      "authorId"
+                    ]
+                  },
+                  "to": {
+                    "model": "Post",
+                    "namespace": "__unbound__"
+                  }
+                },
+                "tags": {
+                  "cardinality": "1:N",
+                  "on": {
+                    "localFields": [
+                      "id"
+                    ],
+                    "targetFields": [
+                      "ownerId"
+                    ]
+                  },
+                  "to": {
+                    "model": "Tag",
+                    "namespace": "__unbound__"
+                  }
                 }
               },
               "storage": {
                 "keyPath": "id",
+                "relations": {
+                  "audits": {
+                    "ignored": true
+                  },
+                  "posts": {
+                    "ignored": true
+                  },
+                  "tags": {
+                    "ignored": true
+                  }
+                },
                 "storeName": "user"
               }
             }
@@ -184,8 +308,36 @@
           "id": "__unbound__"
         }
       },
-      "storageHash": "2183ef12cd858601d8616142e397916b90a3e1474f3ecbb751ab5ff38fe8a1a6",
+      "storageHash": "611c94078928d65422989bb239588b09e908669c8ad43b360fbdbfdf2c242b5d",
       "stores": {
+        "audit": {
+          "indexes": {
+            "userId": {
+              "keyPath": "userId",
+              "unique": false
+            }
+          },
+          "keyPath": "id",
+          "record": {
+            "fields": {
+              "id": {
+                "nullable": false,
+                "type": {
+                  "codecId": "idb/string@1",
+                  "kind": "scalar"
+                }
+              },
+              "userId": {
+                "nullable": false,
+                "type": {
+                  "codecId": "idb/string@1",
+                  "kind": "scalar"
+                }
+              }
+            },
+            "model": "Audit"
+          }
+        },
         "note": {
           "indexes": {
             "userId": {
@@ -215,6 +367,12 @@
           }
         },
         "post": {
+          "indexes": {
+            "authorId": {
+              "keyPath": "authorId",
+              "unique": false
+            }
+          },
           "keyPath": "id",
           "record": {
             "fields": {
@@ -299,6 +457,6 @@
   "hashes": {
     "executionHash": null,
     "profileHash": "40329830af4e39e0774683fbebcdc24dcf983a5da02c5fe6079a2a57579f861c",
-    "storageHash": "2183ef12cd858601d8616142e397916b90a3e1474f3ecbb751ab5ff38fe8a1a6"
+    "storageHash": "611c94078928d65422989bb239588b09e908669c8ad43b360fbdbfdf2c242b5d"
   }
 }

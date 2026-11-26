@@ -71,7 +71,7 @@ import { idbScalarTypes } from "./psl-scalars";
 
 /** The attribute namespace family-idb owns. A foreign PSL parser rejects it, see `stripIdbExcludeAttributes`. */
 export const IDB_EXCLUDE_ATTR = "idb.exclude";
-/** Prisma's `@ignore`/`@@ignore`: the field or model is left out of the contract in every projection. */
+/** Prisma's `@ignore`/`@@ignore`: a scalar field leaves the contract; a model or relation is hidden from the client. */
 export const IGNORE_ATTR = "ignore";
 
 // ── Argument types ─────────────────────────────────────────────────────────────
@@ -263,7 +263,8 @@ const excludeModelSpec = modelAttribute(IDB_EXCLUDE_ATTR, {
 });
 
 const ignoreModelSpec = modelAttribute(IGNORE_ATTR, {
-  documentation: "Leaves this model out of the contract, as Prisma's `@@ignore` does.",
+  documentation:
+    "Hides this model from the client, as Prisma's `@@ignore` does. Its store, records and foreign keys stay.",
 });
 
 const idFieldSpec = fieldAttribute("id", {
@@ -308,7 +309,8 @@ const excludeFieldSpec = fieldAttribute(IDB_EXCLUDE_ATTR, {
 });
 
 const ignoreFieldSpec = fieldAttribute(IGNORE_ATTR, {
-  documentation: "Leaves this field out of the contract, as Prisma's `@ignore` does.",
+  documentation:
+    "Leaves this scalar field out of the contract, or hides this relation from the client while it still enforces its foreign key, as Prisma's `@ignore` does.",
 });
 
 /**

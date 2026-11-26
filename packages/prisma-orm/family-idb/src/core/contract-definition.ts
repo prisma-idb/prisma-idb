@@ -59,6 +59,11 @@ export interface IdbModelNode {
   readonly indexes: readonly IdbIndexNode[];
   /** Relations in the order they appear on the model. */
   readonly relations: readonly IdbRelationNode[];
+  /**
+   * `true` for an `@@ignore` model: it keeps its store, records and foreign
+   * keys, but the client has no accessor for it.
+   */
+  readonly ignored?: boolean;
 }
 
 /** A generator that fills a field when a record is created or updated. */
@@ -125,4 +130,10 @@ export interface IdbRelationNode {
    * its `localFields` are not foreign keys.
    */
   readonly index?: boolean;
+  /**
+   * `true` when the client hides the relation. It still enforces its foreign
+   * key and referential actions. Relations of or to an ignored model are hidden
+   * too, without this flag.
+   */
+  readonly ignored?: boolean;
 }
