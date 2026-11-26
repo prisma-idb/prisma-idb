@@ -221,3 +221,23 @@ describe("op executors: request failures", () => {
     });
   });
 });
+
+describe("get-all on a store without a key path", () => {
+  it("reports one failure when both the row and the key requests fail", () => {
+    const { store, requests } = stubStore();
+    Object.defineProperty(store, "keyPath", { value: null });
+    const errors: unknown[] = [];
+    executeOpInTx(
+      store,
+      { meta: META, kind: "get-all", storeName: "trail" },
+      () => undefined,
+      (err) => errors.push(err)
+    );
+    expect(requests).toHaveLength(2);
+    requests[0]!.onerror!();
+    requests[1]!.onerror!();
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toMatchObject({ code: "GET_ALL_FAILED", planKind: "get-all", storeName: "trail" });
+    expect((errors[0] as Error).message).toBe('IDB get-all failed on store "trail": Error: boom');
+  });
+});

@@ -205,15 +205,24 @@ function execGetAll(store: IDBObjectStore, plan: IdbGetAllPlan, onComplete: OnCo
   const source = plan.indexName !== undefined ? store.index(plan.indexName) : store;
   const range = toOptionalIdbKeyRange(plan.range);
   const req = source.getAll(range, plan.count);
-  req.onerror = () => onError(opError("GET_ALL_FAILED", plan, "get-all", req.error, storeTarget(plan)));
   if (store.keyPath !== null) {
+    req.onerror = () => onError(opError("GET_ALL_FAILED", plan, "get-all", req.error, storeTarget(plan)));
     req.onsuccess = () => onComplete(req.result as Row[]);
     return;
   }
   // Out-of-line keys are not in the records, so read them over the same
-  // range. Both requests walk the same entries in the same order.
+  // range. Both requests walk the same entries in the same order. A failed
+  // request aborts the transaction, which fails the other one too, so only
+  // the first failure is reported.
   const keysReq = source.getAllKeys(range, plan.count);
-  keysReq.onerror = () => onError(opError("GET_ALL_FAILED", plan, "get-all keys", keysReq.error, storeTarget(plan)));
+  let failed = false;
+  const fail = (what: string, cause: unknown) => {
+    if (failed) return;
+    failed = true;
+    onError(opError("GET_ALL_FAILED", plan, what, cause, storeTarget(plan)));
+  };
+  req.onerror = () => fail("get-all", req.error);
+  keysReq.onerror = () => fail("get-all keys", keysReq.error);
   keysReq.onsuccess = () => {
     const rows = req.result as Row[];
     const keys = keysReq.result;
