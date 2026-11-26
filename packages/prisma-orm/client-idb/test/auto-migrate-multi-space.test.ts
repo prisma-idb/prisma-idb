@@ -499,7 +499,7 @@ describe("auto-migrate combined multi-space apply", () => {
         factory: indexedDB,
         dbName: name,
         targetVersion,
-        ops: [...extension.migrations[1]!.ops, ...app.migrations[1]!.ops] as Parameters<
+        ops: [...extension.migrations[1]!.ops, ...app.migrations[1]!.ops] as unknown as Parameters<
           typeof openAndUpgrade
         >[0]["ops"],
       });
