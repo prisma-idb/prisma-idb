@@ -503,8 +503,16 @@ function validateReservedNames(definition: IdbContractDefinition, report: Report
         [...at, "storeName"]
       );
     }
-    for (const field of model.fields)
-      check(`Model "${model.modelName}" field name`, field.name, [...at, "fields", field.name]);
+    // Client projection removes excluded scalar fields but keeps their declared names.
+    const fieldNames = new Set(model.fields.map((field) => field.name));
+    if (model.exclusions) {
+      const excludedFields = new Set(model.exclusions.fields);
+      for (const name of model.exclusions.relationFields) excludedFields.delete(name);
+      for (const name of model.exclusions.declaredFields) {
+        if (excludedFields.has(name)) fieldNames.add(name);
+      }
+    }
+    for (const name of fieldNames) check(`Model "${model.modelName}" field name`, name, [...at, "fields", name]);
     for (const relation of model.relations) {
       check(`Model "${model.modelName}" relation name`, relation.name, [...at, "relations", relation.name]);
     }

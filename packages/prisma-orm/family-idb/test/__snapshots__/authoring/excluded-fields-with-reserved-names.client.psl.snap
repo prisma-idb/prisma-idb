@@ -1,0 +1,44 @@
+{
+  "contract": null,
+  "diagnostics": {
+    "interpretation": [
+      {
+        "code": "IDB_RESERVED_NAME",
+        "message": "Model \"User\" field name \"__proto__\" can't be used: JavaScript reads it as an object's prototype rather than as a key. Rename it.",
+        "sourceId": "authoring.prisma",
+        "span": {
+          "end": {
+            "column": 38,
+            "line": 4,
+            "offset": 79
+          },
+          "start": {
+            "column": 9,
+            "line": 4,
+            "offset": 50
+          }
+        }
+      },
+      {
+        "code": "IDB_RESERVED_NAME",
+        "message": "Model \"User\" field name \"_generated\" can't be used: contract emission drops every key with that name. Rename it.",
+        "sourceId": "authoring.prisma",
+        "span": {
+          "end": {
+            "column": 39,
+            "line": 5,
+            "offset": 118
+          },
+          "start": {
+            "column": 9,
+            "line": 5,
+            "offset": 88
+          }
+        }
+      }
+    ],
+    "parse": [],
+    "symbols": []
+  },
+  "hashes": null
+}

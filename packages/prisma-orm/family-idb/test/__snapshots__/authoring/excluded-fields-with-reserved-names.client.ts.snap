@@ -1,0 +1,5 @@
+{
+  "contract": null,
+  "error": "IDB_RESERVED_NAME: Model \"User\" field name \"__proto__\" can't be used: JavaScript reads it as an object's prototype rather than as a key. Rename it.\nIDB_RESERVED_NAME: Model \"User\" field name \"_generated\" can't be used: contract emission drops every key with that name. Rename it.",
+  "hashes": null
+}
