@@ -74,9 +74,9 @@ export function planReconciliation<TContract extends IdbContract>(
 }
 
 /**
- * The wire key of `record`, read from its own key fields. The key cannot come
- * from `versionMetaId`: that id is JSON, which flattens native keys such as
- * `Uint8Array` into something the wire decoder rejects.
+ * The wire key of `record`, read from its own key fields. The key is not parsed
+ * from `versionMetaId`, because events queued by earlier versions carry an id
+ * that flattened `Uint8Array` key parts into something the wire decoder rejects.
  */
 function wireKeyOf(keyPath: string | readonly string[], record: Record<string, unknown>): unknown {
   return typeof keyPath === "string" ? record[keyPath] : keyPath.map((field) => record[field]);
