@@ -6,6 +6,8 @@
  * `upgradeneeded` transaction, which also writes every space's marker.
  */
 import "fake-indexeddb/auto";
+import { createObjectStoreOp } from "@prisma-idb/target-idb/migration";
+import { computeMigrationHash } from "@prisma/orm-toolchain/migration-tools/hash";
 import { openAndUpgrade, readMarker } from "@prisma-idb/target-idb/runtime";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { defineContract } from "@prisma-idb/family-idb/contract-ts";
@@ -543,6 +545,55 @@ describe("auto-migrate combined multi-space apply", () => {
       expect(await recovered.verifyMarker()).toBe(true);
     } finally {
       await recovered.close();
+    }
+  });
+
+  it("keeps a helper store created by an at-head extension's migration", async () => {
+    const name = dbName();
+    const extension = otherExtension();
+    const helper = "extensionStaging";
+    const baseline = extension.contractSpace.migrations[0]!;
+    const ops = [...baseline.ops, createObjectStoreOp(helper, { keyPath: "id" })];
+    const extensionWithHelper = {
+      ...extension,
+      contractSpace: {
+        ...extension.contractSpace,
+        migrations: [
+          {
+            ...baseline,
+            ops,
+            metadata: { ...baseline.metadata, migrationHash: computeMigrationHash(baseline.metadata, ops) },
+          },
+        ],
+      },
+    };
+    const extensions = [extensionWithHelper];
+    const before = buildContractSpaceFixture([appV1]);
+    const client = await createAutoMigratingIdbClient({ contractSpace: before, dbName: name, extensions });
+    await client.close();
+
+    const after = defineContract({
+      family: idbFamilyPack,
+      target: idbTargetPack,
+      models: {
+        User: { store: "users", key: "id", fields: { id: "String", email: "String" } },
+        Staging: { store: helper, key: "id", fields: { id: "String" } },
+      },
+    });
+    await expect(
+      createAutoMigratingIdbClient({
+        contractSpace: buildContractSpaceFixture([appV1, after]),
+        dbName: name,
+        extensions,
+      })
+    ).rejects.toThrow('Store "extensionStaging" is used by contract spaces "other-ext" and "app".');
+
+    const db = await openRawDb(name);
+    try {
+      expect(db.objectStoreNames.contains(helper)).toBe(true);
+      expect(await readMarker(db, "app")).toMatchObject({ storageHash: before.headRef.hash });
+    } finally {
+      db.close();
     }
   });
 

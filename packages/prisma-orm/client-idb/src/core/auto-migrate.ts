@@ -171,12 +171,16 @@ export async function autoMigrate(input: {
   const appliedOwners = new Map<string, string>([[IDB_MARKER_STORE, APP_SPACE_ID]]);
   for (const { spaceId, contractSpace } of spaces) {
     const markerHash = markerHashes.get(spaceId);
-    if (markerHash === undefined || markerHash === null) continue;
-    const storeNames =
-      markerHash === contractSpace.headRef.hash
-        ? declaredStores(contractSpace)
-        : await storesAtMarker(contractSpace, markerHash);
-    for (const storeName of storeNames) recordStoreOwner(appliedOwners, storeName, spaceId);
+    if (markerHash === undefined) continue;
+    if (markerHash === contractSpace.headRef.hash) {
+      for (const storeName of declaredStores(contractSpace)) recordStoreOwner(appliedOwners, storeName, spaceId);
+    }
+    if (contractSpace.migrations.length > 0) {
+      // Applied migrations can leave helper stores outside the declared contract.
+      for (const storeName of await storesAtMarker(contractSpace, markerHash)) {
+        recordStoreOwner(appliedOwners, storeName, spaceId);
+      }
+    }
   }
 
   // Combine every pending space into ONE upgradeneeded transaction (one IDB
