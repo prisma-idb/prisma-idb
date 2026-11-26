@@ -16,9 +16,9 @@ An app and its extensions, such as the sync extension, each have their own migra
 
 The browser collects the pending operations for the app space and for each extension space, then:
 
-1. Opens the database once, at `db.version + 1`, and applies every space's operations in that one `upgradeneeded` transaction.
+1. Opens the database at `db.version + 1` to start one `upgradeneeded` transaction.
 2. Checks store ownership in apply order against the live stores and the spaces' applied markers before running any operations.
-3. Writes every migrated space's marker in the same transaction, after all the operations.
+3. Applies every space's operations and writes every migrated space's marker in that transaction.
 
 ```text
 autoMigrate: pending spaces "app" and "idb-sync"
@@ -35,15 +35,12 @@ autoMigrate: pending spaces "app" and "idb-sync"
 
 Extension spaces go first, sorted by space id, and the app space goes last. This follows upstream ADR 212's convention.
 
-The order is safe for two reasons:
-
-- **Markers are written after every schema change**, including the app baseline's creation of `_prisma_next_marker`. So no marker is ever written to a store that doesn't exist yet.
-- **IndexedDB schemas have no references between stores.** In Postgres, an app table may use a type that an extension installs, so the order matters. Here it doesn't.
+The app baseline can create `_prisma_next_marker` last because marker writes follow all operations. A name can be reused only after its current owner releases it in this apply order. For example, the app can use a name an extension drops earlier in the same upgrade.
 
 ## Why combining is safe
 
 - **Scope.** A version-change transaction already covers every store in the database. Combining several spaces' operations only saves extra calls to `indexedDB.open`.
-- **One owner at a time.** Extension prefixes such as `_idb_sync_` keep names disjoint. A space can create a store under a name released by a previous space in apply order. The client starts from ownership at the applied markers, including stores created by migrations outside their space’s declared schema. It applies each create and drop to that ownership map and checks that the result matches the destination contracts. It rejects overlapping claims and operations on existing stores whose owner cannot be determined. The client can replay a create for a store ahead of its marker if the pending operations and destination contracts identify one owner and every live marker belongs to a configured space.
+- **One owner at a time.** Extension prefixes such as `_idb_sync_` keep names disjoint. A space can create a store under a name released by a previous space in apply order. The client starts from ownership at the applied markers, including stores created by migrations outside their space’s declared schema. It applies each create and drop to that ownership map and checks that the result matches the destination contracts. It rejects overlapping claims and operations on existing stores whose owner cannot be determined. The client can replay a create for a store ahead of its marker if the pending operations and destination contracts identify one owner and every live marker belongs to a configured space. A handoff of a store that already exists requires a marker recording the current IndexedDB version. The client starts recording that version on a fresh database and advances it with atomic upgrades. Legacy markers lack that proof, so the client rejects a live handoff when an earlier split write could have already changed the store's owner.
 - **Failure rolls everything back.** If anything throws, the whole transaction aborts, every space's schema changes and markers with it, and the next open tries again ([ADR 002](ADR%20002%20-%20Two-Phase%20Migration.md)).
 
 ## Alternatives considered
@@ -71,7 +68,7 @@ Combining the spaces fixes both, and removes the app-first rule as a side effect
 - **Applying several spaces is atomic.** Every space's schema changes and markers commit together, or nothing does.
 - **One upgrade cycle.** A first launch causes exactly one upgrade, and at most one `blocked` cycle, however many spaces need migrating.
 - **`openAndUpgrade` takes a `markers` array**, not a single `marker`.
-- **Extension authors don't have to think about ordering** relative to the app space.
+- **A handoff depends on apply order.** The releasing space must run before the claiming space. For a verified legacy database, ship the release and claim as separate upgrades.
 
 ## Related
 

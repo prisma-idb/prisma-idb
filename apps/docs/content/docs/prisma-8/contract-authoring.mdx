@@ -65,7 +65,7 @@ Scalar and enum fields can be lists. Lists cannot be optional. An empty-list def
 
 Neither authoring path accepts `__proto__` or `_generated` as the name of a model, store, field, relation, index, enum or enum member. Both report `IDB_RESERVED_NAME`. JavaScript reads `__proto__` as an object's prototype rather than as a key, and contract emission drops every key named `_generated`. Both paths also refuse `_prisma_next_marker` as a store name, because the client always creates that store for the contract marker.
 
-Each store name can belong to one contract space at a time. The sync extension uses names that start with `_idb_sync_`. During an upgrade, an earlier space can drop a store and release the name for a later space. The client checks that each migration operates on its own stores before any operations run. The `prisma-idb migration preflight` command checks the app chain on its own.
+Each store name can belong to one contract space at a time. The sync extension uses names that start with `_idb_sync_`. An earlier space can drop a store and release its name for a later space. See [migration ordering and legacy markers](/docs/prisma-8/migrations#extensions) for the conditions. The client checks that each migration operates on its own stores before any operations run. The `prisma-idb migration preflight` command checks the app chain on its own.
 
 ## Equivalent contracts
 

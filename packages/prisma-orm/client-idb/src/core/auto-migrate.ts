@@ -124,7 +124,7 @@ export async function autoMigrate(input: {
     for (const storeName of declaredStores(contractSpace)) recordStoreOwner(destinationOwners, storeName, spaceId);
   }
 
-  const { currentVersion, markerHashes } = await openAndReadMarkers(dbName, factory);
+  const { currentVersion, markerHashes, hasVerifiedSchemaVersion } = await openAndReadMarkers(dbName, factory);
   const pendingPerSpace: Array<{ spaceId: string; ops: IdbDdlOp[]; storageHash: string }> = [];
 
   for (const { spaceId, contractSpace } of spaces) {
@@ -188,12 +188,17 @@ export async function autoMigrate(input: {
   const onAppTransform = createTransformRecordsCallback(input.contractSpace.contractJson, input.extensions ?? []);
   let operationIndex = -1;
   let upgraded = false;
+  const markerMeta: Record<string, number> = {};
   await openAndUpgrade({
     factory,
     dbName,
     targetVersion: currentVersion + 1,
     ops: schedule.map(({ op }) => op),
-    markers: orderedPending.map((space) => ({ space: space.spaceId, storageHash: space.storageHash })),
+    markers: orderedPending.map(({ spaceId, storageHash }) => ({
+      space: spaceId,
+      storageHash,
+      meta: markerMeta,
+    })),
     onUpgradeStart(storeNames, previousVersion) {
       if (previousVersion !== currentVersion) {
         throw new Error("The IndexedDB version changed while planning an upgrade. Open the client again.");
@@ -203,8 +208,13 @@ export async function autoMigrate(input: {
         appliedOwners,
         destinationOwners,
         schedule,
-        recoverableOwners
+        recoverableOwners,
+        hasVerifiedSchemaVersion
       );
+      // An unrelated upgrade cannot establish the ownership of old live stores.
+      if (hasVerifiedSchemaVersion || storeNames.length === 0) {
+        markerMeta["idbDatabaseVersion"] = currentVersion + 1;
+      }
       upgraded = true;
     },
     onOperationStart() {
@@ -305,8 +315,14 @@ function validateStoreOwnership(
   owners: Map<string, string>,
   destinationOwners: ReadonlyMap<string, string>,
   schedule: readonly { spaceId: string; op: IdbDdlOp }[],
-  recoverableOwners: ReadonlyMap<string, string | null>
+  recoverableOwners: ReadonlyMap<string, string | null>,
+  hasVerifiedSchemaVersion: boolean
 ): void {
+  // A legacy client could finish the DDL and stop before writing its markers.
+  // Record a live name's initial owner so replays cannot silently drop a store
+  // that might already hold the next space's rows.
+  const initialOwners = hasVerifiedSchemaVersion ? undefined : new Map(owners);
+  const initiallyLive = hasVerifiedSchemaVersion ? undefined : new Set(liveStores);
   for (const {
     spaceId,
     op: { kind, storeName },
@@ -319,7 +335,16 @@ function validateStoreOwnership(
       );
     }
     if (owner !== undefined || kind === "createObjectStore") recordStoreOwner(owners, storeName, spaceId);
-    if (kind === "createObjectStore") liveStores.add(storeName);
+    if (kind === "createObjectStore") {
+      const initialOwner = initialOwners?.get(storeName);
+      if (initialOwner !== undefined && initialOwner !== spaceId && initiallyLive?.has(storeName)) {
+        throw new Error(
+          `Cannot transfer existing store ${JSON.stringify(storeName)} with older migration markers. ` +
+            "Verify which space owns its rows before continuing the migration."
+        );
+      }
+      liveStores.add(storeName);
+    }
     if (kind === "dropObjectStore") {
       owners.delete(storeName);
       liveStores.delete(storeName);
@@ -461,7 +486,11 @@ async function walkChain(input: {
 function openAndReadMarkers(
   dbName: string,
   factory: IDBFactory
-): Promise<{ currentVersion: number; markerHashes: ReadonlyMap<string, string> }> {
+): Promise<{
+  currentVersion: number;
+  markerHashes: ReadonlyMap<string, string>;
+  hasVerifiedSchemaVersion: boolean;
+}> {
   return new Promise((resolve, reject) => {
     const req = factory.open(dbName);
     req.onsuccess = () => {
@@ -469,8 +498,12 @@ function openAndReadMarkers(
       const currentVersion = db.version;
       void (async () => {
         try {
-          const markers = await readMarkerHashes(db);
-          resolve({ currentVersion, markerHashes: markers });
+          const markers = await readMigrationMarkers(db);
+          const markerHashes = new Map(markers.map(({ space, storageHash }) => [space, storageHash]));
+          const hasVerifiedSchemaVersion = markers.some(
+            (marker) => marker.meta?.["idbDatabaseVersion"] === currentVersion
+          );
+          resolve({ currentVersion, markerHashes, hasVerifiedSchemaVersion });
         } catch (error) {
           reject(error);
         } finally {
@@ -485,17 +518,14 @@ function openAndReadMarkers(
 }
 
 /** Read all marker rows in one transaction, including markers for omitted extensions. */
-function readMarkerHashes(db: IDBDatabase): Promise<ReadonlyMap<string, string>> {
+function readMigrationMarkers(db: IDBDatabase): Promise<IdbMarkerRecord[]> {
   return new Promise((resolve, reject) => {
     if (!db.objectStoreNames.contains(IDB_MARKER_STORE)) {
-      resolve(new Map());
+      resolve([]);
       return;
     }
     const request = db.transaction(IDB_MARKER_STORE).objectStore(IDB_MARKER_STORE).getAll();
-    request.onsuccess = () => {
-      const markers = request.result as IdbMarkerRecord[];
-      resolve(new Map(markers.map(({ space, storageHash }) => [space, storageHash])));
-    };
+    request.onsuccess = () => resolve(request.result as IdbMarkerRecord[]);
     request.onerror = () => reject(request.error ?? new Error("Failed to read IndexedDB migration markers."));
   });
 }

@@ -460,6 +460,96 @@ describe("auto-migrate combined multi-space apply", () => {
     }
   );
 
+  it.each(["directly", "after a marker-only app upgrade"])(
+    "preserves rows when replaying an interrupted handoff %s",
+    async (retry) => {
+      const name = dbName();
+      const spaceId = "ext-notes";
+      const extensionBefore = defineContract({
+        family: idbFamilyPack,
+        target: idbTargetPack,
+        models: { ExtensionNote: { store: "notes", key: "id", fields: { id: "String" } } },
+      });
+      const extensionAfter = defineContract({
+        family: idbFamilyPack,
+        target: idbTargetPack,
+        models: { ExtensionNote: { store: "extensionNotes", key: "id", fields: { id: "String" } } },
+      });
+      const appAfter = defineContract({
+        family: idbFamilyPack,
+        target: idbTargetPack,
+        models: {
+          User: { store: "users", key: "id", fields: { id: "String", email: "String" } },
+          Note: { store: "notes", key: "id", fields: { id: "String" } },
+        },
+      });
+      const before = await createAutoMigratingIdbClient({
+        contractSpace: buildContractSpaceFixture([appV1]),
+        dbName: name,
+        extensions: [{ spaceId, contractSpace: buildExtensionContractSpaceFixture(spaceId, [extensionBefore]) }],
+      });
+      await before.close();
+
+      const app = buildContractSpaceFixture([appV1, appAfter]);
+      const extension = buildExtensionContractSpaceFixture(spaceId, [extensionBefore, extensionAfter]);
+      const dbBefore = await openRawDb(name);
+      const targetVersion = dbBefore.version + 1;
+      dbBefore.close();
+      await openAndUpgrade({
+        factory: indexedDB,
+        dbName: name,
+        targetVersion,
+        ops: [...extension.migrations[1]!.ops, ...app.migrations[1]!.ops] as Parameters<
+          typeof openAndUpgrade
+        >[0]["ops"],
+      });
+
+      const dbAhead = await openRawDb(name);
+      try {
+        await new Promise<void>((resolve, reject) => {
+          const tx = dbAhead.transaction("notes", "readwrite");
+          tx.objectStore("notes").put({ id: "app-note" });
+          tx.oncomplete = () => resolve();
+          tx.onabort = () => reject(tx.error);
+        });
+      } finally {
+        dbAhead.close();
+      }
+
+      const appBridge = { ...appV1, storage: { ...appV1.storage, storageHash: "bridge" } } as typeof appV1;
+      const appOrigin = retry === "directly" ? appV1 : appBridge;
+      let expectedVersion = targetVersion;
+      if (retry !== "directly") {
+        const bridged = await createAutoMigratingIdbClient({
+          contractSpace: buildContractSpaceFixture([appV1, appBridge]),
+          dbName: name,
+          extensions: [{ spaceId, contractSpace: buildExtensionContractSpaceFixture(spaceId, [extensionBefore]) }],
+        });
+        await bridged.close();
+        expectedVersion += 1;
+      }
+      const finalApp = retry === "directly" ? app : buildContractSpaceFixture([appV1, appBridge, appAfter]);
+
+      await expect(
+        createAutoMigratingIdbClient({
+          contractSpace: finalApp,
+          dbName: name,
+          extensions: [{ spaceId, contractSpace: extension }],
+        })
+      ).rejects.toThrow(/Cannot transfer existing store "notes".*older migration markers/);
+
+      const db = await openRawDb(name);
+      try {
+        expect(db.version).toBe(expectedVersion);
+        expect(await readStores(db, ["notes"])).toEqual([[{ id: "app-note" }]]);
+        expect(await readMarker(db, "app")).toMatchObject({ storageHash: appOrigin.storage.storageHash });
+        expect(await readMarker(db, spaceId)).toMatchObject({ storageHash: extensionBefore.storage.storageHash });
+      } finally {
+        db.close();
+      }
+    }
+  );
+
   it("rejects an extension claiming a store before the app releases it", async () => {
     const name = dbName();
     const extensionContract = defineContract({
