@@ -229,6 +229,42 @@ function interpret(schema: string, projection?: ContractProjection) {
 }
 
 describe("excluded scalar attribute binding", () => {
+  it("rejects a recovered list default with a missing bracket on an excluded field", () => {
+    const result = interpret("model Item {\n  id String @id\n  tags Int[] @idb.exclude @default([1)\n}", "client");
+    expect(result.ok ? [] : result.failure.diagnostics).toContainEqual(
+      expect.objectContaining({ code: "PSL_INVALID_ATTRIBUTE_SYNTAX" })
+    );
+  });
+
+  it.each(["@onCreate(uuid(7e1))", "@onUpdate(nanoid(8e1))"])(
+    "rejects incomplete execution default arguments in either projection: %s",
+    (attribute) => {
+      for (const projection of ["full", "client"] as const) {
+        const exclusion = projection === "client" ? " @idb.exclude" : "";
+        const result = interpret(
+          `model Example {\n id String @id\n token String ${attribute}${exclusion}\n}`,
+          projection
+        );
+        expect(result.ok ? [] : result.failure.diagnostics).toContainEqual(
+          expect.objectContaining({ code: "PSL_INVALID_ATTRIBUTE_SYNTAX" })
+        );
+      }
+    }
+  );
+
+  it.each([
+    ["field", "model Hidden {\n id String @id\n score Float @idb.exclude @default(9e999)\n}"],
+    ["model", "model Hidden {\n id String @id\n score Float @default(9e999)\n @@idb.exclude\n}"],
+  ])("rejects an incomplete default before applying client exclusions to a %s", (_kind, hidden) => {
+    const result = interpret(`model Visible {\n id String @id\n}\n${hidden}`, "client");
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.failure.diagnostics).toContainEqual(
+        expect.objectContaining({ code: "PSL_INVALID_ATTRIBUTE_SYNTAX" })
+      );
+    }
+  });
+
   it.each(["secret Json @default([now()]) @idb.exclude", "secret ServerOnly @default() @onCreate(1) @idb.exclude"])(
     "skips server-only attributes in the client projection: %s",
     (field) => {
