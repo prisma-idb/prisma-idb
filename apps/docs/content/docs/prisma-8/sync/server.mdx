@@ -98,6 +98,8 @@ Returned pull and rejected-push records contain only top-level fields from the c
 
 `db` is your Prisma 8 SQL client. It must have `.transaction(fn)` and `.orm.public.<Model>`. Resolve `scopeKey` from the authenticated session, never the request body or query string.
 
+The SQL adapter requires PostgreSQL. `createSqlSyncAdapter` and `createSqlSync` reject other database targets at startup.
+
 ### Checked foreign keys
 
 Since version 0.7, `@prisma-idb/sync-server-sql` requires these schema shapes for relations checked along ownership paths to `rootModel`:
@@ -261,9 +263,9 @@ model Changelog {
 
 Keep the server's migrations in their own folder, such as `migrations-postgres/`, separate from the browser's `migrations/`. They're separate histories for separate databases.
 
-### Other databases
+### Custom server contract configuration
 
-`defineConfig` from `@prisma-idb/sync-server/postgres` wraps `sqlContractWithSync` from `@prisma-idb/sync-server/schema`, which works with any SQL target. Use it directly for another target, or when you need options the wrapper doesn't expose. It needs the framework's own `defineConfig`, with every descriptor set by hand:
+`defineConfig` from `@prisma-idb/sync-server/postgres` wraps `sqlContractWithSync` from `@prisma-idb/sync-server/schema`. Use the schema helper when you need options the wrapper does not expose. Other SQL targets require your own sync adapter. The example configures the Prisma framework directly for PostgreSQL.
 
 ```ts
 import { definePrismaConfig } from "@prisma/cli-engine";

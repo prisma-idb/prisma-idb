@@ -30,8 +30,8 @@ export { prepareSqlSchemaWithSync };
  * On Postgres, prefer `@prisma-idb/sync-server/postgres`'s
  * `defineConfig` — it wires all of this (plus the family/target/adapter/driver
  * descriptors) behind a handful of options. Reach for this function directly
- * only for a different SQL target, or when you need control the facade
- * doesn't expose.
+ * when you need control the facade does not expose or are building a custom
+ * adapter for another SQL target. The bundled SQL adapter requires PostgreSQL.
  *
  * This needs the core `defineConfig` (`@prisma/orm-framework/config/config-types`)
  * wired by hand — a target's own convenience `defineConfig` (e.g.

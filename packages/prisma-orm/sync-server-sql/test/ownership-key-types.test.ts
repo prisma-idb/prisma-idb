@@ -136,9 +136,4 @@ describe("ownership lock key casts", () => {
       expect(await lockRow(db, tx, contract, "Board", "absent", "share")).toBe(false);
     });
   });
-
-  it("does not require a raw SQL lane on SQLite", async () => {
-    await expect(lockRow({}, {}, { ...testContract, target: "sqlite" }, "User", "owner", "share")).resolves.toBe(true);
-    await expect(lockRow({}, {}, { ...testContract, target: "sqlite" }, "User", "owner", "update")).resolves.toBe(true);
-  });
 });

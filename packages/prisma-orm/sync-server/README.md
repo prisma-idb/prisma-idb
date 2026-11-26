@@ -108,7 +108,9 @@ Other families can extend the exported `defaultValidationCodecs` with a `codecLo
 | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `@prisma-idb/sync-server`          | `createSyncServer`, with `validatePush`, `buildPullQueries` and `projectRecord`. Also `buildOwnershipDag`, `resolveAuthorizationPaths`, `resolveParentReferenceChecks` and `defaultGetKeyField`. |
 | `@prisma-idb/sync-server/postgres` | `defineConfig`: a Postgres config that reads the shared schema, removes the `idb` attributes and adds the `Changelog` model.                                                                     |
-| `@prisma-idb/sync-server/schema`   | `sqlContractWithSync` for other SQL targets, and the text transforms `prepareSqlSchemaWithSync` and `injectChangelogModelSql`.                                                                   |
+| `@prisma-idb/sync-server/schema`   | `sqlContractWithSync` for custom schema configuration, and the text transforms `prepareSqlSchemaWithSync` and `injectChangelogModelSql`.                                                         |
+
+The schema helpers can build contracts for custom adapters. The bundled SQL sync adapter requires PostgreSQL.
 
 ## Documentation
 

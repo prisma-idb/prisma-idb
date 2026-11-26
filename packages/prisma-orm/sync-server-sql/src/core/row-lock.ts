@@ -28,8 +28,7 @@ interface SqlStorage {
  * contract column stores. Returns `undefined` for a type this package does
  * not know, such as a user-defined enum.
  *
- * The Postgres target loads on demand: it is an optional peer, and SQLite
- * servers never reach this code.
+ * The Postgres target loads on demand, because it is an optional peer.
  */
 async function castTypeOf(column: { dataType: string; typeParams?: Record<string, unknown> }) {
   const { createPostgresBuiltinDataTypeLookup } = await import("@prisma/orm-postgres/target/data-types");
@@ -50,9 +49,6 @@ function quoteIdentifier(name: string): string {
  * the row through the ORM afterward: READ COMMITTED gives that statement a
  * fresh snapshot after any lock wait, and the lock keeps the row stable.
  * Returns false if the row disappeared while waiting.
- *
- * SQLite needs no additional lock. It returns true here so callers still
- * read through the ORM; its single writer or SQLITE_BUSY prevents stale writes.
  */
 export async function lockRow(
   db: unknown,
@@ -62,7 +58,6 @@ export async function lockRow(
   key: unknown,
   strength: LockStrength
 ): Promise<boolean> {
-  if (contract.target !== "postgres") return true;
   const storage = domainModelsAtDefaultNamespace(contract.domain)[model]?.storage as
     { namespaceId: string; table: string } | undefined;
   const sqlStorage = contract.storage as unknown as SqlStorage;

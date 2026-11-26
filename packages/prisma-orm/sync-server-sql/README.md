@@ -1,6 +1,6 @@
 # `@prisma-idb/sync-server-sql`
 
-This adapter runs Prisma 8 IDB sync against a SQL database through your Prisma 8 SQL ORM client.
+This adapter runs Prisma 8 IDB sync against a PostgreSQL database through your Prisma 8 SQL ORM client. It refuses contracts for other SQL targets, such as SQLite, when you create it.
 It executes the authorization checks from [`@prisma-idb/sync-server`](https://www.npmjs.com/package/@prisma-idb/sync-server), applies pushes and resolves pulls.
 
 ## Set up the adapter
@@ -116,7 +116,6 @@ PostgreSQL aborts one transaction to resolve the deadlock.
 If it aborts the push, the result is `retryable: true`.
 Serialization failures and lock timeouts are also retryable.
 The adapter sets no lock timeout; the application may configure PostgreSQL's `lock_timeout`.
-SQLite needs no extra lock because it permits one writer at a time.
 
 ### Example: Alice's FoodEntry
 

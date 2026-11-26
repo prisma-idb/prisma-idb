@@ -100,7 +100,7 @@ A missing row after a lock wait breaks the ownership chain and returns `SCOPE_VI
 The scope advisory lock comes last, before the changelog id is allocated.
 Shared parent locks let pushes to different children proceed together.
 Pull and rejected-record reads take no row locks.
-SQLite relies on its single writer; stale transactions fail with `SQLITE_BUSY`.
+**Updated (2026-11-23).** The SQL adapter requires PostgreSQL for row and advisory locks. `createSqlSyncAdapter` rejects contracts for other targets at startup.
 `sync-server` describes the checks but cannot enforce the transaction because it never accesses the database.
 
 #### Example: Alice's FoodEntry

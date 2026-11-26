@@ -187,7 +187,6 @@ export async function applyPushEvent(
  * candidate-parent hop under FOR SHARE, from child to root. Locks are held
  * until commit. Each ORM read follows its locking statement so it sees any
  * ownership change committed while waiting. The scope advisory lock is last.
- * SQLite relies on its single writer and rejects stale transactions as busy.
  *
  * `db` must expose `.transaction(fn)`, calling `fn` with a scope whose
  * `.orm.public` works the same way `db.orm.public` does — the same
@@ -231,7 +230,6 @@ export async function applyPushEventDecoded(
       };
 
       // Lock the target before walking either its stored or candidate parents.
-      // Authorization decides how to handle a missing target on both dialects.
       if (event.operation !== "create") await lockRow(db, tx, contract, model, nativeKey, "update");
       const startRow = event.operation === "create" ? event.payload : await plainReadRow(model, nativeKey);
       if (!(await isAuthorized(startRow))) return scopeViolation;
@@ -261,7 +259,7 @@ export async function applyPushEventDecoded(
         throw new Error(`Unsupported operation "${event.operation}"`);
       }
 
-      await appendChangelogRow(db, tx, contract, scopeKey, {
+      await appendChangelogRow(db, tx, scopeKey, {
         model,
         keyPath: check.key,
         operation: event.operation,
