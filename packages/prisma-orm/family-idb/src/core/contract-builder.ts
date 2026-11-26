@@ -95,8 +95,12 @@ export type IndexDef = {
 /** The fields, storage layout, relations, and projection rules of one model. */
 export type ModelDef<EnumName extends string = never> = {
   readonly store: string;
-  /** The primary key field, or an ordered list of fields for a compound primary key. */
-  readonly key: IdbKeyPath;
+  /**
+   * The primary key field, or an ordered list of fields for a compound primary key.
+   * Only an `ignored: true` model may omit it, like a PSL `@@ignore` model without
+   * `@id` or `@@id`. Its store then keeps rows under keys IndexedDB generates.
+   */
+  readonly key?: IdbKeyPath;
   /** All scalar fields on the model. Use `"Type"` for non-nullable, `"Type?"` for nullable. */
   readonly fields: Record<string, FieldSpec<EnumName>>;
   readonly indexes?: Record<string, IndexDef>;
@@ -511,7 +515,7 @@ function lowerModel(modelName: string, def: ProjectedModelDef, enums: EnumDefs):
           },
         }
       : {}),
-    key: def.key,
+    key: def.key ?? [],
     // Same as PSL: the request is retained so validation can reject a misplaced one.
     autoIncrement: autoIncrementFields.length > 0,
     ...(autoIncrementFields.length > 0 ? { autoIncrementFields } : {}),

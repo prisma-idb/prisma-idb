@@ -272,7 +272,7 @@ function verifyIndex(
 function verifyStore(
   storeName: string,
   contractStore: {
-    keyPath: IdbStoreIR["keyPath"];
+    keyPath?: IdbStoreIR["keyPath"];
     autoIncrement?: boolean;
     indexes?: Record<string, { keyPath: IdbIndexIR["keyPath"]; unique: boolean; multiEntry?: boolean }>;
   },
@@ -292,7 +292,8 @@ function verifyStore(
 
   // keyPath
   if (!keyPathEquals(contractStore.keyPath, actualStore.keyPath)) {
-    const msg = `Store "${storeName}" keyPath mismatch: expected ${JSON.stringify(contractStore.keyPath)}, got ${JSON.stringify(actualStore.keyPath)}`;
+    // `null` stands for a store without a key path, as IDBObjectStore.keyPath reports it.
+    const msg = `Store "${storeName}" keyPath mismatch: expected ${JSON.stringify(contractStore.keyPath ?? null)}, got ${JSON.stringify(actualStore.keyPath ?? null)}`;
     issues.push({ kind: "primary_key_mismatch", table: storeName, message: msg, path: [storeName] });
     children.push(
       failNode(
@@ -430,7 +431,7 @@ export function verifyIdbSchema(
       stores: Record<
         string,
         {
-          keyPath: IdbStoreIR["keyPath"];
+          keyPath?: IdbStoreIR["keyPath"];
           autoIncrement?: boolean;
           indexes?: Record<string, { keyPath: IdbIndexIR["keyPath"]; unique: boolean; multiEntry?: boolean }>;
         }

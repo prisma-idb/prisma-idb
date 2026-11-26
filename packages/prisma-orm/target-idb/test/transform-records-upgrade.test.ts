@@ -345,3 +345,45 @@ describe("transformRecords upgrades", () => {
     expect(counts).toEqual(ops.map(() => 1));
   });
 });
+
+describe("transformRecords on a store without a key path", () => {
+  it("rewrites each record in place under its generated key", async () => {
+    const factory = new IDBFactory();
+    await openAndUpgrade({
+      factory,
+      dbName: "records",
+      targetVersion: 1,
+      ops: [createMarkerStoreOp(), createObjectStoreOp("trail", { autoIncrement: true })],
+      markers: [{ space: "app", storageHash: "old" }],
+    });
+    let db = await open(factory);
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction("trail", "readwrite");
+      tx.objectStore("trail").add({ note: "a" });
+      tx.objectStore("trail").add({ note: "b", level: 2 });
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+    db.close();
+    await openAndUpgrade({
+      factory,
+      dbName: "records",
+      targetVersion: 2,
+      ops: [transformRecordsOp("trail", { fields: { level: defaultIfMissing(1) } })],
+      markers: [{ space: "app", storageHash: "new" }],
+    });
+    db = await open(factory);
+    const entries = await new Promise<[IDBValidKey, unknown][]>((resolve, reject) => {
+      const store = db.transaction("trail").objectStore("trail");
+      const keys = store.getAllKeys();
+      const values = store.getAll();
+      values.onsuccess = () => resolve(keys.result.map((key, i) => [key, values.result[i]]));
+      values.onerror = () => reject(values.error);
+    });
+    db.close();
+    expect(entries).toEqual([
+      [1, { note: "a", level: 1 }],
+      [2, { note: "b", level: 2 }],
+    ]);
+  });
+});

@@ -57,7 +57,13 @@ import { collectDeleteStoreNames, applyReferentialActionsForRow } from "@prisma-
 import { decodeJsonRecord, validateRecord, validateKeyPath } from "@prisma-idb/target-idb/runtime";
 import type { SyncIdbClient } from "./sync-client";
 import { deleteRecord, putRecord } from "./raw-store";
-import { VERSION_META_STORE, versionMetaKey, resolveVersionMeta, nativeVersionMetaKey } from "./version-meta";
+import {
+  VERSION_META_STORE,
+  versionMetaKey,
+  resolveVersionMeta,
+  nativeVersionMetaKey,
+  syncedKeyPath,
+} from "./version-meta";
 import {
   decimalKeysEqual,
   hasDecimalPrimaryKey,
@@ -132,7 +138,7 @@ export function decodePullLog<TContract extends IdbContract>(
   isDelete: boolean
 ): { key: IDBValidKey; record: Record<string, unknown> | null } | null {
   try {
-    const keyPath = getKeyPath(contract, log.model);
+    const keyPath = syncedKeyPath(contract, log.model);
     const fields = typeof keyPath === "string" ? [keyPath] : keyPath;
     // A compound key arrives as an array, one wire value per key field.
     const wireValues = typeof keyPath === "string" ? [log.keyPath] : log.keyPath;

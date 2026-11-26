@@ -236,6 +236,43 @@ it("emits the ignored flags of models and relations in the model storage type, a
   );
 });
 
+const keylessContract = defineContract({
+  family: idbFamilyPack,
+  target: idbTargetPack,
+  models: {
+    User: { store: "users", key: "id", fields: { id: "String" } },
+    Trail: {
+      store: "trail",
+      fields: { note: "String", userId: "String" },
+      relations: {
+        user: { to: "User", cardinality: "N:1", on: { local: ["userId"], target: ["id"] }, onDelete: "cascade" },
+      },
+      ignored: true,
+    },
+  },
+});
+
+it("emits no keyPath for an ignored model without a key, or for its store", () => {
+  const models = keylessContract.domain.namespaces["__unbound__"]!.models as Record<
+    string,
+    Parameters<typeof idbEmission.generateModelStorageType>[1]
+  >;
+  expect(idbEmission.generateModelStorageType("Trail", models["Trail"]!)).toBe(
+    "{ readonly storeName: 'trail'; readonly ignored: true; readonly relations: { readonly user: { readonly ignored: true } } }"
+  );
+  const storage = idbEmission.generateStorageType(keylessContract, "string");
+  expect(storage).toContain("readonly trail: { readonly record: { readonly model: 'Trail'");
+  expect(storage).toMatch(/readonly trail: \{ readonly record: [^]*?; readonly autoIncrement: true; readonly indexes:/);
+  expectTypechecks({
+    "keyless-store.ts": `
+ export type Storage = ${storage};
+ type ExpectTrue<T extends true> = T;
+ type NoKeyPath = ExpectTrue<"keyPath" extends keyof Storage["stores"]["trail"] ? false : true>;
+ type Generated = ExpectTrue<Storage["stores"]["trail"]["autoIncrement"]>;
+ `,
+  });
+});
+
 // ── validateContract ──────────────────────────────────────────────────────────
 
 describe("validateContract", () => {
@@ -273,6 +310,33 @@ describe("validateContract", () => {
       storageHash: "sha256:x",
     });
     expect(() => validateContract(raw)).toThrowError(/keyPath/);
+  });
+
+  it("accepts an ignored model whose store generates out-of-line keys", () => {
+    expect(() => validateContract(JSON.parse(JSON.stringify(keylessContract)))).not.toThrow();
+  });
+
+  it("throws when a model that is not ignored has no keyPath", () => {
+    const raw = JSON.parse(JSON.stringify(keylessContract));
+    delete raw.domain.namespaces["__unbound__"].models.Trail.storage.ignored;
+    expect(() => validateContract(raw)).toThrowError(
+      'Model "Trail" has no storage.keyPath. Only an ignored model may omit it.'
+    );
+  });
+
+  it("throws when a model and its store disagree on having a keyPath", () => {
+    const raw = JSON.parse(JSON.stringify(keylessContract));
+    raw.domain.namespaces["__unbound__"].models.Trail.storage.keyPath = "note";
+    expect(() => validateContract(raw)).toThrowError(
+      'Model "Trail" and its store "trail" disagree on whether the store has a keyPath.'
+    );
+  });
+
+  it("throws when a store without a keyPath does not generate keys", () => {
+    const raw = makeRawWithStorage({ stores: { posts: { autoIncrement: true } }, storageHash: "sha256:x" });
+    expect(() => validateContract(raw)).not.toThrow();
+    const noGenerator = makeRawWithStorage({ stores: { posts: {} }, storageHash: "sha256:x" });
+    expect(() => validateContract(noGenerator)).toThrowError(/Only a store with autoIncrement: true may omit it/);
   });
 
   it("throws when a store has an empty string keyPath", () => {

@@ -25,6 +25,7 @@ import type {
   IdbModelNode,
   IdbRelationNode,
 } from "./contract-definition";
+import { keyPathFields } from "@prisma-idb/target-idb/pack";
 import { foreignKeyIndexes } from "./foreign-key-indexes";
 import { buildRecordShape } from "./record-shape";
 import { validateContract } from "./validate";
@@ -136,6 +137,11 @@ function buildFieldDefaults(fields: readonly IdbFieldNode[]): Record<string, str
   );
 }
 
+/** `false` for an `@@ignore` model declared without `@id` or `@@id`. */
+function hasKey(model: IdbModelNode): boolean {
+  return keyPathFields(model.key).length > 0;
+}
+
 /** Build a model's domain entry from its node. */
 function buildModel(model: IdbModelNode, ignoredModels: ReadonlySet<string>): BuiltModel {
   const { relations, relationActions } = buildRelations(model, ignoredModels);
@@ -145,7 +151,7 @@ function buildModel(model: IdbModelNode, ignoredModels: ReadonlySet<string>): Bu
     relations,
     storage: {
       storeName: model.storeName,
-      keyPath: model.key,
+      ...(hasKey(model) ? { keyPath: model.key } : {}),
       ...(Object.keys(relationActions).length > 0 ? { relations: relationActions } : {}),
       ...(Object.keys(fieldDefaults).length > 0 ? { fieldDefaults } : {}),
       ...(model.ignored === true ? { ignored: true as const } : {}),
@@ -172,8 +178,10 @@ function buildStore(model: IdbModelNode, built: BuiltModel, enums: Record<string
   const indexes = buildIndexes([...model.indexes, ...foreignKeyIndexes(model)]);
   return {
     record: buildRecordShape(model.modelName, built.fields, { enum: enums }),
-    keyPath: model.key,
-    ...(model.autoIncrement ? { autoIncrement: true } : {}),
+    // An `@@ignore` model without `@id` or `@@id` keeps its rows in a store
+    // whose keys IndexedDB generates out of line.
+    ...(hasKey(model) ? { keyPath: model.key } : {}),
+    ...(model.autoIncrement || !hasKey(model) ? { autoIncrement: true } : {}),
     ...(Object.keys(indexes).length > 0 ? { indexes } : {}),
   };
 }

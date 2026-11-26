@@ -54,8 +54,9 @@ export function applyOneDdlOp(
   switch (op.kind) {
     case "createObjectStore": {
       if (!db.objectStoreNames.contains(op.storeName)) {
+        // Without a key path the store keeps generated keys out of line.
         db.createObjectStore(op.storeName, {
-          keyPath: toDomKeyPath(op.def.keyPath),
+          ...(op.def.keyPath !== undefined && { keyPath: toDomKeyPath(op.def.keyPath) }),
           ...(op.def.autoIncrement !== undefined && { autoIncrement: op.def.autoIncrement }),
         });
       }

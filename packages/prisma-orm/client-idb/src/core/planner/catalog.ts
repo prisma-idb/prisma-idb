@@ -12,9 +12,13 @@ export interface CatalogField {
   readonly dict?: true;
 }
 
-/** One primary-key or secondary-index source, in declaration order. */
+/**
+ * One primary-key or secondary-index source, in declaration order. The primary
+ * key of a store without a key path has no `keyPath` and no fields, so the
+ * planner never selects it.
+ */
 export interface CatalogSource {
-  readonly keyPath: IdbKeyPath;
+  readonly keyPath: IdbKeyPath | undefined;
   readonly fields: readonly string[];
   readonly indexName?: string;
   readonly unique: boolean;
@@ -67,7 +71,10 @@ export function buildCatalog(contract: IdbContract, storeName: string, modelName
   }
   const catalog: QueryCatalog = Object.freeze({
     storeName,
-    primaryKey: source(store.keyPath, true, false),
+    primaryKey:
+      store.keyPath === undefined
+        ? Object.freeze({ keyPath: undefined, fields: Object.freeze([]), unique: true, multiEntry: false })
+        : source(store.keyPath, true, false),
     indexes: Object.freeze(
       Object.entries(store.indexes ?? {}).map(([name, index]) =>
         source(index.keyPath, index.unique ?? false, index.multiEntry ?? false, name)

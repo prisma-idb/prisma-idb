@@ -29,7 +29,7 @@ import {
 } from "./migration-factories";
 import { dataLossOf, refuseStatements } from "./plan-subjects";
 import type { IdbSchemaDiffInput } from "./schema-diff";
-import { diffIdbSchema } from "./schema-diff";
+import { diffIdbSchema, storeKeyChanges } from "./schema-diff";
 
 // ── Plan type ─────────────────────────────────────────────────────────────────
 
@@ -208,7 +208,7 @@ function renderOpCall(op: IdbDdlOp): string {
       if (op.storeName === IDB_MARKER_STORE && op.label === createMarkerStoreOp().label) {
         return "createMarkerStoreOp()";
       }
-      const optsParts = [`keyPath: ${JSON.stringify(op.def.keyPath)}`];
+      const optsParts = op.def.keyPath === undefined ? [] : [`keyPath: ${JSON.stringify(op.def.keyPath)}`];
       if (op.def.autoIncrement !== undefined) {
         optsParts.push(`autoIncrement: ${op.def.autoIncrement}`);
       }
@@ -387,7 +387,7 @@ function planStoreRecordTransform(
     }
     if (fieldAcceptsExistingValues(oldField, field)) continue;
     // The runner rejects transforms that touch an existing primary key.
-    if (keyPathFields(store.keyPath).some((key) => key === name || key.startsWith(`${name}.`))) {
+    if (keyPathFields(store.keyPath ?? []).some((key) => key === name || key.startsWith(`${name}.`))) {
       conflicts.push({
         kind: "keyFieldTransform",
         summary: `Cannot migrate incompatible key field "${name}" in store "${storeName}".`,
@@ -476,6 +476,18 @@ export class IdbMigrationPlanner implements MigrationPlanner<"idb", "idb"> {
               "Expected contract.storage.stores to be a record of IdbStoreDefinition.",
           },
         ],
+      };
+    }
+
+    const keyChanges = storeKeyChanges(fromSchema, toSchema);
+    if (keyChanges.length > 0) {
+      return {
+        kind: "failure",
+        conflicts: keyChanges.map((change) => ({
+          kind: "storeKeyChange",
+          summary: `Cannot change the primary key of store "${change.storeName}".`,
+          why: change.message,
+        })),
       };
     }
 

@@ -270,7 +270,12 @@ function readSchema(factory: IDBFactory, dbName: string): Promise<IdbSchemaIR> {
               const index = store.index(indexName);
               indexes[indexName] = { keyPath: index.keyPath, unique: index.unique, multiEntry: index.multiEntry };
             }
-            stores[name] = { keyPath: store.keyPath ?? [], autoIncrement: store.autoIncrement, indexes };
+            // A null key path means the store keeps its keys out of line.
+            stores[name] = {
+              ...(store.keyPath !== null ? { keyPath: store.keyPath } : {}),
+              autoIncrement: store.autoIncrement,
+              indexes,
+            };
           }
         }
         resolve({ stores });

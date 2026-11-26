@@ -25,7 +25,8 @@ export type IdbIndexIR = {
 
 /** The primary-key layout and indexes read from an object store. */
 export type IdbStoreIR = {
-  readonly keyPath: IdbKeyPathIR;
+  /** Absent for a store that keeps generated keys out of line. */
+  readonly keyPath?: IdbKeyPathIR;
   readonly autoIncrement?: boolean;
   readonly indexes?: Record<string, IdbIndexIR>;
 };

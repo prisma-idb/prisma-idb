@@ -20,7 +20,8 @@ export function testDbName(): string {
 }
 
 type StoreIndex = { name: string; keyPath: string; unique?: boolean };
-type StoreSpec = { name: string; keyPath: string | string[]; indexes?: StoreIndex[] };
+/** Omit `keyPath` for a store whose keys IndexedDB generates out of line. */
+type StoreSpec = { name: string; keyPath?: string | string[]; indexes?: StoreIndex[] };
 
 export const USERS_STORE: StoreSpec = { name: "users", keyPath: "id" };
 export const POSTS_STORE: StoreSpec = {
@@ -41,7 +42,10 @@ export function openTestDb(name: string, stores: StoreSpec[]): Promise<IDBDataba
     req.onupgradeneeded = () => {
       const db = req.result;
       for (const spec of stores) {
-        const os = db.createObjectStore(spec.name, { keyPath: spec.keyPath });
+        const os = db.createObjectStore(
+          spec.name,
+          spec.keyPath === undefined ? { autoIncrement: true } : { keyPath: spec.keyPath }
+        );
         for (const idx of spec.indexes ?? []) {
           os.createIndex(idx.name, idx.keyPath, { unique: idx.unique ?? false });
         }

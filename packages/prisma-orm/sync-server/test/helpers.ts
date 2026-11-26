@@ -127,6 +127,13 @@ export function kanbanContractWithIgnored(): { contract: SyncServerContract; cli
         board: { to: "Board", cardinality: "N:1", on: { local: ["boardId"], target: ["id"] }, ignored: true },
       },
     },
+    // No key: an ignored model's store can generate its keys.
+    Trail: {
+      store: "trail",
+      fields: { note: "String", boardId: "String" },
+      relations: { board: { to: "Board", cardinality: "N:1", on: { local: ["boardId"], target: ["id"] } } },
+      ignored: true,
+    },
   };
   const input = { family: idbFamilyPack, target: idbTargetPack, models };
   return { contract: defineContract(input), clientContract: defineContract(input, { projection: "client" }) };

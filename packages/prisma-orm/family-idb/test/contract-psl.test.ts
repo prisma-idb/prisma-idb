@@ -2140,11 +2140,30 @@ describe("@ignore and @@ignore", () => {
       expect(hidden(models["Profile"]!)).toEqual(["user"]);
     });
 
-    it("refuses an @@ignore model without a key, because its object store stays", () => {
-      expect(codes("model Log {\n  msg String\n  @@ignore\n}", projection)).toEqual([
+    it("keeps an @@ignore model without a key in a store with generated out-of-line keys", () => {
+      const { contract, models } = modelsOf(
+        `${user}model Log {\n  code String @unique\n  userId String\n  user User @relation(fields: [userId], references: [id], onDelete: Cascade)\n  @@ignore\n}`
+      );
+      expect(models["Log"]!.storage).toEqual({
+        storeName: "log",
+        relations: { user: { onDelete: "cascade", ignored: true } },
+        ignored: true,
+      });
+      const store = contract.storage.stores["log"]!;
+      expect(store).not.toHaveProperty("keyPath");
+      expect(store.autoIncrement).toBe(true);
+      expect(store.indexes).toEqual({
+        code_unique: { keyPath: "code", unique: true },
+        userId: { keyPath: "userId", unique: false },
+      });
+      expect(Object.keys(contract.roots)).toEqual(["user"]);
+    });
+
+    it("still refuses a model without a key that is not @@ignore", () => {
+      expect(codes("model Log {\n  msg String\n}", projection)).toEqual([
         [
           "IDB_MISSING_ID",
-          'Model "Log" has no @id field. It is marked @@ignore, but an ignored model keeps its object store, which needs a key. Add @id to exactly one scalar field, or @@id([...]) for a compound key.',
+          'Model "Log" has no @id field. Add @id to exactly one scalar field, or @@id([...]) for a compound key.',
         ],
       ]);
     });
@@ -2206,6 +2225,80 @@ describe("@ignore and @@ignore", () => {
       if (plan.kind !== "success") throw new Error("Expected a successful migration plan");
       expect(plan.plan.operations).toEqual([]);
     });
+
+    describe("migrations of an @@ignore model without a key", () => {
+      const keyless = (body = "", model = "Log", attributes = "@@ignore") =>
+        modelsOf(`${user}model ${model} {\n  msg String\n  ${body}\n  ${attributes}\n}`).contract;
+      const planBetween = (from: ReturnType<typeof keyless> | null, to: ReturnType<typeof keyless>) =>
+        new IdbMigrationPlanner().plan({
+          contract: to,
+          fromContract: from,
+          origin: null,
+          statements: [],
+          schema: null,
+          frameworkComponents: [],
+          spaceId: "app",
+          policy: { allowedOperationClasses: ["additive", "widening", "destructive", "data"] },
+        });
+      const operations = (from: ReturnType<typeof keyless> | null, to: ReturnType<typeof keyless>) => {
+        const plan = planBetween(from, to);
+        if (plan.kind !== "success") throw new Error(`Expected a successful plan: ${JSON.stringify(plan.conflicts)}`);
+        return {
+          operations: plan.plan.operations as unknown as { id: string; def?: unknown }[],
+          renderTypeScript: () => (plan.plan as unknown as { renderTypeScript(): string }).renderTypeScript(),
+        };
+      };
+
+      it("creates its store with generated keys and renders it without a key path", () => {
+        const plan = operations(null, keyless("tag String @unique"));
+        const create = plan.operations.find((op) => op.id === "object-store.log.create");
+        expect(create?.def).toEqual({ autoIncrement: true, indexes: { tag_unique: { keyPath: "tag", unique: true } } });
+        const rendered = plan.renderTypeScript();
+        expect(rendered).toContain(
+          'createObjectStoreOp("log", { autoIncrement: true, indexes: { "tag_unique": { keyPath: "tag", unique: true } } })'
+        );
+        expect(rendered).toContain('createIndexOp("log", "tag_unique", { keyPath: "tag", unique: true })');
+      });
+
+      it("drops its store when the model is removed, and re-creates it under a new @@map name", () => {
+        const before = keyless();
+        expect(operations(before, modelsOf(user).contract).operations.map((op) => op.id)).toEqual([
+          "object-store.log.drop",
+        ]);
+        expect(
+          operations(before, keyless("", "Log", '@@ignore\n  @@map("logs")')).operations.map((op) => op.id)
+        ).toEqual(["object-store.logs.create", "object-store.log.drop"]);
+      });
+
+      it.each([
+        ["gains @id", "", "id String @id", "none (generated out-of-line keys)", '"id"'],
+        ["loses @id", "id String @id", "", '"id"', "none (generated out-of-line keys)"],
+      ])("refuses a plan when the model %s, because the store's key cannot change", (_, before, after, from, to) => {
+        const plan = planBetween(keyless(before), keyless(after));
+        expect(plan).toEqual({
+          kind: "failure",
+          conflicts: [
+            {
+              kind: "storeKeyChange",
+              summary: 'Cannot change the primary key of store "log".',
+              why:
+                "IDB does not support altering an existing store's keyPath. " +
+                `Store "log" keyPath changed from ${from} to ${to}. ` +
+                "Author a manual migration that drops and re-creates the store with the desired data flow.",
+            },
+          ],
+        });
+      });
+
+      it("refuses the schema when the model loses @@ignore", () => {
+        expect(codes(`${user}model Log {\n  msg String\n}`, projection)).toEqual([
+          [
+            "IDB_MISSING_ID",
+            'Model "Log" has no @id field. Add @id to exactly one scalar field, or @@id([...]) for a compound key.',
+          ],
+        ]);
+      });
+    });
   });
 });
 
@@ -2222,6 +2315,18 @@ describe("shared definition diagnostics", () => {
     );
     expect(diagnostics.map((diagnostic) => diagnostic.code)).toEqual([code]);
     expect(schema.slice(diagnostics[0]!.span!.start.offset, diagnostics[0]!.span!.end.offset)).toBe(`value ${type}`);
+  });
+
+  it("refuses a model without a key that is not ignored, in PSL and TypeScript alike", async () => {
+    const diagnostics = await sharedDiagnostics("model Log {\n msg String\n}", {
+      Log: { store: "log", fields: { msg: "String" } },
+    });
+    expect(diagnostics.map(({ code, message }) => [code, message])).toEqual([
+      [
+        "IDB_MISSING_ID",
+        'Model "Log" has no @id field. Add @id to exactly one scalar field, or @@id([...]) for a compound key.',
+      ],
+    ]);
   });
 
   it.each(["index", "unique", "id"])("anchors an unknown @@%s field at its declaration", async (attribute) => {

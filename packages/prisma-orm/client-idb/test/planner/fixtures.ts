@@ -40,6 +40,8 @@ export function planContains(plan: LogicalPlan, row: Record<string, unknown>): b
   if (plan.access.kind === "full") return true;
   if (plan.access.kind === "empty") return false;
   const path = plan.access.source.keyPath;
+  // The planner never selects the primary key of a store without a key path.
+  if (path === undefined) throw new Error("A planned source has no key path");
   const key = typeof path === "string" ? row[path] : path.map((name) => row[name]);
   return isValidIdbKey(key) && plan.access.ranges.some((range) => contains(range, key));
 }

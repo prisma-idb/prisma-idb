@@ -181,6 +181,52 @@
                 "storeName": "tag"
               }
             },
+            "Trail": {
+              "fields": {
+                "code": {
+                  "nullable": false,
+                  "type": {
+                    "codecId": "idb/string@1",
+                    "kind": "scalar"
+                  }
+                },
+                "userId": {
+                  "nullable": false,
+                  "type": {
+                    "codecId": "idb/string@1",
+                    "kind": "scalar"
+                  }
+                }
+              },
+              "relations": {
+                "user": {
+                  "cardinality": "N:1",
+                  "nullable": false,
+                  "on": {
+                    "localFields": [
+                      "userId"
+                    ],
+                    "targetFields": [
+                      "id"
+                    ]
+                  },
+                  "to": {
+                    "model": "User",
+                    "namespace": "__unbound__"
+                  }
+                }
+              },
+              "storage": {
+                "ignored": true,
+                "relations": {
+                  "user": {
+                    "ignored": true,
+                    "onDelete": "cascade"
+                  }
+                },
+                "storeName": "trail"
+              }
+            },
             "User": {
               "fields": {
                 "email": {
@@ -258,6 +304,21 @@
                     "model": "Tag",
                     "namespace": "__unbound__"
                   }
+                },
+                "trails": {
+                  "cardinality": "1:N",
+                  "on": {
+                    "localFields": [
+                      "id"
+                    ],
+                    "targetFields": [
+                      "userId"
+                    ]
+                  },
+                  "to": {
+                    "model": "Trail",
+                    "namespace": "__unbound__"
+                  }
                 }
               },
               "storage": {
@@ -270,6 +331,9 @@
                     "ignored": true
                   },
                   "tags": {
+                    "ignored": true
+                  },
+                  "trails": {
                     "ignored": true
                   }
                 },
@@ -308,7 +372,7 @@
           "id": "__unbound__"
         }
       },
-      "storageHash": "611c94078928d65422989bb239588b09e908669c8ad43b360fbdbfdf2c242b5d",
+      "storageHash": "2a349e186e4e935b681ab95fdcbb66d7a6d3e6d164eab972af4f0f7540dfa9d0",
       "stores": {
         "audit": {
           "indexes": {
@@ -422,6 +486,38 @@
             "model": "Tag"
           }
         },
+        "trail": {
+          "autoIncrement": true,
+          "indexes": {
+            "code_unique": {
+              "keyPath": "code",
+              "unique": true
+            },
+            "userId": {
+              "keyPath": "userId",
+              "unique": false
+            }
+          },
+          "record": {
+            "fields": {
+              "code": {
+                "nullable": false,
+                "type": {
+                  "codecId": "idb/string@1",
+                  "kind": "scalar"
+                }
+              },
+              "userId": {
+                "nullable": false,
+                "type": {
+                  "codecId": "idb/string@1",
+                  "kind": "scalar"
+                }
+              }
+            },
+            "model": "Trail"
+          }
+        },
         "user": {
           "keyPath": "id",
           "record": {
@@ -453,6 +549,6 @@
   "hashes": {
     "executionHash": null,
     "profileHash": "40329830af4e39e0774683fbebcdc24dcf983a5da02c5fe6079a2a57579f861c",
-    "storageHash": "611c94078928d65422989bb239588b09e908669c8ad43b360fbdbfdf2c242b5d"
+    "storageHash": "2a349e186e4e935b681ab95fdcbb66d7a6d3e6d164eab972af4f0f7540dfa9d0"
   }
 }

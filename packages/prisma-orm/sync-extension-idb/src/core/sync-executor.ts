@@ -55,7 +55,7 @@ import { isIgnoredModel } from "@prisma-idb/target-idb/runtime";
 import type { OutboxEvent, OutboxWriteEntry, VersionMetaRecord } from "../types";
 import { OUTBOX_STORE } from "./outbox-store";
 import { scanStore } from "./raw-store";
-import { VERSION_META_STORE, versionMetaKey, resolveVersionMeta } from "./version-meta";
+import { VERSION_META_STORE, versionMetaKey, resolveVersionMeta, syncedKeyPath } from "./version-meta";
 import { hasDecimalPrimaryKey, preserveDecimalKeySpelling } from "@prisma-idb/client-idb/internal";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -395,7 +395,7 @@ export class SyncInterceptorExecutor implements IdbQueryExecutorWithTransaction 
   ): { plan: IdbQueryPlan<Row>; entries: readonly OutboxWriteEntry[] } {
     const { contract } = this.#config;
     const modelName = ast.modelName;
-    const keyPath = getKeyPath(contract, modelName);
+    const keyPath = syncedKeyPath(contract, modelName);
 
     if (ast.kind === "createAll") {
       // Unlike a scan-write bulk op, every record's key is already known

@@ -83,6 +83,16 @@ export type IdbRowFilter = (row: Record<string, unknown>) => boolean;
 export type IdbRowComparator = (a: Record<string, unknown>, b: Record<string, unknown>) => number;
 
 /**
+ * The property under which a row read from a store without a key path carries
+ * its primary key. Such a store keeps keys out of line, so the record itself
+ * has no key field. Read ops (`key-get`, `get-all`, `cursor-scan`) and the rows
+ * write ops echo set it, so a caller can update or delete the row by key.
+ * Structured clone skips symbol-keyed properties, so writing the row back never
+ * stores it.
+ */
+export const OUT_OF_LINE_KEY: unique symbol = Symbol.for("@prisma-idb/out-of-line-key");
+
+/**
  * Full cursor scan over an object store or index.
  *
  * Used for `findMany`, `findFirst`, and any query where an exact key lookup
