@@ -60,6 +60,8 @@ It applies every migration, in order, to an empty in-memory IndexedDB ([`fake-in
 
 A missing or invalid head snapshot also fails preflight. So does a snapshot whose `storageHash` differs from `head.to`, or from the hash of its own content. Restore the snapshot from source control or regenerate the chain. A valid package hash alone does not prove that hand-edited operations produce the right schema.
 
+Preflight also fails, with exit code 2, when the migrations directory has no packages, because the browser can't open a database without a chain. Run `migration plan` to create the baseline before you add preflight to CI.
+
 `fake-indexeddb` can differ from real browsers in edge cases, so keep testing your app in a browser too.
 
 ## Edit a migration by hand

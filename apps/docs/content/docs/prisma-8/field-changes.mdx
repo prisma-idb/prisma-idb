@@ -40,7 +40,7 @@ npx prisma-idb migration contract-space
 npx prisma-idb migration preflight
 ```
 
-Preflight checks that the emitted contract's storage hash matches the migration chain's head. It also replays the chain and checks the final stores and indexes against the head snapshot.
+Preflight checks that the emitted contract's storage hash matches the migration chain's head. It also replays the chain through the same upgrade the browser runs, including the marker each migration writes, and checks the final stores and indexes against the head snapshot. It fails when there are no migrations, since the browser can't open a database without them.
 
 Commit the schema, emitted contract and types, new migration package, new snapshot, and regenerated contract-space module together. Ship them in the same app bundle.
 

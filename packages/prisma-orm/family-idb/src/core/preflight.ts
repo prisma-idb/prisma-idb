@@ -5,12 +5,7 @@ import { computeMigrationHash } from "@prisma/orm-toolchain/migration-tools/hash
 import { computeStorageHash } from "@prisma/orm-framework/contract/hashing";
 import { CliStructuredError } from "@prisma/cli-engine/protocol";
 import { chainOrderByMetadata, type ChainablePackage } from "./chain-order";
-import {
-  assertNoMigrationPlaceholders,
-  applyOneDdlOp,
-  isIdbDdlOp,
-  type IdbDdlOp,
-} from "@prisma-idb/target-idb/migration";
+import { isIdbDdlOp, openAndUpgrade, type IdbDdlOp } from "@prisma-idb/target-idb/migration";
 import { join } from "pathe";
 import { verifyIdbSchema } from "./schema-verify";
 import type { IdbIndexIR, IdbSchemaIR } from "./schema-ir";
@@ -61,8 +56,12 @@ export async function runPreflight(opts: PreflightOptions): Promise<number> {
 
   const packages = await loadPackages(appDir);
   if (packages.length === 0) {
-    out("No migration packages found. Nothing to preflight.\n");
-    return 0;
+    // The browser can't open a database with no migration chain, so there is nothing to approve.
+    err(
+      `No migration packages found in ${appDir}.\n` +
+        "Run `prisma-idb migration plan --name <slug>` to create the first migration.\n\nPreflight failed.\n"
+    );
+    return 1;
   }
 
   out(`Preflighting ${packages.length} migration(s) against fake-indexeddb…\n`);
@@ -74,9 +73,15 @@ export async function runPreflight(opts: PreflightOptions): Promise<number> {
   for (const pkg of packages) {
     out(`  ${pkg.dirName} … `);
     try {
-      assertNoMigrationPlaceholders(pkg.ops);
       currentVersion += 1;
-      await applyPackage({ factory, dbName, targetVersion: currentVersion, ops: pkg.ops });
+      // The browser's own upgrade, which also writes the space's marker after the ops.
+      await openAndUpgrade({
+        factory: factory as unknown as globalThis.IDBFactory,
+        dbName,
+        targetVersion: currentVersion,
+        ops: pkg.ops,
+        markers: [{ space: "app", storageHash: pkg.metadata.to }],
+      });
       out("ok\n");
     } catch (applyErr) {
       out("FAILED\n");
@@ -200,54 +205,6 @@ function assertSnapshotIsHead(contract: IdbContract, headHash: string): void {
   if (computedHash !== storageHash) {
     throw new Error(`snapshot storageHash ${storageHash} does not match its content (computed ${computedHash})`);
   }
-}
-
-/** Replay one package through IDB events inside a version-change transaction. */
-function applyPackage(input: {
-  readonly factory: IDBFactory;
-  readonly dbName: string;
-  readonly targetVersion: number;
-  readonly ops: readonly IdbDdlOp[];
-}): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const req = input.factory.open(input.dbName, input.targetVersion);
-    let upgradeError: unknown;
-    req.onupgradeneeded = (event) => {
-      const target = event.target as IDBOpenDBRequest;
-      const db = target.result;
-      const tx = target.transaction;
-      if (tx === null) {
-        reject(new Error("upgradeneeded fired with null version-change transaction"));
-        return;
-      }
-      /** Issue the next DDL operation from the preceding operation callback to keep the upgrade active. */
-      const runNext = (i: number): void => {
-        try {
-          const op = input.ops[i];
-          if (op) {
-            applyOneDdlOp(
-              db,
-              tx,
-              op,
-              () => runNext(i + 1),
-              (error) => {
-                upgradeError = error;
-              }
-            );
-          }
-        } catch (error) {
-          upgradeError = error;
-          tx.abort();
-        }
-      };
-      runNext(0);
-    };
-    req.onsuccess = () => {
-      req.result.close();
-      resolve();
-    };
-    req.onerror = () => reject(upgradeError ?? req.error ?? new Error("preflight open request failed"));
-  });
 }
 
 /** Read the replayed stores and indexes, excluding the runtime marker store. */

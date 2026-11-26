@@ -155,6 +155,30 @@ describe.skipIf(!supportsJsonAttributes)("generateContractSpace", () => {
     await expect(generateContractSpace(defaultPaths(cwd))).rejects.toThrow(/chain broken/i);
   });
 
+  it("throws without writing when a package is unreadable, instead of skipping it", async () => {
+    await writePackage({ dirName: "0001_baseline", from: null, to: "sha256:A" });
+    await writePackage({ dirName: "0002_addPosts", from: "sha256:A", to: "sha256:B" });
+    await writeFile(join(cwd, "migrations", "app", "0002_addPosts", "migration.json"), "{", "utf-8");
+
+    await expect(generateContractSpace(defaultPaths(cwd))).rejects.toThrow(
+      "Migration package 0002_addPosts has an invalid migration.json"
+    );
+    await expect(readFile(defaultPaths(cwd).outPath, "utf-8")).rejects.toThrow(/ENOENT/);
+  });
+
+  it.each(["{", '{"operation": "createObjectStore"}'])(
+    "refuses malformed operations file %s before emitting",
+    async (ops) => {
+      await writePackage({ dirName: "0001_baseline", from: null, to: "sha256:A" });
+      await writeFile(join(cwd, "migrations", "app", "0001_baseline", "ops.json"), ops, "utf-8");
+
+      await expect(generateContractSpace(defaultPaths(cwd))).rejects.toThrow(
+        "Migration package 0001_baseline has an invalid ops.json"
+      );
+      await expect(readFile(defaultPaths(cwd).outPath, "utf-8")).rejects.toThrow(/ENOENT/);
+    }
+  );
+
   it("is idempotent", async () => {
     await writePackage({ dirName: "z_baseline", from: null, to: "sha256:A" });
 

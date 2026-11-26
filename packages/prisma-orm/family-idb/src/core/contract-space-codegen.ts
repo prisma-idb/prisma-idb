@@ -52,8 +52,9 @@ export async function generateContractSpace(opts: GenerateContractSpaceOptions):
   const contractPath = opts.contractPath;
   const outPath = opts.outPath;
 
-  const packages = await loadPackages(appDir, err);
-  validateChain(packages);
+  // Throws, before anything is written, on a broken chain or an unreadable package:
+  // a package left out would leave the generated head on an earlier migration.
+  const packages = await loadPackages(appDir);
 
   // Warn when no packages exist — the output module will have an empty
   // migrations list and `hash: ""`, which breaks createAutoMigratingIdbClient
@@ -83,7 +84,7 @@ export async function generateContractSpace(opts: GenerateContractSpaceOptions):
   return 0;
 }
 
-async function loadPackages(appDir: string, err: (line: string) => void): Promise<LoadedPackage[]> {
+async function loadPackages(appDir: string): Promise<LoadedPackage[]> {
   let dirs: string[];
   try {
     dirs = (await readdir(appDir, { withFileTypes: true })).filter((d) => d.isDirectory()).map((d) => d.name);
@@ -98,30 +99,25 @@ async function loadPackages(appDir: string, err: (line: string) => void): Promis
   // baselines may use `T120000`). The truth is in metadata.from/to edges.
   const unordered = new Map<string, LoadedPackage>();
   for (const dirName of dirs) {
-    const metaPath = join(appDir, dirName, "migration.json");
-    const opsPath = join(appDir, dirName, "ops.json");
-    try {
-      const metaRaw = await readFile(metaPath, "utf-8");
-      const metadata = JSON.parse(metaRaw) as MigrationMetadata;
-      // existence check for ops.json — we don't parse here because the
-      // generated module JSON-imports the file at build time.
-      await readFile(opsPath, "utf-8");
-      unordered.set(dirName, { dirName, metadata });
-    } catch (loadErr) {
-      err(`Skipping ${dirName}: missing or unreadable migration.json/ops.json ` + `(${(loadErr as Error).message})\n`);
+    const metadata = (await readPackageJson(appDir, dirName, "migration.json")) as MigrationMetadata;
+    const ops = await readPackageJson(appDir, dirName, "ops.json");
+    if (!Array.isArray(ops)) {
+      throw new Error(`Migration package ${dirName} has an invalid ops.json. Expected an array of operations.`);
     }
+    unordered.set(dirName, { dirName, metadata });
   }
 
   return chainOrderByMetadata(unordered);
 }
 
-/**
- * No-op — `chainOrderByMetadata` already enforces all invariants during
- * {@link loadPackages}. Kept as a named hook so callers can compose their
- * own package list and re-validate without calling the full load path.
- */
-function validateChain(_packages: ReadonlyArray<LoadedPackage>): void {
-  // Validation happens inside `chainOrderByMetadata` during load. No-op here.
+async function readPackageJson(appDir: string, dirName: string, fileName: string): Promise<unknown> {
+  try {
+    return JSON.parse(await readFile(join(appDir, dirName, fileName), "utf-8")) as unknown;
+  } catch (error) {
+    throw new Error(`Migration package ${dirName} has an invalid ${fileName}: ${(error as Error).message}`, {
+      cause: error,
+    });
+  }
 }
 
 interface RenderInput {

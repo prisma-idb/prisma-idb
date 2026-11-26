@@ -50,6 +50,20 @@ async function writeUsersAndPostsSnapshot(cwd: string): Promise<void> {
 }
 
 describe("prisma-idb migration preflight", () => {
+  it("exits 2 with PREFLIGHT_FAILED and says how to create the first migration when there are no migration packages", async () => {
+    // Regression: preflight used to exit 0 with "Nothing to preflight", so CI approved a project
+    // whose browser build could not open a database.
+    const cwd = await setupTmpProject("preflight-empty");
+    await writeContractJson(cwd, HASH_BASELINE);
+
+    const { stderr, exitCode } = await cli(["migration", "preflight"], { cwd });
+
+    expect(exitCode).toBe(2);
+    expect(stderr).toContain("IDB-CLI.PREFLIGHT_FAILED");
+    expect(stderr).toContain("No migration packages found");
+    expect(stderr).toContain("migration plan");
+  });
+
   it("exits 2 with a structured error and a readable schema diff when the chain does not build the head contract", async () => {
     // Regression: a failing preflight that exits 0 would let CI ship a migration chain that
     // cannot produce the schema the app expects.

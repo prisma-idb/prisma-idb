@@ -2,7 +2,7 @@
 
 - **Status:** Accepted, meant to be temporary
 - **Date:** 2026-09-26
-- **Updated:** 2026-10-04: preflight verifies the replayed schema by default.
+- **Updated:** 2026-10-04: preflight verifies the replayed schema by default. 2026-11-24: preflight replays through the browser's upgrade, so it also writes markers, and it fails when there are no migration packages.
 - **Area:** Migrations, CLI
 
 ## Summary

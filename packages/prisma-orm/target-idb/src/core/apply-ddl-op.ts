@@ -227,6 +227,9 @@ function putMarkersInUpgrade(db: IDBDatabase, tx: IDBTransaction, markers: reado
     );
   }
   const markerStore = tx.objectStore(IDB_MARKER_STORE);
+  if (markerStore.keyPath !== "space") {
+    throw new Error(`IDB: the "${IDB_MARKER_STORE}" store must use the key path "space" to write markers.`);
+  }
   for (const marker of markers) markerStore.put(toMarkerRecord(marker));
 }
 
