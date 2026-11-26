@@ -2328,6 +2328,7 @@ describe("shared definition diagnostics", () => {
 
   it("refuses a model without a key that is not ignored, in PSL and TypeScript alike", async () => {
     const diagnostics = await sharedDiagnostics("model Log {\n msg String\n}", {
+      // @ts-expect-error The type requires `key` on a model that isn't ignored; this checks the runtime refusal.
       Log: { store: "log", fields: { msg: "String" } },
     });
     expect(diagnostics.map(({ code, message }) => [code, message])).toEqual([
