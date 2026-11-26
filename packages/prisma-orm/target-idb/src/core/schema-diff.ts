@@ -59,6 +59,31 @@ function storesByModel(schema: IdbSchemaDiffInput | null): ReadonlyMap<string, s
   return stores;
 }
 
+/** Find store moves that would leave one model using another model's records. */
+export function findIdbStoreMoveConflict(
+  from: IdbSchemaDiffInput | null,
+  to: IdbSchemaDiffInput
+): IdbStoreMoveConflictError | undefined {
+  const fromStores = new Map(Object.entries(from?.stores ?? {}));
+  const fromStoreByModel = storesByModel(from);
+  const toStoreByModel = storesByModel(to);
+  const retainedStores = new Set<string>();
+  for (const [model, storeName] of toStoreByModel) {
+    if (fromStoreByModel.get(model) === storeName || fromStores.get(storeName)?.record?.model === model) {
+      retainedStores.add(storeName);
+    }
+  }
+  for (const [model, storeName] of toStoreByModel) {
+    const oldName = fromStoreByModel.get(model);
+    if (oldName === undefined || oldName === storeName || fromStores.get(storeName)?.record?.model === model) continue;
+    const sourceReassigned = Object.hasOwn(to.stores, oldName) && !retainedStores.has(oldName);
+    if (sourceReassigned || fromStores.has(storeName)) {
+      return new IdbStoreMoveConflictError(model, sourceReassigned ? oldName : storeName);
+    }
+  }
+  return undefined;
+}
+
 /**
  * Compute an ordered set of DDL operations to migrate from `from` to `to`.
  *
@@ -87,26 +112,16 @@ function storesByModel(schema: IdbSchemaDiffInput | null): ReadonlyMap<string, s
  * store that the prior contract shared between models.
  */
 export function diffIdbSchema(from: IdbSchemaDiffInput | null, to: IdbSchemaDiffInput): IdbDdlOp[] {
+  const conflict = findIdbStoreMoveConflict(from, to);
+  if (conflict !== undefined) throw conflict;
+  return diffIdbDdl(from, to);
+}
+
+/** Compute the DDL after the caller has checked model-to-store bindings. */
+export function diffIdbDdl(from: IdbSchemaDiffInput | null, to: IdbSchemaDiffInput): IdbDdlOp[] {
   const fromStores = new Map(Object.entries(from?.stores ?? {}));
   const toStores = new Map(Object.entries(to.stores));
   const ops: IdbDdlOp[] = [];
-
-  const fromStoreByModel = storesByModel(from);
-  const toStoreByModel = storesByModel(to);
-  const retainedStores = new Set<string>();
-  for (const [model, storeName] of toStoreByModel) {
-    if (fromStoreByModel.get(model) === storeName || fromStores.get(storeName)?.record?.model === model) {
-      retainedStores.add(storeName);
-    }
-  }
-  for (const [model, storeName] of toStoreByModel) {
-    const oldName = fromStoreByModel.get(model);
-    if (oldName === undefined || oldName === storeName || fromStores.get(storeName)?.record?.model === model) continue;
-    const sourceReassigned = toStores.has(oldName) && !retainedStores.has(oldName);
-    if (sourceReassigned || fromStores.has(storeName)) {
-      throw new IdbStoreMoveConflictError(model, sourceReassigned ? oldName : storeName);
-    }
-  }
 
   // 0. Store-level mutation guard. IDB has no in-place alter for store
   // structure — keyPath / autoIncrement changes are unrecoverable without

@@ -54,34 +54,16 @@ export interface AutoMigrateClientOptions<TContract extends IdbContract> {
  * Create a typed IDB client, applying any pending migrations from the bundled
  * `contractSpace` first.
  *
- * **What runs**:
+ * 1. Read all applied markers from `_prisma_next_marker` in one transaction.
+ * 2. Collect pending packages for each space behind its head. When an upgrade
+ *    is needed, recover the applied store names of every configured space.
+ * 3. Validate ownership against the live store names inside `upgradeneeded`.
+ *    Apply extensions in space-ID order, then the app. Write all new markers
+ *    in the same transaction.
+ * 4. Return the typed client.
  *
- * 1. Open the database at the current local version, read the marker from
- *    `_prisma_next_marker`. (Null for a fresh database)
- * 2. If the marker hash equals `contractSpace.headRef.hash`, the database
- *    is already at the target — return the client immediately.
- * 3. Otherwise, walk `contractSpace.migrations` from the marker hash (or
- *    `null` for fresh) to `headRef.hash`, collecting each pending
- *    package's `ops` in chain order.
- * 4. If `extensions` are configured, repeat steps 1–3 for each extension
- *    space, then combine every space's pending ops into ONE reopen at
- *    `db.version + 1` so `upgradeneeded` fires once; apply every collected
- *    op (all spaces) inside that single version-change transaction, which
- *    also writes every migrated space's marker.
- * 5. Hand back the typed `IdbClient`.
- *
- * Every pending op is applied exactly as planned, destructive ones included.
- * The developer reviewed them when running `prisma-idb migration plan`,
- * which warns about any that delete data. Skipping some ops would leave the
- * database claiming a schema it doesn't have, and refusing them would stop
- * the app from opening for every user.
- *
- * **What does NOT run in the browser**:
- *
- * The planner does not ship to the browser. The differ does not run. Live-DB
- * schema introspection does not happen. All the planning was done once at
- * design time and is encoded in the bundled `ops.json` blobs inside
- * `contractSpace.migrations`.
+ * The browser replays the bundled operations. Those operations can delete
+ * stores and rows. The CLI warns about data loss when it plans a migration.
  *
  * @example
  * ```ts

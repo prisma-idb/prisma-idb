@@ -183,10 +183,13 @@ describe("migration pipeline e2e", { timeout: 120_000 }, () => {
   });
 });
 
-it("reports a decoded store collision as a migration planning failure", async () => {
+it.each(["matching", "different"])("reports a decoded store collision with %s key codecs", async (keyCodecs) => {
   const cwd = await setupTmpProject("store-name-collision");
-  const moved = { keyPath: "id", record: { model: "User", fields: {} } };
-  const other = { keyPath: "id", record: { model: "Other", fields: {} } };
+  const stringId = { type: { kind: "scalar", codecId: "idb/string@1" }, nullable: false };
+  const otherId =
+    keyCodecs === "matching" ? stringId : { ...stringId, type: { kind: "scalar", codecId: "idb/int32@1" } };
+  const moved = { keyPath: "id", record: { model: "User", fields: { id: stringId } } };
+  const other = { keyPath: "id", record: { model: "Other", fields: { id: otherId } } };
   const oldName = String.raw`no\u0074es`;
   await writeRawContractJson(cwd, { storage: { storageHash: "before", stores: { [oldName]: moved, notes: other } } });
   expect((await cli(["migration", "plan"], { cwd })).exitCode).toBe(0);

@@ -30,7 +30,7 @@ import {
 } from "./migration-factories";
 import { dataLossOf, refuseStatements } from "./plan-subjects";
 import type { IdbSchemaDiffInput } from "./schema-diff";
-import { diffIdbSchema, IdbStoreMoveConflictError } from "./schema-diff";
+import { diffIdbDdl, findIdbStoreMoveConflict } from "./schema-diff";
 
 // ── Plan type ─────────────────────────────────────────────────────────────────
 
@@ -490,16 +490,13 @@ export class IdbMigrationPlanner implements MigrationPlanner<"idb", "idb"> {
       };
     }
 
+    const storeConflict = findIdbStoreMoveConflict(fromSchema, toSchema);
+    if (storeConflict !== undefined) {
+      return { kind: "failure", conflicts: [{ kind: "storeNameCollision", summary: storeConflict.message }] };
+    }
     const recordDiff = diffRecordShapes(fromSchema, toSchema, contract as Contract);
     if (recordDiff.conflicts.length > 0) return { kind: "failure", conflicts: recordDiff.conflicts };
-    let ddlOps: IdbDdlOp[];
-    try {
-      ddlOps = diffIdbSchema(fromSchema, toSchema);
-    } catch (error) {
-      if (!(error instanceof IdbStoreMoveConflictError)) throw error;
-      return { kind: "failure", conflicts: [{ kind: "storeNameCollision", summary: error.message }] };
-    }
-    const ops = [...ddlOps, ...recordDiff.ops];
+    const ops = [...diffIdbDdl(fromSchema, toSchema), ...recordDiff.ops];
 
     // On first migration (fresh database), create the internal
     // _prisma_next_marker store so the runtime can verify the
