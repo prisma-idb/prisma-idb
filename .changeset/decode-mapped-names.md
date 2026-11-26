@@ -5,14 +5,8 @@
 
 Breaking: PSL store and index names now decode escape sequences, as upstream Prisma does. `@@map("a\nb")` names the store `a`, a newline, then `b`, where it used to keep the backslash and `n` as written. `"a\\b"` now gives one backslash instead of two. The same applies to `name:` and `map:` on `@@index` and `@@unique`. An unknown or incomplete escape, such as `\q` or `\u12`, stays as written. Names without a backslash are unchanged.
 
-If a mapped name in your schema contains a backslash escape, its decoded name differs from the stored one:
+An index name that decodes differently can be dropped and recreated without deleting records. A store name that decodes to an unused name can cause the migration to create an empty store and drop the old store with its records.
 
-- For an index, the next migration drops the old index and creates the renamed one.
+Planning rejects a store move that would reuse a name when both contracts identify the moving model. For older snapshots without that model metadata, planning matches stores by name. If a decoded name matches another model's old store, the new model can read that store's records while the old model loses access to them. Stores removed by the migration lose all their records.
 
-<!-- coderabbit-ai-generated:v1 -->
-
-<!-- coderabbit-ai-generated-section:v1:7268c4f0d16929b3f5cf1e7085684753c7e115448eaa0e065cb08069a16ba9e5 -->
-
-- For a store, the next migration drops the old store with its records and creates an empty store under the decoded name. If either name would reuse an existing store's records, planning rejects the move and the database stays unchanged. To keep the existing store and its records, write the name so that it decodes to the old one: double each backslash, for example `@@map("a\\nb")` for a store named `a\nb`. Check the planned migration for a `dropObjectStoreOp` before you apply it.
-
-<!-- /coderabbit-ai-generated:v1 -->
+To keep existing stores and their records, update affected `@@map` strings before emitting the contract so each decodes to its original store name. For example, use `@@map("a\\nb")` to keep a store named `a\nb`. Verify each model's emitted store name against the previous contract, then review the planned migration for store drops before applying it.
