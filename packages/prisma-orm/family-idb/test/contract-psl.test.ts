@@ -2168,6 +2168,15 @@ describe("@ignore and @@ignore", () => {
       ]);
     });
 
+    it("refuses a model that is not @@ignore and has only a unique field, unlike upstream", () => {
+      expect(codes("model Log {\n  slug String @unique\n  msg String\n}", projection)).toEqual([
+        [
+          "IDB_MISSING_ID",
+          'Model "Log" has no @id field. Add @id to exactly one scalar field, or @@id([...]) for a compound key.',
+        ],
+      ]);
+    });
+
     it("treats an empty relation name as no name when it pairs an @ignore owner with its backrelation", () => {
       const { models } = modelsOf(
         'model User {\n  id String @id\n  posts Post[]\n}\nmodel Post {\n  id String @id\n  authorId String\n  author User @relation("", fields: [authorId], references: [id]) @ignore\n}'

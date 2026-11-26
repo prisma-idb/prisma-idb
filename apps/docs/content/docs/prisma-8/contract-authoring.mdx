@@ -174,7 +174,7 @@ export function buildContract(input: DefineContractInput) {
 
 | Code                                 | Meaning                                                                                                  |
 | ------------------------------------ | -------------------------------------------------------------------------------------------------------- |
-| `IDB_MISSING_ID`                     | A model that isn't ignored has no primary key.                                                           |
+| `IDB_MISSING_ID`                     | A model that isn't ignored has no primary key. A `@unique` field doesn't count as one.                   |
 | `IDB_MULTIPLE_ID_FIELDS`             | A PSL model declares more than one field-level `@id`.                                                    |
 | `IDB_INVALID_ID`                     | A primary-key declaration is malformed or references an unknown field.                                   |
 | `IDB_NULLABLE_ID`                    | A primary-key field is optional.                                                                         |
