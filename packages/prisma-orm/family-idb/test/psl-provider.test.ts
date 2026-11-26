@@ -319,6 +319,98 @@ describe("stripIdbExcludeAttributes", () => {
     expect(result).not.toContain("@@idb.exclude");
   });
 
+  it("leaves @idb.exclude inside string literals and comments alone", () => {
+    const schema = `
+      model Note {
+        id     String @id
+        phrase String @default("prefix @idb.exclude suffix") @idb.exclude // keep @idb.exclude here
+        // @@idb.exclude is documented below
+        @@idb.exclude
+      }
+    `;
+    expect(stripIdbExcludeAttributes(schema)).toBe(`
+      model Note {
+        id     String @id
+        phrase String @default("prefix @idb.exclude suffix") // keep @idb.exclude here
+        // @@idb.exclude is documented below
+      }
+    `);
+  });
+
+  it.each([
+    [
+      "mixed CR and LF line endings",
+      "model A {\n  id String @id\n  @@idb.exclude // trailing\r  b String\r}\n",
+      "model A {\n  id String @id\n  // trailing\r  b String\r}\n",
+    ],
+    [
+      "a comment inside an empty argument list",
+      "model A {\n  id String @id\n  @@idb.exclude( // marker\n  )\n}\n",
+      "model A {\n  id String @id\n}\n",
+    ],
+    [
+      "CRLF line endings",
+      "model A {\r\n  id String @id\r\n  s String @idb.exclude\r\n  @@idb.exclude\r\n}\r\n",
+      "model A {\r\n  id String @id\r\n  s String\r\n}\r\n",
+    ],
+    [
+      "an attribute after it",
+      "model A {\n  id String @id\n  s String @idb.exclude @unique\n}\n",
+      "model A {\n  id String @id\n  s String @unique\n}\n",
+    ],
+    [
+      "a model attribute after it on the same line",
+      'model A {\n  id String @id\n  @@idb.exclude @@map("a")\n}\n',
+      'model A {\n  id String @id\n  @@map("a")\n}\n',
+    ],
+    ["an enum block", "enum Role {\n  USER @idb.exclude\n  @@idb.exclude\n}\n", "enum Role {\n  USER\n}\n"],
+    [
+      "a composite type block",
+      "type Address {\n  street String @idb.exclude\n}\n",
+      "type Address {\n  street String\n}\n",
+    ],
+  ])("strips @idb.exclude with %s and keeps the rest of the line", (_, schema, expected) => {
+    expect(stripIdbExcludeAttributes(schema)).toBe(expected);
+  });
+
+  it("strips the colon-qualified spelling that IndexedDB recognizes", () => {
+    const schema = "model A {\n  id String @id\n  hidden String @idb:exclude\n  @@idb:exclude\n}\n";
+    expect(stripIdbExcludeAttributes(schema)).toBe("model A {\n  id String @id\n  hidden String\n}\n");
+  });
+
+  it.each(["@idb.exclude( @unique", "@idb.exclude.", "@idb::exclude", "@idb.exclude(1)"])(
+    "leaves a malformed exclusion marker untouched: %s",
+    (attribute) => {
+      const schema = `model A {\n  id String @id ${attribute}\n  other String @idb.exclude\n}\n`;
+      expect(stripIdbExcludeAttributes(schema)).toBe(schema.replace("other String @idb.exclude", "other String"));
+    }
+  );
+
+  it.each([
+    [
+      "a duplicate model name",
+      "model A {\n  id String @id\n}\nmodel A {\n  id String @id\n  s String @idb.exclude\n  @@idb.exclude\n}\n",
+      "model A {\n  id String @id\n}\nmodel A {\n  id String @id\n  s String\n}\n",
+    ],
+    [
+      "a syntax error in the same model",
+      "model A {\n  id String @id\n  s String @idb.exclude\n  t String @@@@\n}\nmodel B {\n  id String @id @idb.exclude\n}\n",
+      "model A {\n  id String @id\n  s String\n  t String @@@@\n}\nmodel B {\n  id String @id\n}\n",
+    ],
+    [
+      "an unterminated model",
+      "model A {\n  id String @id\n  s String @idb.exclude\n",
+      "model A {\n  id String @id\n  s String\n",
+    ],
+    [
+      "non-ASCII text before the attribute",
+      'model A {\n  id String @id\n  s String @default("😀 é 漢") @idb.exclude\n  // 😀 é\n  @@idb.exclude\n}\n',
+      'model A {\n  id String @id\n  s String @default("😀 é 漢")\n  // 😀 é\n}\n',
+    ],
+  ])("strips @idb.exclude from the text even with %s", (_, schema, expected) => {
+    expect(stripIdbExcludeAttributes(schema)).toBe(expected);
+  });
+
   it("round-trips through prismaIdbContract's own parser without error once stripped", async () => {
     const stripped = stripIdbExcludeAttributes(`
       model User {
