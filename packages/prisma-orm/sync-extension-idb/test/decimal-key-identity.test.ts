@@ -6,7 +6,7 @@ import type { IdbAtomicPlan } from "@prisma-idb/driver-idb/runtime";
 import type { IdbQueryExecutorWithTransaction } from "@prisma-idb/client-idb/orm";
 import { SyncInterceptorExecutor } from "../src/core/sync-executor";
 import { createIDBRuntimeDriver } from "@prisma-idb/driver-idb/runtime";
-import { versionMetaMatches } from "../src/core/version-meta";
+import { versionMetaKey, versionMetaMatches } from "../src/core/version-meta";
 import type { IdbContract } from "@prisma-idb/client-idb/orm";
 import { createSyncIdbClient } from "../src/exports/client";
 import { applyPull, decodePullLog } from "../src/core/apply-pull";
@@ -356,7 +356,7 @@ it("matches persisted compound metadata ids without flattening Date or Bytes ide
   }) as unknown as IdbContract;
   const date = new Date("2026-10-01T00:00:00Z");
   const bytes = new Uint8Array([1, 2]);
-  const id = `Item::${JSON.stringify([date, bytes, "10"])}`;
+  const id = versionMetaKey("Item", [date, bytes, "10"]);
   expect(versionMetaMatches(contract, "Item", id, [date, bytes, "10.00"])).toBe(true);
   expect(versionMetaMatches(contract, "Item", id, [date, new Uint8Array([1, 3]), "10.00"])).toBe(false);
 });
