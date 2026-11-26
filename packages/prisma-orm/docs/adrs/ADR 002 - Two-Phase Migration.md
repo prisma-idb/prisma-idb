@@ -51,7 +51,7 @@ When IndexedDB aborts an upgrade, the open request fails with a generic `AbortEr
 
 ### Schema operations still skip work that's already done
 
-`applyOneDdlOp` still checks for an existing store or index before creating one, and for a missing one before dropping it. IndexedDB itself would throw `ConstraintError` on an existing target and abort the upgrade. A normal run no longer replays anything, but a database can still have a schema ahead of its marker, for example one left by an older build that wrote the marker separately. The checks let those databases catch up.
+`applyOneDdlOp` still checks for an existing store or index before creating one, and for a missing one before dropping it. IndexedDB itself would throw `ConstraintError` on an existing target and abort the upgrade. A normal run no longer replays anything, but a database can still have a schema ahead of its marker, for example one left by an older build that wrote the marker separately. The checks let those databases catch up. The auto-migrating client also checks ownership across contract spaces. It can replay a create for an existing store ahead of its marker when the pending operations and destination contracts agree on one owner and the database has no markers for unconfigured spaces. Recovery requires configuring every installed space. A store created by an omitted space before it wrote its first marker cannot be identified from the database.
 
 ## Alternatives considered
 

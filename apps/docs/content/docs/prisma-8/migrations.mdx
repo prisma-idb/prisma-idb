@@ -97,6 +97,8 @@ An extension, such as [sync](/docs/prisma-8/sync), ships its own object stores a
 
 The client records each chain's progress in the `_prisma_next_marker` store under its own ID (`"app"` for yours, `"idb-sync"` for sync). Each store has one owner at a time. The browser applies extension migrations in space-ID order, then app migrations. A space can create a store under a name an earlier space drops during the upgrade. The browser checks the live stores and applied markers before running any operation, and rejects an operation that would touch a store still owned by another space.
 
+Older releases could finish creating stores before writing their markers. When recovering such a database, keep every installed extension in the client configuration. The browser can replay an already-applied store creation when the configured histories agree on one owner. A store left by an omitted extension that never wrote its marker is indistinguishable from a completed create by the app.
+
 If you're writing an extension, pass `--space <id>` to `migration plan` to write its packages under `migrations/<id>/` instead of `migrations/app/`.
 
 ## Command reference

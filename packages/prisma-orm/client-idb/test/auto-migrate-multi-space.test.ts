@@ -6,7 +6,7 @@
  * `upgradeneeded` transaction, which also writes every space's marker.
  */
 import "fake-indexeddb/auto";
-import { readMarker } from "@prisma-idb/target-idb/runtime";
+import { openAndUpgrade, readMarker } from "@prisma-idb/target-idb/runtime";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { defineContract } from "@prisma-idb/family-idb/contract-ts";
 import idbFamilyPack from "@prisma-idb/family-idb/pack";
@@ -495,6 +495,54 @@ describe("auto-migrate combined multi-space apply", () => {
       expect(db.objectStoreNames.contains("newUsers")).toBe(false);
     } finally {
       db.close();
+    }
+  });
+
+  it.each(["missing", "behind"])("catches up a %s marker when the app already created its store", async (marker) => {
+    const name = dbName();
+    const after = defineContract({
+      family: idbFamilyPack,
+      target: idbTargetPack,
+      models: {
+        User: { store: "users", key: "id", fields: { id: "String", email: "String" } },
+        Note: { store: "notes", key: "id", fields: { id: "String" } },
+      },
+    });
+    const contractSpace = buildContractSpaceFixture(marker === "missing" ? [after] : [appV1, after]);
+    if (marker === "behind") {
+      const client = await createAutoMigratingIdbClient({
+        contractSpace: buildContractSpaceFixture([appV1]),
+        dbName: name,
+      });
+      await client.close();
+    }
+    const dbBefore = await openRawDb(name);
+    const targetVersion = dbBefore.version + 1;
+    dbBefore.close();
+    await openAndUpgrade({
+      factory: indexedDB,
+      dbName: name,
+      targetVersion,
+      ops: contractSpace.migrations.at(-1)!.ops as Parameters<typeof openAndUpgrade>[0]["ops"],
+    });
+    const db = await openRawDb(name);
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const tx = db.transaction("notes", "readwrite");
+        tx.objectStore("notes").put({ id: "already-written" });
+        tx.oncomplete = () => resolve();
+        tx.onabort = () => reject(tx.error);
+      });
+    } finally {
+      db.close();
+    }
+
+    const recovered = await createAutoMigratingIdbClient({ contractSpace, dbName: name });
+    try {
+      expect(await asRecord(recovered.orm)["notes"]!.all().toArray()).toEqual([{ id: "already-written" }]);
+      expect(await recovered.verifyMarker()).toBe(true);
+    } finally {
+      await recovered.close();
     }
   });
 

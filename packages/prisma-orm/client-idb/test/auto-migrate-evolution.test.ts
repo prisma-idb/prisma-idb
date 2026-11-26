@@ -176,6 +176,28 @@ describe("auto-migrate across contract evolution", () => {
     await c2.close();
   });
 
+  it("recovers store ownership from an applied migration with a legacy prefixed hash", async () => {
+    const name = dbName();
+    const before = await createAutoMigratingIdbClient({ contractSpace: buildContractSpaceFixture([v1]), dbName: name });
+    await before.close();
+
+    const next = buildContractSpaceFixture([v1, v2]);
+    const [baseline, ...pending] = next.migrations;
+    const legacyBaseline = {
+      ...baseline!,
+      metadata: { ...baseline!.metadata, migrationHash: `sha256:${baseline!.metadata.migrationHash}` },
+    };
+    const after = await createAutoMigratingIdbClient({
+      contractSpace: { ...next, migrations: [legacyBaseline, ...pending] },
+      dbName: name,
+    });
+    try {
+      expect(await after.verifyMarker()).toBe(true);
+    } finally {
+      await after.close();
+    }
+  });
+
   it("uses the factory override for both migration and runtime queries", async () => {
     const fake: { IDBFactory: new () => IDBFactory } = await import("fake-indexeddb");
     const customFactory = new fake.IDBFactory();
