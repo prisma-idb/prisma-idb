@@ -29,7 +29,7 @@ import {
 } from "./migration-factories";
 import { dataLossOf, refuseStatements } from "./plan-subjects";
 import type { IdbSchemaDiffInput } from "./schema-diff";
-import { diffIdbSchema } from "./schema-diff";
+import { diffIdbSchema, IdbStoreMoveConflictError } from "./schema-diff";
 
 // ── Plan type ─────────────────────────────────────────────────────────────────
 
@@ -481,7 +481,14 @@ export class IdbMigrationPlanner implements MigrationPlanner<"idb", "idb"> {
 
     const recordDiff = diffRecordShapes(fromSchema, toSchema, contract as Contract);
     if (recordDiff.conflicts.length > 0) return { kind: "failure", conflicts: recordDiff.conflicts };
-    const ops = [...diffIdbSchema(fromSchema, toSchema), ...recordDiff.ops];
+    let ddlOps: IdbDdlOp[];
+    try {
+      ddlOps = diffIdbSchema(fromSchema, toSchema);
+    } catch (error) {
+      if (!(error instanceof IdbStoreMoveConflictError)) throw error;
+      return { kind: "failure", conflicts: [{ kind: "storeNameCollision", summary: error.message }] };
+    }
+    const ops = [...ddlOps, ...recordDiff.ops];
 
     // On first migration (fresh database), create the internal
     // _prisma_next_marker store so the runtime can verify the

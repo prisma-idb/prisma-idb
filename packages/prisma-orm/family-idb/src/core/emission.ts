@@ -9,16 +9,13 @@ import type { IdbModelStorage, IdbStorage } from "@prisma-idb/target-idb/pack";
 
 /**
  * Converts a JavaScript primitive or plain object into a TypeScript type-literal
- * string. Arrays become `readonly [...]` tuples; objects become `{ readonly k: v }`
- * type literals; strings are single-quoted with escaping.
+ * string. Arrays become `readonly [...]` tuples. Objects become `{ readonly k: v }`
+ * type literals. Strings use JSON string syntax to escape control characters.
  */
 function serializeValue(value: unknown): string {
   if (value === null) return "null";
   if (value === undefined) return "undefined";
-  if (typeof value === "string") {
-    const escaped = value.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
-    return `'${escaped}'`;
-  }
+  if (typeof value === "string") return JSON.stringify(value);
   if (typeof value === "number" || typeof value === "boolean") return String(value);
   if (typeof value === "bigint") return `${value}n`;
   if (Array.isArray(value)) {
@@ -37,8 +34,7 @@ function serializeValue(value: unknown): string {
 
 /**
  * Converts an object key to a safe TypeScript identifier. If the key is already a
- * valid identifier it is returned as-is; otherwise it is wrapped in single-quoted
- * string literal form.
+ * valid identifier it is returned as-is; otherwise it is emitted as a string literal.
  */
 function serializeObjectKey(key: string): string {
   if (/^[$A-Z_a-z][$\w]*$/.test(key)) return key;

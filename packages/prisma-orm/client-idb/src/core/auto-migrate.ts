@@ -9,6 +9,7 @@ import { computeMigrationHash } from "./migration-hash";
 // Import from `./runtime` (not `./migration`) so `MigrationCLI` → `node:fs`
 // is not bundled into the browser client.
 import {
+  IDB_MARKER_STORE,
   isIdbDdlOp,
   openAndUpgrade,
   readMarker,
@@ -138,6 +139,11 @@ export async function autoMigrate(input: {
   const { dbName, factory } = input;
 
   const spaces = resolveContractSpaces(input.contractSpace, input.extensions ?? []);
+  const storeOwners = new Map<string, string>([[IDB_MARKER_STORE, APP_SPACE_ID]]);
+  for (const { spaceId, contractSpace } of spaces) {
+    const { stores } = contractSpace.contractJson.storage as IdbContract["storage"];
+    for (const storeName of Object.keys(stores ?? {})) recordStoreOwner(storeOwners, storeName, spaceId);
+  }
 
   // Read current DB version once (all spaces share the same IDB database).
   const { currentVersion: initialVersion } = await openAndReadMarker(dbName, factory, APP_SPACE_ID);
@@ -168,6 +174,11 @@ export async function autoMigrate(input: {
   }
 
   if (pendingPerSpace.length === 0) return;
+
+  // A pending operation can touch a store absent from its space's final contract.
+  for (const { spaceId, ops } of pendingPerSpace) {
+    for (const op of ops) recordStoreOwner(storeOwners, op.storeName, spaceId);
+  }
 
   // Combine every pending space into ONE upgradeneeded transaction (one IDB
   // version bump total), which also writes every space's marker. A failure
@@ -232,6 +243,18 @@ function createTransformRecordsCallback(contract: Contract, extensions: Readonly
     };
     runHook(0);
   };
+}
+
+/** Stores belong to one space because every space shares the same IndexedDB database. */
+function recordStoreOwner(owners: Map<string, string>, storeName: string, spaceId: string): void {
+  const owner = owners.get(storeName);
+  if (owner === undefined) owners.set(storeName, spaceId);
+  else if (owner !== spaceId) {
+    throw new Error(
+      `Store ${JSON.stringify(storeName)} is used by contract spaces ${JSON.stringify(owner)} and ${JSON.stringify(spaceId)}. ` +
+        "Give each store a name unique to its contract space."
+    );
+  }
 }
 
 /** Validates bundled descriptors before the migration loop opens the database. */

@@ -317,6 +317,109 @@ describe("auto-migrate combined multi-space apply", () => {
     db.close();
   });
 
+  it("rejects an app upgrade into an installed extension's store and preserves both spaces", async () => {
+    const name = dbName();
+    // The old contract stores @@map("no\u0074es") verbatim. The new one decodes it to "notes".
+    const oldStore = String.raw`no\u0074es`;
+    const appBefore = defineContract({
+      family: idbFamilyPack,
+      target: idbTargetPack,
+      models: { AppNote: { store: oldStore, key: "id", fields: { id: "String" } } },
+    });
+    const appAfter = defineContract({
+      family: idbFamilyPack,
+      target: idbTargetPack,
+      models: { AppNote: { store: "notes", key: "id", fields: { id: "String" } } },
+    });
+    const extensionContract = defineContract({
+      family: idbFamilyPack,
+      target: idbTargetPack,
+      models: { ExtensionNote: { store: "notes", key: "id", fields: { id: "String" } } },
+    });
+    const extensions = [
+      { spaceId: "ext-notes", contractSpace: buildExtensionContractSpaceFixture("ext-notes", [extensionContract]) },
+    ];
+    const client = await createAutoMigratingIdbClient({
+      contractSpace: buildContractSpaceFixture([appBefore]),
+      dbName: name,
+      extensions,
+    });
+    await client.close();
+
+    const stores = [oldStore, "notes", "_prisma_next_marker"];
+    const originalDb = await openRawDb(name);
+    const originalVersion = originalDb.version;
+    let originalRows: unknown[][];
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const tx = originalDb.transaction(stores, "readwrite");
+        tx.objectStore(oldStore).put({ id: "app" });
+        tx.objectStore("notes").put({ id: "extension" });
+        tx.oncomplete = () => resolve();
+        tx.onabort = () => reject(tx.error);
+      });
+      originalRows = await readStores(originalDb, stores);
+    } finally {
+      originalDb.close();
+    }
+
+    await expect(
+      createAutoMigratingIdbClient({
+        contractSpace: buildContractSpaceFixture([appBefore, appAfter]),
+        dbName: name,
+        extensions,
+      })
+    ).rejects.toThrow('Store "notes" is used by contract spaces "app" and "ext-notes".');
+
+    const db = await openRawDb(name);
+    try {
+      expect(db.version).toBe(originalVersion);
+      expect(await readStores(db, stores)).toEqual(originalRows);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("rejects pending app operations on a store declared by an extension", async () => {
+    const name = dbName();
+    const extensionContract = defineContract({
+      family: idbFamilyPack,
+      target: idbTargetPack,
+      models: { ExtensionNote: { store: "users", key: "id", fields: { id: "String" } } },
+    });
+    const spaceId = "ext-users";
+    const extensions = [{ spaceId, contractSpace: buildExtensionContractSpaceFixture(spaceId, [extensionContract]) }];
+    const newApp = defineContract({
+      family: idbFamilyPack,
+      target: idbTargetPack,
+      models: { User: { store: "newUsers", key: "id", fields: { id: "String", email: "String" } } },
+    });
+
+    const client = await createAutoMigratingIdbClient({
+      contractSpace: buildContractSpaceFixture([appV1]),
+      dbName: name,
+    });
+    const row = { id: "u1", email: "alice@example.com" };
+    await asRecord(client.orm)["users"]!.create(row);
+    await client.close();
+
+    await expect(
+      createAutoMigratingIdbClient({
+        contractSpace: buildContractSpaceFixture([appV1, newApp]),
+        dbName: name,
+        extensions,
+      })
+    ).rejects.toThrow('Store "users" is used by contract spaces "ext-users" and "app".');
+
+    const db = await openRawDb(name);
+    try {
+      expect(await readStores(db, ["users"])).toEqual([[row]]);
+      expect(db.objectStoreNames.contains("newUsers")).toBe(false);
+    } finally {
+      db.close();
+    }
+  });
+
   it("descriptor self-consistency: throws if an extension's headRef doesn't match its contractJson hash", async () => {
     const name = dbName();
     const appSpace = buildContractSpaceFixture([appV1]);

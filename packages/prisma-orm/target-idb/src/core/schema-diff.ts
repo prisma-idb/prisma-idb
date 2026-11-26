@@ -35,6 +35,17 @@ function indexDefinitionsDiffer(a: IdbIndexDefinition, b: IdbIndexDefinition): b
   );
 }
 
+/** A model move that would reuse an object store from another model. */
+export class IdbStoreMoveConflictError extends Error {
+  constructor(model: string, storeName: string) {
+    super(
+      `Cannot move model ${JSON.stringify(model)}: store name ${JSON.stringify(storeName)} is in use. ` +
+        "Choose a different store name or author a manual migration to handle the existing records."
+    );
+    this.name = "IdbStoreMoveConflictError";
+  }
+}
+
 /**
  * Compute an ordered set of DDL operations to migrate from `from` to `to`.
  *
@@ -76,12 +87,7 @@ export function diffIdbSchema(from: IdbSchemaDiffInput | null, to: IdbSchemaDiff
     const oldName = fromStoreByModel.get(model);
     if (oldName === undefined) continue;
     const collision = toStores.has(oldName) ? oldName : fromStores.has(storeName) ? storeName : undefined;
-    if (collision !== undefined) {
-      throw new Error(
-        `Cannot move model ${JSON.stringify(model)}: store name ${JSON.stringify(collision)} is in use. ` +
-          `Choose a different store name or author a manual migration to handle the existing records.`
-      );
-    }
+    if (collision !== undefined) throw new IdbStoreMoveConflictError(model, collision);
   }
 
   // 0. Store-level mutation guard. IDB has no in-place alter for store

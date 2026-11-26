@@ -182,3 +182,19 @@ describe("migration pipeline e2e", { timeout: 120_000 }, () => {
     expect(head).toMatchObject({ from: V1_STORAGE_HASH, to: V2_STORAGE_HASH });
   });
 });
+
+it("reports a decoded store collision as a migration planning failure", async () => {
+  const cwd = await setupTmpProject("store-name-collision");
+  const moved = { keyPath: "id", record: { model: "User", fields: {} } };
+  const other = { keyPath: "id", record: { model: "Other", fields: {} } };
+  const oldName = String.raw`no\u0074es`;
+  await writeRawContractJson(cwd, { storage: { storageHash: "before", stores: { [oldName]: moved, notes: other } } });
+  expect((await cli(["migration", "plan"], { cwd })).exitCode).toBe(0);
+
+  await writeRawContractJson(cwd, { storage: { storageHash: "after", stores: { notes: moved } } });
+  const result = await cli(["migration", "plan", "--name", "decoded"], { cwd });
+  expect(result.exitCode).toBe(2);
+  expect(result.stderr).toContain("IDB-CLI.MIGRATION_PLAN_FAILED");
+  expect(result.stderr).toContain('Cannot move model "User": store name "notes" is in use.');
+  expect(await getMigrationDirs(cwd)).toHaveLength(1);
+});
