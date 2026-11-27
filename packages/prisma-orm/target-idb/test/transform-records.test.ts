@@ -13,9 +13,11 @@ import {
 const conversions: readonly [IdbValueTransform, unknown, unknown][] = [
   [coerce("int"), true, 1],
   [coerce("int"), false, 0],
-  [coerce("int"), 1.5, 1.5],
   [coerce("int"), "42", 42],
-  [coerce("int"), "", 0],
+  [coerce("int"), " -7 ", -7],
+  [coerce("int"), 2_147_483_647, 2_147_483_647],
+  [coerce("int"), "+5", 5],
+  [coerce("int"), "3.0", 3],
   [coerce("string"), true, "true"],
   [coerce("string"), false, "false"],
   [coerce("string"), 42, "42"],
@@ -32,6 +34,19 @@ const conversions: readonly [IdbValueTransform, unknown, unknown][] = [
 
 const invalid: readonly [IdbValueTransform, unknown, string][] = [
   [coerce("int"), "abc", "cannot coerce abc to int"],
+  // An Int is a 32-bit integer; a write would refuse anything else.
+  [coerce("int"), 1.5, "cannot coerce 1.5 to int"],
+  [coerce("int"), "1.5", "cannot coerce 1.5 to int"],
+  [coerce("int"), "", "cannot coerce  to int"],
+  [coerce("int"), 2_147_483_648, "cannot coerce 2147483648 to int"],
+  [coerce("int"), "-2147483649", "cannot coerce -2147483649 to int"],
+  // Number() reads these, but they aren't decimal text.
+  [coerce("int"), "0x10", "cannot coerce 0x10 to int"],
+  [coerce("int"), "0b11", "cannot coerce 0b11 to int"],
+  [coerce("int"), "1e3", "cannot coerce 1e3 to int"],
+  // Number() rounds these to whole numbers; the written fraction isn't zero.
+  [coerce("int"), "2147483647.00000001", "cannot coerce 2147483647.00000001 to int"],
+  [coerce("int"), "1.00000000000000001", "cannot coerce 1.00000000000000001 to int"],
   [coerce("boolean"), "yes", "cannot coerce yes to boolean"],
   [coerce("boolean"), "TRUE", "cannot coerce TRUE to boolean"],
   [coerce("isoDateString"), true, "cannot coerce true to isoDateString"],

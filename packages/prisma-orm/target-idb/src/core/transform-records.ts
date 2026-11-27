@@ -1,3 +1,4 @@
+import { INT32_RANGE, isIntegerIn } from "@prisma/orm-framework/components/codec";
 import { errorUnfilledPlaceholder } from "@prisma/orm-framework/errors/migration";
 import type { IdbValueTransform, TransformRecordsOp } from "./migration-factories";
 
@@ -43,6 +44,19 @@ export function transformRecord(
   return result;
 }
 
+/**
+ * Reads the decimal text `coerce("int")` accepts, such as `"42"`, `" -7 "` or
+ * `"3.0"`, and returns `NaN` for anything else. `Number()` alone would also
+ * read `"0x10"`, `"0b11"` and `"1e3"`, which a stored `Int` written as text
+ * never looks like. A fraction must be all zeros, checked on the written
+ * digits, because `Number("2147483647.00000001")` rounds to a whole number.
+ */
+function readIntText(value: string): number {
+  const match = /^([+-]?\d+)(?:\.(\d+))?$/.exec(value.trim());
+  if (match === null || /[1-9]/.test(match[2] ?? "")) return Number.NaN;
+  return Number(match[1]);
+}
+
 /** Applies one value transform; an unfilled placeholder throws, wherever it sits in a pipe. */
 function transformValue(transform: IdbValueTransform, value: unknown, mode: RecordTransformMode): unknown {
   switch (transform.kind) {
@@ -57,11 +71,19 @@ function transformValue(transform: IdbValueTransform, value: unknown, mode: Reco
     case "coerce": {
       if (value === null || value === undefined) return value;
       switch (transform.to) {
-        case "int":
-          if (typeof value === "number") return value;
-          if (typeof value === "boolean") return value ? 1 : 0;
-          if (typeof value === "string" && !Number.isNaN(Number(value))) return Number(value);
+        case "int": {
+          // The result is stored as an `Int`, so it must pass the int32 check every write applies.
+          const n =
+            typeof value === "number"
+              ? value
+              : typeof value === "boolean"
+                ? Number(value)
+                : typeof value === "string"
+                  ? readIntText(value)
+                  : Number.NaN;
+          if (isIntegerIn(n, INT32_RANGE)) return n;
           break;
+        }
         case "string":
           if (["string", "number", "boolean"].includes(typeof value)) return String(value);
           break;

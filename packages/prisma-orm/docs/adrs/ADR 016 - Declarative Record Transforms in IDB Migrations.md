@@ -95,12 +95,12 @@ The executor rejects changes to key fields before opening the cursor. This inclu
 
 ### What `coerce` does with each input
 
-| `to`              | From a `boolean`        | From a `number`                                                     | From a `string`                                                | From `null`/`undefined` |
-| ----------------- | ----------------------- | ------------------------------------------------------------------- | -------------------------------------------------------------- | ----------------------- |
-| `"int"`           | `true → 1`, `false → 0` | unchanged                                                           | `Number(value)`. **Throws** if the result is `NaN`.            | unchanged               |
-| `"string"`        | `String(value)`         | `String(value)`                                                     | unchanged                                                      | unchanged               |
-| `"boolean"`       | unchanged               | `value !== 0`                                                       | Only `"true"` and `"false"` convert. Anything else **throws**. | unchanged               |
-| `"isoDateString"` | **Throws**              | Treated as epoch milliseconds, then `new Date(value).toISOString()` | Kept if `Date.parse` accepts it. Otherwise **throws**.         | unchanged               |
+| `to`              | From a `boolean`        | From a `number`                                                                    | From a `string`                                                                                                                                                                                                                | From `null`/`undefined` |
+| ----------------- | ----------------------- | ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------- |
+| `"int"`           | `true → 1`, `false → 0` | Kept if it is a whole number from -2147483648 to 2147483647. Otherwise **throws**. | Decimal text such as `"42"`, `" -7 "` or `"3.0"` whose fraction, if any, is all zeros and whose value fits as above. Other text, including `"0x10"`, `"0b11"`, `"1e3"`, `""`, `"1.5"` and `"1.00000000000000001"`, **throws**. | unchanged               |
+| `"string"`        | `String(value)`         | `String(value)`                                                                    | unchanged                                                                                                                                                                                                                      | unchanged               |
+| `"boolean"`       | unchanged               | `value !== 0`                                                                      | Only `"true"` and `"false"` convert. Anything else **throws**.                                                                                                                                                                 | unchanged               |
+| `"isoDateString"` | **Throws**              | Treated as epoch milliseconds, then `new Date(value).toISOString()`                | Kept if `Date.parse` accepts it. Otherwise **throws**.                                                                                                                                                                         | unchanged               |
 
 Invalid input throws instead of quietly becoming a plausible wrong value, such as `Number("abc")` becoming `0` or `Boolean("false")` becoming `true`. A throw inside `upgradeneeded` aborts the whole upgrade, so nothing is half-applied ([ADR 002](ADR%20002%20-%20Two-Phase%20Migration.md)).
 
@@ -199,6 +199,10 @@ This changes `applyOneDdlOp(db, tx, op)` to `applyOneDdlOp(db, tx, op, onDone)`:
 - **Its two callers**, `openAndUpgrade` and `preflight.ts`'s `applyPackage`, currently loop over the operations. They become a recursive `runNext(i)` that moves on to the next operation only from `onDone()`. This is the same pattern as `runOpsSequentially` in the driver. Neither caller's own signature changes.
 
 A failed request during the walk isn't caught separately. As with every other request, the error aborts the whole upgrade transaction, so nothing is half-applied.
+
+## Dated note (2026-11-25): `coerce("int")` keeps values in the `Int` range
+
+`coerce("int")` now returns only whole numbers from -2147483648 to 2147483647, the values every `Int` write accepts. `null` and `undefined` still pass through. Before, it kept any number and converted any string `Number()` reads. So `"1.5"` became `1.5`, which isn't a valid `Int`, and `""` and `"0x10"` became the valid but unintended `0` and `16`. A string must now be decimal text, and its fraction is checked on the written digits, because `Number()` rounds `"1.00000000000000001"` to `1`. The table above shows the current rules. This tightens one conversion and does not change the decision above.
 
 ## Alternatives considered
 
