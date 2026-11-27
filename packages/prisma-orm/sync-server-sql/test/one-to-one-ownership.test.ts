@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createSyncServer, resolveAuthorizationPaths } from "@prisma-idb/sync-server";
 import type { PushCheck, SyncServerContract } from "@prisma-idb/sync-server";
 import { createSqlSyncAdapter } from "../src/core/create-adapter";
+import { resolvePullRecord } from "../src/core/resolve-pull-record";
 import { sqlGetKeyField } from "../src/core/get-key-field";
 import { testClientContract, testContract, testDb } from "./helpers";
 
@@ -201,6 +202,29 @@ describe("applying a delete through an owning relation", () => {
       )
     ).rejects.toThrow(/Unsupported tenant parent join "User\.profile"/);
     expect(transaction).not.toHaveBeenCalled();
+  });
+
+  it("refuses the same check in the resolver that paged pulls and push reconciliation share", async () => {
+    const syncServer = createSyncServer({
+      contract: testContract,
+      clientContract: profileClientContract,
+      rootModel: "User",
+      getKeyField: sqlGetKeyField,
+    });
+
+    // A wrapped `SyncServer` can return a check the stock server never would.
+    await expect(
+      resolvePullRecord(
+        {},
+        syncServer,
+        testContract,
+        sqlGetKeyField,
+        "User",
+        { kind: "scoped", keyField: "id", key: "u1", rootKeyField: "id", scopeKey: "u1", paths: [["profile"]] },
+        "u1",
+        "update"
+      )
+    ).rejects.toThrow(/Unsupported tenant parent join "User\.profile"/);
   });
 
   it("still opens a transaction for a join on the parent's key", async () => {
