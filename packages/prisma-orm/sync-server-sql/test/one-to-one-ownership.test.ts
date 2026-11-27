@@ -3,8 +3,9 @@
  * the foreign key. These tests use a contract emitted from a real schema, where
  * the table and column names are mapped (`profiles.user_id`).
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createSyncServer, resolveAuthorizationPaths } from "@prisma-idb/sync-server";
+import type { PushCheck, SyncServerContract } from "@prisma-idb/sync-server";
 import { createSqlSyncAdapter } from "../src/core/create-adapter";
 import { sqlGetKeyField } from "../src/core/get-key-field";
 import { testClientContract, testContract, testDb } from "./helpers";
@@ -124,5 +125,71 @@ describe("a one-to-one foreign key in an emitted SQL contract", () => {
       ok: true,
       logs: [{ model: "User" }, { model: "Profile", keyPath: "p1", record: { id: "p1", userId: "u1" } }],
     });
+  });
+});
+
+/** The emitted contract with `Profile.user` joined on `User.name`, a column that isn't the key. */
+function joinedOnNonKeyColumn(cardinality: "1:1" | "N:1"): SyncServerContract {
+  const contract = structuredClone(testContract) as unknown as {
+    domain: {
+      namespaces: Record<
+        string,
+        {
+          models: Record<
+            string,
+            { relations: Record<string, { cardinality: string; on: { targetFields: string[] } }> }
+          >;
+        }
+      >;
+    };
+    storage: {
+      namespaces: Record<
+        string,
+        { entries: { table: Record<string, { foreignKeys: { target: { columns: string[] } }[] }> } }
+      >;
+    };
+  };
+  const relation = contract.domain.namespaces["public"]!.models["Profile"]!.relations["user"]!;
+  relation.cardinality = cardinality;
+  relation.on.targetFields = ["name"];
+  contract.storage.namespaces["public"]!.entries.table["profiles"]!.foreignKeys[0]!.target.columns = ["name"];
+  return contract as unknown as SyncServerContract;
+}
+
+describe("applying a delete through an owning relation", () => {
+  const event = { id: "e1", operation: "delete", payload: { key: "p1" } } as const;
+  const check: PushCheck = {
+    kind: "scoped",
+    keyField: "id",
+    key: "p1",
+    rootKeyField: "id",
+    scopeKey: "bob",
+    paths: [["user"]],
+  };
+
+  it.each(["1:1", "N:1"] as const)(
+    "refuses a %s join on a column other than the parent's key before opening a transaction",
+    async (cardinality) => {
+      const transaction = vi.fn();
+      const adapter = createSqlSyncAdapter({ contract: joinedOnNonKeyColumn(cardinality) });
+
+      await expect(adapter.applyPushEvent({ transaction }, event, "Profile", check, "bob")).rejects.toThrow(
+        /Unsupported tenant parent join "Profile\.user"/
+      );
+      expect(transaction).not.toHaveBeenCalled();
+    }
+  );
+
+  it("still opens a transaction for a join on the parent's key", async () => {
+    const transaction = vi.fn().mockRejectedValue(new Error("stop after validation"));
+    const adapter = createSqlSyncAdapter({ contract: testContract });
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    try {
+      await adapter.applyPushEvent({ transaction }, event, "Profile", check, "bob");
+      expect(transaction).toHaveBeenCalledOnce();
+    } finally {
+      vi.restoreAllMocks();
+    }
   });
 });

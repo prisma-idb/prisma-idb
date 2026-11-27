@@ -103,6 +103,16 @@ export async function checkParentReferences(
   return true;
 }
 
+/** Rejects a path that joins a parent on anything but its key, before the ownership walk reads parents by key. */
+export function assertParentJoinsTargetKeys(
+  contract: SyncServerContract,
+  getKeyField: GetKeyField,
+  model: string,
+  check: Extract<PushCheck, { kind: "scoped" }>
+): void {
+  resolveParentReferenceChecks(contract, getKeyField, model, check.paths);
+}
+
 /** Validates trusted push metadata before opening a transaction, including checks from older callers. */
 export function prepareParentReferenceChecks(
   contract: SyncServerContract,

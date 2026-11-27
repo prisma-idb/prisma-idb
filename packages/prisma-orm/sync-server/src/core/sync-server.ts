@@ -142,13 +142,17 @@ function buildOwnershipCheck(
   if (modelName === dag.rootModel) {
     return { kind: "root", keyField, key, scopeKey, authorized: key === scopeKey };
   }
+  const paths = resolveAuthorizationPaths(contract, dag.rootModel, modelName);
+  // The ownership walk reads each parent by its key. A join to any other column would
+  // authorize against the wrong row, for every operation and for pulls, so refuse it here.
+  resolveParentReferenceChecks(contract, getKeyField, modelName, paths);
   return {
     kind: "scoped",
     keyField,
     key,
     rootKeyField: getKeyField(contract, dag.rootModel),
     scopeKey,
-    paths: resolveAuthorizationPaths(contract, dag.rootModel, modelName),
+    paths,
   };
 }
 
