@@ -44,7 +44,7 @@ Warning: this migration deletes data. When it runs in a user's browser, every re
 Check that this is intended before shipping it.
 ```
 
-The browser applies the migration as planned; there's no switch to skip or refuse it at run time. Review the change before you commit it. IndexedDB can hold data that exists nowhere else, such as drafts or offline changes that haven't synced yet. If you need to keep that data, stop writing to the model in one release and remove it in a later one.
+The browser validates the migration and its starting state before applying the operations as planned. Review the change before you commit it. IndexedDB can hold data that exists nowhere else, such as drafts or offline changes that haven't synced yet. If you need to keep that data, stop writing to the model in one release and remove it in a later one.
 
 Dropping an index loses nothing, so changing an index is always safe.
 
