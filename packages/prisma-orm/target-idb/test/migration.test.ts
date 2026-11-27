@@ -47,6 +47,23 @@ const ALLOW_ALL: MigrationOperationPolicy = {
 // ── diffIdbSchema ─────────────────────────────────────────────────────────────
 
 describe("diffIdbSchema", () => {
+  it("treats stores and indexes named after Object.prototype members as new", () => {
+    const from: IdbSchemaDiffInput = { stores: { users: { keyPath: "id" } } };
+    const to: IdbSchemaDiffInput = {
+      stores: {
+        users: { keyPath: "id", indexes: { constructor: { keyPath: "email" } } },
+        toString: { keyPath: "id", indexes: { hasOwnProperty: { keyPath: "name" } } },
+      },
+    };
+
+    expect(diffIdbSchema(from, to)).toEqual([
+      createObjectStoreOp("toString", { keyPath: "id", indexes: { hasOwnProperty: { keyPath: "name" } } }),
+      createIndexOp("toString", "hasOwnProperty", { keyPath: "name" }),
+      createIndexOp("users", "constructor", { keyPath: "email" }),
+    ]);
+    expect(diffIdbSchema(to, from)).toEqual([dropIndexOp("users", "constructor"), dropObjectStoreOp("toString")]);
+  });
+
   it("creates a new store with its indexes when migrating from null", () => {
     const to: IdbSchemaDiffInput = {
       stores: {

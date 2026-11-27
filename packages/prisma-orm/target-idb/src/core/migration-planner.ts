@@ -417,7 +417,8 @@ function diffRecordShapes(
   const ops: IdbDdlOp[] = [];
   const conflicts: MigrationPlannerConflict[] = [];
   for (const [storeName, store] of Object.entries(to.stores)) {
-    const oldRecord = from?.stores[storeName]?.record;
+    const oldRecord =
+      from !== null && Object.hasOwn(from.stores, storeName) ? from.stores[storeName]!.record : undefined;
     const newRecord = store.record;
     // New stores have no rows to backfill. Legacy DDL-only contracts carry no field history.
     if (oldRecord === undefined || newRecord === undefined) continue;
