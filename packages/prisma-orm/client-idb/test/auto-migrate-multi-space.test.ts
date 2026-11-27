@@ -8,7 +8,7 @@
 import "fake-indexeddb/auto";
 import { createObjectStoreOp } from "@prisma-idb/target-idb/migration";
 import { computeMigrationHash } from "@prisma/orm-toolchain/migration-tools/hash";
-import { openAndUpgrade, readMarker } from "@prisma-idb/target-idb/runtime";
+import { openAndUpgrade, readMarker, writeMarker } from "@prisma-idb/target-idb/runtime";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { defineContract } from "@prisma-idb/family-idb/contract-ts";
 import idbFamilyPack from "@prisma-idb/family-idb/pack";
@@ -684,6 +684,72 @@ describe("auto-migrate combined multi-space apply", () => {
       expect(await readMarker(db, "app")).toMatchObject({ storageHash: before.headRef.hash });
     } finally {
       db.close();
+    }
+  });
+
+  it("rejects an upgrade when another space writes a marker after planning", async () => {
+    const name = dbName();
+    const app = buildContractSpaceFixture([appV1]);
+    const client = await createAutoMigratingIdbClient({ contractSpace: app, dbName: name });
+    await client.close();
+
+    const priorDb = await openRawDb(name);
+    const currentVersion = priorDb.version + 1;
+    priorDb.close();
+    await openAndUpgrade({
+      factory: indexedDB,
+      dbName: name,
+      targetVersion: currentVersion,
+      ops: [createObjectStoreOp("notes", { keyPath: "id" })],
+    });
+    const db = await openRawDb(name);
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const tx = db.transaction("notes", "readwrite");
+        tx.objectStore("notes").put({ id: "extension-note" });
+        tx.oncomplete = () => resolve();
+        tx.onabort = () => reject(tx.error);
+      });
+
+      const appAfter = defineContract({
+        family: idbFamilyPack,
+        target: idbTargetPack,
+        models: {
+          User: { store: "users", key: "id", fields: { id: "String", email: "String" } },
+          Note: { store: "notes", key: "id", fields: { id: "String" } },
+        },
+      });
+      let lateMarker: Promise<void> | undefined;
+      const factory = {
+        open(dbName: string, version?: number) {
+          if (version !== undefined) {
+            lateMarker = writeMarker(db, { space: "ext-notes", storageHash: "extension-head" });
+            db.close();
+          }
+          return indexedDB.open(dbName, version);
+        },
+      } as IDBFactory;
+
+      await expect(
+        createAutoMigratingIdbClient({
+          contractSpace: buildContractSpaceFixture([appV1, appAfter]),
+          dbName: name,
+          factory,
+        })
+      ).rejects.toThrow(/migration markers changed.*Open the client again/);
+      await lateMarker;
+    } finally {
+      db.close();
+    }
+
+    const reopened = await openRawDb(name);
+    try {
+      expect(reopened.version).toBe(currentVersion);
+      expect(await readStores(reopened, ["notes"])).toEqual([[{ id: "extension-note" }]]);
+      expect(await readMarker(reopened, "app")).toMatchObject({ storageHash: app.headRef.hash });
+      expect(await readMarker(reopened, "ext-notes")).toMatchObject({ storageHash: "extension-head" });
+    } finally {
+      reopened.close();
     }
   });
 

@@ -57,8 +57,9 @@ export interface AutoMigrateClientOptions<TContract extends IdbContract> {
  * 1. Read all applied markers from `_prisma_next_marker` in one transaction.
  * 2. Collect pending packages for each space behind its head. When an upgrade
  *    is needed, recover the applied store names of every configured space.
- * 3. Validate ownership against the live store names inside `upgradeneeded`.
- *    Apply extensions in space-ID order, then the app. Write all new markers
+ * 3. Recheck the applied markers and validate ownership against the live store
+ *    names inside `upgradeneeded`. Apply extensions in space-ID order, then the
+ *    app. Write all new markers
  *    in the same transaction.
  * 4. Return the typed client.
  *
@@ -124,12 +125,15 @@ export async function autoMigrate(input: {
     for (const storeName of declaredStores(contractSpace)) recordStoreOwner(destinationOwners, storeName, spaceId);
   }
 
-  const { currentVersion, markerHashes, hasVerifiedSchemaVersion } = await openAndReadMarkers(dbName, factory);
+  const { currentVersion, markers: appliedMarkers } = await openAndReadMarkers(dbName, factory);
+  const hasVerifiedSchemaVersion = [...appliedMarkers.values()].some(
+    (marker) => marker.meta?.["idbDatabaseVersion"] === currentVersion
+  );
   const pendingPerSpace: Array<{ spaceId: string; ops: IdbDdlOp[]; storageHash: string }> = [];
 
   for (const { spaceId, contractSpace } of spaces) {
     const targetHash = contractSpace.headRef.hash;
-    const markerHash = markerHashes.get(spaceId) ?? null;
+    const markerHash = appliedMarkers.get(spaceId)?.storageHash ?? null;
     if (markerHash === targetHash) continue;
 
     const pendingOps = await walkChain({
@@ -152,7 +156,7 @@ export async function autoMigrate(input: {
 
   const appliedOwners = new Map<string, string>([[IDB_MARKER_STORE, APP_SPACE_ID]]);
   for (const { spaceId, contractSpace } of spaces) {
-    const markerHash = markerHashes.get(spaceId);
+    const markerHash = appliedMarkers.get(spaceId)?.storageHash;
     if (markerHash === undefined) continue;
     if (markerHash === contractSpace.headRef.hash) {
       for (const storeName of declaredStores(contractSpace)) recordStoreOwner(appliedOwners, storeName, spaceId);
@@ -183,7 +187,7 @@ export async function autoMigrate(input: {
 
   const schedule = orderedPending.flatMap(({ spaceId, ops }) => ops.map((op) => ({ spaceId, op })));
   const configuredSpaceIds = new Set(spaces.map(({ spaceId }) => spaceId));
-  const hasUnconfiguredMarker = [...markerHashes.keys()].some((spaceId) => !configuredSpaceIds.has(spaceId));
+  const hasUnconfiguredMarker = [...appliedMarkers.keys()].some((spaceId) => !configuredSpaceIds.has(spaceId));
   const recoverableOwners = hasUnconfiguredMarker ? new Map() : replayStoreOwners(destinationOwners, schedule);
   const onAppTransform = createTransformRecordsCallback(input.contractSpace.contractJson, input.extensions ?? []);
   let operationIndex = -1;
@@ -199,9 +203,12 @@ export async function autoMigrate(input: {
       storageHash,
       meta: markerMeta,
     })),
-    onUpgradeStart(storeNames, previousVersion) {
+    onUpgradeStart(storeNames, previousVersion, liveMarkers) {
       if (previousVersion !== currentVersion) {
         throw new Error("The IndexedDB version changed while planning an upgrade. Open the client again.");
+      }
+      if (!sameMigrationMarkers(appliedMarkers, liveMarkers)) {
+        throw new Error("The IndexedDB migration markers changed while planning an upgrade. Open the client again.");
       }
       validateStoreOwnership(
         new Set(Array.from(storeNames)),
@@ -227,8 +234,8 @@ export async function autoMigrate(input: {
   });
   if (!upgraded) {
     // Another opener can reach the requested version before this request runs.
-    const { markerHashes: applied } = await openAndReadMarkers(dbName, factory);
-    if (spaces.some(({ spaceId, contractSpace }) => applied.get(spaceId) !== contractSpace.headRef.hash)) {
+    const { markers: applied } = await openAndReadMarkers(dbName, factory);
+    if (spaces.some(({ spaceId, contractSpace }) => applied.get(spaceId)?.storageHash !== contractSpace.headRef.hash)) {
       throw new Error("Another client upgraded IndexedDB to different contract spaces. Open the client again.");
     }
   }
@@ -466,8 +473,8 @@ async function walkChain(input: {
         `Migration package "${next.dirName}" failed integrity check: ` +
           `stored migrationHash ${storedHash} does not match ` +
           `computed hash ${computedHash}. ` +
-          "The ops may have been edited after the package was generated. " +
-          "Re-run `prisma-idb migration plan` to regenerate the package."
+          "Restore the correct migration.json and ops.json for this package, then run " +
+          "`prisma-idb migration contract-space` to rebuild the bundle."
       );
     }
     for (const op of next.ops) {
@@ -482,14 +489,31 @@ async function walkChain(input: {
   return pendingOps;
 }
 
+/** Compare the marker fields that affect migration planning, including unconfigured spaces. */
+function sameMigrationMarkers(
+  expected: ReadonlyMap<string, IdbMarkerRecord>,
+  live: readonly IdbMarkerRecord[]
+): boolean {
+  return (
+    expected.size === live.length &&
+    live.every(({ space, storageHash, meta }) => {
+      const marker = expected.get(space);
+      return (
+        marker !== undefined &&
+        marker.storageHash === storageHash &&
+        marker.meta?.["idbDatabaseVersion"] === meta?.["idbDatabaseVersion"]
+      );
+    })
+  );
+}
+
 /** Read all spaces' markers while holding one connection at the same database version. */
 function openAndReadMarkers(
   dbName: string,
   factory: IDBFactory
 ): Promise<{
   currentVersion: number;
-  markerHashes: ReadonlyMap<string, string>;
-  hasVerifiedSchemaVersion: boolean;
+  markers: ReadonlyMap<string, IdbMarkerRecord>;
 }> {
   return new Promise((resolve, reject) => {
     const req = factory.open(dbName);
@@ -499,11 +523,7 @@ function openAndReadMarkers(
       void (async () => {
         try {
           const markers = await readMigrationMarkers(db);
-          const markerHashes = new Map(markers.map(({ space, storageHash }) => [space, storageHash]));
-          const hasVerifiedSchemaVersion = markers.some(
-            (marker) => marker.meta?.["idbDatabaseVersion"] === currentVersion
-          );
-          resolve({ currentVersion, markerHashes, hasVerifiedSchemaVersion });
+          resolve({ currentVersion, markers: new Map(markers.map((marker) => [marker.space, marker])) });
         } catch (error) {
           reject(error);
         } finally {

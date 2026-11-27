@@ -187,6 +187,18 @@ describe("auto-migrate across contract evolution", () => {
       ...baseline!,
       metadata: { ...baseline!.metadata, migrationHash: `sha256:${baseline!.metadata.migrationHash}` },
     };
+    const corruptBaseline = {
+      ...legacyBaseline,
+      metadata: { ...legacyBaseline.metadata, migrationHash: "sha256:wrong" },
+    };
+    await expect(
+      createAutoMigratingIdbClient({
+        contractSpace: { ...next, migrations: [corruptBaseline, ...pending] },
+        dbName: name,
+      })
+    ).rejects.toThrow(
+      /failed integrity check.*Restore the correct migration\.json and ops\.json.*migration contract-space/
+    );
     const after = await createAutoMigratingIdbClient({
       contractSpace: { ...next, migrations: [legacyBaseline, ...pending] },
       dbName: name,

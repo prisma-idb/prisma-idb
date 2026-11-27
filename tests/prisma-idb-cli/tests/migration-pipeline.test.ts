@@ -183,6 +183,15 @@ describe("migration pipeline e2e", { timeout: 120_000 }, () => {
   });
 });
 
+async function readBaseline(cwd: string) {
+  const dirs = await getMigrationDirs(cwd);
+  expect(dirs).toHaveLength(1);
+  const baselineDir = join(cwd, "migrations", "app", dirs[0]!);
+  const metadata = await readFile(join(baselineDir, "migration.json"), "utf-8");
+  const operations = await readFile(join(baselineDir, "ops.json"), "utf-8");
+  return { dirs, metadata, operations };
+}
+
 it.each(["matching", "different"])("reports a decoded store collision with %s key codecs", async (keyCodecs) => {
   const cwd = await setupTmpProject("store-name-collision");
   const stringId = { type: { kind: "scalar", codecId: "idb/string@1" }, nullable: false };
@@ -193,13 +202,14 @@ it.each(["matching", "different"])("reports a decoded store collision with %s ke
   const oldName = String.raw`no\u0074es`;
   await writeRawContractJson(cwd, { storage: { storageHash: "before", stores: { [oldName]: moved, notes: other } } });
   expect((await cli(["migration", "plan"], { cwd })).exitCode).toBe(0);
+  const baseline = await readBaseline(cwd);
 
   await writeRawContractJson(cwd, { storage: { storageHash: "after", stores: { notes: moved } } });
   const result = await cli(["migration", "plan", "--name", "decoded"], { cwd });
   expect(result.exitCode).toBe(2);
   expect(result.stderr).toContain("IDB-CLI.MIGRATION_PLAN_FAILED");
   expect(result.stderr).toContain('Cannot move model "User": store name "notes" is in use.');
-  expect(await getMigrationDirs(cwd)).toHaveLength(1);
+  expect(await readBaseline(cwd)).toEqual(baseline);
 });
 
 it("rejects a decoded store collision using the model bindings from a legacy snapshot", async () => {
@@ -218,6 +228,7 @@ it("rejects a decoded store collision using the model bindings from a legacy sna
     },
   });
   expect((await cli(["migration", "plan"], { cwd })).exitCode).toBe(0);
+  const baseline = await readBaseline(cwd);
 
   await writeRawContractJson(cwd, {
     storage: {
@@ -232,5 +243,5 @@ it("rejects a decoded store collision using the model bindings from a legacy sna
   expect(result.exitCode, result.stderr).toBe(2);
   expect(result.stderr).toContain("IDB-CLI.MIGRATION_PLAN_FAILED");
   expect(result.stderr).toContain("Cannot move model");
-  expect(await getMigrationDirs(cwd)).toHaveLength(1);
+  expect(await readBaseline(cwd)).toEqual(baseline);
 });

@@ -254,8 +254,12 @@ export function openAndUpgrade(input: {
   readonly targetVersion: number;
   readonly ops: readonly IdbDdlOp[];
   readonly markers?: readonly MarkerWriteInput[];
-  /** Validates the live store names before any writes in the version-change transaction. */
-  readonly onUpgradeStart?: (storeNames: DOMStringList, previousVersion: number) => void;
+  /** Validates live store names and markers before any writes in the version-change transaction. */
+  readonly onUpgradeStart?: (
+    storeNames: DOMStringList,
+    previousVersion: number,
+    markers: readonly IdbMarkerRecord[]
+  ) => void;
   readonly onOperationStart?: (op: IdbDdlOp) => void;
   readonly onOperationComplete?: (op: IdbDdlOp) => void;
   /**
@@ -360,13 +364,28 @@ export function openAndUpgrade(input: {
           onDone();
         }
       };
-      try {
-        input.onUpgradeStart?.(db.objectStoreNames, event.oldVersion);
-      } catch (error) {
-        failUpgrade(error);
-        return;
+      const startUpgrade = (markers: readonly IdbMarkerRecord[]): void => {
+        try {
+          input.onUpgradeStart?.(db.objectStoreNames, event.oldVersion, markers);
+        } catch (error) {
+          failUpgrade(error);
+          return;
+        }
+        runNext(0);
+      };
+      if (input.onUpgradeStart && db.objectStoreNames.contains(IDB_MARKER_STORE)) {
+        try {
+          const markerRequest = tx.objectStore(IDB_MARKER_STORE).getAll();
+          markerRequest.onsuccess = () => startUpgrade(markerRequest.result as IdbMarkerRecord[]);
+          markerRequest.onerror = () => {
+            upgradeError = markerRequest.error ?? new Error("Failed to read IndexedDB migration markers.");
+          };
+        } catch (error) {
+          failUpgrade(error);
+        }
+      } else {
+        startUpgrade([]);
       }
-      runNext(0);
     };
 
     request.onsuccess = (event) => {

@@ -17,7 +17,7 @@ An app and its extensions, such as the sync extension, each have their own migra
 The browser collects the pending operations for the app space and for each extension space, then:
 
 1. Opens the database at `db.version + 1` to start one `upgradeneeded` transaction.
-2. Checks store ownership in apply order against the live stores and the spaces' applied markers before running any operations.
+2. Rechecks the applied markers and validates store ownership against the live stores in apply order. If the marker state changed during planning, the upgrade aborts before any operation runs.
 3. Applies every space's operations and writes every migrated space's marker in that transaction.
 
 ```text
