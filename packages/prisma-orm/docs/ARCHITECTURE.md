@@ -157,9 +157,11 @@ Each migration package records the contract hash it starts `from` and the hash i
 ```
 createAutoMigratingIdbClient({ contractSpace, dbName, extensions })
   │
+  ├── 0. reject a store name that more than one space's contract declares
   ├── 1. open the database and read every marker from _prisma_next_marker
   ├── 2. if each space's marker already matches its head, skip to step 5
-  ├── 3. walk each space's chain from its marker to its head, collecting every pending operation
+  ├── 3. walk each space's chain from its marker to its head, collecting every pending operation;
+  │     reject a store that one space's operations touch and another space uses
   ├── 4. reopen at db.version + 1; inside upgradeneeded, in one transaction:
   │       ├── apply every operation (extension spaces first, the app space last)
   │       └── write every space's new marker

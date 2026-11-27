@@ -9,6 +9,7 @@ import { computeMigrationHash } from "./migration-hash";
 // Import from `./runtime` (not `./migration`) so `MigrationCLI` → `node:fs`
 // is not bundled into the browser client.
 import {
+  IDB_MARKER_STORE,
   isIdbDdlOp,
   openAndUpgrade,
   readMarker,
@@ -169,6 +170,8 @@ export async function autoMigrate(input: {
 
   if (pendingPerSpace.length === 0) return;
 
+  assertStoresBelongToOneSpace(spaces, pendingPerSpace);
+
   // Combine every pending space into ONE upgradeneeded transaction (one IDB
   // version bump total), which also writes every space's marker. A failure
   // partway through rolls back all spaces' schema changes and markers, and a
@@ -277,6 +280,9 @@ function resolveContractSpaces(
     }
   }
 
+  // Check declared stores even when no space has pending migrations.
+  assertStoresBelongToOneSpace(spaces, []);
+
   return spaces;
 }
 
@@ -377,4 +383,45 @@ function openAndReadMarker(
       reject(req.error ?? new Error(`IDB open failed while reading marker for "${dbName}"`));
     };
   });
+}
+
+/**
+ * Checks that each store name belongs to one contract space. All spaces share
+ * one IndexedDB database, so a name that two spaces use would mix their rows,
+ * and one space's migration could drop or rewrite the other's store. A space
+ * uses a name when its current contract declares the store or one of its
+ * pending operations touches it. The app owns the marker store: every space
+ * keeps its marker row there, but only app migrations may change the store.
+ */
+function assertStoresBelongToOneSpace(
+  spaces: ReadonlyArray<{ spaceId: string; contractSpace: ContractSpace<Contract> }>,
+  pending: ReadonlyArray<{ spaceId: string; ops: readonly IdbDdlOp[] }>
+): void {
+  const owners = new Map<string, string>([[IDB_MARKER_STORE, APP_SPACE_ID]]);
+  const claim = (storeName: string, spaceId: string): void => {
+    const owner = owners.get(storeName);
+    if (owner === undefined) owners.set(storeName, spaceId);
+    else if (owner !== spaceId) {
+      throw new Error(
+        `Store ${JSON.stringify(storeName)} is used by contract spaces ${JSON.stringify(owner)} and ${JSON.stringify(spaceId)}. ` +
+          "Each store must belong to one contract space. Use a different name in one space's contract and in its migrations."
+      );
+    }
+  };
+  for (const { spaceId, contractSpace } of spaces) {
+    const { stores } = contractSpace.contractJson.storage as IdbContract["storage"];
+    for (const storeName of Object.keys(stores ?? {})) claim(storeName, spaceId);
+  }
+  for (const { spaceId, ops } of pending) {
+    for (const op of ops) {
+      // IndexedDB converts other values to strings, which would slip past the
+      // name comparison above.
+      if (typeof op.storeName !== "string") {
+        throw new Error(
+          `A migration of contract space ${JSON.stringify(spaceId)} has an operation without a string store name: ${JSON.stringify(op)}.`
+        );
+      }
+      claim(op.storeName, spaceId);
+    }
+  }
 }

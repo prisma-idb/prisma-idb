@@ -55,7 +55,7 @@ Scalar and enum fields can be lists. Lists cannot be optional. An empty-list def
 
 Neither authoring path accepts `__proto__` or `_generated` as the name of a model, store, field, relation, index, enum or enum member. Both report `IDB_RESERVED_NAME`. JavaScript reads `__proto__` as an object's prototype rather than as a key, and contract emission drops every key named `_generated`. Both paths also refuse `_prisma_next_marker` as a store name, because the client always creates that store for the contract marker.
 
-With the sync extension, the client also creates stores whose names start with `_idb_sync_`. Authoring doesn't check your store names against that prefix, so don't use it.
+With the sync extension, the client also creates stores whose names start with `_idb_sync_`, so don't use that prefix. Each store belongs to one contract space. If your schema and an extension use the same store name, the client refuses to open and names the store. This includes an upgrade in which one of them drops the store and the other creates a store with the same name. The client checks this each time it opens, against the extensions you pass and their pending migrations, before it creates or changes any store.
 
 ## Equivalent contracts
 

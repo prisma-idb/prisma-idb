@@ -11,6 +11,9 @@ import { defineContract } from "@prisma-idb/family-idb/contract-ts";
 import idbFamilyPack from "@prisma-idb/family-idb/pack";
 import idbTargetPack from "@prisma-idb/target-idb/pack";
 import type { IdbExtensionSpace } from "@prisma-idb/family-idb/control";
+import { computeMigrationHash } from "@prisma/orm-toolchain/migration-tools/hash";
+import { dropObjectStoreOp, transformRecordsOp } from "@prisma-idb/target-idb/migration";
+import { readMarker, writeMarker } from "@prisma-idb/target-idb/runtime";
 import { createAutoMigratingIdbClient } from "../src/exports/client-auto";
 import type { IdbStoreAccessor } from "../src/exports/orm";
 import { buildContractSpaceFixture, buildExtensionContractSpaceFixture } from "./_contract-space-fixture";
@@ -380,5 +383,212 @@ describe("auto-migrate combined multi-space apply", () => {
     await expect(
       createAutoMigratingIdbClient({ contractSpace: appSpace, dbName: name, extensions: [first, duplicate] })
     ).rejects.toThrow(/duplicate or reserved/i);
+  });
+
+  it("rejects an extension that declares a store the current app already uses, keeping the app's rows", async () => {
+    const name = dbName();
+    const appSpace = buildContractSpaceFixture([appV1]);
+    const first = await createAutoMigratingIdbClient({ contractSpace: appSpace, dbName: name });
+    await asRecord(first.orm)["users"]!.create({ id: "u1", email: "alice@example.com" });
+    await first.close();
+    const sharing = defineContract({
+      family: idbFamilyPack,
+      target: idbTargetPack,
+      models: { Widget: { store: "users", key: "id", fields: { id: "String" } } },
+    });
+
+    await expect(
+      createAutoMigratingIdbClient({
+        contractSpace: appSpace,
+        dbName: name,
+        extensions: [{ spaceId: "other", contractSpace: buildExtensionContractSpaceFixture("other", [sharing]) }],
+      })
+    ).rejects.toThrow('Store "users" is used by contract spaces "app" and "other".');
+
+    const db = await openRawDb(name);
+    try {
+      expect(await readStores(db, ["users"])).toEqual([[{ id: "u1", email: "alice@example.com" }]]);
+      expect(await readMarker(db, "other")).toBeNull();
+    } finally {
+      db.close();
+    }
+  });
+
+  it("rejects a store that two current spaces both declare, even with nothing pending", async () => {
+    const name = dbName();
+    const appSpace = buildContractSpaceFixture([appV1]);
+    const first = await createAutoMigratingIdbClient({ contractSpace: appSpace, dbName: name });
+    await first.close();
+    const sharing = defineContract({
+      family: idbFamilyPack,
+      target: idbTargetPack,
+      models: { Widget: { store: "users", key: "id", fields: { id: "String" } } },
+    });
+    const sharingSpace = buildExtensionContractSpaceFixture("other", [sharing]);
+    const db = await openRawDb(name);
+    try {
+      await writeMarker(db, { space: "other", storageHash: sharingSpace.headRef.hash });
+    } finally {
+      db.close();
+    }
+
+    await expect(
+      createAutoMigratingIdbClient({
+        contractSpace: appSpace,
+        dbName: name,
+        extensions: [{ spaceId: "other", contractSpace: sharingSpace }],
+      })
+    ).rejects.toThrow('Store "users" is used by contract spaces "app" and "other".');
+  });
+
+  it("rejects an extension migration that drops a store the current app declares", async () => {
+    const name = dbName();
+    const appSpace = buildContractSpaceFixture([appV1]);
+    const first = await createAutoMigratingIdbClient({ contractSpace: appSpace, dbName: name });
+    await asRecord(first.orm)["users"]!.create({ id: "u1", email: "alice@example.com" });
+    await first.close();
+    const space = buildExtensionContractSpaceFixture("other", [otherExtV1]);
+    const migration = space.migrations[0]!;
+    const ops = [...migration.ops, dropObjectStoreOp("users")];
+    const dropping = {
+      ...space,
+      migrations: [
+        {
+          ...migration,
+          ops,
+          metadata: { ...migration.metadata, migrationHash: computeMigrationHash(migration.metadata, ops) },
+        },
+      ],
+    };
+
+    await expect(
+      createAutoMigratingIdbClient({
+        contractSpace: appSpace,
+        dbName: name,
+        extensions: [{ spaceId: "other", contractSpace: dropping }],
+      })
+    ).rejects.toThrow('Store "users" is used by contract spaces "app" and "other".');
+
+    const db = await openRawDb(name);
+    try {
+      expect(await readStores(db, ["users"])).toEqual([[{ id: "u1", email: "alice@example.com" }]]);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("rejects a migration operation whose store name is not a string", async () => {
+    const space = buildExtensionContractSpaceFixture("other", [otherExtV1]);
+    const migration = space.migrations[0]!;
+    const ops = [...migration.ops, { ...dropObjectStoreOp("users"), storeName: 123 as unknown as string }];
+    const numeric = {
+      ...space,
+      migrations: [
+        {
+          ...migration,
+          ops,
+          metadata: { ...migration.metadata, migrationHash: computeMigrationHash(migration.metadata, ops) },
+        },
+      ],
+    };
+
+    await expect(
+      createAutoMigratingIdbClient({
+        contractSpace: buildContractSpaceFixture([appV1]),
+        dbName: dbName(),
+        extensions: [{ spaceId: "other", contractSpace: numeric }],
+      })
+    ).rejects.toThrow('A migration of contract space "other" has an operation without a string store name');
+  });
+
+  it("rejects an extension migration that changes the marker store of a current app", async () => {
+    const name = dbName();
+    const appSpace = buildContractSpaceFixture([appV1]);
+    const first = await createAutoMigratingIdbClient({ contractSpace: appSpace, dbName: name });
+    await first.close();
+    const space = buildExtensionContractSpaceFixture("other", [otherExtV1]);
+    const migration = space.migrations[0]!;
+    const ops = [...migration.ops, transformRecordsOp("_prisma_next_marker", { removeFields: ["meta"] })];
+    const tampering = {
+      ...space,
+      migrations: [
+        {
+          ...migration,
+          ops,
+          metadata: { ...migration.metadata, migrationHash: computeMigrationHash(migration.metadata, ops) },
+        },
+      ],
+    };
+
+    await expect(
+      createAutoMigratingIdbClient({
+        contractSpace: appSpace,
+        dbName: name,
+        extensions: [{ spaceId: "other", contractSpace: tampering }],
+      })
+    ).rejects.toThrow('Store "_prisma_next_marker" is used by contract spaces "app" and "other".');
+  });
+
+  it("rejects two spaces whose pending migrations both use a store that neither contract declares", async () => {
+    const withArchive = (store: string) =>
+      defineContract({
+        family: idbFamilyPack,
+        target: idbTargetPack,
+        models: {
+          Owner: { store, key: "id", fields: { id: "String" } },
+          Archive: { store: "archive", key: "id", fields: { id: "String" } },
+        },
+      });
+    const appWithArchive = withArchive("users");
+    const extensionWithArchive = withArchive("_other_ext_widgets");
+
+    await expect(
+      createAutoMigratingIdbClient({
+        contractSpace: buildContractSpaceFixture([appWithArchive, appV1]),
+        dbName: dbName(),
+        extensions: [
+          {
+            spaceId: "other",
+            contractSpace: buildExtensionContractSpaceFixture("other", [extensionWithArchive, otherExtV1]),
+          },
+        ],
+      })
+    ).rejects.toThrow('Store "archive" is used by contract spaces "app" and "other".');
+  });
+
+  it("rejects an extension creating a store that the app drops in the same upgrade", async () => {
+    const name = dbName();
+    const appWithArchive = defineContract({
+      family: idbFamilyPack,
+      target: idbTargetPack,
+      models: {
+        User: { store: "users", key: "id", fields: { id: "String", email: "String" } },
+        Archive: { store: "archive", key: "id", fields: { id: "String" } },
+      },
+    });
+    const claiming = defineContract({
+      family: idbFamilyPack,
+      target: idbTargetPack,
+      models: { Archive: { store: "archive", key: "id", fields: { id: "String" } } },
+    });
+    const appSpace = buildContractSpaceFixture([appWithArchive]);
+    const first = await createAutoMigratingIdbClient({ contractSpace: appSpace, dbName: name });
+    await asRecord(first.orm)["archive"]!.create({ id: "kept" } as never);
+    await first.close();
+
+    await expect(
+      createAutoMigratingIdbClient({
+        contractSpace: buildContractSpaceFixture([appWithArchive, appV1]),
+        dbName: name,
+        extensions: [{ spaceId: "other", contractSpace: buildExtensionContractSpaceFixture("other", [claiming]) }],
+      })
+    ).rejects.toThrow('Store "archive" is used by contract spaces "other" and "app".');
+
+    const db = await openRawDb(name);
+    try {
+      expect(await readStores(db, ["archive"])).toEqual([[{ id: "kept" }]]);
+    } finally {
+      db.close();
+    }
   });
 });

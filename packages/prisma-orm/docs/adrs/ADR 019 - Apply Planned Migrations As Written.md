@@ -23,7 +23,7 @@ Upstream draws the same line. `prisma migrate`, which applies planned migration 
 
 ## Decision
 
-- **Apply the whole chain or nothing.** The browser applies every pending operation, in order, in one upgrade transaction ([ADR 002](ADR%20002%20-%20Two-Phase%20Migration.md)). It never skips an operation. If the chain is broken or a package fails its integrity check, it throws before touching the database.
+- **Apply the whole chain or nothing.** The browser applies every pending operation, in order, in one upgrade transaction ([ADR 002](ADR%20002%20-%20Two-Phase%20Migration.md)). It never skips an operation. It throws before it starts the upgrade if a chain is broken, a package fails its integrity check, or two contract spaces use the same store name. Two spaces use the same name when their current contracts or pending operations both name it. The app owns `_prisma_next_marker`.
 - **Warn at plan time.** `prisma-idb migration plan` prints a warning to stderr when a migration drops a store, naming each store whose records will be deleted. Dropping an index isn't listed, because nothing is lost.
 - **No runtime switch.** The `policy` option and the `MigrationPolicy` type are removed.
 
