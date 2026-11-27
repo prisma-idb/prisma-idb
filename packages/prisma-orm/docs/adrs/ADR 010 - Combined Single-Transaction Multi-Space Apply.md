@@ -37,12 +37,12 @@ Extension spaces go first, sorted by space id, and the app space goes last. This
 The order is safe for two reasons:
 
 - **Markers are written after every schema change**, including the app baseline's creation of `_prisma_next_marker`. So no marker is ever written to a store that doesn't exist yet.
-- **IndexedDB schemas have no references between stores.** In Postgres, an app table may use a type that an extension installs, so the order matters. Here it doesn't.
+- **IndexedDB schemas have no references between stores.** In Postgres, an app table may use a type that an extension installs, so the order matters. Here only migration hooks depend on it: when an app migration transforms records, the sync extension's hook rewrites its outbox store, which must already exist. Applying extensions first guarantees that.
 
 ## Why combining is safe
 
 - **Scope.** A version-change transaction already covers every store in the database. Combining several spaces' operations only saves extra calls to `indexedDB.open`.
-- **No overlap.** Each extension uses its own store-name prefix, such as `_idb_sync_` for the sync extension. Operations from different spaces never touch the same store, so their order can't cause a `ConstraintError`.
+- **No overlap.** Each store belongs to one space. Extensions use their own store-name prefix, such as `_idb_sync_` for the sync extension. Before it opens the upgrade, the client rejects any store name that more than one space declares or touches in a pending operation. Operations from different spaces never touch the same store, so their order can't cause a `ConstraintError`.
 - **Failure rolls everything back.** If anything throws, the whole transaction aborts, every space's schema changes and markers with it, and the next open tries again ([ADR 002](ADR%20002%20-%20Two-Phase%20Migration.md)).
 
 ## Alternatives considered
