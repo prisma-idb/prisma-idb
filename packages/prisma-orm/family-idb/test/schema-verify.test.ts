@@ -270,6 +270,38 @@ describe("verifyIdbSchema — index issues", () => {
 
 // ── Result shape ──────────────────────────────────────────────────────────────
 
+describe("verifyIdbSchema — names that match Object.prototype members", () => {
+  it("reports an extra toString store and constructor index in strict mode", () => {
+    const contract = makeContract({ users: { keyPath: "id" } });
+    const schema = makeSchema({
+      users: { keyPath: "id", indexes: { constructor: { keyPath: "email", unique: false } } },
+      toString: { keyPath: "id" },
+    });
+    const result = verifyIdbSchema(contract, schema, true);
+
+    expect(result.ok).toBe(false);
+    expect(result.schema.issues.map((issue) => [issue.kind, issue.path])).toEqual([
+      ["extra_index", ["users", "constructor"]],
+      ["extra_table", ["toString"]],
+    ]);
+  });
+
+  it("reports a missing toString store and constructor index", () => {
+    const contract = makeContract({
+      users: { keyPath: "id", indexes: { constructor: { keyPath: "email", unique: false } } },
+      toString: { keyPath: "id" },
+    });
+    const schema = makeSchema({ users: { keyPath: "id" } });
+    const result = verifyIdbSchema(contract, schema, false);
+
+    expect(result.ok).toBe(false);
+    expect(result.schema.issues.map((issue) => [issue.kind, issue.path])).toEqual([
+      ["missing_column", ["users", "constructor"]],
+      ["missing_table", ["toString"]],
+    ]);
+  });
+});
+
 describe("verifyIdbSchema — result shape", () => {
   it("reports consistent counts, strict mode and elapsed time for a matching schema", () => {
     const contract = makeContract({

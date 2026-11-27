@@ -327,13 +327,13 @@ function verifyStore(
   const actualIndexes = actualStore.indexes ?? {};
 
   for (const [indexName, contractIndex] of Object.entries(contractIndexes)) {
-    const actualIndex = actualIndexes[indexName];
+    const actualIndex = Object.hasOwn(actualIndexes, indexName) ? actualIndexes[indexName] : undefined;
     children.push(verifyIndex(indexName, contractIndex, actualIndex, storeName, storePath, issues));
   }
 
   // Extra indexes in the supplied schema (only relevant in strict mode)
   for (const indexName of Object.keys(actualIndexes)) {
-    if (!(indexName in contractIndexes)) {
+    if (!Object.hasOwn(contractIndexes, indexName)) {
       const msg = `Index "${indexName}" exists in manifest but is not in contract`;
       if (strict) {
         issues.push({
@@ -441,13 +441,15 @@ export function verifyIdbSchema(
 
   // Verify each store defined in the contract.
   for (const [storeName, contractStore] of Object.entries(contractStores)) {
-    const actualStore: IdbStoreIR | undefined = actualStores[storeName];
+    const actualStore: IdbStoreIR | undefined = Object.hasOwn(actualStores, storeName)
+      ? actualStores[storeName]
+      : undefined;
     storeNodes.push(verifyStore(storeName, contractStore, actualStore, strict, issues));
   }
 
   // Extra stores in the supplied schema (only in strict mode as failures, otherwise warnings).
   for (const [storeName, actualStore] of Object.entries(actualStores)) {
-    if (!(storeName in contractStores)) {
+    if (!Object.hasOwn(contractStores, storeName)) {
       const msg = `Object store "${storeName}" exists in manifest but is not in contract`;
       if (strict) {
         issues.push({ kind: "extra_table", table: storeName, message: msg, path: [storeName] });
