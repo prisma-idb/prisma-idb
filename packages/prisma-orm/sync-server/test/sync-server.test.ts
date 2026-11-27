@@ -295,6 +295,25 @@ describe("createSyncServer", () => {
       expect(() => createSyncServer({ contract, clientContract, rootModel: "User" })).toThrow(/storage.keyPath/);
     });
 
+    it("tells the caller to give a compound-key root model a single-field key", () => {
+      const withCompoundRoot = (contract: SyncServerContract): SyncServerContract => {
+        const clone = JSON.parse(JSON.stringify(contract)) as SyncServerContract;
+        for (const namespace of Object.values(clone.domain.namespaces)) {
+          const user = namespace.models["User"];
+          if (user) (user.storage as { keyPath?: unknown }).keyPath = ["id", "email"];
+        }
+        return clone;
+      };
+
+      expect(() =>
+        createSyncServer({
+          contract: withCompoundRoot(kanbanContract()),
+          clientContract: withCompoundRoot(kanbanClientContract()),
+          rootModel: "User",
+        })
+      ).toThrow(/Model "User" has .*compound primary key.*give the root model a single-field primary key/);
+    });
+
     it("works against a non-IDB-shaped contract given a custom getKeyField", () => {
       const contract = toNonIdbShapedContract(kanbanContract());
       const clientContract = toNonIdbShapedContract(kanbanClientContract());

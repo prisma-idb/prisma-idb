@@ -120,8 +120,9 @@ export const defaultGetKeyField: GetKeyField = (contract, modelName) => {
   const keyPath = (model?.storage as { readonly keyPath?: unknown } | undefined)?.keyPath;
   if (typeof keyPath !== "string") {
     const hint = Array.isArray(keyPath)
-      ? "This model has a compound primary key (an array keyPath) — sync-server does not support compound-key " +
-        "models yet. Exclude this model from the client contract to keep it out of sync."
+      ? "This model has a compound primary key (an array keyPath), which sync-server doesn't support yet. " +
+        "Exclude the model from the client contract. The sync root model must stay in the client contract, " +
+        "so give the root model a single-field primary key instead."
       : "This contract's storage shape isn't IDB's — pass a getKeyField option to createSyncServer.";
     throw new Error(`Model "${modelName}" has no single string storage.keyPath in the contract. ${hint}`);
   }
