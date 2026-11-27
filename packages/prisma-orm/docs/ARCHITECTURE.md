@@ -162,7 +162,9 @@ createAutoMigratingIdbClient({ contractSpace, dbName, extensions })
   ├── 3. walk each space's chain from its marker to its head, collecting every pending operation
   ├── 4. reopen at db.version + 1; inside upgradeneeded, in one transaction:
   │       ├── apply every operation (extension spaces first, the app space last)
-  │       └── write every space's new marker
+  │       └── write the new marker of each space that migrated
+  │     then go back to step 1, in case another tab upgraded the database first;
+  │     after three upgrade attempts, throw if anything is still pending
   └── 5. return createIdbClient({ contract, dbName })
 ```
 

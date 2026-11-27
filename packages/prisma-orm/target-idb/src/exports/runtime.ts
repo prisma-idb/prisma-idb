@@ -23,7 +23,7 @@ export {
 // `MigrationCLI` → `node:fs` into the client bundle.
 export { applyOneDdlOp, openAndUpgrade, readMarker, writeMarker, writeMarkers } from "../core/apply-ddl-op";
 export type { IdbMarkerRecord, MarkerWriteInput } from "../core/apply-ddl-op";
-export { isIdbDdlOp } from "../core/migration-factories";
+export { IDB_MARKER_STORE, isIdbDdlOp } from "../core/migration-factories";
 export { transformRecord } from "../core/transform-records";
 export type { RecordTransformMode } from "../core/transform-records";
 export type {

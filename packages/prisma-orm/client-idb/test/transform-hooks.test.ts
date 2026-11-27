@@ -115,4 +115,22 @@ describe("auto-migration extension transform hooks", () => {
       createAutoMigratingIdbClient({ contractSpace: appSpace, extensions, dbName: "hooks", factory: new IDBFactory() })
     ).rejects.toThrow("hook failed");
   });
+
+  it("reports a hook failure named VersionError instead of retrying the upgrade", async () => {
+    let calls = 0;
+    const extensions: IdbExtensionSpace[] = [
+      {
+        spaceId: "metadata",
+        contractSpace: metadataSpace,
+        onTransformRecords: (_tx, _op, _model, done) => {
+          calls += 1;
+          done(new DOMException("hook version mismatch", "VersionError"));
+        },
+      },
+    ];
+    await expect(
+      createAutoMigratingIdbClient({ contractSpace: appSpace, extensions, dbName: "hooks", factory: new IDBFactory() })
+    ).rejects.toThrow("hook version mismatch");
+    expect(calls).toBe(1);
+  });
 });

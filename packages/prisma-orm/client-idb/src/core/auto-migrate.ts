@@ -9,10 +9,11 @@ import { computeMigrationHash } from "./migration-hash";
 // Import from `./runtime` (not `./migration`) so `MigrationCLI` → `node:fs`
 // is not bundled into the browser client.
 import {
+  IDB_MARKER_STORE,
   isIdbDdlOp,
   openAndUpgrade,
-  readMarker,
   type IdbDdlOp,
+  type IdbMarkerRecord,
   type TransformRecordsOp,
 } from "@prisma-idb/target-idb/runtime";
 import { createIdbClient, type IdbClient } from "./idb-client";
@@ -55,18 +56,16 @@ export interface AutoMigrateClientOptions<TContract extends IdbContract> {
  *
  * **What runs**:
  *
- * 1. Open the database at the current local version, read the marker from
- *    `_prisma_next_marker`. (Null for a fresh database)
- * 2. If the marker hash equals `contractSpace.headRef.hash`, the database
- *    is already at the target — return the client immediately.
- * 3. Otherwise, walk `contractSpace.migrations` from the marker hash (or
- *    `null` for fresh) to `headRef.hash`, collecting each pending
- *    package's `ops` in chain order.
- * 4. If `extensions` are configured, repeat steps 1–3 for each extension
- *    space, then combine every space's pending ops into ONE reopen at
- *    `db.version + 1` so `upgradeneeded` fires once; apply every collected
- *    op (all spaces) inside that single version-change transaction, which
- *    also writes every migrated space's marker.
+ * 1. Open the database at its current version and read every space's
+ *    marker from `_prisma_next_marker` in one transaction.
+ * 2. If every marker equals its space's `headRef.hash`, return the client.
+ * 3. Otherwise, walk each space's `migrations` from its marker hash (or
+ *    `null` for a fresh database) to `headRef.hash`, collecting the pending
+ *    ops in chain order.
+ * 4. Reopen at `db.version + 1` and apply every space's ops in that one
+ *    `upgradeneeded` transaction, which also writes every migrated space's
+ *    marker. Then go back to step 1, because another tab may have upgraded
+ *    the database first.
  * 5. Hand back the typed `IdbClient`.
  *
  * Every pending op is applied exactly as planned, destructive ones included.
@@ -135,12 +134,28 @@ export async function autoMigrate(input: {
   readonly factory: IDBFactory;
   readonly extensions?: ReadonlyArray<IdbExtensionSpace>;
 }): Promise<void> {
+  // Another connection can upgrade the database while this client plans its
+  // own upgrade, for example a tab that still runs an older build. The client
+  // then reads the markers again and continues from them. After the last
+  // allowed upgrade, the final pass only checks that every space is current.
+  for (let pass = 0; pass <= MAX_UPGRADE_ATTEMPTS; pass += 1) {
+    if (await applyPendingMigrations(input, pass < MAX_UPGRADE_ATTEMPTS)) return;
+  }
+}
+
+const MAX_UPGRADE_ATTEMPTS = 3;
+
+/**
+ * Applies every pending migration in one upgrade. Returns `true` when every
+ * space is already current, and `false` after an upgrade or a lost race.
+ */
+async function applyPendingMigrations(input: Parameters<typeof autoMigrate>[0], mayUpgrade: boolean): Promise<boolean> {
   const { dbName, factory } = input;
 
   const spaces = resolveContractSpaces(input.contractSpace, input.extensions ?? []);
 
-  // Read current DB version once (all spaces share the same IDB database).
-  const { currentVersion: initialVersion } = await openAndReadMarker(dbName, factory, APP_SPACE_ID);
+  // All spaces share one database, so read the version and every marker together.
+  const { currentVersion: initialVersion, markers } = await openAndReadMarkers(dbName, factory);
 
   // Collect pending work per space without applying yet, so a broken chain in
   // any space fails before the database is touched.
@@ -148,7 +163,7 @@ export async function autoMigrate(input: {
 
   for (const space of spaces) {
     const targetHash = space.contractSpace.headRef.hash;
-    const { markerHash } = await openAndReadMarker(dbName, factory, space.spaceId);
+    const markerHash = markers.get(space.spaceId) ?? null;
     if (markerHash === targetHash) continue;
 
     const pendingOps = await walkChain({
@@ -167,7 +182,13 @@ export async function autoMigrate(input: {
     pendingPerSpace.push({ spaceId: space.spaceId, ops: pendingOps, storageHash: targetHash });
   }
 
-  if (pendingPerSpace.length === 0) return;
+  if (pendingPerSpace.length === 0) return true;
+  if (!mayUpgrade) {
+    throw new Error(
+      `IndexedDB database "${dbName}" was upgraded by other connections while this client was migrating it. ` +
+        "Close other tabs that use this database, then open the client again."
+    );
+  }
 
   // Combine every pending space into ONE upgradeneeded transaction (one IDB
   // version bump total), which also writes every space's marker. A failure
@@ -185,14 +206,33 @@ export async function autoMigrate(input: {
     return a.spaceId.localeCompare(b.spaceId);
   });
 
-  await openAndUpgrade({
-    factory,
-    dbName,
-    targetVersion: initialVersion + 1,
-    ops: orderedPending.flatMap((space) => space.ops),
-    markers: orderedPending.map((space) => ({ space: space.spaceId, storageHash: space.storageHash })),
-    onTransformRecords: createTransformRecordsCallback(input.contractSpace.contractJson, input.extensions ?? []),
-  });
+  // Track whether this open request started an upgrade. A `VersionError`
+  // without one means another connection already upgraded past the requested
+  // version. A `VersionError` after the upgrade started came from inside it.
+  let upgradeStarted = false;
+  const trackingFactory = {
+    open(name: string, version?: number): IDBOpenDBRequest {
+      const request = factory.open(name, version);
+      request.addEventListener("upgradeneeded", () => {
+        upgradeStarted = true;
+      });
+      return request;
+    },
+  } as IDBFactory;
+  try {
+    await openAndUpgrade({
+      factory: trackingFactory,
+      dbName,
+      targetVersion: initialVersion + 1,
+      ops: orderedPending.flatMap((space) => space.ops),
+      markers: orderedPending.map((space) => ({ space: space.spaceId, storageHash: space.storageHash })),
+      onTransformRecords: createTransformRecordsCallback(input.contractSpace.contractJson, input.extensions ?? []),
+    });
+  } catch (error) {
+    if (!upgradeStarted && (error as { name?: unknown } | null)?.name === "VersionError") return false;
+    throw error;
+  }
+  return false;
 }
 
 /**
@@ -341,15 +381,13 @@ async function walkChain(input: {
 }
 
 /**
- * Open the database at its current local version (no version arg), read the
- * marker for `spaceId`, then close the connection. Returns the current integer
- * version so the caller can compute `currentVersion + 1` for the upgrade re-open.
+ * Opens the database at its current version and reads every space's marker in
+ * one transaction, so the version and all markers come from the same state.
  */
-function openAndReadMarker(
+function openAndReadMarkers(
   dbName: string,
-  factory: IDBFactory,
-  spaceId: string
-): Promise<{ currentVersion: number; markerHash: string | null }> {
+  factory: IDBFactory
+): Promise<{ currentVersion: number; markers: ReadonlyMap<string, string> }> {
   return new Promise((resolve, reject) => {
     let req: IDBOpenDBRequest;
     try {
@@ -362,19 +400,28 @@ function openAndReadMarker(
     req.onsuccess = () => {
       const db = req.result;
       const currentVersion = db.version;
-      void (async () => {
-        try {
-          const record = await readMarker(db, spaceId);
-          resolve({ currentVersion, markerHash: record?.storageHash ?? null });
-        } catch (err) {
-          reject(err);
-        } finally {
-          db.close();
-        }
-      })();
+      const finish = (error: unknown, markers?: ReadonlyMap<string, string>) => {
+        db.close();
+        if (markers) resolve({ currentVersion, markers });
+        else reject(error);
+      };
+      if (!db.objectStoreNames.contains(IDB_MARKER_STORE)) {
+        finish(undefined, new Map());
+        return;
+      }
+      try {
+        const request = db.transaction(IDB_MARKER_STORE).objectStore(IDB_MARKER_STORE).getAll();
+        request.onsuccess = () => {
+          const records = request.result as IdbMarkerRecord[];
+          finish(undefined, new Map(records.map((record) => [record.space, record.storageHash])));
+        };
+        request.onerror = () => finish(request.error ?? new Error(`IDB failed to read markers for "${dbName}"`));
+      } catch (err) {
+        finish(err);
+      }
     };
     req.onerror = () => {
-      reject(req.error ?? new Error(`IDB open failed while reading marker for "${dbName}"`));
+      reject(req.error ?? new Error(`IDB open failed while reading markers for "${dbName}"`));
     };
   });
 }

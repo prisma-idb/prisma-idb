@@ -16,9 +16,12 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { defineContract } from "@prisma-idb/family-idb/contract-ts";
 import idbFamilyPack from "@prisma-idb/family-idb/pack";
 import idbTargetPack from "@prisma-idb/target-idb/pack";
+import { computeMigrationHash } from "@prisma/orm-toolchain/migration-tools/hash";
+import { transformRecordsOp } from "@prisma-idb/target-idb/migration";
+import { openAndUpgrade, readMarker, type IdbDdlOp } from "@prisma-idb/target-idb/runtime";
 import { createAutoMigratingIdbClient } from "../src/exports/client-auto";
 import type { IdbStoreAccessor } from "../src/exports/orm";
-import { buildContractSpaceFixture } from "./_contract-space-fixture";
+import { buildContractSpaceFixture, buildExtensionContractSpaceFixture } from "./_contract-space-fixture";
 
 function asRecord(orm: unknown): Record<string, IdbStoreAccessor<never, never>> {
   return orm as Record<string, IdbStoreAccessor<never, never>>;
@@ -192,6 +195,219 @@ describe("auto-migrate across contract evolution", () => {
     await asRecord(client.orm)["users"]!.create({ id: "u1", email: "alice@example.com" });
     expect(await asRecord(client.orm)["users"]!.all().toArray()).toHaveLength(1);
     await client.close();
+  });
+
+  it.each([
+    { races: 1, overshoot: 0, case: "reaches the requested version first" },
+    { races: 2, overshoot: 0, case: "wins two upgrades in a row" },
+    { races: 1, overshoot: 1, case: "upgrades past the requested version" },
+  ])("finishes migrating when an older build $case", async ({ races, overshoot }) => {
+    const name = dbName();
+    const olderBuild = buildContractSpaceFixture([v1]);
+    const newerBuild = buildContractSpaceFixture([v1, v2]);
+    let raced = 0;
+    const racingFactory = {
+      open(database: string, version?: number) {
+        if (version !== undefined && raced < races) {
+          raced += 1;
+          // IndexedDB serves open requests in order, so this upgrade runs first.
+          void openAndUpgrade({
+            factory: indexedDB,
+            dbName: database,
+            targetVersion: version + overshoot,
+            ops: olderBuild.migrations[0]!.ops as readonly IdbDdlOp[],
+            markers: [{ space: "app", storageHash: olderBuild.headRef.hash }],
+          });
+        }
+        return version === undefined ? indexedDB.open(database) : indexedDB.open(database, version);
+      },
+    } as unknown as IDBFactory;
+
+    const client = await createAutoMigratingIdbClient({
+      contractSpace: newerBuild,
+      dbName: name,
+      factory: racingFactory,
+    });
+    expect(raced).toBe(races);
+    await asRecord(client.orm)["posts"]!.create({ id: "p1", title: "Hello" });
+    expect(await asRecord(client.orm)["posts"]!.all().toArray()).toHaveLength(1);
+    await client.close();
+
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open(name);
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    try {
+      expect(await readMarker(db, "app")).toMatchObject({ storageHash: newerBuild.headRef.hash });
+    } finally {
+      db.close();
+    }
+  });
+
+  it("does not replay a migration that an older build already applied", async () => {
+    const name = dbName();
+    const fields = { id: "String", first: "String", second: "String" } as const;
+    const before = defineContract({
+      family: idbFamilyPack,
+      target: idbTargetPack,
+      models: { Pair: { store: "pairs", key: "id", fields } },
+    });
+    const swapped = defineContract({
+      family: idbFamilyPack,
+      target: idbTargetPack,
+      models: { Pair: { store: "pairs", key: "id", fields, indexes: { byFirst: { keyPath: "first" } } } },
+    });
+    const later = defineContract({
+      family: idbFamilyPack,
+      target: idbTargetPack,
+      models: {
+        Pair: { store: "pairs", key: "id", fields, indexes: { byFirst: { keyPath: "first" } } },
+        Post: { store: "posts", key: "id", fields: { id: "String", title: "String" } },
+      },
+    });
+    // Swapping two fields is not idempotent, so applying it twice is visible.
+    const withSwap = <T extends { migrations: readonly { ops: readonly unknown[]; metadata: object }[] }>(
+      space: T
+    ): T => {
+      const migrations = space.migrations.map((migration, index) => {
+        if (index !== 1) return migration;
+        const ops = [
+          ...migration.ops,
+          transformRecordsOp("pairs", { renameFields: { first: "second", second: "first" } }),
+        ];
+        return {
+          ...migration,
+          ops,
+          metadata: {
+            ...migration.metadata,
+            migrationHash: computeMigrationHash(migration.metadata as never, ops as never),
+          },
+        };
+      });
+      return { ...space, migrations };
+    };
+    const olderBuild = withSwap(buildContractSpaceFixture([before, swapped]));
+    const newerBuild = withSwap(buildContractSpaceFixture([before, swapped, later]));
+
+    const seed = await createAutoMigratingIdbClient({
+      contractSpace: buildContractSpaceFixture([before]),
+      dbName: name,
+    });
+    await asRecord(seed.orm)["pairs"]!.create({ id: "p1", first: "A", second: "B" } as never);
+    await seed.close();
+
+    let raced = false;
+    const racingFactory = {
+      open(database: string, version?: number) {
+        if (version !== undefined && !raced) {
+          raced = true;
+          void openAndUpgrade({
+            factory: indexedDB,
+            dbName: database,
+            targetVersion: version,
+            ops: olderBuild.migrations[1]!.ops as readonly IdbDdlOp[],
+            markers: [{ space: "app", storageHash: olderBuild.headRef.hash }],
+          });
+        }
+        return version === undefined ? indexedDB.open(database) : indexedDB.open(database, version);
+      },
+    } as unknown as IDBFactory;
+
+    const client = await createAutoMigratingIdbClient({
+      contractSpace: newerBuild,
+      dbName: name,
+      factory: racingFactory,
+    });
+    expect(raced).toBe(true);
+    expect(await asRecord(client.orm)["pairs"]!.all().toArray()).toEqual([{ id: "p1", first: "B", second: "A" }]);
+    await client.close();
+  });
+
+  it("applies a pending extension after an older build brings only the app up to date", async () => {
+    const name = dbName();
+    const appSpace = buildContractSpaceFixture([v1]);
+    const extensionContract = defineContract({
+      family: idbFamilyPack,
+      target: idbTargetPack,
+      models: {
+        Item: {
+          store: "_ext_items",
+          key: "id",
+          fields: { id: "String", label: "String" },
+          indexes: { byLabel: { keyPath: "label" } },
+        },
+      },
+    });
+    const extension = buildExtensionContractSpaceFixture("ext", [extensionContract]);
+    let raced = false;
+    const racingFactory = {
+      open(database: string, version?: number) {
+        if (version !== undefined && !raced) {
+          raced = true;
+          // The older build has no extension, so it only migrates the app.
+          void openAndUpgrade({
+            factory: indexedDB,
+            dbName: database,
+            targetVersion: version,
+            ops: appSpace.migrations[0]!.ops as readonly IdbDdlOp[],
+            markers: [{ space: "app", storageHash: appSpace.headRef.hash }],
+          });
+        }
+        return version === undefined ? indexedDB.open(database) : indexedDB.open(database, version);
+      },
+    } as unknown as IDBFactory;
+
+    const client = await createAutoMigratingIdbClient({
+      contractSpace: appSpace,
+      dbName: name,
+      factory: racingFactory,
+      extensions: [{ spaceId: "ext", contractSpace: extension }],
+    });
+    expect(raced).toBe(true);
+    await client.close();
+
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open(name);
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    try {
+      expect(await readMarker(db, "ext")).toMatchObject({ storageHash: extension.headRef.hash });
+      expect(Array.from(db.transaction("_ext_items").objectStore("_ext_items").indexNames)).toEqual(["byLabel"]);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("stops with an error when other connections keep winning the upgrade", async () => {
+    const name = dbName();
+    const olderBuild = buildContractSpaceFixture([v1]);
+    let upgradeRequests = 0;
+    const racingFactory = {
+      open(database: string, version?: number) {
+        if (version !== undefined) {
+          upgradeRequests += 1;
+          void openAndUpgrade({
+            factory: indexedDB,
+            dbName: database,
+            targetVersion: version,
+            ops: olderBuild.migrations[0]!.ops as readonly IdbDdlOp[],
+            markers: [{ space: "app", storageHash: olderBuild.headRef.hash }],
+          });
+        }
+        return version === undefined ? indexedDB.open(database) : indexedDB.open(database, version);
+      },
+    } as unknown as IDBFactory;
+
+    await expect(
+      createAutoMigratingIdbClient({
+        contractSpace: buildContractSpaceFixture([v1, v2]),
+        dbName: name,
+        factory: racingFactory,
+      })
+    ).rejects.toThrow(/was upgraded by other connections.*Close other tabs/);
+    expect(upgradeRequests).toBe(3);
   });
 
   it("rejects instead of treating IDB open errors as a fresh install", async () => {
