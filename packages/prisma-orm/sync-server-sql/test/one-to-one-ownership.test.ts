@@ -180,6 +180,29 @@ describe("applying a delete through an owning relation", () => {
     }
   );
 
+  it("refuses a caller-supplied pull check that follows a join other than the parent's key", async () => {
+    const syncServer = createSyncServer({
+      contract: testContract,
+      clientContract: profileClientContract,
+      rootModel: "User",
+      getKeyField: sqlGetKeyField,
+    });
+    const adapter = createSqlSyncAdapter({ contract: testContract, syncServer, contractCheck: "off" });
+    const transaction = vi.fn();
+
+    // `User.profile` is the inverse side: it joins `Profile.userId`, which isn't `Profile`'s key.
+    await expect(
+      adapter.resolvePullRecord(
+        { transaction },
+        "User",
+        { kind: "scoped", keyField: "id", key: "u1", rootKeyField: "id", scopeKey: "u1", paths: [["profile"]] },
+        "u1",
+        "update"
+      )
+    ).rejects.toThrow(/Unsupported tenant parent join "User\.profile"/);
+    expect(transaction).not.toHaveBeenCalled();
+  });
+
   it("still opens a transaction for a join on the parent's key", async () => {
     const transaction = vi.fn().mockRejectedValue(new Error("stop after validation"));
     const adapter = createSqlSyncAdapter({ contract: testContract });

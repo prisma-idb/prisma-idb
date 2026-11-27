@@ -1,6 +1,6 @@
 import { domainModelsAtDefaultNamespace } from "@prisma/orm-framework/contract/types";
 import { resolveAuthorizationPaths, resolveParentReferenceChecks } from "@prisma-idb/sync-server";
-import { assertNoParentDefaults } from "./authorization";
+import { assertNoParentDefaults, assertParentJoinsTargetKeys } from "./authorization";
 import type { GetKeyField, OwnershipCheck, PushCheck, SyncServer, SyncServerContract } from "@prisma-idb/sync-server";
 import type { ApplyPushInput, ApplyPushOutcome } from "./apply-push";
 import type { PullInput, PullOutcome } from "./pull";
@@ -123,6 +123,8 @@ export function createSqlSyncAdapter(options: CreateSqlSyncAdapterOptions): SqlS
     },
     resolvePullRecord: async (db, model, check, keyPath, operation) => {
       const server = requireSyncServer("resolvePullRecord");
+      // `check` comes from the caller, so validate its joins before the ownership walk reads parents by key.
+      if (check.kind === "scoped") assertParentJoinsTargetKeys(contract, getKeyField, model, check);
       return inReadSnapshot(db, contract.target, (tx) =>
         resolvePullRecordImpl(tx, server, contract, getKeyField, model, check, keyPath, operation)
       );

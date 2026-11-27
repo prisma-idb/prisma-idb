@@ -108,7 +108,7 @@ export function assertParentJoinsTargetKeys(
   contract: SyncServerContract,
   getKeyField: GetKeyField,
   model: string,
-  check: Extract<PushCheck, { kind: "scoped" }>
+  check: { readonly paths: readonly (readonly string[])[] }
 ): void {
   resolveParentReferenceChecks(contract, getKeyField, model, check.paths);
 }

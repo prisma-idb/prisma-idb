@@ -129,6 +129,32 @@ export const defaultGetKeyField: GetKeyField = (contract, modelName) => {
   return keyPath;
 };
 
+/**
+ * Builds a root decision or the relation paths needed to authorize a scoped row, with the
+ * candidate parents derived from those paths.
+ */
+function buildOwnershipCheckWithParents(
+  dag: OwnershipDag,
+  contract: SyncServerContract,
+  getKeyField: GetKeyField,
+  modelName: string,
+  keyField: string,
+  key: unknown,
+  scopeKey: string
+): { readonly check: OwnershipCheck; readonly parents: readonly ParentReferenceCheck[] } {
+  if (modelName === dag.rootModel) {
+    return { check: { kind: "root", keyField, key, scopeKey, authorized: key === scopeKey }, parents: [] };
+  }
+  const paths = resolveAuthorizationPaths(contract, dag.rootModel, modelName);
+  // The ownership walk reads each parent by its key. A join to any other column would
+  // authorize against the wrong row, for every operation and for pulls, so refuse it here.
+  const parents = resolveParentReferenceChecks(contract, getKeyField, modelName, paths);
+  return {
+    check: { kind: "scoped", keyField, key, rootKeyField: getKeyField(contract, dag.rootModel), scopeKey, paths },
+    parents,
+  };
+}
+
 /** Builds a root decision or the relation paths needed to authorize a scoped row. */
 function buildOwnershipCheck(
   dag: OwnershipDag,
@@ -139,21 +165,7 @@ function buildOwnershipCheck(
   key: unknown,
   scopeKey: string
 ): OwnershipCheck {
-  if (modelName === dag.rootModel) {
-    return { kind: "root", keyField, key, scopeKey, authorized: key === scopeKey };
-  }
-  const paths = resolveAuthorizationPaths(contract, dag.rootModel, modelName);
-  // The ownership walk reads each parent by its key. A join to any other column would
-  // authorize against the wrong row, for every operation and for pulls, so refuse it here.
-  resolveParentReferenceChecks(contract, getKeyField, modelName, paths);
-  return {
-    kind: "scoped",
-    keyField,
-    key,
-    rootKeyField: getKeyField(contract, dag.rootModel),
-    scopeKey,
-    paths,
-  };
+  return buildOwnershipCheckWithParents(dag, contract, getKeyField, modelName, keyField, key, scopeKey).check;
 }
 
 /** Validates native payloads and keys before deriving ownership and candidate-parent checks. */
@@ -194,7 +206,7 @@ export function validatePush(
         return { kind: "validation-failure", error: "RECORD_VALIDATION_FAILURE", issues: result.issues };
       }
     }
-    const check = buildOwnershipCheck(
+    const { check, parents } = buildOwnershipCheckWithParents(
       dag,
       contract,
       getKeyField,
@@ -203,9 +215,7 @@ export function validatePush(
       event.wireKey,
       options.scopeKey
     );
-    return check.kind === "scoped" && event.operation !== "delete"
-      ? { ...check, parentReferences: resolveParentReferenceChecks(contract, getKeyField, event.model, check.paths) }
-      : check;
+    return check.kind === "scoped" && event.operation !== "delete" ? { ...check, parentReferences: parents } : check;
   }
 
   return events.map((event) => ({ eventId: event.id, model: event.model, check: checkEvent(event) }));

@@ -108,6 +108,8 @@ Since version 0.7, `@prisma-idb/sync-server-sql` requires these schema shapes fo
 - The referencing foreign key has no database or ORM-generated default, including defaults on nullable fields. Authorization needs its value before insertion.
 - A default on the parent's primary key alone does not violate the foreign key rule.
 
+`@prisma-idb/sync-server` enforces the key rule too, so a custom adapter gets the same error from `validatePush` and `buildPullQueries`.
+
 For example, `ownerId String` with `owner User @relation(fields: [ownerId], references: [id])` is supported when `User.id` is its single-field primary key. `ownerId String @default("system")` is unsupported, even if the application always supplies `ownerId`.
 
 With `syncServer`, `createSqlSyncAdapter` checks these rules at construction. Lower-level push calls check them before opening a transaction. Configuration errors name the unsupported relation or field:
