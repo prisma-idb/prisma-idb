@@ -33,7 +33,7 @@ autoMigrate: pending spaces "app" and "idb-sync"
 
 ### Order of operations
 
-Extension spaces go first, sorted by space id, and the app space goes last. This follows upstream ADR 212's convention.
+Extension spaces go first, sorted by space ID independently of locale, and the app space goes last. This follows the [upstream apply order](https://github.com/prisma/orm/blob/17385f2d86eefa3783e86d94534168a224806c0a/packages/1-framework/3-tooling/migration/src/concatenate-space-apply-inputs.ts).
 
 The app baseline can create `_prisma_next_marker` last because marker writes follow all operations. A name can be reused only after its current owner releases it in this apply order. For example, the app can use a name an extension drops earlier in the same upgrade.
 

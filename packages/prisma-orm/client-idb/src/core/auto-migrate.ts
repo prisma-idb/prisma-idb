@@ -175,14 +175,15 @@ export async function autoMigrate(input: {
   // multi-tab user hits one versionchange/blocked cycle on cold start instead
   // of one per space.
   //
-  // DDL op order is extensions (alphabetical by spaceId) first, app space
+  // DDL op order is extensions (sorted by ID without locale collation) first, app space
   // last, matching upstream ADR 212's convention. That's safe even though the
   // app space creates `_prisma_next_marker`: openAndUpgrade writes the
   // markers only after every op has run.
   const orderedPending = [...pendingPerSpace].sort((a, b) => {
+    if (a.spaceId === b.spaceId) return 0;
     if (a.spaceId === APP_SPACE_ID) return 1;
     if (b.spaceId === APP_SPACE_ID) return -1;
-    return a.spaceId.localeCompare(b.spaceId);
+    return a.spaceId < b.spaceId ? -1 : 1;
   });
 
   const schedule = orderedPending.flatMap(({ spaceId, ops }) => ops.map((op) => ({ spaceId, op })));

@@ -550,6 +550,44 @@ describe("auto-migrate combined multi-space apply", () => {
     }
   );
 
+  it("releases a store before another extension claims it regardless of locale", async () => {
+    const archived = defineContract({
+      family: idbFamilyPack,
+      target: idbTargetPack,
+      models: { Widget: { store: "archivedWidgets", key: "id", fields: { id: "String" } } },
+    });
+    const releasing = buildExtensionContractSpaceFixture("aa", [otherExtV1, archived]);
+    const claiming = buildExtensionContractSpaceFixture("ab", [otherExtV1]);
+    const name = dbName();
+    const danish = new Intl.Collator("da");
+    const comparison = vi.spyOn(String.prototype, "localeCompare").mockImplementation(function (this: string, other) {
+      return danish.compare(this, other);
+    });
+    try {
+      const client = await createAutoMigratingIdbClient({
+        contractSpace: buildContractSpaceFixture([appV1]),
+        dbName: name,
+        extensions: [
+          { spaceId: "ab", contractSpace: claiming },
+          { spaceId: "aa", contractSpace: releasing },
+        ],
+      });
+      await client.close();
+    } finally {
+      comparison.mockRestore();
+    }
+
+    const db = await openRawDb(name);
+    try {
+      expect(db.objectStoreNames.contains("archivedWidgets")).toBe(true);
+      expect(db.objectStoreNames.contains("_other_ext_widgets")).toBe(true);
+      expect(await readMarker(db, "aa")).toMatchObject({ storageHash: releasing.headRef.hash });
+      expect(await readMarker(db, "ab")).toMatchObject({ storageHash: claiming.headRef.hash });
+    } finally {
+      db.close();
+    }
+  });
+
   it("rejects an extension claiming a store before the app releases it", async () => {
     const name = dbName();
     const extensionContract = defineContract({
