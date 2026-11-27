@@ -202,7 +202,7 @@ A failed request during the walk isn't caught separately. As with every other re
 
 ## Dated note (2026-11-25): `coerce("int")` keeps values in the `Int` range
 
-`coerce("int")` now returns only whole numbers from -2147483648 to 2147483647, the values every `Int` write accepts. Before, it kept any number and converted any string `Number()` reads, so `"1.5"` became `1.5`, `""` became `0`, and `"0x10"` became `16`, and the upgrade stored values that later `Int` writes refused. A string must now be decimal text, and its fraction is checked on the written digits, because `Number()` rounds `"1.00000000000000001"` to `1`. The table above shows the current rules. This tightens one conversion and does not change the decision above.
+`coerce("int")` now returns only whole numbers from -2147483648 to 2147483647, the values every `Int` write accepts. `null` and `undefined` still pass through. Before, it kept any number and converted any string `Number()` reads. So `"1.5"` became `1.5`, which isn't a valid `Int`, and `""` and `"0x10"` became the valid but unintended `0` and `16`. A string must now be decimal text, and its fraction is checked on the written digits, because `Number()` rounds `"1.00000000000000001"` to `1`. The table above shows the current rules. This tightens one conversion and does not change the decision above.
 
 ## Alternatives considered
 
