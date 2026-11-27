@@ -36,13 +36,13 @@ Import each contract's `.json` and cast it to its generated `Contract` type. Id 
 
 `createSyncServer` throws at startup if the ownership relations form a cycle, or a synced model has no path of many-to-one relations to `rootModel`.
 
-Synced models need a single-field primary key. Compound keys aren't supported by sync yet, and `getKeyField` throws for them.
+Synced models need a single-field primary key. `createSyncServer` resolves the key field for each synced model at startup and rejects compound keys.
 
 ### Writing a `getKeyField` for another family
 
 A resolver takes the contract and a model name and returns the name of the model's primary-key field. For SQL contracts, `sqlGetKeyField` uses the following metadata:
 
-The resolver reads `model.storage.table` and `model.storage.namespaceId`, then finds the table's `primaryKey.columns` in `contract.storage.namespaces`. It rejects missing table metadata and any primary key that does not have exactly one column. Return that column's name.
+The resolver reads `model.storage.table` and `model.storage.namespaceId`, then finds the table's `primaryKey.columns` in `contract.storage.namespaces`. It requires exactly one primary-key column, then finds the corresponding field in `model.storage.fields`. Return the model field name. For `id String @id @map("user_id")`, the resolver returns `id`.
 
 Use the exported `GetKeyField` type from `@prisma-idb/sync-server` to type a custom resolver. See the [SQL resolver implementation](https://github.com/prisma-idb/prisma-idb/blob/main/packages/prisma-orm/sync-server-sql/src/core/get-key-field.ts) for the contract shape and checks.
 

@@ -292,16 +292,26 @@ describe("createSyncServer", () => {
     it("throws with the default resolver when storage isn't IDB-shaped", () => {
       const contract = toNonIdbShapedContract(kanbanContract());
       const clientContract = toNonIdbShapedContract(kanbanClientContract());
-      const syncServer = createSyncServer({ contract, clientContract, rootModel: "User" });
+      expect(() => createSyncServer({ contract, clientContract, rootModel: "User" })).toThrow(/storage.keyPath/);
+    });
+
+    it("tells the caller to give a compound-key root model a single-field key", () => {
+      const withCompoundRoot = (contract: SyncServerContract): SyncServerContract => {
+        const clone = JSON.parse(JSON.stringify(contract)) as SyncServerContract;
+        for (const namespace of Object.values(clone.domain.namespaces)) {
+          const user = namespace.models["User"];
+          if (user) (user.storage as { keyPath?: unknown }).keyPath = ["id", "email"];
+        }
+        return clone;
+      };
 
       expect(() =>
-        syncServer.validatePush(
-          [{ id: "e1", model: "User", operation: "update", payload: { id: "user-1" }, wireKey: "user-1" }],
-          {
-            scopeKey: "user-1",
-          }
-        )
-      ).toThrow(/storage.keyPath/);
+        createSyncServer({
+          contract: withCompoundRoot(kanbanContract()),
+          clientContract: withCompoundRoot(kanbanClientContract()),
+          rootModel: "User",
+        })
+      ).toThrow(/Model "User" has .*compound primary key.*give the root model a single-field primary key/);
     });
 
     it("works against a non-IDB-shaped contract given a custom getKeyField", () => {
