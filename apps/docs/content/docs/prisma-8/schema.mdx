@@ -74,6 +74,8 @@ model Todo {
 const todos = await db.orm.todos.all();
 ```
 
+Store and index names in `@@map`, `name:` and `map:` are ordinary Prisma strings, so escape sequences are decoded. `@@map("a\\b")` names the store `a\b`. An unknown escape, such as `\q`, stays as written.
+
 No name in a schema, such as a model, store, field, relation, index or enum, can be `__proto__` or `_generated`, and no model can be stored in `_prisma_next_marker`. See [reserved names](/docs/prisma-8/contract-authoring#reserved-names).
 
 ## Primary keys
@@ -94,7 +96,7 @@ Every model needs a primary key.
 | `@@index([a])`     | A non-unique index.          |
 | `@@index([a, b])`  | A non-unique compound index. |
 
-Pass `name:` to choose an index's name, for example `@@index([userId], name: "byUser")`. Without one, the name is the field names joined with `_`, plus `_unique` for a unique index. A field can't appear twice in one index. Two indexes can't share a name, unless they cover the same fields; then they merge into one index, which is unique if either declaration is.
+Pass `name:`, or `map:`, to choose an index's name, for example `@@index([userId], name: "byUser")`. If you pass both, `name:` wins. Without either, the name is the field names joined with `_`, plus `_unique` for a unique index. A field can't appear twice in one index. Two indexes can't share a name, unless they cover the same fields; then they merge into one index, which is unique if either declaration is.
 
 Like keys, indexed fields must be `String`, `Int`, `Float`, `DateTime`, `Decimal` or `Bytes`. IndexedDB silently leaves other values out of an index, so `contract emit` rejects an index on a `Boolean`, `BigInt` or `Json` field.
 
