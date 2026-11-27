@@ -10,6 +10,6 @@ An index name that decodes differently can be dropped and recreated without dele
 
 Planning rejects a store move that would reuse a name when both contracts identify the moving model. The planner also reads model bindings from legacy snapshots without stored record shapes. Snapshots with neither source of model bindings are compared by store name.
 
-During browser upgrades, each store has one owner at a time. A contract space can reuse a name another space releases earlier in the same upgrade. Reassigning a live store requires a marker that verifies the database version. A legacy upgrade with ambiguous ownership aborts before modifying rows.
+During browser upgrades, each store has one owner at a time. The browser rechecks the applied markers inside the upgrade transaction. Extensions apply in space-ID order independently of locale, followed by the app. A contract space can reuse a name another space releases earlier in the same upgrade. Reassigning a live store requires a marker that verifies the database version. Recovering a store ahead of its marker requires the applied history for every installed marker. An upgrade with ambiguous ownership aborts before modifying rows.
 
 To keep existing stores and their records, update affected `@@map` strings before emitting the contract so each decodes to its original store name. For example, use `@@map("a\\nb")` to keep a store named `a\nb`. Verify each model's emitted store name against the previous contract, then review the planned migration for store drops before applying it.

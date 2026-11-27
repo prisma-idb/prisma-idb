@@ -676,54 +676,83 @@ describe("auto-migrate combined multi-space apply", () => {
     }
   });
 
-  it("keeps a helper store created by an at-head extension's migration", async () => {
-    const name = dbName();
-    const extension = otherExtension();
-    const helper = "extensionStaging";
-    const baseline = extension.contractSpace.migrations[0]!;
-    const ops = [...baseline.ops, createObjectStoreOp(helper, { keyPath: "id" })];
-    const extensionWithHelper = {
-      ...extension,
-      contractSpace: {
-        ...extension.contractSpace,
-        migrations: [
-          {
-            ...baseline,
-            ops,
-            metadata: { ...baseline.metadata, migrationHash: computeMigrationHash(baseline.metadata, ops) },
-          },
-        ],
-      },
-    };
-    const extensions = [extensionWithHelper];
-    const before = buildContractSpaceFixture([appV1]);
-    const client = await createAutoMigratingIdbClient({ contractSpace: before, dbName: name, extensions });
-    await client.close();
+  it.each(["full history", "head only", "legacy head only"])(
+    "keeps a helper store created by an at-head extension with %s",
+    async (history) => {
+      const name = dbName();
+      const extension = otherExtension();
+      const helper = "extensionStaging";
+      const baseline = extension.contractSpace.migrations[0]!;
+      const ops = [...baseline.ops, createObjectStoreOp(helper, { keyPath: "id" })];
+      const extensionWithHelper = {
+        ...extension,
+        contractSpace: {
+          ...extension.contractSpace,
+          migrations: [
+            {
+              ...baseline,
+              ops,
+              metadata: { ...baseline.metadata, migrationHash: computeMigrationHash(baseline.metadata, ops) },
+            },
+          ],
+        },
+      };
+      const extensions = [extensionWithHelper];
+      const before = buildContractSpaceFixture([appV1]);
+      const client = await createAutoMigratingIdbClient({ contractSpace: before, dbName: name, extensions });
+      await client.close();
 
-    const after = defineContract({
-      family: idbFamilyPack,
-      target: idbTargetPack,
-      models: {
-        User: { store: "users", key: "id", fields: { id: "String", email: "String" } },
-        Staging: { store: helper, key: "id", fields: { id: "String" } },
-      },
-    });
-    await expect(
-      createAutoMigratingIdbClient({
-        contractSpace: buildContractSpaceFixture([appV1, after]),
-        dbName: name,
-        extensions,
-      })
-    ).rejects.toThrow('Store "extensionStaging" is used by contract spaces "other-ext" and "app".');
+      const original = await openRawDb(name);
+      const version = original.version;
+      const row = { id: "extension-owned" };
+      try {
+        await new Promise<void>((resolve, reject) => {
+          const tx = original.transaction(helper, "readwrite");
+          tx.objectStore(helper).put(row);
+          tx.oncomplete = () => resolve();
+          tx.onabort = () => reject(tx.error);
+        });
+        if (history === "legacy head only") {
+          await writeMarker(original, { space: "app", storageHash: before.headRef.hash });
+          await writeMarker(original, { space: extension.spaceId, storageHash: extension.contractSpace.headRef.hash });
+        }
+      } finally {
+        original.close();
+      }
 
-    const db = await openRawDb(name);
-    try {
-      expect(db.objectStoreNames.contains(helper)).toBe(true);
-      expect(await readMarker(db, "app")).toMatchObject({ storageHash: before.headRef.hash });
-    } finally {
-      db.close();
+      const after = defineContract({
+        family: idbFamilyPack,
+        target: idbTargetPack,
+        models: {
+          User: { store: "users", key: "id", fields: { id: "String", email: "String" } },
+          Staging: { store: helper, key: "id", fields: { id: "String" } },
+        },
+      });
+      await expect(
+        createAutoMigratingIdbClient({
+          contractSpace: buildContractSpaceFixture([appV1, after]),
+          dbName: name,
+          extensions:
+            history === "full history"
+              ? extensions
+              : [{ ...extension, contractSpace: { ...extension.contractSpace, migrations: [] } }],
+        })
+      ).rejects.toThrow(
+        history === "full history"
+          ? 'Store "extensionStaging" is used by contract spaces "other-ext" and "app".'
+          : 'existing store "extensionStaging" has no owner at the applied migration markers'
+      );
+
+      const db = await openRawDb(name);
+      try {
+        expect(db.version).toBe(version);
+        expect(await readStores(db, [helper])).toEqual([[row]]);
+        expect(await readMarker(db, "app")).toMatchObject({ storageHash: before.headRef.hash });
+      } finally {
+        db.close();
+      }
     }
-  });
+  );
 
   it("rejects an upgrade when another space writes a marker after planning", async () => {
     const name = dbName();

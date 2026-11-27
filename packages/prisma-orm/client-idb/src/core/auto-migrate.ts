@@ -59,8 +59,7 @@ export interface AutoMigrateClientOptions<TContract extends IdbContract> {
  *    is needed, recover the applied store names of every configured space.
  * 3. Recheck the applied markers and validate ownership against the live store
  *    names inside `upgradeneeded`. Apply extensions in space-ID order, then the
- *    app. Write all new markers
- *    in the same transaction.
+ *    app, and write all new markers in the same transaction.
  * 4. Return the typed client.
  *
  * The browser replays the bundled operations. Those operations can delete
@@ -155,6 +154,7 @@ export async function autoMigrate(input: {
   if (pendingPerSpace.length === 0) return;
 
   const appliedOwners = new Map<string, string>([[IDB_MARKER_STORE, APP_SPACE_ID]]);
+  const spacesWithAppliedHistory = new Set<string>();
   for (const { spaceId, contractSpace } of spaces) {
     const markerHash = appliedMarkers.get(spaceId)?.storageHash;
     if (markerHash === undefined) continue;
@@ -166,6 +166,7 @@ export async function autoMigrate(input: {
       for (const storeName of await storesAtMarker(contractSpace, markerHash)) {
         recordStoreOwner(appliedOwners, storeName, spaceId);
       }
+      spacesWithAppliedHistory.add(spaceId);
     }
   }
 
@@ -187,9 +188,11 @@ export async function autoMigrate(input: {
   });
 
   const schedule = orderedPending.flatMap(({ spaceId, ops }) => ops.map((op) => ({ spaceId, op })));
-  const configuredSpaceIds = new Set(spaces.map(({ spaceId }) => spaceId));
-  const hasUnconfiguredMarker = [...appliedMarkers.keys()].some((spaceId) => !configuredSpaceIds.has(spaceId));
-  const recoverableOwners = hasUnconfiguredMarker ? new Map() : replayStoreOwners(destinationOwners, schedule);
+  // Only legacy split writes can leave a store ahead of its marker. A space
+  // without its applied history might own a helper store outside its contract.
+  const canRecoverStores =
+    !hasVerifiedSchemaVersion && [...appliedMarkers.keys()].every((spaceId) => spacesWithAppliedHistory.has(spaceId));
+  const recoverableOwners = canRecoverStores ? replayStoreOwners(destinationOwners, schedule) : new Map();
   const onAppTransform = createTransformRecordsCallback(input.contractSpace.contractJson, input.extensions ?? []);
   let operationIndex = -1;
   let upgraded = false;
