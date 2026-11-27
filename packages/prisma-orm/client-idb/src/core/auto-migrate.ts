@@ -473,8 +473,8 @@ async function walkChain(input: {
         `Migration package "${next.dirName}" failed integrity check: ` +
           `stored migrationHash ${storedHash} does not match ` +
           `computed hash ${computedHash}. ` +
-          "Restore the correct migration.json and ops.json for this package, then run " +
-          "`prisma-idb migration contract-space` to rebuild the bundle."
+          "Restore the correct migration.json and ops.json for this package. " +
+          "Run `prisma-idb migration contract-space` to rebuild an app bundle. For a packaged extension, reinstall the package with the correct migration."
       );
     }
     for (const op of next.ops) {
