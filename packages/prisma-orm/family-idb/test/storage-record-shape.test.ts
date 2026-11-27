@@ -182,9 +182,9 @@ describe("IDB storage record shape", () => {
   it("emits record metadata in the storage type", () => {
     const type = idbEmission.generateStorageType(contract(), "StorageHash");
     expect(type).toContain("readonly record:");
-    expect(type).toContain("readonly model: 'User'");
-    expect(type).toContain("readonly codecId: 'idb/string@1'");
-    expect(type).toContain("readonly value: 'ADMIN'");
+    expect(type).toContain('readonly model: "User"');
+    expect(type).toContain('readonly codecId: "idb/string@1"');
+    expect(type).toContain('readonly value: "ADMIN"');
   });
 
   it("plans no DDL for changed fields and verifies only stores and indexes", () => {

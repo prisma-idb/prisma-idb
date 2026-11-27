@@ -330,12 +330,45 @@ describe("interpretPslDocumentToIdbContract with portable attribute arguments", 
     expect(interpret(schema).ok).toBe(true);
   });
 
-  it("keeps escape sequences in a model's storage name verbatim", () => {
-    const result = interpret('model Post {\n  id String @id\n  @@map("a\\nb")\n}');
+  it("decodes escape sequences in storage and index names, as upstream does", () => {
+    const result = interpret(
+      'model Post {\n  id String @id\n  t String\n  @@map("a\\nb")\n  @@index([t], name: "by\\u0041")\n  @@unique([t], map: "u\\u0042")\n}'
+    );
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(Object.keys(result.value.storage.stores)).toEqual(["a\\nb"]);
+    expect(Object.keys(result.value.storage.stores)).toEqual(["a\nb"]);
+    expect(Object.keys(result.value.storage.stores["a\nb"]!.indexes ?? {})).toContain("byA");
+    expect(Object.keys(result.value.storage.stores["a\nb"]!.indexes ?? {})).toContain("uB");
+  });
+
+  it.each([
+    [String.raw`a\\b`, "a\\b"],
+    [String.raw`a\"b`, 'a"b'],
+    [String.raw`a\tb`, "a\tb"],
+    [String.raw`a\x41`, "aA"],
+    [String.raw`a\qb`, String.raw`a\qb`],
+    [String.raw`a\u12`, String.raw`a\u12`],
+  ])("names the store %s as %j, decoding escapes like upstream and keeping invalid ones", (written, stored) => {
+    const result = interpret(
+      `model Post {\n  id String @id\n  t String\n  @@map("${written}")\n  @@index([t], name: "i${written}")\n  @@index([id, t], map: "m${written}")\n}`
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(Object.keys(result.value.storage.stores)).toEqual([stored]);
+    expect(Object.keys(result.value.storage.stores[stored]!.indexes ?? {})).toContain(`i${stored}`);
+    expect(Object.keys(result.value.storage.stores[stored]!.indexes ?? {})).toContain(`m${stored}`);
+  });
+
+  it("reports an index name that matches another index after decoding", () => {
+    const result = interpret(
+      'model Post {\n  id String @id\n  email String @unique\n  other String\n  @@unique([other], name: "email\\u005funique")\n}'
+    );
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.failure.diagnostics.map((d) => d.code)).toContain("IDB_INVALID_INDEX");
   });
 
   it("reports a list default on a scalar field as an invalid default value", () => {

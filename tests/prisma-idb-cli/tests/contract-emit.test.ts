@@ -122,6 +122,49 @@ void wrongKey;
     ).toBe("");
   }, 60_000);
 
+  it("emits a typed contract with decoded line breaks in store and index names", async () => {
+    const cwd = await project();
+    await writeFile(
+      join(cwd, "schema.prisma"),
+      String.raw`model User {
+        id String @id
+        name String
+        @@map("a\nb")
+        @@index([name], name: "by\nName")
+        @@unique([name], map: "unique\rName")
+      }`
+    );
+
+    await emit(cwd);
+    const contract = JSON.parse(await readFile(join(cwd, "generated/browser.json"), "utf8"));
+    expect(contract.domain.namespaces.__unbound__.models.User.storage.storeName).toBe("a\nb");
+    expect(Object.keys(contract.storage.stores["a\nb"].indexes)).toEqual(["by\nName", "unique\rName"]);
+
+    const consumer = join(cwd, "consumer.ts");
+    await writeFile(
+      consumer,
+      String.raw`
+import type { Contract } from "./generated/browser";
+type Assert<T extends true> = T;
+type Equal<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
+type StoreName = Contract["domain"]["namespaces"]["__unbound__"]["models"]["User"]["storage"]["storeName"];
+type MappedName = Assert<Equal<StoreName, "a\nb">>;
+type Indexes = Contract["storage"]["stores"]["a\nb"]["indexes"];
+type IndexNames = Assert<Equal<keyof Indexes, "by\nName" | "unique\rName">>;
+`
+    );
+    const program = ts.createProgram([consumer], {
+      noEmit: true,
+      strict: true,
+      skipLibCheck: true,
+      module: ts.ModuleKind.Preserve,
+      moduleResolution: ts.ModuleResolutionKind.Bundler,
+      target: ts.ScriptTarget.ES2022,
+      types: [],
+    });
+    expect(ts.getPreEmitDiagnostics(program).map((diagnostic) => diagnostic.messageText)).toEqual([]);
+  });
+
   // Catches stale or partially overwritten artifacts when regeneration fails.
   it("preserves the previous artifacts after source validation or publication fails", async () => {
     const cwd = await project();
