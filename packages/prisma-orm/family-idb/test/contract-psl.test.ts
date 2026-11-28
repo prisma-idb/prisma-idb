@@ -1969,3 +1969,39 @@ describe("shared definition diagnostics", () => {
     expect(schema.slice(span.start.offset, span.end.offset)).toBe('@default("wrong")');
   });
 });
+
+describe("Decimal literal defaults", () => {
+  it.each(["abc", "1.50", "1.25e3"])("refuses a quoted Decimal default %s", (written) => {
+    const result = interpret(`model Item {\n  id String @id\n  d Decimal @default("${written}")\n}`);
+    expect(result.ok ? [] : result.failure.diagnostics.map((d) => [d.code, d.message])).toEqual([
+      [
+        "IDB_INVALID_DEFAULT_VALUE",
+        'Field "Item.d" has a quoted Decimal default. Write an unquoted decimal number, such as 12.50.',
+      ],
+    ]);
+  });
+});
+
+describe("Int literal defaults", () => {
+  it.each(["1.5", "1.0", "2147483648", "-2147483649", "2147483647.00000001", "99999999999999999999"])(
+    "rejects @default(%s), which no Int write would accept",
+    (value) => {
+      const result = interpret(`
+      model Item {
+        id    String @id
+        count Int    @default(${value})
+      }
+    `);
+      expect(result.ok ? [] : result.failure.diagnostics.map((d) => [d.code, d.message])).toEqual([
+        [
+          "IDB_INVALID_DEFAULT_VALUE",
+          `Field "Item.count" default ${value} is not an Int. Write a whole number from -2147483648 to 2147483647.`,
+        ],
+      ]);
+    }
+  );
+
+  it("accepts an Int default at the edge of the range", () => {
+    expect(interpret(`model Item {\n  id String @id\n  count Int @default(2147483647)\n}`).ok).toBe(true);
+  });
+});

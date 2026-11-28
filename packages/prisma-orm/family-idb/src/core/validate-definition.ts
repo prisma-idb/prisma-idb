@@ -1,4 +1,6 @@
+import { INT32_RANGE, isIntegerIn } from "@prisma/orm-framework/components/codec";
 import { keyPathFields } from "@prisma-idb/target-idb/pack";
+import { isDecimalString } from "@prisma-idb/target-idb/runtime";
 import type { IdbKeyPath } from "@prisma-idb/target-idb/pack";
 import { foreignKeyIndexes } from "./foreign-key-indexes";
 import type {
@@ -33,15 +35,41 @@ export function isValidIdbKeyCodec(codecId: string): boolean {
   return !["idb/bool@1", "idb/bigint@1", "idb/json@1"].includes(codecId);
 }
 
+/** Why an `Int` default was refused. */
+export function intDefaultMessage(label: string, written: string): string {
+  return `${label} default ${written} is not an Int. Write a whole number from ${INT32_RANGE.min} to ${INT32_RANGE.max}.`;
+}
+
+/** Why a `Decimal` default was refused. A string default is quoted, so `"abc"` reads as text. */
+export function decimalDefaultMessage(label: string, value: string | number | boolean): string {
+  const written = typeof value === "string" ? JSON.stringify(value) : String(value);
+  return `${label} default ${written} is not a Decimal. Write finite decimal text, such as "12.50".`;
+}
+
+/**
+ * Whether PSL numeral text names an `Int`: whole-number digits in the int32
+ * range. It reads the digits as written, so `2147483647.00000001` is refused
+ * instead of rounding to a valid `Int` first.
+ */
+export function isIntNumeralText(text: string): boolean {
+  if (!/^[+-]?\d+$/.test(text)) return false;
+  const value = BigInt(text);
+  return value >= BigInt(INT32_RANGE.min) && value <= BigInt(INT32_RANGE.max);
+}
+
 /** Literal defaults must match the field's stored scalar type. */
 export function literalValueMatchesCodec(value: string | number | boolean, codecId: string): boolean {
   switch (codecId) {
     case "idb/string@1":
       return typeof value === "string";
     case "idb/int32@1":
+      // An Int default is written as the field's value, so it must pass the int32 check every write applies.
+      return isIntegerIn(value, INT32_RANGE);
     case "idb/double@1":
-    case "idb/decimal@1":
       return typeof value === "number";
+    case "idb/decimal@1":
+      // A string keeps every digit; a number is exact only up to double precision.
+      return typeof value === "string" ? isDecimalString(value) : typeof value === "number" && Number.isFinite(value);
     case "idb/bool@1":
       return typeof value === "boolean";
     default:
@@ -128,6 +156,14 @@ function validateLiteralDefault(
           `${label} default is not a declared value of enum "${field.enumName}".`,
           defaultAt
         );
+      }
+    } else if (field.codecId === "idb/int32@1" && typeof field.literalDefault === "number") {
+      if (!literalValueMatchesCodec(field.literalDefault, field.codecId)) {
+        report("IDB_INVALID_DEFAULT_VALUE", intDefaultMessage(label, String(field.literalDefault)), defaultAt);
+      }
+    } else if (field.codecId === "idb/decimal@1") {
+      if (!literalValueMatchesCodec(field.literalDefault, field.codecId)) {
+        report("IDB_INVALID_DEFAULT_VALUE", decimalDefaultMessage(label, field.literalDefault), defaultAt);
       }
     } else if (!literalValueMatchesCodec(field.literalDefault, field.codecId)) {
       report(

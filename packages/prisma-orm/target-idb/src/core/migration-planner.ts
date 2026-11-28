@@ -1,3 +1,4 @@
+import { INT32_RANGE, isIntegerIn } from "@prisma/orm-framework/components/codec";
 import type { Contract } from "@prisma/orm-framework/contract/types";
 import type { TargetBoundComponentDescriptor } from "@prisma/orm-framework/components/components";
 import type {
@@ -18,6 +19,7 @@ import type {
   IdbStoreDefinition,
 } from "./idb-contract-types";
 import { keyPathFields } from "./idb-contract-types";
+import { isDecimalString } from "./decimal-compare";
 import {
   defaultIfMissing,
   placeholder,
@@ -274,9 +276,11 @@ function storedLiteralDefault(
   let stored: string | number | boolean;
   switch (field.type.codecId) {
     case "idb/decimal@1":
-      // PSL supplies numbers for Decimal defaults; IDB's Decimal codec stores strings.
+      // Authoring stores Decimal defaults as decimal strings. A number is still converted, for contracts
+      // emitted before that or built by hand, because IDB's Decimal codec stores strings.
       if (typeof value !== "number" && typeof value !== "string") return undefined;
       stored = String(value);
+      if (!isDecimalString(stored)) return undefined;
       break;
     case "idb/string@1":
       if (typeof value !== "string") return undefined;
@@ -287,8 +291,7 @@ function storedLiteralDefault(
       stored = value;
       break;
     case "idb/int32@1":
-      if (typeof value !== "number" || !Number.isInteger(value) || value < -2147483648 || value > 2147483647)
-        return undefined;
+      if (!isIntegerIn(value, INT32_RANGE)) return undefined;
       stored = value;
       break;
     case "idb/double@1":

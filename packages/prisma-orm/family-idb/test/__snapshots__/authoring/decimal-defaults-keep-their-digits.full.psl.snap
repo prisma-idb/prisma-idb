@@ -1,0 +1,177 @@
+{
+  "contract": {
+    "capabilities": {
+      "idb": {
+        "ddlOnlyInUpgrade": true,
+        "transactionalDDL": true
+      }
+    },
+    "domain": {
+      "namespaces": {
+        "__unbound__": {
+          "models": {
+            "Price": {
+              "fields": {
+                "exact": {
+                  "nullable": false,
+                  "type": {
+                    "codecId": "idb/decimal@1",
+                    "kind": "scalar"
+                  }
+                },
+                "id": {
+                  "nullable": false,
+                  "type": {
+                    "codecId": "idb/string@1",
+                    "kind": "scalar"
+                  }
+                },
+                "signed": {
+                  "nullable": false,
+                  "type": {
+                    "codecId": "idb/decimal@1",
+                    "kind": "scalar"
+                  }
+                },
+                "simple": {
+                  "nullable": false,
+                  "type": {
+                    "codecId": "idb/decimal@1",
+                    "kind": "scalar"
+                  }
+                }
+              },
+              "relations": {},
+              "storage": {
+                "fieldDefaults": {
+                  "exact": "1234567890123456789.123",
+                  "signed": "-0.10",
+                  "simple": "1.5"
+                },
+                "keyPath": "id",
+                "storeName": "price"
+              }
+            }
+          }
+        }
+      }
+    },
+    "execution": {
+      "executionHash": "5c28ee6ca7080f4d36b9df8366903fbdb308273e216ef65755ce44179189737c",
+      "mutations": {
+        "defaults": [
+          {
+            "onCreate": {
+              "id": "literal",
+              "kind": "generator",
+              "params": {
+                "value": "1234567890123456789.123"
+              }
+            },
+            "ref": {
+              "entry": "price",
+              "field": "exact",
+              "namespace": "__unbound__"
+            }
+          },
+          {
+            "onCreate": {
+              "id": "literal",
+              "kind": "generator",
+              "params": {
+                "value": "1.5"
+              }
+            },
+            "ref": {
+              "entry": "price",
+              "field": "simple",
+              "namespace": "__unbound__"
+            }
+          },
+          {
+            "onCreate": {
+              "id": "literal",
+              "kind": "generator",
+              "params": {
+                "value": "-0.10"
+              }
+            },
+            "ref": {
+              "entry": "price",
+              "field": "signed",
+              "namespace": "__unbound__"
+            }
+          }
+        ]
+      }
+    },
+    "extensions": {},
+    "meta": {},
+    "profileHash": "40329830af4e39e0774683fbebcdc24dcf983a5da02c5fe6079a2a57579f861c",
+    "roots": {
+      "price": {
+        "model": "Price",
+        "namespace": "__unbound__"
+      }
+    },
+    "storage": {
+      "namespaces": {
+        "__unbound__": {
+          "entries": {},
+          "id": "__unbound__"
+        }
+      },
+      "storageHash": "9bb53d88bec07866df03dab0097d6fb482f6c98ef8995abe145fa123e16f9ea3",
+      "stores": {
+        "price": {
+          "keyPath": "id",
+          "record": {
+            "fields": {
+              "exact": {
+                "nullable": false,
+                "type": {
+                  "codecId": "idb/decimal@1",
+                  "kind": "scalar"
+                }
+              },
+              "id": {
+                "nullable": false,
+                "type": {
+                  "codecId": "idb/string@1",
+                  "kind": "scalar"
+                }
+              },
+              "signed": {
+                "nullable": false,
+                "type": {
+                  "codecId": "idb/decimal@1",
+                  "kind": "scalar"
+                }
+              },
+              "simple": {
+                "nullable": false,
+                "type": {
+                  "codecId": "idb/decimal@1",
+                  "kind": "scalar"
+                }
+              }
+            },
+            "model": "Price"
+          }
+        }
+      }
+    },
+    "target": "idb",
+    "targetFamily": "idb"
+  },
+  "diagnostics": {
+    "interpretation": [],
+    "parse": [],
+    "symbols": []
+  },
+  "hashes": {
+    "executionHash": "5c28ee6ca7080f4d36b9df8366903fbdb308273e216ef65755ce44179189737c",
+    "profileHash": "40329830af4e39e0774683fbebcdc24dcf983a5da02c5fe6079a2a57579f861c",
+    "storageHash": "9bb53d88bec07866df03dab0097d6fb482f6c98ef8995abe145fa123e16f9ea3"
+  }
+}
