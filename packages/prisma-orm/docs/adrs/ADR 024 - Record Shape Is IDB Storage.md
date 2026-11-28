@@ -3,6 +3,7 @@
 - **Status:** Accepted.
 - **Date:** 2026-10-11
 - **Area:** Contracts and migrations
+- **Updated:** 2026-11-24: `--rename`, `--backfill` and `--convert` statements are carried out.
 
 ## Context
 
@@ -52,7 +53,9 @@ The planner writes an editable scaffold with unresolved slots. Authors fill thos
 
 A removed field and an added field remain separate changes. The planner cannot know whether they represent a rename. Authors preserve values with `transformRecordsOp(store, { renameFields: { newName: "oldName" } })`. They remove the corresponding planned removal and backfill or placeholder.
 
-This follows the explicit rename rule in upstream [ADR 264](https://github.com/prisma/orm/blob/6e12cc2/docs/architecture%20docs/adrs/ADR%20264%20-%20A%20model%20names%20its%20storage%20verbatim,%20and%20a%20rename%20is%20an%20operation.md). IDB key fields remain immutable under [ADR 020](ADR%20020%20-%20Primary%20Keys%20Are%20Immutable.md).
+Since 2026-11-24, the planner still never infers a rename, but it carries out one the author states, as upstream does. `migration plan --rename Model.old:Model.new` writes the `renameFields` transform instead of the removal and backfill. `--backfill` and `--convert` leave a placeholder the author fills, as upstream leaves that code to the user. A new field with a supported literal default uses that default to fill existing rows, so planning refuses `--backfill` for it. A `--convert` names the field as the destination contract spells it, so a converted field that was renamed is looked up under its old name in the origin contract. Statements about namespaces, enum values and value objects have no IndexedDB form and are refused. Primary-key fields stay immutable under ADR 020, so renaming or backfilling one is refused.
+
+This follows the explicit rename rule in upstream [ADR 264](https://github.com/prisma/orm/blob/17385f2d86eefa3783e86d94534168a224806c0a/docs/architecture%20docs/adrs/ADR%20264%20-%20A%20model%20names%20its%20storage%20verbatim,%20and%20a%20rename%20is%20an%20operation.md). IDB key fields remain immutable under [ADR 020](ADR%20020%20-%20Primary%20Keys%20Are%20Immutable.md).
 
 ## Rejected alternatives
 

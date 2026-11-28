@@ -12,6 +12,7 @@ import { planOriginOf } from "@prisma/orm-framework/components/control";
 import { keepInternalSpecifiers } from "@prisma/orm-framework/components/emission";
 import { computeMigrationHash } from "@prisma/orm-toolchain/migration-tools/hash";
 import { formatMigrationDirName } from "@prisma/orm-toolchain/migration-tools/io";
+import { resolveStatements, type StatementText } from "@prisma/orm-toolchain/cli/control-api";
 import { deriveProvidedInvariants } from "@prisma/orm-toolchain/migration-tools/invariants";
 import { dirname, join, relative } from "pathe";
 import { generateContractSpace } from "./contract-space-codegen";
@@ -31,6 +32,11 @@ export interface MigrationPlanOptions {
    * on-disk chain has been inspected.
    */
   readonly name?: string;
+  /**
+   * `--rename`, `--convert` and `--backfill` statements, in the order given, read against the
+   * head migration's contract and the emitted one. A first migration has nothing to rename.
+   */
+  readonly statements?: readonly StatementText[];
   /** Contract-space identifier. Defaults to `"app"`. See ADR 212. */
   readonly spaceId?: string;
   /** Output sinks. Default to `process.stdout`/`process.stderr` so every
@@ -135,6 +141,13 @@ interface SharedCtx extends MigrationPlanOptions {
 /** Plan a baseline for a fresh contract space and persist its migration package. */
 async function planGreenfield(ctx: SharedCtx): Promise<number> {
   const name = ctx.name ?? "baseline";
+  if ((ctx.statements ?? []).length > 0) {
+    ctx.err(
+      "migration plan: --rename, --convert and --backfill need an earlier migration to read the old names from, and this space has none yet.\n" +
+        "Plan the first migration without them.\n"
+    );
+    return 1;
+  }
 
   let contractRaw: string;
   let contractJson: unknown;
@@ -167,7 +180,7 @@ async function planGreenfield(ctx: SharedCtx): Promise<number> {
   if (planResult.kind === "failure") {
     ctx.err(
       "migration plan: migration planning failed:\n" +
-        planResult.conflicts.map((c) => `  ${c.summary}`).join("\n") +
+        planResult.conflicts.map((c) => `  ${c.summary}${c.why === undefined ? "" : `\n    ${c.why}`}`).join("\n") +
         "\n"
     );
     return 1;
@@ -293,6 +306,22 @@ async function planIncremental(ctx: SharedCtx, existingDirs: readonly string[]):
   // fromContract is never null here, so the planner never prepends the
   // _prisma_next_marker op — no stripping needed, unlike the greenfield path.
   const fromSchema = contractToIdbSchema(fromContractJson);
+  const resolved = resolveStatements({
+    statements: ctx.statements ?? [],
+    origin: { kind: "contract", contract: fromContractJson as Contract },
+    destination: contractJson as Contract,
+  });
+  if (!resolved.ok) {
+    const { message, why, nextActions } = resolved.failure;
+    ctx.err(
+      [
+        `migration plan: ${message}`,
+        ...(why ? [`  ${why}`] : []),
+        ...(nextActions ?? []).map((a) => `  ${a.label}`),
+      ].join("\n") + "\n"
+    );
+    return 1;
+  }
   const planner = new IdbMigrationPlanner();
   const planResult = planner.plan({
     contract: contractJson,
@@ -300,7 +329,7 @@ async function planIncremental(ctx: SharedCtx, existingDirs: readonly string[]):
     policy: { allowedOperationClasses: ["additive", "widening", "destructive", "data"] },
     fromContract: fromContractJson as Contract,
     origin: planOriginOf(fromContractJson as Contract),
-    statements: [],
+    statements: resolved.value,
     frameworkComponents: [],
     spaceId: ctx.spaceId,
   });
@@ -308,7 +337,7 @@ async function planIncremental(ctx: SharedCtx, existingDirs: readonly string[]):
   if (planResult.kind === "failure") {
     ctx.err(
       "migration plan: migration planning failed:\n" +
-        planResult.conflicts.map((c) => `  ${c.summary}`).join("\n") +
+        planResult.conflicts.map((c) => `  ${c.summary}${c.why === undefined ? "" : `\n    ${c.why}`}`).join("\n") +
         "\n"
     );
     return 1;
