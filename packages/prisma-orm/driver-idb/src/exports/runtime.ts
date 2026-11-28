@@ -55,8 +55,8 @@ export function createIDBRuntimeDriver(
   options?: {
     readonly factory?: IDBFactory;
     /**
-     * The `IDBKeyRange` of the same implementation as `factory`. Needed when the
-     * global scope has none, for example fake-indexeddb's `IDBKeyRange` outside a browser.
+     * `IDBKeyRange` constructor for `factory`. Defaults to `globalThis.IDBKeyRange`.
+     * Pass a matching constructor if the global is missing or belongs to a different IndexedDB implementation.
      */
     readonly keyRange?: typeof IDBKeyRange;
   }

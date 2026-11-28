@@ -52,8 +52,8 @@ export interface SyncIdbClientOptions<TContract extends IdbContract> {
   /** IDB factory override — primarily for tests. Defaults to `indexedDB`. */
   readonly factory?: IDBFactory;
   /**
-   * The `IDBKeyRange` of the same implementation as `factory`. Needed when the
-   * global scope has no IndexedDB, for example fake-indexeddb outside a browser.
+   * `IDBKeyRange` constructor for `factory`. Defaults to `globalThis.IDBKeyRange`.
+   * Pass a matching constructor if the global is missing or belongs to a different IndexedDB implementation.
    */
   readonly keyRange?: typeof IDBKeyRange;
   /**

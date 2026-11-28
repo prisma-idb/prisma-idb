@@ -4,4 +4,4 @@
 "@prisma-idb/sync-extension-idb": patch
 ---
 
-A driver given its own `factory` now compares keys and builds key ranges with that implementation, not the global one. Before, an update in a realm without a global `indexedDB`, such as a test using fake-indexeddb's `IDBFactory`, failed with `PUT_FAILED`, and range queries used the global `IDBKeyRange`. Pass the matching `IDBKeyRange` as the new `keyRange` option of `createIDBRuntimeDriver`, `createIdbClient`, `createAutoMigratingIdbClient`, `createSyncIdbClient` or `createAutoMigratingSyncIdbClient` when the global scope has none.
+The driver compares primary keys using its IndexedDB factory. Pass the matching `IDBKeyRange` constructor as `keyRange` when the global constructor is missing or comes from a different IndexedDB implementation. The driver uses that constructor for query ranges. You can set it on `createIDBRuntimeDriver`, `createIdbClient`, `createAutoMigratingIdbClient`, `createSyncIdbClient` or `createAutoMigratingSyncIdbClient`.
