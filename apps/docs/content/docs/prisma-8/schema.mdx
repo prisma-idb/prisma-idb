@@ -124,11 +124,11 @@ A default or generated value only applies when the field is left out; an explici
 
 Prisma 8 removed some Prisma 6 forms, and `contract emit` names the replacement:
 
-| Prisma 6                                        | Prisma 8                                     |
-| ----------------------------------------------- | -------------------------------------------- |
-| `@default(uuid())`, `@default(uuid(7))`         | `@onCreate(uuid())`, `@onCreate(uuid(7))`    |
-| `@default(cuid())`                              | `@onCreate(cuid(2))`                         |
-| `@updatedAt` or the `temporal.updatedAt()` type | `DateTime @onCreate(now()) @onUpdate(now())` |
+| Prisma 6                                        | Prisma 8                                                               |
+| ----------------------------------------------- | ---------------------------------------------------------------------- |
+| `@default(uuid())`, `@default(uuid(7))`         | `@onCreate(uuid())`, `@onCreate(uuid(7))`                              |
+| `@default(cuid())`                              | `@onCreate(cuid(2))`                                                   |
+| `@updatedAt` or the `temporal.updatedAt()` type | `DateTime @onCreate(now()) @onUpdate(now())` on a non-key scalar field |
 
 The contract these produce is unchanged, so an existing database needs no migration.
 

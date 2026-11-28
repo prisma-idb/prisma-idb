@@ -542,12 +542,18 @@ export function createIdbAttributeBinder(input: IdbAttributeBinderInput): IdbAtt
     Object.values(table.namespaces).flatMap((namespace) => Object.values(namespace.models).map((model) => model.name))
   );
 
+  /** An onUpdate generator may only target a field outside the primary key. */
+  function canUpdateField(model: ModelSymbol, field: FieldSymbol): boolean {
+    if (field.attributes.some((attribute) => attribute.name === "id")) return false;
+    const id = model.attributes.find((attribute) => attribute.name === "id");
+    if (id === undefined) return true;
+    const result = interpretAttribute(id.node, idModelSpec, { ...base, selfModel: model });
+    return result.ok && !result.value.fields.includes(field.name);
+  }
+
   /**
-   * Reports the field attributes IDB would otherwise drop or misread, without
-   * binding their arguments: an unsupported attribute (with what to write for
-   * `@updatedAt`), a repeat of a single-use attribute, `@relation` on a field
-   * whose type isn't a model, and a value attribute such as `@unique` on a
-   * relation field. Excluded fields run this scan too.
+   * Check attribute names, placement, and structural syntax before binding values.
+   * Excluded fields run the same scan.
    */
   function refusedFieldAttributes(model: ModelSymbol, field: FieldSymbol): ReadonlySet<AttributeSymbol> {
     const cached = refusedByOwner.get(field);
@@ -562,10 +568,12 @@ export function createIdbAttributeBinder(input: IdbAttributeBinderInput): IdbAtt
     };
     for (const attribute of field.attributes) {
       const name = attribute.name;
+      if (!hasCompleteDefaultArgs(attribute)) refused.add(attribute);
       if (name === "updatedAt") {
         const canUseGenerators =
           field.typeName === "DateTime" &&
           !field.list &&
+          canUpdateField(model, field) &&
           !field.attributes.some((other) => other.name === "onCreate" || other.name === "onUpdate");
         refuse(
           attribute,
@@ -582,7 +590,11 @@ export function createIdbAttributeBinder(input: IdbAttributeBinderInput): IdbAtt
         refuse(attribute, "PSL_UNSUPPORTED_FIELD_ATTRIBUTE", `${label} uses unsupported attribute "@${name}".`);
       } else {
         seen.add(name);
-        if (name === "relation" && !isRelationField) {
+        if (name === IDB_EXCLUDE_ATTR) {
+          if (interpret(excludeFieldSpec, attribute, { ...base, selfModel: model, field }) === undefined) {
+            refused.add(attribute);
+          }
+        } else if (name === "relation" && !isRelationField) {
           refuse(
             attribute,
             "IDB_INVALID_RELATION",
@@ -682,10 +694,6 @@ export function createIdbAttributeBinder(input: IdbAttributeBinderInput): IdbAtt
     return expected.length === 0;
   }
 
-  function checkExcludedFieldDefaults(field: FieldSymbol): void {
-    for (const attribute of field.attributes) hasCompleteDefaultArgs(attribute);
-  }
-
   /**
    * What `@onCreate` and `@onUpdate` are checked against. The binder this file
    * creates doesn't resolve field types, so the field's contributed type is read
@@ -734,10 +742,6 @@ export function createIdbAttributeBinder(input: IdbAttributeBinderInput): IdbAtt
     for (const attribute of field.attributes) {
       const span = attribute.span;
       if (refused.has(attribute)) continue;
-      if (!hasCompleteDefaultArgs(attribute)) {
-        failed = true;
-        continue;
-      }
       switch (attribute.name) {
         case "id":
           if (interpret(idFieldSpec, attribute, ctx) === undefined) failed = true;
@@ -771,9 +775,6 @@ export function createIdbAttributeBinder(input: IdbAttributeBinderInput): IdbAtt
           else relation ??= { value, span };
           break;
         }
-        case IDB_EXCLUDE_ATTR:
-          if (interpret(excludeFieldSpec, attribute, ctx) === undefined) failed = true;
-          break;
       }
     }
     const bound = {
@@ -790,11 +791,7 @@ export function createIdbAttributeBinder(input: IdbAttributeBinderInput): IdbAtt
   }
 
   function excludedField(model: ModelSymbol, field: FieldSymbol): ReturnType<IdbAttributeBinder["excludedField"]> {
-    checkExcludedFieldDefaults(field);
-    const refused = refusedFieldAttributes(model, field);
-    for (const marker of field.attributes.filter((a) => a.name === IDB_EXCLUDE_ATTR && !refused.has(a))) {
-      interpret(excludeFieldSpec, marker, { ...base, selfModel: model, field });
-    }
+    refusedFieldAttributes(model, field);
     return {
       id: field.attributes.find(({ name }) => name === "id")?.span,
       unique: field.attributes.find(({ name }) => name === "unique")?.span,
@@ -811,9 +808,7 @@ export function createIdbAttributeBinder(input: IdbAttributeBinderInput): IdbAtt
       for (const field of Object.values(model.fields)) refusedFieldAttributes(model, field);
       const markers = model.attributes.filter(({ name }) => name === IDB_EXCLUDE_ATTR);
       if (markers.length === 0) return false;
-      for (const field of Object.values(model.fields)) excludedField(model, field);
-      // Validate every marker, not just the first, so a repeated malformed exclusion cannot hide in either projection.
-      // The model stays excluded either way: a malformed exclusion fails the contract through its diagnostic.
+      // The single-use scan reports repeats. Bind the first marker even when the model is excluded.
       for (const marker of markers) {
         if (!refused.has(marker)) interpret(excludeModelSpec, marker, { ...base, selfModel: model });
       }

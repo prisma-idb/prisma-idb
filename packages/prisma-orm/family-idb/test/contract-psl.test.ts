@@ -2035,6 +2035,34 @@ describe("attributes IDB doesn't read", () => {
       expect(codes(`model Item {\n  id String @id\n  ${declaration}\n}`, projection)).toEqual([diagnostic]);
     });
 
+    it.each(["stamp DateTime @id @updatedAt", "id String\n stamp DateTime @updatedAt\n @@id([id, stamp])"])(
+      "refuses @updatedAt on a primary-key field without suggesting an onUpdate generator",
+      (declaration) => {
+        expect(codes(`model Item {\n ${declaration}\n}`, projection)).toContainEqual([
+          "PSL_UNSUPPORTED_FIELD_ATTRIBUTE",
+          'Field "Item.stamp" uses unsupported attribute "@updatedAt".',
+        ]);
+      }
+    );
+
+    it.each(["score Int @idb.exclude @default(1) @default(2", "@@madeUp\n score Int @default(2"])(
+      "reports malformed default syntax even when another attribute is refused",
+      (declaration) => {
+        const result = codes(`model Item {\n id String @id\n ${declaration}\n}`, projection);
+        expect(result.filter(([, message]) => message === "The @default argument list is incomplete.")).toEqual([
+          ["PSL_INVALID_ATTRIBUTE_SYNTAX", "The @default argument list is incomplete."],
+        ]);
+      }
+    );
+
+    it("validates the field exclusion marker even when binding the model fails", () => {
+      const result = codes(
+        "model Item {\n id String @id\n label String @idb.exclude(1)\n @@idb.exclude\n @@whatever\n}",
+        projection
+      );
+      expect(result).toContainEqual(["PSL_INVALID_ATTRIBUTE_SYNTAX", expect.stringContaining("idb.exclude")]);
+    });
+
     it("counts a repeated @onCreate even when the first one fails to bind", () => {
       expect(
         codes("model Item {\n  id String @id\n  s String @onCreate(bogus()) @onCreate(uuid())\n}", projection)
