@@ -45,7 +45,7 @@ import {
   createMutationDefaultsCache,
   type MutationDefaultsCache,
 } from "./mutation-defaults";
-import { absentAsNull } from "@prisma-idb/target-idb/runtime";
+import { absentAsNull, snapshotJsonFields } from "@prisma-idb/target-idb/runtime";
 import { buildCatalog } from "./planner/catalog";
 import { fieldValueChanged, preserveDecimalKeySpelling } from "./decimal-identity";
 import { lowerExists, lowerRows, lowerWrite, type RowsRequest, type WriteRequest } from "./planner/lower";
@@ -391,7 +391,12 @@ function prepareRelationOperation(
   relation: RelationDefinition,
   mutation: IdbRelationMutation<IdbContract, string>
 ): ParsedRelationOperation {
-  if (mutation.kind === "create") return mutation;
+  if (mutation.kind === "create") {
+    return {
+      kind: "create",
+      data: mutation.data.map((data) => snapshotJsonFields(contract, relation.relatedModelName, data)),
+    };
+  }
   const { kind } = mutation;
   const parentOwned = relation.cardinality === "N:1";
   if (parentOwned && kind === "disconnect") return { kind, criteria: [] };

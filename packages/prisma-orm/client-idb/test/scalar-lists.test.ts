@@ -1,4 +1,7 @@
+/// <reference types="node" />
+
 import "fake-indexeddb/auto";
+import { runInNewContext } from "node:vm";
 import { afterEach, describe, expect, it } from "vitest";
 import { defineContract, type FieldSpec } from "@prisma-idb/family-idb/contract-ts";
 import idbFamily from "@prisma-idb/family-idb/pack";
@@ -162,6 +165,60 @@ it("rejects unsupported list filters and operations even without matches", async
   await expect(samples.update((u) => [u["values"]!.pop(0 as 1)])).rejects.toThrow(/pop/);
   await expect(samples.update(() => [{ operator: "$unset", field: "values" }])).rejects.toThrow(/cannot be unset/);
   await expect(samples.update((u) => [u["values"]!.push("x"), u["values"]!.pop(1)])).rejects.toThrow(/Conflicting/);
+});
+
+it("rejects invalid Json list pushes and prior elements that are no longer valid", async () => {
+  const { samples, client } = await fixture("Json");
+  await samples.create({ id: "current", values: [] });
+  await expect(
+    samples.where({ id: "current" }).update((u) => [u["values"]!.push({ nested: [undefined] })])
+  ).rejects.toThrow(/JSON-compatible value/);
+  expect((await samples.findUnique("current"))?.["values"]).toEqual([]);
+
+  const legacy = { id: "legacy", values: [{ a: 1, b: undefined }], defaulted: [] };
+  await client.withTransaction(["samples"], (scope) =>
+    scope.execute({ kind: "put", storeName: "samples", record: legacy } as never)
+  );
+  await expect(samples.where({ id: "legacy" }).update((u) => [u["values"]!.push(2)])).rejects.toThrow(
+    /JSON-compatible value/
+  );
+  await expect(samples.where({ id: "legacy" }).update((u) => [u["values"]!.addToSet(2)])).rejects.toThrow(
+    /JSON-compatible value/
+  );
+  expect(await samples.findUnique("legacy")).toStrictEqual(legacy);
+});
+
+it("captures a Json list operand before a pending update reads the row", async () => {
+  const { samples } = await fixture("Json");
+  await samples.create({ id: "a", values: [] });
+  const value: { nested: (number | undefined)[] } = { nested: [1] };
+  const pending = samples.update((u) => [u["values"]!.push(value)]);
+  value.nested[0] = undefined;
+  expect((await pending)?.["values"]).toEqual([{ nested: [1] }]);
+});
+
+it("matches JSON list elements supplied from another realm", async () => {
+  const { samples } = await fixture("Json");
+  await samples.create({ id: "a", values: [{ nested: [-0] }] });
+  const value: unknown = runInNewContext("({ nested: [-0] })");
+  expect((await samples.update((u) => [u["values"]!.addToSet(value)]))?.["values"]).toEqual([{ nested: [-0] }]);
+  expect((await samples.update((u) => [u["values"]!.pull(value)]))?.["values"]).toEqual([]);
+});
+
+it("refuses to compare an invalid legacy JSON list and allows replacing it", async () => {
+  const { samples, client } = await fixture("Json");
+  const cyclic: Record<string, unknown> = {};
+  cyclic["self"] = cyclic;
+  await client.withTransaction(["samples"], (scope) =>
+    scope.execute({
+      kind: "put",
+      storeName: "samples",
+      record: { id: "legacy", values: [cyclic], defaulted: [] },
+    } as never)
+  );
+  await expect(samples.update((u) => [u["values"]!.addToSet(2)])).rejects.toThrow(/JSON-compatible value/);
+  await expect(samples.update((u) => [u["values"]!.pull(2)])).rejects.toThrow(/JSON-compatible value/);
+  expect((await samples.update({ values: [2] }))?.["values"]).toEqual([2]);
 });
 
 it("does not reinterpret unmigrated missing lists as empty", async () => {

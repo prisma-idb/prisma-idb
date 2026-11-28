@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { runInNewContext } from "node:vm";
 import type {
   ApplicationDomainNamespace,
   ContractField,
@@ -128,6 +129,92 @@ describe("validateRecord", () => {
         validateRecord(contract({ json: field(codecId, extra) }), "Item", { id: "a", json: null }, options).ok
       ).toBe(false);
     }
+  });
+
+  it("accepts only values JSON can represent in a Json field, including list elements", () => {
+    const scalar = contract({ json: field("idb/json@1") });
+    const list = contract({ json: field("idb/json@1", { many: { elementNullable: false } }) });
+    for (const json of [
+      { a: [1, "x", true, null, -0, { b: 2 }] },
+      { toJSON: "data" },
+      Object.assign(Object.create(null), { a: 1 }),
+      runInNewContext("({ a: [1] })"),
+    ]) {
+      expect(validateRecord(scalar, "Item", { id: "a", json }).ok).toBe(true);
+    }
+    const cyclic: Record<string, unknown> = {};
+    cyclic["self"] = cyclic;
+    for (const json of [new Map([["a", 1]]), new Date(0), { at: new Date(0) }, [1n], { n: Number.NaN }, cyclic]) {
+      expect(validateRecord(scalar, "Item", { id: "a", json }).ok).toBe(false);
+    }
+    expect(validateRecord(list, "Item", { id: "a", json: [{ a: 1 }, new Set()] }).ok).toBe(false);
+  });
+
+  it.each(["idb/json@1", "pg/json@1", "pg/jsonb@1"])("rejects lossy values for %s", (codecId) => {
+    const scalar = contract({ json: field(codecId) });
+    const list = contract({ json: field(codecId, { many: { elementNullable: false } }) });
+    const codecLookup = {
+      targetTypesFor: (id: string) => (id === codecId ? ["unknown"] : idbCodecLookup.targetTypesFor(id)),
+    };
+    const sparse = [1, 2];
+    delete sparse[0];
+    const withSerializer = Object.assign([1], { toJSON: "shadow" });
+    for (const json of [{ b: undefined }, { a: [[undefined]] }, sparse, withSerializer, { at: new Date(0) }]) {
+      for (const [schema, input] of [
+        [scalar, json],
+        [list, [json]],
+      ] as const) {
+        expect(validateRecord(schema, "Item", { id: "a", json: input }, { codecLookup })).toMatchObject({
+          ok: false,
+          issues: [expect.stringMatching(/json.*JSON-compatible value/s)],
+        });
+      }
+    }
+    for (const json of [sparse, withSerializer]) {
+      expect(validateRecord(list, "Item", { id: "a", json }, { codecLookup }).ok).toBe(false);
+    }
+  });
+
+  it.each([
+    [{ many: { elementNullable: false } }, [1], "0"],
+    [{ dict: true }, { own: 1 }, "own"],
+  ] as const)("rejects Json container accessors without reading them", (container, value, key) => {
+    const json = field("idb/json@1", container);
+    const getter = vi.fn(() => {
+      Object.defineProperty(value, key, { value: 1, enumerable: true });
+      return 1;
+    });
+    Object.defineProperty(value, key, { get: getter, enumerable: true, configurable: true });
+    expect(validateRecord(contract({ json }), "Item", { id: "a", json: value }).ok).toBe(false);
+    expect(getter).not.toHaveBeenCalled();
+  });
+
+  it("reports invalid null list elements with one short diagnostic", () => {
+    const json = field("idb/json@1", { many: { elementNullable: false } });
+    const result = validateRecord(contract({ json }), "Item", { id: "a", json: Array(10_000).fill(null) });
+    expect(result).toMatchObject({ ok: false, issues: [expect.stringContaining("json")] });
+    if (!result.ok) expect(result.issues[0]!.length).toBeLessThan(150);
+  });
+
+  it("allows 1000 Json containers and rejects deeper nesting", () => {
+    const scalar = contract({ json: field("idb/json@1") });
+    const nest = (depth: number, value: unknown = 1) => {
+      for (let i = 0; i < depth; i++) value = [value];
+      return value;
+    };
+    expect(validateRecord(scalar, "Item", { id: "a", json: nest(1000) }).ok).toBe(true);
+    expect(validateRecord(scalar, "Item", { id: "a", json: nest(1001) }).ok).toBe(false);
+    expect(validateRecord(scalar, "Item", { id: "a", json: nest(100_000) }).ok).toBe(false);
+    const shared = [1];
+    expect(validateRecord(scalar, "Item", { id: "a", json: [nest(999, shared), shared] }).ok).toBe(false);
+  });
+
+  it("accepts ordinary shared subtrees and rejects graphs whose JSON representation would be much larger", () => {
+    const scalar = contract({ json: field("idb/json@1") });
+    let shared: unknown = { a: 1 };
+    expect(validateRecord(scalar, "Item", { id: "a", json: [shared, shared] })).toEqual({ ok: true });
+    for (let i = 0; i < 30; i++) shared = [shared, shared];
+    expect(validateRecord(scalar, "Item", { id: "a", json: shared }).ok).toBe(false);
   });
 
   it("honors mapped enum values on scalars and lists", () => {

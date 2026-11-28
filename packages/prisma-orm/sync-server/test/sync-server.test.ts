@@ -57,6 +57,47 @@ describe("createSyncServer", () => {
   });
 
   describe("validatePush", () => {
+    it("rejects invalid JSON using the projected client contract before authorizing a push", () => {
+      const contract = kanbanContract();
+      const clientContract = kanbanClientContract();
+      contract.domain.namespaces[Object.keys(contract.domain.namespaces)[0]!]!.models["User"]!.fields["name"] = {
+        nullable: false,
+        type: { kind: "scalar", codecId: "pg/jsonb@1" },
+      };
+      clientContract.domain.namespaces[Object.keys(clientContract.domain.namespaces)[0]!]!.models["User"]!.fields[
+        "name"
+      ] = {
+        nullable: false,
+        type: { kind: "scalar", codecId: "idb/json@1" },
+      };
+      const syncServer = createSyncServer({ contract, clientContract, rootModel: "User" });
+      const [invalid, valid] = syncServer.validatePush(
+        [
+          {
+            id: "e1",
+            model: "User",
+            operation: "update",
+            payload: { id: "u1", name: { nested: [undefined] } },
+            wireKey: "u1",
+          },
+          {
+            id: "e2",
+            model: "User",
+            operation: "update",
+            payload: { id: "u1", name: { nested: [null] } },
+            wireKey: "u1",
+          },
+        ],
+        { scopeKey: "u1" }
+      );
+      expect(invalid?.check).toMatchObject({
+        kind: "validation-failure",
+        error: "RECORD_VALIDATION_FAILURE",
+        issues: [expect.stringMatching(/name.*JSON-compatible value/)],
+      });
+      expect(valid?.check).toMatchObject({ kind: "root", authorized: true });
+    });
+
     it("rejects malformed records and keys as permanent validation failures", () => {
       const contract = kanbanContract();
       const syncServer = createSyncServer({

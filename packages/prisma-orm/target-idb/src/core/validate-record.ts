@@ -8,6 +8,7 @@ import { domainModelsAtDefaultNamespace, valueObjectAt } from "@prisma/orm-frame
 import { type, type Type } from "arktype";
 import { idbCodecLookup } from "./codecs";
 import { isDecimalString } from "./decimal-compare";
+import { isJsonCodec, isJsonCompatible } from "./json-value";
 import { isValidIdbKey } from "./key-compare";
 
 /** The validation verdict, with diagnostic messages when a record or key is rejected. */
@@ -109,6 +110,7 @@ function buildField(
     if (!values?.length) throw new Error(`Unknown or empty enum "${ref.entityName}"`);
     validator = validator.narrow((value) => values.some((allowed) => Object.is(allowed, value)));
   }
+  const jsonScalar = field.type.kind === "scalar" && isJsonCodec(field.type.codecId);
   // Nullable applies to the container. List elements are nullable only when the field says so.
   if (field.many) {
     const elementNullable = field.many.elementNullable;
@@ -118,10 +120,16 @@ function buildField(
     validator = validator.narrow((value) => value !== undefined && (elementNullable || value !== null)).array();
   }
   if (field.dict) validator = type({ "[string]": validator });
-  // JSON null is a scalar value (Prisma JsonNull), independent of database nullability.
-  const jsonScalar =
-    field.type.kind === "scalar" && ["idb/json@1", "pg/json@1", "pg/jsonb@1"].includes(field.type.codecId);
-  if (jsonScalar && !field.many && !field.dict) return validator.narrow((value) => value !== undefined);
+  if (jsonScalar) {
+    // Inspect descriptors before the native shape's list or dictionary traversal reads any values.
+    // JSON null is a scalar value, independent of database nullability.
+    const nativeShape = field.nullable ? validator.or("null") : validator;
+    return type("unknown").narrow(
+      (value, context) =>
+        (isJsonCompatible(value) && nativeShape.allows(value)) ||
+        context.reject({ expected: "a JSON-compatible value", actual: "invalid JSON data" })
+    );
+  }
   return field.nullable ? validator.or("null") : validator.exclude("null | undefined");
 }
 

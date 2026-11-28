@@ -135,6 +135,84 @@ beforeEach(async () => {
 afterEach(async () => client.close());
 
 describe("local scalar writes", () => {
+  it("rejects invalid Json in create, bulk create, update and upsert", async () => {
+    const json = { nested: [[undefined]] };
+    const invalid = { ...validRow("invalid"), json };
+    await expect(samples.create(invalid)).rejects.toThrow(IdbRecordValidationError);
+    await expect(samples.createAll([validRow(), invalid]).toArray()).rejects.toThrow(IdbRecordValidationError);
+    await expect(samples.upsert({ where: { id: "invalid" }, create: invalid, update: { json } })).rejects.toThrow(
+      IdbRecordValidationError
+    );
+    expect(await samples.all()).toEqual([]);
+    await samples.create(validRow());
+    await expect(samples.where({ id: "s1" }).update({ json })).rejects.toThrow(IdbRecordValidationError);
+    await expect(samples.upsert({ where: { id: "s1" }, create: validRow(), update: { json } })).rejects.toThrow(
+      IdbRecordValidationError
+    );
+    expect(await samples.all()).toEqual([validRow()]);
+  });
+
+  it("writes the JSON captured when the mutation starts", async () => {
+    const json: { nested: (number | undefined)[] } = { nested: [1] };
+    const mutate = () => {
+      json.nested[0] = undefined;
+    };
+
+    const create = samples.create({ ...validRow(), json });
+    mutate();
+    expect((await create)["json"]).toEqual({ nested: [1] });
+
+    json.nested[0] = 2;
+    const update = samples.where({ id: "s1" }).update({ json });
+    mutate();
+    expect((await update)?.["json"]).toEqual({ nested: [2] });
+
+    json.nested[0] = 3;
+    const batch = samples.createAll([{ ...validRow("s2"), json }]);
+    mutate();
+    expect((await batch.toArray())[0]?.["json"]).toEqual({ nested: [3] });
+
+    json.nested[0] = 4;
+    const bulk = samples.where({ id: "s2" }).updateAll({ json });
+    mutate();
+    expect((await bulk.toArray())[0]?.["json"]).toEqual({ nested: [4] });
+
+    json.nested[0] = 5;
+    const upsert = samples.upsert({ where: { id: "s3" }, create: { ...validRow("s3"), json }, update: {} });
+    mutate();
+    expect((await upsert)["json"]).toEqual({ nested: [5] });
+    expect((await samples.findUnique("s3"))?.["json"]).toEqual({ nested: [5] });
+  });
+
+  it("captures JSON in nested create records before opening the transaction", async () => {
+    const nested = await openClient(
+      contractFromPsl(`
+      model User {
+        id String @id
+        posts Post[]
+      }
+      model Post {
+        id String @id
+        userId String
+        user User @relation(fields: [userId], references: [id])
+        json Json
+      }
+    `)
+    );
+    try {
+      const json: { nested: (number | undefined)[] } = { nested: [1] };
+      const pending = nested.orm["user"]!.create({
+        id: "u1",
+        posts: (relation: { create(data: Record<string, unknown>): unknown }) => relation.create({ id: "p1", json }),
+      } as never);
+      json.nested[0] = undefined;
+      await pending;
+      expect((await nested.orm["post"]!.findUnique("p1"))?.["json"]).toEqual({ nested: [1] });
+    } finally {
+      await nested.close();
+    }
+  });
+
   it("rejects non-finite numbers before storage", async () => {
     const error = await samples.create({ ...validRow(), score: Infinity }).catch((error: unknown) => error);
     expect(error).toBeInstanceOf(IdbRecordValidationError);

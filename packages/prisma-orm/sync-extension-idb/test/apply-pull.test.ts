@@ -124,6 +124,42 @@ describe("applyPull", () => {
     expect(await scanAll(client, "users")).toEqual([{ id: "u1", name: 42n }]);
   });
 
+  it("rejects pulled records with invalid values inside a Json field", async () => {
+    const { client, contract } = await createTestSyncClient();
+    contract.domain.namespaces[Object.keys(contract.domain.namespaces)[0]!]!.models["User"]!.fields["name"] = {
+      nullable: false,
+      type: { kind: "scalar", codecId: "idb/json@1" },
+    };
+    const result = await applyPull(client, [
+      log({ changelogId: changelogId(1), operation: "create", record: { id: "u1", name: { legacy: undefined } } }),
+      log({ changelogId: changelogId(2), operation: "create", record: { id: "u1", name: { legacy: null } } }),
+    ]);
+    expect(result).toMatchObject({ applied: 1, validationFailed: 1, lastChangelogId: changelogId(2) });
+    expect(await scanAll(client, "users")).toEqual([{ id: "u1", name: { legacy: null } }]);
+  });
+
+  it("validates the original Json list before applying a pulled record", async () => {
+    const contract = defineContract({
+      family: idbFamilyPack,
+      target: idbTargetPack,
+      models: { User: { store: "users", key: "id", fields: { id: "String", values: "Json[]" } } },
+    });
+    const dbName = testDbName();
+    const db = await openTestDb(dbName, [{ name: "users", keyPath: "id" }, OUTBOX_STORE, VERSION_META_STORE]);
+    db.close();
+    const client = createSyncIdbClient({ contract, dbName });
+    try {
+      const values = Object.assign([1], { toJSON: "shadow" });
+      const result = await applyPull(client, [
+        log({ changelogId: changelogId(1), operation: "create", record: { id: "u1", values } }),
+      ]);
+      expect(result).toMatchObject({ applied: 0, validationFailed: 1 });
+      expect(await scanAll(client, "users")).toEqual([]);
+    } finally {
+      await client.close();
+    }
+  });
+
   it("applies a create log and writes version-meta", async () => {
     const { client } = await createTestSyncClient();
 

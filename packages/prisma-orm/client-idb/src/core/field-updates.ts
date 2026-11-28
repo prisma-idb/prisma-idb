@@ -1,6 +1,6 @@
 import { type ContractField, domainModelsAtDefaultNamespace } from "@prisma/orm-framework/contract/types";
 import { keyPathFields } from "@prisma-idb/target-idb/pack";
-import { compareListElement } from "@prisma-idb/target-idb/runtime";
+import { compareListElement, snapshotJsonFields } from "@prisma-idb/target-idb/runtime";
 import { assertValidRecord } from "./record-validation";
 import { assertEnumValues } from "./enum-validation";
 import { getKeyPath, type DefaultModelRow, type IdbContract, type ModelKeyPath, type ModelFieldMany } from "./types";
@@ -61,13 +61,13 @@ function createUpdateAccessor(): object {
   );
 }
 
-/** Validate an element operand with the same record and enum validators as a normal write. */
-function assertListOperation(
+/** Capture and validate the operand before a pending update reads any rows. */
+function resolveListOperation(
   contract: IdbContract,
   modelName: string,
   definition: ContractField,
   operation: IdbFieldOperation
-): void {
+): IdbFieldOperation {
   const { field, operator, value } = operation;
   if (!definition.many || definition.type.kind !== "scalar")
     throw new TypeError(`Field "${field}" is not a scalar list`);
@@ -75,14 +75,17 @@ function assertListOperation(
   if (!["$push", "$pull", "$addToSet", "$pop"].includes(operator))
     throw new TypeError(`Unsupported list operation "${operator}"`);
   if (operator === "$pop" && value !== 1 && value !== -1) throw new TypeError("pop() expects 1 or -1");
-  const operand = { [field]: operator === "$pop" ? [] : [value] };
+  const operand = snapshotJsonFields(contract, modelName, { [field]: operator === "$pop" ? [] : [value] });
   assertEnumValues(contract, modelName, operand);
   assertValidRecord(contract, modelName, "update", operand);
+  return { field, operator, value: operator === "$pop" ? value : (operand[field] as unknown[])[0] };
 }
 
 /** Build and validate the update description even when its query matches no rows. */
 export function resolveFieldUpdates(contract: IdbContract, modelName: string, input: unknown): ResolvedFieldUpdates {
-  if (typeof input !== "function") return { patch: input as Record<string, unknown>, operations: [] };
+  if (typeof input !== "function") {
+    return { patch: snapshotJsonFields(contract, modelName, input as Record<string, unknown>), operations: [] };
+  }
   const accessor = createUpdateAccessor();
   const operations: unknown = input(accessor);
   if (!Array.isArray(operations)) throw new TypeError("An update callback must return field operations");
@@ -97,15 +100,15 @@ export function resolveFieldUpdates(contract: IdbContract, modelName: string, in
     if (Object.hasOwn(patch, field)) throw new TypeError(`Conflicting update operations on field "${field}"`);
     if (operator === "$set") patch[field] = value;
     else {
-      assertListOperation(contract, modelName, fields[field]!, operation);
       // Declare the written field for defaults and transaction store collection. It is resolved per row below.
+      pending.push(resolveListOperation(contract, modelName, fields[field]!, { field, operator, value }));
       patch[field] = [];
-      pending.push(operation);
     }
   }
-  assertEnumValues(contract, modelName, patch);
-  assertValidRecord(contract, modelName, "update", patch);
-  return { patch, operations: pending };
+  const snapshot = snapshotJsonFields(contract, modelName, patch);
+  assertEnumValues(contract, modelName, snapshot);
+  assertValidRecord(contract, modelName, "update", snapshot);
+  return { patch: snapshot, operations: pending };
 }
 
 /** Resolve list operations from the row read inside the same transaction as the write. */
@@ -124,6 +127,9 @@ export function applyFieldUpdates(
       throw new TypeError(`Stored list "${modelName}.${field}" is missing or invalid; migrate the store first`);
     const type = fields[field]!.type;
     const codecId = type.kind === "scalar" ? type.codecId : undefined;
+    if (codecId === "idb/json@1" && (operator === "$pull" || operator === "$addToSet")) {
+      assertValidRecord(contract, modelName, "update", { [field]: current });
+    }
     const equal = (element: unknown) => compareListElement(codecId, element, value) === 0;
     switch (operator) {
       case "$push":

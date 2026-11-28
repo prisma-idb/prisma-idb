@@ -1,0 +1,102 @@
+import type { JsonValue } from "@prisma/orm-framework/contract/types";
+
+// A depth of 1 means one array or object containing scalar values.
+const MAX_JSON_DEPTH = 1000;
+// JSON repeats shared subtrees. Bound the extra work without limiting ordinary trees.
+const MAX_SHARED_WORK = 1_000_000;
+
+interface Subtree {
+  height: number;
+  work: number;
+}
+
+interface Frame extends Subtree {
+  readonly container: object;
+  readonly children: unknown[];
+}
+
+export function isJsonCodec(codecId: string): boolean {
+  return codecId === "idb/json@1" || codecId === "pg/json@1" || codecId === "pg/jsonb@1";
+}
+
+/** Checks for plain JSON data without altering the input or recursing on the JS stack. */
+export function isJsonCompatible(root: unknown): root is JsonValue {
+  const path = new WeakSet<object>();
+  const subtrees = new WeakMap<object, Subtree>();
+  const frames: Frame[] = [];
+  let sharedWork = 0;
+
+  function addChild(height: number, work: number): void {
+    const parent = frames.at(-1);
+    if (parent) {
+      parent.height = Math.max(parent.height, height + 1);
+      parent.work = Math.min(parent.work + work, MAX_SHARED_WORK + 1);
+    }
+  }
+
+  function visit(value: unknown): boolean {
+    if (value === null || typeof value === "string" || typeof value === "boolean" || typeof value === "number") {
+      addChild(0, typeof value === "string" ? 1 + value.length : 1);
+      return typeof value !== "number" || Number.isFinite(value);
+    }
+    if (typeof value !== "object" || path.has(value) || frames.length >= MAX_JSON_DEPTH) return false;
+
+    const subtree = subtrees.get(value);
+    if (subtree !== undefined) {
+      // A finished subtree may be reached again by a longer path.
+      sharedWork += subtree.work;
+      if (frames.length + subtree.height > MAX_JSON_DEPTH || sharedWork > MAX_SHARED_WORK) return false;
+      addChild(subtree.height, subtree.work);
+      return true;
+    }
+
+    const contents = jsonChildren(value);
+    if (contents === undefined) return false;
+    path.add(value);
+    frames.push({ container: value, ...contents, height: 1 });
+    return true;
+  }
+
+  if (!visit(root)) return false;
+  while (frames.length > 0) {
+    const frame = frames.at(-1)!;
+    if (frame.children.length > 0) {
+      if (!visit(frame.children.pop())) return false;
+    } else {
+      frames.pop();
+      path.delete(frame.container);
+      subtrees.set(frame.container, { height: frame.height, work: frame.work });
+      addChild(frame.height, frame.work);
+    }
+  }
+  return true;
+}
+
+function jsonChildren(value: object): { children: unknown[]; work: number } | undefined {
+  if (Array.isArray(value)) {
+    // JSON encodes only a dense array's indexed elements.
+    if ("toJSON" in value || Reflect.ownKeys(value).length !== value.length + 1) return undefined;
+    const children: unknown[] = [];
+    for (let index = 0; index < value.length; index++) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, index);
+      if (!descriptor?.enumerable || !Object.hasOwn(descriptor, "value")) return undefined;
+      children.push(descriptor.value);
+    }
+    return { children, work: 1 };
+  }
+
+  const prototype = Object.getPrototypeOf(value) as object | null;
+  if (prototype !== null && Object.getPrototypeOf(prototype) !== null) return undefined;
+  if ("toJSON" in value && !Object.hasOwn(value, "toJSON")) return undefined;
+
+  const children: unknown[] = [];
+  let work = 1;
+  for (const key of Reflect.ownKeys(value)) {
+    if (typeof key !== "string") return undefined;
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (!descriptor?.enumerable || !Object.hasOwn(descriptor, "value")) return undefined;
+    children.push(descriptor.value);
+    work += 1 + key.length;
+  }
+  return { children, work };
+}

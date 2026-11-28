@@ -86,6 +86,10 @@ The framework already uses arktype for codec schemas. Runtime derivation avoids 
 - Record validation checks shape, not relational integrity or permission. Ownership checks and database constraints remain necessary after validation.
 - Adding codecs with a new native application representation requires extending the scalar mapping. Built-in mapping coverage and push/pull integration are tested.
 
+## Dated note (2026-11-24): Json values
+
+A `Json` value can contain `null`, strings, booleans, finite numbers, dense arrays, and plain objects of those values. The list declaration controls whether a `Json[]` element itself can be `null`. Omit object properties you would otherwise set to `undefined`. Writes reject undefined properties and array elements so IndexedDB and sync see the same members. Arrays must have an element at every index and cannot carry a `toJSON` property. Convert values such as `Date`, `BigInt`, and bytes to your application’s JSON representation before writing them. The nesting limit is 1000 arrays or objects. Shared references are allowed. Their repeated expansion may account for up to one million values, object properties and UTF-16 code units in strings and property names. Plain objects from other realms are accepted. Validation tracks each container and checks the longest path without recursing on the JavaScript stack. Local writes and pulled records persist a copy of the JSON data they validate. Validation checks list and dictionary descriptors before reading their elements.
+
 ## Related
 
 - [ADR 014](ADR%20014%20-%20Sync%20Ownership%20DAG.md): push authorization follows shape validation.
