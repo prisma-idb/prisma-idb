@@ -30,7 +30,7 @@ Prisma clients for IndexedDB, with optional sync to a server. This is a pnpm wor
 - Inside an IndexedDB transaction, never `await` anything that is not an IndexedDB request. The transaction commits as soon as the event loop is idle, so a stray `await` silently breaks atomicity. Chain requests through callbacks.
 - Browser packages must not import `node:*` modules. `tsc` and Vitest both miss this; only the Playwright suites catch it.
 - Vitest does not type-check. Run `pnpm check` before you call a change done.
-- Write comments, error messages and docs as plain, direct prose. State the behavior and the reason inline. Don't refer to plans, phases or ADR numbers in code comments or error messages.
+- Write comments, error messages, docs and changesets as plain, direct prose. State the behavior and the reason inline. Don't refer to plans, phases or ADR numbers in code comments or error messages. Keep paragraphs short and put edge cases in lists or tables; the [docs rule](.claude/rules/docs.md) has the full style and a changeset template.
 - Commit messages use Conventional Commits with a package scope, for example `fix(family-idb): keep the cause on contract emit failures`. Don't add a `Co-Authored-By` trailer.
 - Commit, push or open a PR only when asked.
 - Keep each PR small and about one thing, so a person can review it in one sitting. Put unrelated fixes in separate PRs. When a change needs several PRs that build on each other, open them as a stack. The `open-pr` skill explains how.
@@ -67,7 +67,7 @@ A package's tests run against the built `dist` of the packages it depends on. Af
 Review comments on past PRs mostly found the same few gaps. Check for them yourself first:
 
 1. **Every path, not just the main one.** For each new check, option or behavior, list every place it must apply (all write operations and their nested, bulk and per-row branches; both PSL and TypeScript authoring; every generator, phase and field kind; every wrapper of a changed API) and confirm each one.
-2. **Every claim matches the code.** Docs, changesets, comments, error messages and diagnostics. Search for wording your change made stale.
+2. **Every claim matches the code, and the text is readable.** Docs, changesets, comments, error messages and diagnostics. Search for wording your change made stale. When a review adds a caveat, restructure the text instead of appending to a paragraph.
 3. **Every test can fail.** Break the code under test and watch the test fail.
 4. **Scale and failure.** No per-row store scans, no spreading unbounded arrays, no error that hides the original one.
 
@@ -75,7 +75,7 @@ After a multi-file implementation, and before opening a PR, run the `change-revi
 
 ## Changesets and releases
 
-- Add a `.changeset/*.md` (`pnpm changeset`) for each published package a change affects. For docs-only or other non-release changes, add an empty one (`pnpm changeset --empty`).
+- Add a `.changeset/*.md` (`pnpm changeset`) for each published package a change affects, in the shape the [docs rule](.claude/rules/docs.md#write-a-changeset) gives. For docs-only or other non-release changes, add an empty one (`pnpm changeset --empty`).
 - `target-idb`, `driver-idb`, `adapter-idb`, `runtime-idb`, `client-idb` and `family-idb` release together at one version ([.changeset/config.json](.changeset/config.json)). Sync packages and the legacy generator version separately.
 - Releases are automated by [release.yml](.github/workflows/release.yml). Don't run `changeset version` or `changeset publish`.
 
