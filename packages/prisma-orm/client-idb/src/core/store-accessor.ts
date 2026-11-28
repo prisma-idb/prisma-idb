@@ -1,6 +1,6 @@
 import { type IdbUpdateCallback, resolveFieldUpdates, applyFieldUpdates } from "./field-updates";
 import { AsyncIterableResult } from "@prisma/orm-framework/components/runtime";
-import type { PlanMeta } from "@prisma/orm-framework/contract/types";
+import { domainModelsAtDefaultNamespace, type PlanMeta } from "@prisma/orm-framework/contract/types";
 import type { IdbFilterExpr, IdbQueryPlan } from "@prisma-idb/adapter-idb/runtime";
 import { absentAsNull, isValidIdbKey } from "@prisma-idb/target-idb/runtime";
 import type {
@@ -414,14 +414,22 @@ function assertPageArgument(argument: "take" | "skip", value: unknown): void {
   throw new RangeError(`${argument} must be an integer from 0 to ${Number.MAX_SAFE_INTEGER}${received}`);
 }
 
-/**
- * Rejects an `orderBy()` argument that is not an object, such as `null` from an untyped caller. Copying `null` would
- * give an empty spec, and a later update would silently treat it as no order.
- */
-function assertOrderBySpec(spec: unknown): void {
-  if (typeof spec === "object" && spec !== null && !Array.isArray(spec)) return;
-  throw new TypeError(
-    `orderBy must be an object that maps fields to "asc" or "desc", got ${spec === null ? "null" : Array.isArray(spec) ? "an array" : typeof spec}`
+/** Capture and validate the sort before it can choose a row for a write. */
+function snapshotOrderBy(spec: unknown, contract: IdbContract, modelName: string): Record<string, "asc" | "desc"> {
+  if (typeof spec !== "object" || spec === null || Array.isArray(spec)) {
+    throw new TypeError(
+      `orderBy must be an object that maps fields to "asc" or "desc", got ${spec === null ? "null" : Array.isArray(spec) ? "an array" : typeof spec}`
+    );
+  }
+  const fields = domainModelsAtDefaultNamespace(contract.domain)[modelName]!.fields;
+  return Object.fromEntries(
+    Object.entries(spec as Record<string, unknown>).map(([field, direction]) => {
+      if (!Object.hasOwn(fields, field)) throw new TypeError(`Model "${modelName}" has no field "${field}"`);
+      if (direction !== "asc" && direction !== "desc") {
+        throw new TypeError(`orderBy direction for field "${field}" must be "asc" or "desc"`);
+      }
+      return [field, direction] as const;
+    })
   );
 }
 
@@ -492,8 +500,7 @@ export class IdbStoreAccessorImpl<
   orderBy(
     spec: OrderBySpec<TContract, ModelName>
   ): IdbStoreAccessor<TContract, ModelName, TIncludes, TSelected, TFiltered> {
-    assertOrderBySpec(spec);
-    return this.#clone({ orderBy: { ...spec } as Record<string, "asc" | "desc"> });
+    return this.#clone({ orderBy: snapshotOrderBy(spec, this.#contract, this.#modelName) });
   }
 
   take(n: number): IdbStoreAccessor<TContract, ModelName, TIncludes, TSelected, TFiltered> {
@@ -745,7 +752,10 @@ export class IdbStoreAccessorImpl<
       return row as DefaultModelRow<TContract, ModelName> | null;
     }
 
-    // Always routes through the transaction scope, whether or not the patch
+    // A zero-limit update returns before asking the executor for a transaction scope.
+    if (this.#state.take === 0 && this.#executor instanceof OpenTransaction) this.#executor.assertNotEnded();
+
+    // Writes route through the transaction scope, whether or not the patch
     // touches a scalar FK field — same reasoning as `updateAll()` below: the
     // matched row isn't known until the scan-write actually runs (`.where()`
     // filters on ANY field, not just the primary key), and only the

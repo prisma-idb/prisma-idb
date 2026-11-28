@@ -101,6 +101,17 @@ describe("windowed update() with foreign keys", () => {
     expect(() => posts.orderBy({})).not.toThrow();
   });
 
+  it.each([
+    [{ rnak: "desc" }, /Model "Post" has no field "rnak"/],
+    [{ rank: "descending" } as never, /orderBy direction for field "rank"/],
+  ] as const)("rejects an invalid orderBy(%j) before updating a row", async (spec, error) => {
+    const posts = await seed();
+    const update = async () => posts.orderBy(spec).update({ ownerId: "o2" });
+
+    await expect(update()).rejects.toThrow(error);
+    expect(await posts.where({ ownerId: "o2" }).all().toArray()).toEqual([]);
+  });
+
   it("treats orderBy({}) as no order, so it checks the foreign key before looking for a row", async () => {
     const posts = await seed();
     for (const chain of [posts.where({ id: "missing" }), posts.where({ id: "missing" }).orderBy({})]) {
