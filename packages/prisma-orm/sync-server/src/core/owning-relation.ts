@@ -1,0 +1,54 @@
+import { domainModelsAtDefaultNamespace } from "@prisma/orm-framework/contract/types";
+import type { SyncServerContract } from "./ownership-dag";
+
+/** The SQL storage facts a `1:1` relation's ownership is read from. */
+interface SqlModelStorage {
+  readonly table?: string;
+  readonly namespaceId?: string;
+  readonly fields?: Readonly<Record<string, { readonly column?: string }>>;
+}
+
+interface SqlForeignKey {
+  readonly source: { readonly columns: readonly string[] };
+  readonly target: { readonly namespaceId: string; readonly tableName: string; readonly columns: readonly string[] };
+}
+
+/** A to-one relation as the contract stores it. */
+interface ToOneRelation {
+  readonly cardinality: string;
+  readonly to: { readonly model: string };
+  readonly on?: { readonly localFields: readonly string[]; readonly targetFields: readonly string[] };
+}
+
+const sameColumns = (a: readonly string[], b: readonly string[]) =>
+  a.length === b.length && a.every((column, index) => column === b[index]);
+
+/**
+ * Ownership follows any many-to-one relation. For a SQL one-to-one, it
+ * follows the side whose table declares the matching foreign key.
+ */
+export function ownsForeignKey(contract: SyncServerContract, modelName: string, relation: ToOneRelation): boolean {
+  if (relation.cardinality === "N:1") return true;
+  if (relation.cardinality !== "1:1" || relation.on === undefined) return false;
+  const models = domainModelsAtDefaultNamespace(contract.domain);
+  const storage = models[modelName]?.storage as SqlModelStorage | undefined;
+  const targetStorage = models[relation.to.model]?.storage as SqlModelStorage | undefined;
+  if (!storage?.table || !storage.namespaceId || !targetStorage?.table || !targetStorage.namespaceId) return false;
+  const namespaces = (
+    contract.storage as {
+      namespaces?: Record<string, { entries?: { table?: Record<string, { foreignKeys?: readonly SqlForeignKey[] }> } }>;
+    }
+  ).namespaces;
+  const foreignKeys = namespaces?.[storage.namespaceId]?.entries?.table?.[storage.table]?.foreignKeys ?? [];
+  const columnsOf = (owner: SqlModelStorage, fields: readonly string[]) =>
+    fields.map((field) => owner.fields?.[field]?.column ?? field);
+  const local = columnsOf(storage, relation.on.localFields);
+  const target = columnsOf(targetStorage, relation.on.targetFields);
+  return foreignKeys.some(
+    (foreignKey) =>
+      sameColumns(foreignKey.source.columns, local) &&
+      foreignKey.target.tableName === targetStorage.table &&
+      foreignKey.target.namespaceId === targetStorage.namespaceId &&
+      sameColumns(foreignKey.target.columns, target)
+  );
+}

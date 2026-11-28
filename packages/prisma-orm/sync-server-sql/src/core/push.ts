@@ -5,6 +5,7 @@ import {
   checkAuthorization,
   checkParentReferences,
   plainRowReader,
+  assertParentJoinsTargetKeys,
   prepareParentReferenceChecks,
 } from "./authorization";
 import { lockRow, lockingRowReader } from "./row-lock";
@@ -206,6 +207,11 @@ export async function applyPushEventDecoded(
     return { id: event.id, success: false, error: "KEYPATH_VALIDATION_FAILURE", retryable: false };
   }
   const { model } = event;
+  if (check.kind === "scoped" && event.operation === "delete") {
+    // A delete has no candidate parents, but its ownership walk still reads each parent by key.
+    // `check` comes from the caller, so validate its joins here as well as in `validatePush`.
+    assertParentJoinsTargetKeys(contract, getKeyField, model, check);
+  }
   const parents =
     check.kind === "scoped" && event.operation !== "delete"
       ? prepareParentReferenceChecks(contract, getKeyField, model, check)

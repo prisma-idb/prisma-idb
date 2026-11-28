@@ -1,7 +1,7 @@
 import type { GetKeyField, OwnershipCheck, SyncServer, SyncServerContract } from "@prisma-idb/sync-server";
 import { reviveWireKey } from "./wire-values";
 import { ormRootFor } from "./orm-root";
-import { checkAuthorization, plainRowReader } from "./authorization";
+import { assertParentJoinsTargetKeys, checkAuthorization, plainRowReader } from "./authorization";
 
 /**
  * Authorizes a pulled changelog row, then returns the record's *current*
@@ -26,6 +26,8 @@ export async function resolvePullRecord(
   operation: "create" | "update" | "delete"
 ): Promise<Record<string, unknown> | null> {
   if (check.kind === "unknown-model") return null;
+  // A wrapped `SyncServer` can return any check, and the walk below reads each parent by its key.
+  if (check.kind === "scoped") assertParentJoinsTargetKeys(contract, getKeyField, model, check);
 
   const keyField = getKeyField(contract, model);
   const nativeKey = (key: unknown) => reviveWireKey(contract, model, keyField, key);

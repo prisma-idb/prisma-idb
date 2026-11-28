@@ -10,7 +10,7 @@ Reference for `@prisma-idb/sync-server` and `@prisma-idb/sync-server-sql`. For c
 
 ## How authorization works
 
-Every synced record belongs to one user, or to whatever your root model is. The server works out the owner by following many-to-one relations from the record up to the root model. With `Todo → Board → User`, a todo belongs to the user who owns its board.
+Every synced record belongs to one user, or to whatever your root model is. The server works out the owner by following relations that own foreign keys from the record up to the root model. With `Todo → Board → User`, a todo belongs to the user who owns its board.
 
 `sync-server` builds this ownership graph from your schema once, at startup. For each pushed event or pulled changelog row, it returns a description of what to check: which relation paths lead from the record to the root, and which key they must reach. It never runs queries itself, so it works with any database and any HTTP framework. `sync-server-sql` runs those checks against a Prisma 8 SQL client.
 
@@ -34,7 +34,7 @@ const syncServer = createSyncServer({ contract, clientContract, rootModel: "User
 
 Import each contract's `.json` and cast it to its generated `Contract` type. Id fields in the contract have branded types, so the raw JSON doesn't type-check without the cast.
 
-`createSyncServer` throws at startup if the ownership relations form a cycle, or a synced model has no path of many-to-one relations to `rootModel`.
+`createSyncServer` throws at startup if the ownership relations form a cycle, or a synced model has no path to `rootModel` through relations that own a foreign key. A many-to-one relation always owns its foreign key. A one-to-one relation owns it on the side whose table declares the foreign key, such as `UserProfile.user` with `userId String @unique`.
 
 Synced models need a single-field primary key. `createSyncServer` resolves the key field for each synced model at startup and rejects compound keys.
 
@@ -107,6 +107,8 @@ Since version 0.7, `@prisma-idb/sync-server-sql` requires these schema shapes fo
 - Each relation uses one foreign key field and references the parent's single-field primary key. Referencing another `@unique` field or a compound key is unsupported.
 - The referencing foreign key has no database or ORM-generated default, including defaults on nullable fields. Authorization needs its value before insertion.
 - A default on the parent's primary key alone does not violate the foreign key rule.
+
+`@prisma-idb/sync-server` enforces the key rule too, so a custom adapter gets the same error from `validatePush` and `buildPullQueries`.
 
 For example, `ownerId String` with `owner User @relation(fields: [ownerId], references: [id])` is supported when `User.id` is its single-field primary key. `ownerId String @default("system")` is unsupported, even if the application always supplies `ownerId`.
 

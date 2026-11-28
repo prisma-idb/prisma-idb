@@ -39,6 +39,8 @@ for (const { check } of checks) {
 
 3. Run the returned checks in your adapter before writing the record and changelog entry. Use one transaction for all three operations.
 
+The ownership graph follows many-to-one relations and SQL one-to-one relations from the side that declares the foreign key.
+
 For SQL databases, [`@prisma-idb/sync-server-sql`](https://www.npmjs.com/package/@prisma-idb/sync-server-sql) runs these checks and writes for you.
 
 ## Contract identity

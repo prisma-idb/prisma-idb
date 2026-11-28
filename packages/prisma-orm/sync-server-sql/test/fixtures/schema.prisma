@@ -18,6 +18,18 @@ model User {
   alternateParents AlternateParent[]
   alternateEntries AlternateEntry[]
   ownerBridges     OwnerBridge[]
+  profile          Profile?
+}
+
+// A one-to-one that owns its foreign key, with mapped table and column names.
+// `User.profile` is the inverse side and holds no foreign key.
+model Profile {
+  id     String @id
+  userId String? @unique @map("user_id")
+  user   User?   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tasks  ProfileTask[]
+
+  @@map("profiles")
 }
 
 model Board {
@@ -194,4 +206,10 @@ model MappedCard {
   id      String      @id @map("card_key")
   boardId String      @map("board_id")
   board   MappedBoard @relation(fields: [boardId], references: [id], onDelete: Cascade)
+}
+
+model ProfileTask {
+  id        String  @id
+  profileId String
+  profile   Profile @relation(fields: [profileId], references: [id], onDelete: Cascade)
 }
