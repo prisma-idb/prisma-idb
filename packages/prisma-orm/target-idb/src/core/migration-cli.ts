@@ -4,8 +4,15 @@ import { parseArgs } from "node:util";
 import type { MigrationMetadata } from "@prisma/orm-toolchain/migration-tools/metadata";
 import { buildMigrationArtifacts, isDirectEntrypoint } from "@prisma/orm-toolchain/migration-tools/migration";
 import { dirname, join } from "pathe";
-import type { IdbMigration } from "./idb-migration";
-import { assertNoMigrationPlaceholders, deletedDataWarning, type IdbDdlOp } from "./migration-factories";
+import { IdbMigration } from "./idb-migration";
+import {
+  assertFiniteTransformLiterals,
+  assertNoMigrationPlaceholders,
+  deletedDataWarning,
+  snapshotRecordTransform,
+  type IdbDdlOp,
+  type TransformRecordsOp,
+} from "./migration-factories";
 
 type IdbMigrationConstructor = new () => IdbMigration;
 
@@ -69,7 +76,26 @@ export class MigrationCLI {
       // No prior metadata — fresh emit.
     }
 
-    const { opsJson, metadataJson } = await buildMigrationArtifacts(instance, existing);
+    const checked = new (class extends IdbMigration {
+      override get operations() {
+        const ops = IdbMigration.readOperations(instance);
+        if (!Array.isArray(ops)) return ops;
+        return ops.map(async (pending: (typeof instance.operations)[number]) => {
+          const op = await pending;
+          if (op === null || typeof op !== "object") return op;
+          // Other operations can still be pending when this one is checked.
+          if (!("kind" in op) || op.kind !== "transformRecords") return op;
+          const snapshot = snapshotRecordTransform(op as TransformRecordsOp);
+          assertFiniteTransformLiterals(snapshot);
+          return snapshot;
+        });
+      }
+
+      override describe() {
+        return instance.describe();
+      }
+    })();
+    const { opsJson, metadataJson } = await buildMigrationArtifacts(checked, existing);
     const ops = JSON.parse(opsJson) as IdbDdlOp[];
     assertNoMigrationPlaceholders(ops);
     const warning = deletedDataWarning(ops);

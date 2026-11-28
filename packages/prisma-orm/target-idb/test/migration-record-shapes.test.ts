@@ -3,7 +3,14 @@ import { planOriginOf } from "@prisma/orm-framework/components/control";
 import { keepInternalSpecifiers } from "@prisma/orm-framework/components/emission";
 import { describe, expect, it } from "vitest";
 import type { IdbKeyPath, IdbRecordField } from "../src/core/idb-contract-types";
-import { deletedDataWarning } from "../src/core/migration-factories";
+import {
+  defaultIfMissing,
+  deletedDataWarning,
+  pipe,
+  setLiteral,
+  snapshotRecordTransform,
+  transformRecordsOp,
+} from "../src/core/migration-factories";
 import { IdbMigrationPlanner } from "../src/core/migration-planner";
 import { transformRecord } from "../src/core/transform-records";
 
@@ -374,5 +381,56 @@ describe("record shape migration planning", () => {
       if (result.kind === "success")
         expect(result.plan.operations).not.toContainEqual(expect.objectContaining({ kind: "transformRecords" }));
     }
+  });
+});
+
+describe("migration literals", () => {
+  // A migration package is JSON, so these would be stored as null and written into rows.
+  it.each([Infinity, -Infinity, NaN])("refuses %s in setLiteral and defaultIfMissing", (value) => {
+    expect(() => setLiteral(value)).toThrow(/stored as JSON/);
+    expect(() => defaultIfMissing(value)).toThrow(/stored as JSON/);
+  });
+
+  it("refuses non-finite raw transforms when constructing and applying an operation", () => {
+    const fields = { score: pipe({ kind: "defaultIfMissing", value: -Infinity }) };
+    expect(() => transformRecordsOp("items", { fields })).toThrow(/finite number/);
+
+    const op = { ...transformRecordsOp("items", {}), fields };
+    expect(() => transformRecord(op, {}, "full")).toThrow(/finite number/);
+  });
+
+  it("ignores unused literals when transforming an update patch", () => {
+    const op = {
+      ...transformRecordsOp("items", {}),
+      fields: { score: pipe({ kind: "setLiteral", value: Infinity }, { kind: "defaultIfMissing", value: NaN }) },
+    };
+    expect(transformRecord(op, { score: 7 }, "patch")).toEqual({ score: 7 });
+  });
+
+  it("keeps finite literals", () => {
+    expect(setLiteral(1.5)).toEqual({ kind: "setLiteral", value: 1.5 });
+    expect(defaultIfMissing([])).toEqual({ kind: "defaultIfMissing", value: [] });
+  });
+
+  it("snapshots a transform without dropping its other properties or reordering them", () => {
+    const literal = { kind: "setLiteral" as const, value: 1 };
+    const op = {
+      ...transformRecordsOp("items", { fields: { score: pipe(literal) } }),
+      precheck: [{ object: "items" }],
+    };
+    const snapshot = snapshotRecordTransform(op);
+    expect(Object.keys(snapshot)).toEqual(Object.keys(op));
+    expect(snapshot).toMatchObject({ precheck: [{ object: "items" }] });
+    literal.value = 2;
+    expect(snapshot.fields).toEqual({ score: pipe({ kind: "setLiteral", value: 1 }) });
+  });
+
+  it("rejects a non-finite number nested inside a raw literal", () => {
+    const nested = JSON.parse("[[1e999]]") as never;
+    const op = {
+      ...transformRecordsOp("items", {}),
+      fields: { score: { kind: "setLiteral" as const, value: nested } },
+    };
+    expect(() => transformRecord(op, {}, "full")).toThrow(/finite number/);
   });
 });

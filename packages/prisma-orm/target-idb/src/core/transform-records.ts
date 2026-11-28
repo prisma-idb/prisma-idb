@@ -1,6 +1,6 @@
 import { INT32_RANGE, isIntegerIn } from "@prisma/orm-framework/components/codec";
 import { errorUnfilledPlaceholder } from "@prisma/orm-framework/errors/migration";
-import type { IdbValueTransform, TransformRecordsOp } from "./migration-factories";
+import { assertFiniteLiteral, type IdbValueTransform, type TransformRecordsOp } from "./migration-factories";
 
 /** Full records permit backfills; patches only change fields already present. */
 export type RecordTransformMode = "full" | "patch";
@@ -62,10 +62,19 @@ function transformValue(transform: IdbValueTransform, value: unknown, mode: Reco
   switch (transform.kind) {
     case "placeholder":
       throw errorUnfilledPlaceholder(transform.slot);
-    case "defaultIfMissing":
-      return mode === "full" && value === undefined ? structuredClone(transform.value) : value;
-    case "setLiteral":
-      return mode === "full" ? structuredClone(transform.value) : value;
+    case "defaultIfMissing": {
+      if (mode === "patch") return value;
+      const input = transform.value;
+      const literal = value === undefined && Array.isArray(input) ? structuredClone(input) : input;
+      assertFiniteLiteral(literal);
+      return value === undefined ? literal : value;
+    }
+    case "setLiteral": {
+      if (mode === "patch") return value;
+      const literal = structuredClone(transform.value);
+      assertFiniteLiteral(literal);
+      return literal;
+    }
     case "pipe":
       return transform.steps.reduce((current, step) => transformValue(step, current, mode), value);
     case "coerce": {

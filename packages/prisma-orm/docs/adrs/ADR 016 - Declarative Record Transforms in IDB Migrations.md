@@ -9,6 +9,8 @@
 
 Add a migration operation, `transformRecords`, that rewrites every record in a store. It can rename fields, change a field's type, backfill a default, or remove a field. The operation is stored in `ops.json` as plain data, using a small fixed set of transforms, never as a function. A fixed executor applies it inside the upgrade transaction. `migration plan` now proposes literal-default backfills, field removals, and placeholders for changes that need an author decision. Authors can edit or add transforms in `migration.ts`.
 
+Numeric literals in `defaultIfMissing` and `setLiteral` must be finite. The migration checks them before serializing its operations and when applying record transforms. This also applies to literals in nested pipes.
+
 ## Context
 
 ### The original motivating bug

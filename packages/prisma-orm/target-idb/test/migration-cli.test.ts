@@ -27,8 +27,10 @@ import {
   pipe,
   placeholder,
   transformRecordsOp,
+  createIndexOp,
   createObjectStoreOp,
   dropObjectStoreOp,
+  setLiteral,
   type IdbDdlOp,
 } from "../src/core/migration-factories";
 
@@ -141,6 +143,112 @@ describe("MigrationCLI", () => {
     });
     expect(existsSync(join(tmpDir, "ops.json"))).toBe(false);
     expect(existsSync(join(tmpDir, "migration.json"))).toBe(false);
+  });
+
+  it.each([false, true])(
+    "rejects raw non-finite literals in pipes before self-emit (promised: %s)",
+    async (promised) => {
+      class InvalidLiteralMigration extends IdbMigration {
+        override describe() {
+          return { from: null, to: "sha256:test-to-hash" };
+        }
+        override get operations() {
+          const operation = {
+            ...transformRecordsOp("users", {}),
+            fields: { score: pipe(defaultIfMissing(0), pipe({ kind: "setLiteral", value: Infinity })) },
+          };
+          return [promised ? Promise.resolve(operation) : operation];
+        }
+      }
+      writeFileSync(join(tmpDir, "ops.json"), "previous ops");
+      writeFileSync(join(tmpDir, "migration.json"), "previous metadata");
+      process.argv = ["node", "migration.ts"];
+      await expect(MigrationCLI.run(migrationFileUrl, InvalidLiteralMigration)).rejects.toThrow(/finite number/);
+      expect(readFileSync(join(tmpDir, "ops.json"), "utf-8")).toBe("previous ops");
+      expect(readFileSync(join(tmpDir, "migration.json"), "utf-8")).toBe("previous metadata");
+    }
+  );
+
+  it("emits the checked literal even if a pending operation changes the original", async () => {
+    class MutatingMigration extends IdbMigration {
+      override describe() {
+        return { from: null, to: "sha256:test-to-hash" };
+      }
+      override get operations() {
+        const literal = { kind: "setLiteral" as const, value: 42 };
+        const transform = transformRecordsOp("users", { fields: { score: pipe(literal) } });
+        const later = new Promise<IdbDdlOp>((resolve) => {
+          setTimeout(() => {
+            literal.value = Infinity;
+            resolve(createObjectStoreOp("other", { keyPath: "id" }));
+          }, 0);
+        });
+        return [transform, later];
+      }
+    }
+    process.argv = ["node", "migration.ts"];
+    await expect(MigrationCLI.run(migrationFileUrl, MutatingMigration)).resolves.toBe(0);
+    const ops = JSON.parse(readFileSync(join(tmpDir, "ops.json"), "utf-8")) as IdbDdlOp[];
+    expect(ops[0]).toMatchObject({ fields: { score: pipe({ kind: "setLiteral", value: 42 }) } });
+  });
+
+  it("rejects a non-finite literal nested inside a raw list literal", async () => {
+    class NestedLiteralMigration extends IdbMigration {
+      override describe() {
+        return { from: null, to: "sha256:test-to-hash" };
+      }
+      override get operations() {
+        // Parsing `[[1e999]]` from a hand-written file yields an array nested one level deeper than the type allows.
+        const nested = JSON.parse("[[1e999]]") as never;
+        return [
+          { ...transformRecordsOp("users", {}), fields: { score: { kind: "setLiteral" as const, value: nested } } },
+        ];
+      }
+    }
+    process.argv = ["node", "migration.ts"];
+    await expect(MigrationCLI.run(migrationFileUrl, NestedLiteralMigration)).rejects.toThrow(/finite number/);
+    expect(existsSync(join(tmpDir, "ops.json"))).toBe(false);
+  });
+
+  it("keeps the properties of a transform that the operation type doesn't name", async () => {
+    class MetadataMigration extends IdbMigration {
+      override describe() {
+        return { from: null, to: "sha256:test-to-hash" };
+      }
+      override get operations() {
+        const operation = {
+          ...transformRecordsOp("users", { fields: { score: setLiteral(1) } }),
+          precheck: [{ object: "users" }],
+        };
+        return [operation as IdbDdlOp];
+      }
+    }
+    process.argv = ["node", "migration.ts"];
+    expect(await MigrationCLI.run(migrationFileUrl, MetadataMigration)).toBe(0);
+    const [operation] = JSON.parse(readFileSync(join(tmpDir, "ops.json"), "utf-8")) as Record<string, unknown>[];
+    expect(operation).toMatchObject({ precheck: [{ object: "users" }] });
+  });
+
+  it("serializes other operations as they are once every pending operation has resolved", async () => {
+    class LateEditMigration extends IdbMigration {
+      override describe() {
+        return { from: null, to: "sha256:test-to-hash" };
+      }
+      override get operations() {
+        const first = createObjectStoreOp("users", { keyPath: "id" });
+        const later = new Promise<IdbDdlOp>((resolve) => {
+          setTimeout(() => {
+            (first as { storeName: string }).storeName = "members";
+            resolve(createIndexOp("members", "byName", { keyPath: "name", unique: false }));
+          }, 0);
+        });
+        return [first, later];
+      }
+    }
+    process.argv = ["node", "migration.ts"];
+    expect(await MigrationCLI.run(migrationFileUrl, LateEditMigration)).toBe(0);
+    const ops = JSON.parse(readFileSync(join(tmpDir, "ops.json"), "utf-8")) as { storeName: string }[];
+    expect(ops.map((op) => op.storeName)).toEqual(["members", "members"]);
   });
 
   it("emits a filled slot and applies its transform on database open", async () => {

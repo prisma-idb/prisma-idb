@@ -125,6 +125,8 @@ For a supported type conversion, use `coerce(...)`. Its targets are `int`, `stri
 
 The DSL also has no transform that fills only `null`. `defaultIfMissing(...)` preserves `null`. Changing a nullable field to required therefore has no supported transform that fills null values while preserving other values. Keep the field nullable when existing records can contain `null`. For an unsupported required-field addition, add the field as nullable so it needs no backfill, as shown above.
 
+Numbers passed to `setLiteral(...)` and `defaultIfMissing(...)` must be finite.
+
 Add the needed imports to the generated file and remove unused ones. Keep its `describe()` hashes and unrelated operations. Regenerate the package, then bundle and check it:
 
 ```bash
