@@ -163,9 +163,14 @@ function projectModelsForClient(models: Record<string, ModelDef<string>>): Recor
   const result: Record<string, ProjectedModelDef> = Object.create(null);
 
   for (const [modelName, def] of Object.entries(models)) {
-    if (excludedModelNames.has(modelName)) continue;
+    if (excludedModelNames.has(modelName)) {
+      // The projection drops this model before any other check reads it.
+      checkExcludedDefaults(modelName, def, Object.keys(def.fields));
+      continue;
+    }
 
     const excludedFields = new Set(def.excludeFields ?? []);
+    checkExcludedDefaults(modelName, def, excludedFields);
     const relations: Record<string, RelationDef> = Object.create(null);
     for (const [relName, rel] of Object.entries(def.relations ?? {})) {
       if (excludedModelNames.has(rel.to)) {
@@ -450,16 +455,7 @@ function lowerFieldDefaults(
  * projection drops them from `fields` but they are still declared.
  */
 function checkDeclaredDefaults(modelName: string, def: ProjectedModelDef): void {
-  /** Throws an `IDB_INVALID_DEFAULT_VALUE` error located at the named field's default. */
-  const fail = (name: string, message: string): never => {
-    throw new IdbContractError([
-      {
-        code: "IDB_INVALID_DEFAULT_VALUE",
-        message,
-        at: ["models", modelName, "fields", name, "literalDefault"],
-      },
-    ]);
-  };
+  const fail = (name: string, message: string) => failDefault(modelName, name, message);
   for (const [mapName, map] of [
     ["defaults", def.defaults],
     ["fieldDefaults", def.fieldDefaults],
@@ -481,6 +477,50 @@ function checkDeclaredDefaults(modelName: string, def: ProjectedModelDef): void 
       fail(name, `Model "${modelName}" declares a default for field "${name}" in both "defaults" and "fieldDefaults".`);
     }
   }
+}
+
+/** Throws an `IDB_INVALID_DEFAULT_VALUE` error located at the named field's default. */
+function failDefault(modelName: string, name: string, message: string): never {
+  throw new IdbContractError([
+    {
+      code: "IDB_INVALID_DEFAULT_VALUE",
+      message,
+      at: ["models", modelName, "fields", name, "literalDefault"],
+    },
+  ]);
+}
+
+/**
+ * A client projection drops an excluded field or model before the shared validator reads it, so a
+ * `Float` default is checked here and a client build refuses what a full build refuses. Reading each
+ * entry by name finds a non-enumerable one too, as lowering does. Other types are not checked here, as in the shared validator.
+ */
+function checkExcludedDefaults(modelName: string, def: ModelDef<string>, names: Iterable<string>): void {
+  for (const name of names) {
+    const spec = ownEntry(def.fields, name);
+    if (spec === undefined) continue;
+    const type = parseFieldSpec(spec);
+    if (type.typeName !== "Float" || type.many) continue;
+    for (const map of [def.defaults, def.fieldDefaults]) {
+      checkFiniteDefault(modelName, name, ownEntry(map, name), (field, message) =>
+        failDefault(modelName, field, message)
+      );
+    }
+  }
+}
+
+/** A contract stores a Float default as JSON, which has no number for NaN or an infinity. */
+function checkFiniteDefault(
+  modelName: string,
+  name: string,
+  value: unknown,
+  fail: (name: string, message: string) => never
+): void {
+  if (typeof value !== "number" || Number.isFinite(value)) return;
+  fail(
+    name,
+    `Field "${modelName}.${name}" has the default ${value}, which a contract can't store. Use a finite number.`
+  );
 }
 
 /** Translate one model declaration into a model node. */
@@ -522,7 +562,9 @@ function lowerModel(modelName: string, def: ProjectedModelDef, enums: EnumDefs):
  * in `@prisma/orm-family-sql/contract-ts`.
  *
  * Applies the client projection first, so every check and the definition see
- * only the models and fields the projected contract keeps.
+ * only the models and fields the projected contract keeps. The one exception is
+ * the finite-number check on defaults, which also covers the models and fields
+ * that the projection drops, so a client build refuses what a full build refuses.
  *
  * @throws {IdbContractError} With every shared diagnostic. TS input shape errors stay in this front end.
  */

@@ -523,8 +523,32 @@ export function createIdbAttributeBinder(input: IdbAttributeBinderInput): IdbAtt
     return expected.length === 0;
   }
 
-  function checkExcludedFieldDefaults(field: FieldSymbol): void {
-    for (const attribute of field.attributes) hasCompleteDefaultArgs(attribute);
+  /**
+   * Checks the defaults of an excluded field, which the client contract drops. A default's
+   * type belongs to the server projection, but syntax errors and a number the contract can't
+   * store fail both projections alike.
+   */
+  function checkExcludedFieldDefaults(model: ModelSymbol, field: FieldSymbol): void {
+    // Only a Float default is checked, as in the shared validator. The full contract ignores a relation
+    // field's default and stores an enum default as text.
+    const skipped = field.typeName !== "Float" || field.list;
+    // Binding keeps the first default it can read, so a later one is never stored.
+    let bound = false;
+    for (const attribute of field.attributes) {
+      if (!hasCompleteDefaultArgs(attribute) || attribute.name !== "default" || skipped || bound) continue;
+      // A default the spec can't read is another projection's concern, so a failure is not reported here.
+      const read = interpretAttribute(attribute.node, defaultFieldSpec, { ...base, selfModel: model, field });
+      if (!read.ok) continue;
+      bound = true;
+      const form = read.value.value.form;
+      if (form.kind !== "number" || Number.isFinite(form.value)) continue;
+      diagnostics.push({
+        code: "IDB_INVALID_DEFAULT_VALUE",
+        message: `Field "${model.name}.${field.name}" has the default ${form.value}, which a contract can't store. Use a finite number.`,
+        sourceId,
+        span: attribute.span,
+      });
+    }
   }
 
   /**
@@ -648,7 +672,7 @@ export function createIdbAttributeBinder(input: IdbAttributeBinderInput): IdbAtt
     model: bindModel,
     field: bindField,
     excludedField: (model, field) => {
-      checkExcludedFieldDefaults(field);
+      checkExcludedFieldDefaults(model, field);
       for (const marker of field.attributes.filter(({ name }) => name === IDB_EXCLUDE_ATTR)) {
         interpret(excludeFieldSpec, marker, { ...base, selfModel: model, field });
       }
@@ -663,7 +687,7 @@ export function createIdbAttributeBinder(input: IdbAttributeBinderInput): IdbAtt
       // Validate every marker, not just the first, so a repeated malformed exclusion cannot hide in either projection.
       // The model stays excluded either way: a malformed exclusion fails the contract through its diagnostic.
       for (const marker of markers) interpret(excludeModelSpec, marker, { ...base, selfModel: model });
-      for (const field of Object.values(model.fields)) checkExcludedFieldDefaults(field);
+      for (const field of Object.values(model.fields)) checkExcludedFieldDefaults(model, field);
       return true;
     },
     isFieldExcluded: (field) => field.attributes.some((attribute) => attribute.name === IDB_EXCLUDE_ATTR),
