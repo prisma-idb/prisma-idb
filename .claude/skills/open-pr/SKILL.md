@@ -35,7 +35,7 @@ The review hook checks the commit you have checked out. To open each PR in a sta
 
 ## 3. Add a changeset
 
-- For each published package the diff changes, add a changeset with `pnpm changeset` and pick the semver bump. Write the summary for users of the package: what changed and what they need to do.
+- For each published package the diff changes, add a changeset with `pnpm changeset` and pick the semver bump. Write the summary for users of the package, in the shape of the [docs rule](../../rules/docs.md#write-a-changeset): one sentence, then one behavior per bullet, with what they need to do.
 - The six core Prisma 8 packages (`target`, `driver`, `adapter`, `runtime`, `client`, `family`) share one version, so one changeset naming the packages you touched is enough.
 - For docs-only, CI-only, app-only or test-only changes, add an empty changeset: `pnpm changeset --empty`.
 

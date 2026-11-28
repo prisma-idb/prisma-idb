@@ -54,6 +54,8 @@ Docs, READMEs, changesets, code comments, error messages, diagnostics and test n
 - A diagnostic that suggests a replacement suggests one that is valid. Paste it into a test.
 - A changed behavior leaves no stale statement elsewhere. Search the repository for the old wording, including `apps/docs/content/docs`.
 - The changeset describes what users get, and is empty when no published package changes (a test-only change is not a release).
+- The text is readable, as the [docs rule](../../rules/docs.md) requires. Flag a paragraph of more than about five sentences, a sentence that chains several caveats, and a case list written as prose instead of a list or table. Compare the text with its earlier commits: if a review fix appended a sentence to a paragraph that was already long, ask for it to be restructured.
+- A changeset has a one-sentence summary and one behavior per bullet, and a JSDoc block over about eight lines doesn't hold reference material that belongs on the docs site.
 
 ## 5. Check that each test can fail
 
