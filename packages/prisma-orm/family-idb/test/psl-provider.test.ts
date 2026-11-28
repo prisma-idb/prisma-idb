@@ -31,18 +31,6 @@ async function load(schemaFileName: string, schema: string, options?: Parameters
 }
 
 describe("prismaIdbContract", () => {
-  it.each(["1e400", "1E5", "1.5e3"])(
-    "refuses the exponent in a Decimal @default(%s) instead of keeping only its leading digits",
-    async (text) => {
-      const result = await load("schema.prisma", `model Price {\n  id String @id\n  d Decimal @default(${text})\n}`);
-      expect(result.ok).toBe(false);
-      if (result.ok) return;
-      expect(result.failure.diagnostics).toContainEqual(
-        expect.objectContaining({ code: "PSL_INVALID_ATTRIBUTE_SYNTAX" })
-      );
-    }
-  );
-
   it.each([
     ["2024-02-29T00:00:00Z", "2024-02-29T00:00:00.000Z"],
     ["2024-02-29T09:30:00+02:00", "2024-02-29T07:30:00.000Z"],

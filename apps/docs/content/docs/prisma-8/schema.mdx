@@ -118,7 +118,7 @@ Queries use an index automatically for supported equality filters on an indexed 
 | `@onCreate(ulid())`, `@onCreate(ksuid())`           | A ULID or a KSUID, on create.                                        |
 | `@onCreate(nanoid())`                               | A Nano ID of 21 characters, on create. `nanoid(10)` sets the length. |
 
-A literal default must be a value that a write to the field accepts. An `Int` default is a whole number from -2147483648 to 2147483647, written without a fraction or an exponent, so `@default(1.0)` is refused. PSL has no exponent syntax for any number, so write `@default(100000)`, not `@default(1e5)`.
+An `Int` default is a whole number from -2147483648 to 2147483647, written without a fraction or an exponent. A `Decimal` default uses an unquoted number such as `@default(12.50)` and keeps every digit. PSL numerals have no exponent syntax. Write `@default(100000)` for a default of one hundred thousand.
 
 The identifier functions require a `String` field, and any of them also works in `@onUpdate(...)`. A field updated on every write takes both attributes: `updatedAt DateTime @onCreate(now()) @onUpdate(now())`.
 

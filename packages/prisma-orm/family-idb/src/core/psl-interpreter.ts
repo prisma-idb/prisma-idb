@@ -626,6 +626,14 @@ function interpretModel(
           span: defaultAttr.span,
         });
         continue;
+      } else if (!field.list && form.kind === "string" && codecId === DECIMAL_CODEC_ID) {
+        diagnostics.push({
+          code: "IDB_INVALID_DEFAULT_VALUE",
+          message: `Field "${model.name}.${field.name}" has a quoted Decimal default. Write an unquoted decimal number, such as 12.50.`,
+          sourceId,
+          span: defaultAttr.span,
+        });
+        continue;
       } else {
         // A Decimal keeps the digits as written; a JS number would round them.
         const literal =

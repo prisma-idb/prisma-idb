@@ -1971,12 +1971,12 @@ describe("shared definition diagnostics", () => {
 });
 
 describe("Decimal literal defaults", () => {
-  it("says a string Decimal default must be finite decimal text", () => {
-    const result = interpret('model Item {\n  id String @id\n  d Decimal @default("abc")\n}');
+  it.each(["abc", "1.50", "1.25e3"])("refuses a quoted Decimal default %s", (written) => {
+    const result = interpret(`model Item {\n  id String @id\n  d Decimal @default("${written}")\n}`);
     expect(result.ok ? [] : result.failure.diagnostics.map((d) => [d.code, d.message])).toEqual([
       [
         "IDB_INVALID_DEFAULT_VALUE",
-        'Field "Item.d" default "abc" is not a Decimal. Write finite decimal text, such as "12.50".',
+        'Field "Item.d" has a quoted Decimal default. Write an unquoted decimal number, such as 12.50.',
       ],
     ]);
   });
