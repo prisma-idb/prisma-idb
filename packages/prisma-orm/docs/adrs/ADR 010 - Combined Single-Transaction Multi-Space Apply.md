@@ -16,7 +16,7 @@ An app and its extensions, such as the sync extension, each have their own migra
 
 The browser collects the pending operations for the app space and for each extension space, then:
 
-1. Opens the database once, at `db.version + 1`, and applies every space's operations in that one `upgradeneeded` transaction.
+1. Opens the database at `db.version + 1` and applies every pending space's operations in that one `upgradeneeded` transaction.
 2. Writes every migrated space's marker in the same transaction, after all the operations.
 
 ```text
@@ -28,7 +28,7 @@ autoMigrate: pending spaces "app" and "idb-sync"
               put marker "idb-sync", put marker "app"
 ```
 
-`autoMigrate` in `client-idb/src/core/auto-migrate.ts` collects the pending operations for each space, and throws on a broken chain before the database is touched. It then makes one `openAndUpgrade` call (`target-idb/src/core/apply-ddl-op.ts`) with every space's operations and markers.
+`autoMigrate` in `client-idb/src/core/auto-migrate.ts` collects the pending operations for each space, and throws on a broken chain before the database is touched. It then makes one `openAndUpgrade` call (`target-idb/src/core/apply-ddl-op.ts`) with every space's operations and markers. Another tab can upgrade the database first, for example one that runs an older build. The client then reads the markers again and makes another combined call for whatever is still pending. After three upgrade attempts, it throws if work is still pending.
 
 ### Order of operations
 
@@ -68,7 +68,7 @@ Combining the spaces fixes both, and removes the app-first rule as a side effect
 ## Consequences
 
 - **Applying several spaces is atomic.** Every space's schema changes and markers commit together, or nothing does.
-- **One upgrade cycle.** A first launch causes exactly one upgrade, and at most one `blocked` cycle, however many spaces need migrating.
+- **One upgrade cycle.** A first launch causes one upgrade, and at most one `blocked` cycle, however many spaces need migrating. If another tab upgrades the database at the same time, the client makes another combined upgrade for whatever is still pending.
 - **`openAndUpgrade` takes a `markers` array**, not a single `marker`.
 - **Extension authors don't have to think about ordering** relative to the app space.
 
