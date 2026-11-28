@@ -1,5 +1,51 @@
 # @prisma-idb/sync-extension-idb
 
+## 0.14.0
+
+### Minor Changes
+
+- [#398](https://github.com/prisma-idb/prisma-idb/pull/398) [`d5e1761`](https://github.com/prisma-idb/prisma-idb/commit/d5e176191e3d219451e981af380ce07ba3cb0d4a) Thanks [@WhyAsh5114](https://github.com/WhyAsh5114)! - Upgrade to Prisma `8.0.0-rc.24` (`prisma` CLI `8.0.0-rc.34`, `@prisma/cli-engine` `0.10.0`).
+
+  - IDB codecs follow the new codec model: each data type reads and spells its own JSON form, and `codecValueToJson` and `codecValueFromJson` from `@prisma-idb/target-idb/runtime` replace a codec's `encodeJson` and `decodeJson`.
+  - Value objects live in storage, as Prisma now stores them. `decodeJsonRecord` takes the whole contract instead of its domain.
+  - The CLI migration runner refuses with `MIGRATION.IDB_CLI_UNSUPPORTED`, replacing `IDB-RUNNER-CLI-UNSUPPORTED`.
+  - The Postgres sync config uses Prisma's own `DateTime`, which is now `timestamptz(3)` read as a JavaScript `Date`. An existing server database needs a one-time migration of each `DateTime` column to `timestamptz(3)`; see "Upgrade a database created before 0.10" in the sync server docs. The injected `Changelog.id` uses `@onCreate(uuid(7))`, because SQL `@default` now sets database defaults only.
+  - Postgres clients take `contract: contractFromJson<Contract>(json)` in place of `contractJson`.
+
+### Patch Changes
+
+- [#416](https://github.com/prisma-idb/prisma-idb/pull/416) [`ce452a9`](https://github.com/prisma-idb/prisma-idb/commit/ce452a9510d0bee55183cb1a10b19620297f77aa) Thanks [@WhyAsh5114](https://github.com/WhyAsh5114)! - A pulled row for a model the client contract doesn't have, such as one a migration removed, now moves the cursor past it. Before, a page made only of such rows left the cursor in place, so the worker requested the same page on every cycle and never pulled later changes.
+
+  The SQL sync server refuses a pull from a client whose storage hash differs from the server's, unless you set `contractCheck: "off"`. So a client that is older than the server does not receive rows for a model it doesn't know yet, and the worker keeps its cursor on the resulting `contractmismatch`. With `contractCheck: "off"`, rows for a model the client lacks are consumed and not pulled again after an upgrade.
+
+- [#440](https://github.com/prisma-idb/prisma-idb/pull/440) [`c5497d2`](https://github.com/prisma-idb/prisma-idb/commit/c5497d28ed9617a09deb964d6863161bef944f54) Thanks [@WhyAsh5114](https://github.com/WhyAsh5114)! - The driver compares primary keys using its IndexedDB factory. Pass the matching `IDBKeyRange` constructor as `keyRange` when the global constructor is missing or comes from a different IndexedDB implementation. The driver uses that constructor for query ranges. You can set it on `createIDBRuntimeDriver`, `createIdbClient`, `createAutoMigratingIdbClient`, `createSyncIdbClient` or `createAutoMigratingSyncIdbClient`.
+
+- [#424](https://github.com/prisma-idb/prisma-idb/pull/424) [`e3990c8`](https://github.com/prisma-idb/prisma-idb/commit/e3990c87ad3400f678d34f5273ef060ba0903b8e) Thanks [@WhyAsh5114](https://github.com/WhyAsh5114)! - `db.transaction()` confirms that IndexedDB committed before reporting `IdbTransactionCommittedEarlyError`. If validation fails after an early commit, the error retains the validation failure as its cause even if the callback caught it. The runner waits on the transaction scope's commit once, so commit hooks run once.
+
+  The sync client emits `outboxwrite` for tracked writes that persisted before a later failure. Both raw transaction APIs also emit `outboxchange` when `markSynced` or `markFailed` commits before the callback throws.
+
+- [#401](https://github.com/prisma-idb/prisma-idb/pull/401) [`587cdff`](https://github.com/prisma-idb/prisma-idb/commit/587cdff582b6b4580d3bb1c072375266858e7185) Thanks [@WhyAsh5114](https://github.com/WhyAsh5114)! - PSL schemas take `@onCreate(fn())` and `@onUpdate(fn())`, as in upstream Prisma 8. The client runs the generator function when a record is created or updated. The functions are `now()` on `DateTime` fields, and `uuid()`, `uuid(7)`, `cuid(2)`, `ulid()`, `nanoid(size?)` and `ksuid()` on `String` fields. Generated values may now sit on optional fields; an explicit `null` still wins.
+
+  Breaking: Prisma 8 removed some Prisma 6 forms, and `contract emit` now refuses them, naming what to write instead:
+
+  - `@default(uuid())` and `@default(cuid())`: write `@onCreate(uuid())` and `@onCreate(cuid(2))` (`PSL_GENERATOR_IN_DEFAULT`).
+  - `@updatedAt` and the `temporal.updatedAt()` type: write `DateTime @onCreate(now()) @onUpdate(now())`.
+
+  TypeScript contracts write the same generators with upstream's `gen` helpers, from `@prisma-idb/family-idb/contract-ts`: `defaults: { id: { onCreate: gen.uuid(7) }, updatedAt: { onCreate: gen.now(), onUpdate: gen.now() } }`. Each call resolves through the same functions as PSL. Breaking: `uuidv4()`, `uuidv7()`, `cuid2()` and `updatedAt()` are removed; write `{ onCreate: gen.uuid() }`, `{ onCreate: gen.uuid(7) }`, `{ onCreate: gen.cuid(2) }` and `{ onCreate: gen.now(), onUpdate: gen.now() }`. `now()` and `autoincrement()` are unchanged.
+
+  A primary key never changes, so any `@onUpdate(...)` on a key field is refused. The code `IDB_TEMPORAL_UPDATED_AT_ON_KEY_FIELD` is renamed `IDB_ON_UPDATE_ON_KEY_FIELD`.
+
+  The rewritten schema or contract emits the same contract, so existing databases need no migration. A schema shared with a SQL sync server now means the same thing on both sides. `@default(now())` and `@default(autoincrement())` are unchanged.
+
+- [#416](https://github.com/prisma-idb/prisma-idb/pull/416) [`469f227`](https://github.com/prisma-idb/prisma-idb/commit/469f2278eb357afaa2bf5f8a9243646f70a8b804) Thanks [@WhyAsh5114](https://github.com/WhyAsh5114)! - When a push fails and recording the failed attempt also fails, the worker now reports the push failure, and logs the second failure with `console.error`. Before, the second error replaced the first, so the `error` event and the rejected `forceSync()` named the bookkeeping failure instead of the transport failure. A tracked transaction that queues a very large number of outbox events no longer rejects after it has committed.
+- Updated dependencies [[`f50b91a`](https://github.com/prisma-idb/prisma-idb/commit/f50b91a5681688ba795951a6d2a412e0735b24a0), [`ea12f85`](https://github.com/prisma-idb/prisma-idb/commit/ea12f851c39ebbbc4b0ae6ea4ec35834a138cdda), [`a704570`](https://github.com/prisma-idb/prisma-idb/commit/a7045700eddf6b4341b42dccbc60d0d622984c65), [`9e86b31`](https://github.com/prisma-idb/prisma-idb/commit/9e86b31bd00a598266681f0a23d824cd289a2403), [`c5497d2`](https://github.com/prisma-idb/prisma-idb/commit/c5497d28ed9617a09deb964d6863161bef944f54), [`cb03796`](https://github.com/prisma-idb/prisma-idb/commit/cb03796c0e4805729e8447a485cb359ed6a5e73f), [`e3990c8`](https://github.com/prisma-idb/prisma-idb/commit/e3990c87ad3400f678d34f5273ef060ba0903b8e), [`f50b91a`](https://github.com/prisma-idb/prisma-idb/commit/f50b91a5681688ba795951a6d2a412e0735b24a0), [`404a816`](https://github.com/prisma-idb/prisma-idb/commit/404a8168729072d1de68ffe5593b39634961549d), [`587cdff`](https://github.com/prisma-idb/prisma-idb/commit/587cdff582b6b4580d3bb1c072375266858e7185), [`05fb7d2`](https://github.com/prisma-idb/prisma-idb/commit/05fb7d2bf717c258fd847630ce2f002c0ea4a2d5), [`5697d8c`](https://github.com/prisma-idb/prisma-idb/commit/5697d8cea94c49a2e782d3272c660c38e3e17b04), [`d5e1761`](https://github.com/prisma-idb/prisma-idb/commit/d5e176191e3d219451e981af380ce07ba3cb0d4a), [`aa11e3d`](https://github.com/prisma-idb/prisma-idb/commit/aa11e3d252496e5ee39fd8d3301916d90c5a0cff), [`8481a35`](https://github.com/prisma-idb/prisma-idb/commit/8481a35328fd03b9d4b1703c51ec40b4ec47a5af), [`94af73f`](https://github.com/prisma-idb/prisma-idb/commit/94af73f643ec9a6ca730a28c3a78a0b98f95574b), [`e052e44`](https://github.com/prisma-idb/prisma-idb/commit/e052e4429fe932015e61f6c2f486702301f67d66), [`c2d4de8`](https://github.com/prisma-idb/prisma-idb/commit/c2d4de852304b250ab6cb54d03d2596272d84781), [`34d8322`](https://github.com/prisma-idb/prisma-idb/commit/34d83229dfa7b2a909a92b2e4d8066f2930d7edf), [`6a7d5be`](https://github.com/prisma-idb/prisma-idb/commit/6a7d5be680115ac8621ad8446df24791f7342516), [`f50b91a`](https://github.com/prisma-idb/prisma-idb/commit/f50b91a5681688ba795951a6d2a412e0735b24a0), [`c1d3b91`](https://github.com/prisma-idb/prisma-idb/commit/c1d3b916c871807af6519266faad874fca5a7578), [`6afa10f`](https://github.com/prisma-idb/prisma-idb/commit/6afa10fb07d028e6a508d1b2674fff0dba9957ae)]:
+  - @prisma-idb/client-idb@0.18.0
+  - @prisma-idb/target-idb@0.18.0
+  - @prisma-idb/family-idb@0.18.0
+  - @prisma-idb/driver-idb@0.18.0
+  - @prisma-idb/adapter-idb@0.18.0
+  - @prisma-idb/runtime-idb@0.18.0
+
 ## 0.13.0
 
 ### Minor Changes

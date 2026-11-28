@@ -1,5 +1,85 @@
 # @prisma-idb/family-idb
 
+## 0.18.0
+
+### Minor Changes
+
+- [#401](https://github.com/prisma-idb/prisma-idb/pull/401) [`587cdff`](https://github.com/prisma-idb/prisma-idb/commit/587cdff582b6b4580d3bb1c072375266858e7185) Thanks [@WhyAsh5114](https://github.com/WhyAsh5114)! - PSL schemas take `@onCreate(fn())` and `@onUpdate(fn())`, as in upstream Prisma 8. The client runs the generator function when a record is created or updated. The functions are `now()` on `DateTime` fields, and `uuid()`, `uuid(7)`, `cuid(2)`, `ulid()`, `nanoid(size?)` and `ksuid()` on `String` fields. Generated values may now sit on optional fields; an explicit `null` still wins.
+
+  Breaking: Prisma 8 removed some Prisma 6 forms, and `contract emit` now refuses them, naming what to write instead:
+
+  - `@default(uuid())` and `@default(cuid())`: write `@onCreate(uuid())` and `@onCreate(cuid(2))` (`PSL_GENERATOR_IN_DEFAULT`).
+  - `@updatedAt` and the `temporal.updatedAt()` type: write `DateTime @onCreate(now()) @onUpdate(now())`.
+
+  TypeScript contracts write the same generators with upstream's `gen` helpers, from `@prisma-idb/family-idb/contract-ts`: `defaults: { id: { onCreate: gen.uuid(7) }, updatedAt: { onCreate: gen.now(), onUpdate: gen.now() } }`. Each call resolves through the same functions as PSL. Breaking: `uuidv4()`, `uuidv7()`, `cuid2()` and `updatedAt()` are removed; write `{ onCreate: gen.uuid() }`, `{ onCreate: gen.uuid(7) }`, `{ onCreate: gen.cuid(2) }` and `{ onCreate: gen.now(), onUpdate: gen.now() }`. `now()` and `autoincrement()` are unchanged.
+
+  A primary key never changes, so any `@onUpdate(...)` on a key field is refused. The code `IDB_TEMPORAL_UPDATED_AT_ON_KEY_FIELD` is renamed `IDB_ON_UPDATE_ON_KEY_FIELD`.
+
+  The rewritten schema or contract emits the same contract, so existing databases need no migration. A schema shared with a SQL sync server now means the same thing on both sides. `@default(now())` and `@default(autoincrement())` are unchanged.
+
+- [#398](https://github.com/prisma-idb/prisma-idb/pull/398) [`d5e1761`](https://github.com/prisma-idb/prisma-idb/commit/d5e176191e3d219451e981af380ce07ba3cb0d4a) Thanks [@WhyAsh5114](https://github.com/WhyAsh5114)! - Upgrade to Prisma `8.0.0-rc.24` (`prisma` CLI `8.0.0-rc.34`, `@prisma/cli-engine` `0.10.0`).
+
+  - IDB codecs follow the new codec model: each data type reads and spells its own JSON form, and `codecValueToJson` and `codecValueFromJson` from `@prisma-idb/target-idb/runtime` replace a codec's `encodeJson` and `decodeJson`.
+  - Value objects live in storage, as Prisma now stores them. `decodeJsonRecord` takes the whole contract instead of its domain.
+  - The CLI migration runner refuses with `MIGRATION.IDB_CLI_UNSUPPORTED`, replacing `IDB-RUNNER-CLI-UNSUPPORTED`.
+  - The Postgres sync config uses Prisma's own `DateTime`, which is now `timestamptz(3)` read as a JavaScript `Date`. An existing server database needs a one-time migration of each `DateTime` column to `timestamptz(3)`; see "Upgrade a database created before 0.10" in the sync server docs. The injected `Changelog.id` uses `@onCreate(uuid(7))`, because SQL `@default` now sets database defaults only.
+  - Postgres clients take `contract: contractFromJson<Contract>(json)` in place of `contractJson`.
+
+### Patch Changes
+
+- [#486](https://github.com/prisma-idb/prisma-idb/pull/486) [`9e86b31`](https://github.com/prisma-idb/prisma-idb/commit/9e86b31bd00a598266681f0a23d824cd289a2403) Thanks [@WhyAsh5114](https://github.com/WhyAsh5114)! - PSL now decodes escape sequences in `@@map`, `name:` and `map:` strings, as upstream Prisma does. For example, `@@map("a\\b")` now names the store `a\b`. Unknown escapes, such as `\q`, stay as written.
+
+  **Breaking:** a name that contains a valid escape sequence now decodes to a different name. The next migration you plan reflects the new name, and the browser applies it when the app opens. Depending on the schema, the migration can:
+
+  - **Index names:** drop the old index and create the new one. Records are kept.
+  - **Store names:** create an empty store under the new name and drop the old store with its records. If the new name is another model's old store name, the planner either reuses that store and its records or refuses the migration because the key paths differ.
+
+  To keep the old names, write each one as a PSL string again: escape every backslash as `\\` and every double quote as `\"`. For example, a store emitted as `a\nb` needs `@@map("a\\nb")`. Compare the emitted contract with the previous one, and review the planned migration for dropped stores, before you ship it.
+
+- [#362](https://github.com/prisma-idb/prisma-idb/pull/362) [`f50b91a`](https://github.com/prisma-idb/prisma-idb/commit/f50b91a5681688ba795951a6d2a412e0735b24a0) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Accept tagged `date` defaults on PSL `DateTime` fields, such as ``@default(date`2024-01-01T09:30:00Z`)``. The field's codec reads the literal, so a date that does not exist, a calendar date with no time, a time without a UTC offset, an unknown tag or a tagged default on a non-`DateTime` field is reported at the schema.
+
+- [#441](https://github.com/prisma-idb/prisma-idb/pull/441) [`5697d8c`](https://github.com/prisma-idb/prisma-idb/commit/5697d8cea94c49a2e782d3272c660c38e3e17b04) Thanks [@WhyAsh5114](https://github.com/WhyAsh5114)! - `prisma-idb migration preflight` replays the chain through the browser's own upgrade, which also writes each migration's marker. The upgrade fails if the chain omits the `_prisma_next_marker` store or creates it with a key path other than `space`.
+
+  Breaking: `prisma-idb migration preflight` now exits 2 with `IDB-CLI.PREFLIGHT_FAILED` and prints "No migration packages found" when the migrations directory has no packages. Before, it exited 0 with "Nothing to preflight". A CI job that runs preflight before the first `migration plan` must now plan the baseline first, or skip the step. The `prisma-orm-usage` and `prisma-orm-kanban-example` apps already have migration chains, so their scripts are unaffected.
+
+  Generating the contract space reports the file name when `migration.json` or `ops.json` is missing, cannot be read, or contains invalid JSON syntax. It also reports `ops.json` when its top-level value is anything other than an array.
+
+- [#455](https://github.com/prisma-idb/prisma-idb/pull/455) [`aa11e3d`](https://github.com/prisma-idb/prisma-idb/commit/aa11e3d252496e5ee39fd8d3301916d90c5a0cff) Thanks [@WhyAsh5114](https://github.com/WhyAsh5114)! - In PSL, two indexes with the same name, such as `@@unique([a], name: "both")` and `@@index([b], name: "both")`, now fail with `IDB_INVALID_INDEX`. Before, the later index replaced the earlier one, which could drop a uniqueness constraint. The same applies when a declared name matches a name generated on other fields, such as `@@index([other], name: "email_unique")` next to `email String @unique`; the error says which attribute generated the name. Two declarations with the same name over the same fields still merge into one index, unique if either one is, as upstream Prisma's Mongo authoring does. Give each index in a model its own name.
+
+  PSL and TypeScript authoring also reject an index named `__proto__` because contract emission drops it. Rename the index to keep its constraint.
+
+- [#405](https://github.com/prisma-idb/prisma-idb/pull/405) [`8481a35`](https://github.com/prisma-idb/prisma-idb/commit/8481a35328fd03b9d4b1703c51ec40b4ec47a5af) Thanks [@WhyAsh5114](https://github.com/WhyAsh5114)! - Breaking: two models with the same store name now fail with `IDB_DUPLICATE_STORE_NAME` in PSL and TypeScript. Before, the second model's store replaced the first, so `model Todo` and `model todo` compiled to one store with the wrong layout for one of them. Give each model its own store name, with `@@map` in PSL or `store` in TypeScript.
+
+  Moving a model to a new store name creates an empty store. If one model keeps the old store name, the planner can rewrite every row there to match that model's record shape. It cannot tell which rows belong to the model that moved. A changed key path or auto-increment setting prevents the planner from reusing the store, and a new unique index can fail on rows from the other model. In those cases, give both models new store names. The migration drops the old store and deletes its rows when neither model keeps its name.
+
+  A hand-authored `migration.ts` can rewrite rows within a store. Copying rows between stores requires app code. Run the recovery on each device before resuming normal writes.
+
+  1. Pause writes from the app, other tabs, and sync. Keep other tabs from starting an upgrade until the backup is saved. On a device still at the old migration, open the database without requesting a new version and export the rows you need and their primary keys before calling `createAutoMigratingIdbClient`. Identify each row's destination using your app's data. Save the backup and a pending-import flag somewhere the upgrade cannot touch, such as a separate IndexedDB database. Recover rows that were already overwritten from another source if you have one.
+  2. Apply the schema upgrade. Convert the saved rows to their destination models' record shapes and import them into the intended stores. If a model kept the old store, remove the moved model's old copies after verifying their import. Use the keys recorded in the backup to identify those copies.
+  3. Make the restore safe to rerun. On reload, check for a pending import even if the schema is already current. Clear the flag and resume writes only after verifying the restored rows and any cleanup. If you use the sync client to import, account for the new outbox events it queues.
+
+- [#435](https://github.com/prisma-idb/prisma-idb/pull/435) [`94af73f`](https://github.com/prisma-idb/prisma-idb/commit/94af73f643ec9a6ca730a28c3a78a0b98f95574b) Thanks [@WhyAsh5114](https://github.com/WhyAsh5114)! - Reject incomplete PSL arguments for `@default`, `@onCreate` and `@onUpdate` after parser recovery, including on excluded fields and models. Use a decimal literal such as `100000` for a numeric default. Exponent notation such as `1e5` does not produce a default of `1`.
+
+- [#454](https://github.com/prisma-idb/prisma-idb/pull/454) [`c2d4de8`](https://github.com/prisma-idb/prisma-idb/commit/c2d4de852304b250ab6cb54d03d2596272d84781) Thanks [@WhyAsh5114](https://github.com/WhyAsh5114)! - Breaking: a model, store, field, relation, index, enum or enum member named `__proto__` or `_generated` fails with `IDB_RESERVED_NAME` in PSL and TypeScript, and so does a store named `_prisma_next_marker`. JavaScript reads `__proto__` as an object's prototype rather than as a key, so it can't be kept as a name. Contract emission drops every key named `_generated`, so before, a field or relation with that name silently vanished from the emitted contract. The client always creates the `_prisma_next_marker` store for the contract marker, so a model stored under that name collided with it. Rename the model, field or store.
+
+  An index named `__proto__` previously reported `IDB_INVALID_INDEX`. It now reports `IDB_RESERVED_NAME` like the other reserved names.
+
+- [#485](https://github.com/prisma-idb/prisma-idb/pull/485) [`34d8322`](https://github.com/prisma-idb/prisma-idb/commit/34d83229dfa7b2a909a92b2e4d8066f2930d7edf) Thanks [@WhyAsh5114](https://github.com/WhyAsh5114)! - Migration planning and `prisma-idb migration preflight` now handle store and index names that match `Object.prototype` members, such as `toString` or `constructor`. Before, both treated these names as always present:
+
+  - Planning skipped creating or dropping such a store or index, or failed with a `TypeError`.
+  - Preflight missed an extra store or index with such a name, and failed with a `TypeError` when one was missing.
+
+  `__proto__` is still a reserved name, and authoring refuses it.
+
+- [#436](https://github.com/prisma-idb/prisma-idb/pull/436) [`6a7d5be`](https://github.com/prisma-idb/prisma-idb/commit/6a7d5be680115ac8621ad8446df24791f7342516) Thanks [@WhyAsh5114](https://github.com/WhyAsh5114)! - `stripIdbExcludeAttributes`, which the sync server uses to load an IDB schema, now finds `@idb.exclude` and `@@idb.exclude` in the parser's syntax tree instead of matching text:
+
+  - Look-alike `@idb.exclude` and `@@idb.exclude` text in string literals and comments remains unchanged.
+  - A model with CRLF line endings no longer keeps a stray blank line where `@@idb.exclude` was.
+  - `@@idb.exclude` followed by another attribute on the same line, such as `@@map("a")`, no longer takes that attribute with it.
+
+- Updated dependencies [[`ea12f85`](https://github.com/prisma-idb/prisma-idb/commit/ea12f851c39ebbbc4b0ae6ea4ec35834a138cdda), [`a704570`](https://github.com/prisma-idb/prisma-idb/commit/a7045700eddf6b4341b42dccbc60d0d622984c65), [`404a816`](https://github.com/prisma-idb/prisma-idb/commit/404a8168729072d1de68ffe5593b39634961549d), [`587cdff`](https://github.com/prisma-idb/prisma-idb/commit/587cdff582b6b4580d3bb1c072375266858e7185), [`05fb7d2`](https://github.com/prisma-idb/prisma-idb/commit/05fb7d2bf717c258fd847630ce2f002c0ea4a2d5), [`5697d8c`](https://github.com/prisma-idb/prisma-idb/commit/5697d8cea94c49a2e782d3272c660c38e3e17b04), [`d5e1761`](https://github.com/prisma-idb/prisma-idb/commit/d5e176191e3d219451e981af380ce07ba3cb0d4a), [`34d8322`](https://github.com/prisma-idb/prisma-idb/commit/34d83229dfa7b2a909a92b2e4d8066f2930d7edf), [`f50b91a`](https://github.com/prisma-idb/prisma-idb/commit/f50b91a5681688ba795951a6d2a412e0735b24a0)]:
+  - @prisma-idb/target-idb@0.18.0
+
 ## 0.17.0
 
 ### Patch Changes

@@ -1,5 +1,13 @@
 # @prisma-idb/adapter-idb
 
+## 0.18.0
+
+### Patch Changes
+
+- Updated dependencies [[`ea12f85`](https://github.com/prisma-idb/prisma-idb/commit/ea12f851c39ebbbc4b0ae6ea4ec35834a138cdda), [`a704570`](https://github.com/prisma-idb/prisma-idb/commit/a7045700eddf6b4341b42dccbc60d0d622984c65), [`c5497d2`](https://github.com/prisma-idb/prisma-idb/commit/c5497d28ed9617a09deb964d6863161bef944f54), [`cb03796`](https://github.com/prisma-idb/prisma-idb/commit/cb03796c0e4805729e8447a485cb359ed6a5e73f), [`404a816`](https://github.com/prisma-idb/prisma-idb/commit/404a8168729072d1de68ffe5593b39634961549d), [`587cdff`](https://github.com/prisma-idb/prisma-idb/commit/587cdff582b6b4580d3bb1c072375266858e7185), [`05fb7d2`](https://github.com/prisma-idb/prisma-idb/commit/05fb7d2bf717c258fd847630ce2f002c0ea4a2d5), [`5697d8c`](https://github.com/prisma-idb/prisma-idb/commit/5697d8cea94c49a2e782d3272c660c38e3e17b04), [`d5e1761`](https://github.com/prisma-idb/prisma-idb/commit/d5e176191e3d219451e981af380ce07ba3cb0d4a), [`34d8322`](https://github.com/prisma-idb/prisma-idb/commit/34d83229dfa7b2a909a92b2e4d8066f2930d7edf), [`f50b91a`](https://github.com/prisma-idb/prisma-idb/commit/f50b91a5681688ba795951a6d2a412e0735b24a0)]:
+  - @prisma-idb/target-idb@0.18.0
+  - @prisma-idb/driver-idb@0.18.0
+
 ## 0.17.0
 
 ### Patch Changes

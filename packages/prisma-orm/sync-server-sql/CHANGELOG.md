@@ -1,5 +1,40 @@
 # @prisma-idb/sync-server-sql
 
+## 0.12.0
+
+### Minor Changes
+
+- [#398](https://github.com/prisma-idb/prisma-idb/pull/398) [`d5e1761`](https://github.com/prisma-idb/prisma-idb/commit/d5e176191e3d219451e981af380ce07ba3cb0d4a) Thanks [@WhyAsh5114](https://github.com/WhyAsh5114)! - Upgrade to Prisma `8.0.0-rc.24` (`prisma` CLI `8.0.0-rc.34`, `@prisma/cli-engine` `0.10.0`).
+
+  - IDB codecs follow the new codec model: each data type reads and spells its own JSON form, and `codecValueToJson` and `codecValueFromJson` from `@prisma-idb/target-idb/runtime` replace a codec's `encodeJson` and `decodeJson`.
+  - Value objects live in storage, as Prisma now stores them. `decodeJsonRecord` takes the whole contract instead of its domain.
+  - The CLI migration runner refuses with `MIGRATION.IDB_CLI_UNSUPPORTED`, replacing `IDB-RUNNER-CLI-UNSUPPORTED`.
+  - The Postgres sync config uses Prisma's own `DateTime`, which is now `timestamptz(3)` read as a JavaScript `Date`. An existing server database needs a one-time migration of each `DateTime` column to `timestamptz(3)`; see "Upgrade a database created before 0.10" in the sync server docs. The injected `Changelog.id` uses `@onCreate(uuid(7))`, because SQL `@default` now sets database defaults only.
+  - Postgres clients take `contract: contractFromJson<Contract>(json)` in place of `contractJson`.
+
+- [#427](https://github.com/prisma-idb/prisma-idb/pull/427) [`b9ca13e`](https://github.com/prisma-idb/prisma-idb/commit/b9ca13ea8a196e34314d62498dafb07e7dcb46de) Thanks [@WhyAsh5114](https://github.com/WhyAsh5114)! - Pass the top-level SQL client to `pull` and `resolvePullRecord`. A custom client must open a top-level transaction and honor `{ isolationLevel: "RepeatableRead" }`. A Prisma transaction scope cannot open the required snapshot.
+
+  A pull now reads its changelog page, the rows and their ownership chains in one transaction, at `REPEATABLE READ` on PostgreSQL. Custom pulls through `resolvePullRecord` and records returned with rejected pushes use the same isolation. Before, each read was a separate statement, so a write committed during the pull could pair a row with an ownership graph that never existed at the same time.
+
+  The reads in that transaction run one after another, and hold one connection for the page. The number of queries grows with the page size and the number of ownership hops. The default page size is 50. Lower `pullLimit` (or `limit`) if pages are slow or you have a small connection pool.
+
+- [#430](https://github.com/prisma-idb/prisma-idb/pull/430) [`c417c0c`](https://github.com/prisma-idb/prisma-idb/commit/c417c0c3bf1c248929a0a15047e0943b4bb7b673) Thanks [@WhyAsh5114](https://github.com/WhyAsh5114)! - `createSqlSyncAdapter` and `createSqlSync` now require a PostgreSQL contract and throw at startup for other targets. The adapter uses PostgreSQL's public schema, codecs and transaction locks.
+
+### Patch Changes
+
+- [#428](https://github.com/prisma-idb/prisma-idb/pull/428) [`2f3e771`](https://github.com/prisma-idb/prisma-idb/commit/2f3e771dbf46a78dddba28de6cb1e59b0090b69a) Thanks [@WhyAsh5114](https://github.com/WhyAsh5114)! - A synced model whose primary key is mapped to another column, such as `id String @id @map("user_id")`, now syncs. `sqlGetKeyField` returned the column name, so push and pull looked the key up under `user_id` in records and ORM queries that use the field name `id`. It now returns the field name.
+
+  The sync server checks the key resolver for every synced model at startup. Unsupported compound keys fail when the server is created, and the error says to exclude the model from the client contract, or, for the sync root model, to give it a single-field primary key.
+
+- [#429](https://github.com/prisma-idb/prisma-idb/pull/429) [`ab4ab49`](https://github.com/prisma-idb/prisma-idb/commit/ab4ab493be00cd4c2b2fed93a4ce6737d32fd2e7) Thanks [@WhyAsh5114](https://github.com/WhyAsh5114)! - Sync now refuses an ownership relation that joins its parent on a column other than the parent's primary key, for every operation and for pulls. Before, `validatePush` refused it only for creates and updates. The SQL adapter's ownership walk reads each parent by primary key using the foreign key's value, so a delete or a pull through such a join could authorize the wrong row when you used the adapter with your own check or server. (`createSqlSyncAdapter` already refused such a contract at startup when you passed it a `syncServer`.)
+
+  `validatePush` and `buildPullQueries` now throw `Unsupported tenant parent join "Profile.user": expected a single-field FK to the parent's key.` for such a relation. The SQL adapter's `applyPushEvent`, `resolvePullRecord`, pull and push reconciliation throw it before they walk ownership, even when you pass your own check or server. `applyPushEvent` still returns `KEYPATH_VALIDATION_FAILURE` first when the event's key differs from the check's key. To fix the error, make the relation reference the parent's single-field primary key.
+
+- Updated dependencies [[`ea12f85`](https://github.com/prisma-idb/prisma-idb/commit/ea12f851c39ebbbc4b0ae6ea4ec35834a138cdda), [`ce452a9`](https://github.com/prisma-idb/prisma-idb/commit/ce452a9510d0bee55183cb1a10b19620297f77aa), [`a704570`](https://github.com/prisma-idb/prisma-idb/commit/a7045700eddf6b4341b42dccbc60d0d622984c65), [`c5497d2`](https://github.com/prisma-idb/prisma-idb/commit/c5497d28ed9617a09deb964d6863161bef944f54), [`e3990c8`](https://github.com/prisma-idb/prisma-idb/commit/e3990c87ad3400f678d34f5273ef060ba0903b8e), [`404a816`](https://github.com/prisma-idb/prisma-idb/commit/404a8168729072d1de68ffe5593b39634961549d), [`587cdff`](https://github.com/prisma-idb/prisma-idb/commit/587cdff582b6b4580d3bb1c072375266858e7185), [`469f227`](https://github.com/prisma-idb/prisma-idb/commit/469f2278eb357afaa2bf5f8a9243646f70a8b804), [`05fb7d2`](https://github.com/prisma-idb/prisma-idb/commit/05fb7d2bf717c258fd847630ce2f002c0ea4a2d5), [`5697d8c`](https://github.com/prisma-idb/prisma-idb/commit/5697d8cea94c49a2e782d3272c660c38e3e17b04), [`d5e1761`](https://github.com/prisma-idb/prisma-idb/commit/d5e176191e3d219451e981af380ce07ba3cb0d4a), [`34d8322`](https://github.com/prisma-idb/prisma-idb/commit/34d83229dfa7b2a909a92b2e4d8066f2930d7edf), [`c417c0c`](https://github.com/prisma-idb/prisma-idb/commit/c417c0c3bf1c248929a0a15047e0943b4bb7b673), [`2f3e771`](https://github.com/prisma-idb/prisma-idb/commit/2f3e771dbf46a78dddba28de6cb1e59b0090b69a), [`1742b9c`](https://github.com/prisma-idb/prisma-idb/commit/1742b9c819b4512effa8f9e6f398e3422f1c78d4), [`ab4ab49`](https://github.com/prisma-idb/prisma-idb/commit/ab4ab493be00cd4c2b2fed93a4ce6737d32fd2e7), [`f50b91a`](https://github.com/prisma-idb/prisma-idb/commit/f50b91a5681688ba795951a6d2a412e0735b24a0)]:
+  - @prisma-idb/target-idb@0.18.0
+  - @prisma-idb/sync-extension-idb@0.14.0
+  - @prisma-idb/sync-server@0.10.0
+
 ## 0.11.0
 
 ### Minor Changes
