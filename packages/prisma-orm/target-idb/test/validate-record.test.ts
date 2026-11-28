@@ -175,6 +175,27 @@ describe("validateRecord", () => {
     }
   });
 
+  it.each([
+    [{ many: { elementNullable: false } }, [1], "0"],
+    [{ dict: true }, { own: 1 }, "own"],
+  ] as const)("rejects Json container accessors without reading them", (container, value, key) => {
+    const json = field("idb/json@1", container);
+    const getter = vi.fn(() => {
+      Object.defineProperty(value, key, { value: 1, enumerable: true });
+      return 1;
+    });
+    Object.defineProperty(value, key, { get: getter, enumerable: true, configurable: true });
+    expect(validateRecord(contract({ json }), "Item", { id: "a", json: value }).ok).toBe(false);
+    expect(getter).not.toHaveBeenCalled();
+  });
+
+  it("reports invalid null list elements with one short diagnostic", () => {
+    const json = field("idb/json@1", { many: { elementNullable: false } });
+    const result = validateRecord(contract({ json }), "Item", { id: "a", json: Array(10_000).fill(null) });
+    expect(result).toMatchObject({ ok: false, issues: [expect.stringContaining("json")] });
+    if (!result.ok) expect(result.issues[0]!.length).toBeLessThan(150);
+  });
+
   it("allows 1000 Json containers and rejects deeper nesting", () => {
     const scalar = contract({ json: field("idb/json@1") });
     const nest = (depth: number, value: unknown = 1) => {

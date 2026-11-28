@@ -6,6 +6,7 @@ export { codecValueFromJson, codecValueToJson, idbCodecLookup } from "../core/co
 export { absentAsNull } from "../core/absent-as-null";
 export type { AbsentAsNull } from "../core/absent-as-null";
 export { decodeJsonRecord } from "../core/decode-json-record";
+export { snapshotJsonFields } from "../core/snapshot-json-fields";
 export { assertRecordValidator, validateRecord, validateKeyFields, validateKeyPath } from "../core/validate-record";
 export type { ValidationResult, ValidationCodecLookup, RecordValidationOptions } from "../core/validate-record";
 export {

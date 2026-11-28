@@ -19,16 +19,6 @@ export function isJsonCodec(codecId: string): boolean {
   return codecId === "idb/json@1" || codecId === "pg/json@1" || codecId === "pg/jsonb@1";
 }
 
-/** JSON encodes only a dense array's indexed elements. */
-function isDenseJsonArray(value: readonly unknown[]): boolean {
-  if ("toJSON" in value || Reflect.ownKeys(value).length !== value.length + 1) return false;
-  for (let index = 0; index < value.length; index++) {
-    const descriptor = Object.getOwnPropertyDescriptor(value, index);
-    if (!descriptor?.enumerable || !Object.hasOwn(descriptor, "value")) return false;
-  }
-  return true;
-}
-
 /** Checks for plain JSON data without altering the input or recursing on the JS stack. */
 export function isJsonCompatible(root: unknown): root is JsonValue {
   const path = new WeakSet<object>();
@@ -84,9 +74,14 @@ export function isJsonCompatible(root: unknown): root is JsonValue {
 
 function jsonChildren(value: object): { children: unknown[]; work: number } | undefined {
   if (Array.isArray(value)) {
-    if (!isDenseJsonArray(value)) return undefined;
+    // JSON encodes only a dense array's indexed elements.
+    if ("toJSON" in value || Reflect.ownKeys(value).length !== value.length + 1) return undefined;
     const children: unknown[] = [];
-    for (let index = 0; index < value.length; index++) children.push(value[index]);
+    for (let index = 0; index < value.length; index++) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, index);
+      if (!descriptor?.enumerable || !Object.hasOwn(descriptor, "value")) return undefined;
+      children.push(descriptor.value);
+    }
     return { children, work: 1 };
   }
 

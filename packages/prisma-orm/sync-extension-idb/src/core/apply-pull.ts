@@ -54,7 +54,7 @@ import type { IdbTransactionScope } from "@prisma-idb/driver-idb/runtime";
 import type { IdbContract } from "@prisma-idb/client-idb/orm";
 import { getStoreName, getKeyPath, extractKeyFromRow } from "@prisma-idb/client-idb/orm";
 import { collectDeleteStoreNames, applyReferentialActionsForRow } from "@prisma-idb/client-idb/internal";
-import { decodeJsonRecord, validateRecord, validateKeyPath } from "@prisma-idb/target-idb/runtime";
+import { decodeJsonRecord, snapshotJsonFields, validateRecord, validateKeyPath } from "@prisma-idb/target-idb/runtime";
 import type { SyncIdbClient } from "./sync-client";
 import { deleteRecord, putRecord } from "./raw-store";
 import { VERSION_META_STORE, versionMetaKey, resolveVersionMeta, nativeVersionMetaKey } from "./version-meta";
@@ -147,7 +147,7 @@ export function decodePullLog<TContract extends IdbContract>(
     if (!validateKeyPath(contract, log.model, key).ok) return null;
     if (isDelete) return { key, record: null };
 
-    const record = decodeJsonRecord(contract, log.model, log.record!);
+    const record = snapshotJsonFields(contract, log.model, decodeJsonRecord(contract, log.model, log.record!));
     if (!validateRecord(contract, log.model, record).ok) return null;
     if (!decimalKeysEqual(contract, log.model, key, extractKeyFromRow(record, keyPath))) return null;
     return { key, record };

@@ -6,6 +6,7 @@ import type {
 } from "@prisma/orm-framework/contract/types";
 import { domainModelsAtDefaultNamespace, valueObjectAt } from "@prisma/orm-framework/contract/types";
 import { codecValueFromJson, idbCodecLookup } from "./codecs";
+import { isJsonCodec } from "./json-value";
 
 /**
  * Decode a plain JS record that arrived as wire JSON (e.g. an HTTP pull
@@ -54,6 +55,8 @@ function decodeFieldValue(
   fieldLabel: string
 ): unknown {
   if (value === null || value === undefined) return value;
+  // JSON codecs use the same value on the wire and in storage. Keep the container intact for validation.
+  if (field.type.kind === "scalar" && isJsonCodec(field.type.codecId)) return value;
   if (field.many) {
     return Array.isArray(value)
       ? value.map((el) => (el === null ? el : decodeScalarOrValueObject(el, field, contract, fieldLabel)))

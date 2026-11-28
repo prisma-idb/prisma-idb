@@ -120,13 +120,15 @@ function buildField(
     validator = validator.narrow((value) => value !== undefined && (elementNullable || value !== null)).array();
   }
   if (field.dict) validator = type({ "[string]": validator });
-  // JSON null is a scalar value (Prisma JsonNull), independent of database nullability.
   if (jsonScalar) {
-    validator = validator.narrow(
+    // Inspect descriptors before the native shape's list or dictionary traversal reads any values.
+    // JSON null is a scalar value, independent of database nullability.
+    const nativeShape = field.nullable ? validator.or("null") : validator;
+    return type("unknown").narrow(
       (value, context) =>
-        isJsonCompatible(value) || context.reject({ expected: "a JSON-compatible value", actual: "invalid JSON data" })
+        (isJsonCompatible(value) && nativeShape.allows(value)) ||
+        context.reject({ expected: "a JSON-compatible value", actual: "invalid JSON data" })
     );
-    if (!field.many && !field.dict) return validator;
   }
   return field.nullable ? validator.or("null") : validator.exclude("null | undefined");
 }

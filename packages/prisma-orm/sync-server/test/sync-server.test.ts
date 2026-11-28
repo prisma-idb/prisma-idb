@@ -57,7 +57,7 @@ describe("createSyncServer", () => {
   });
 
   describe("validatePush", () => {
-    it("rejects a PostgreSQL JSON value before authorizing a push", () => {
+    it("rejects invalid JSON using the projected client contract before authorizing a push", () => {
       const contract = kanbanContract();
       const clientContract = kanbanClientContract();
       contract.domain.namespaces[Object.keys(contract.domain.namespaces)[0]!]!.models["User"]!.fields["name"] = {

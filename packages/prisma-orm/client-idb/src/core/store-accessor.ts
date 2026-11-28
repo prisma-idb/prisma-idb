@@ -2,7 +2,7 @@ import { type IdbUpdateCallback, resolveFieldUpdates, applyFieldUpdates } from "
 import { AsyncIterableResult } from "@prisma/orm-framework/components/runtime";
 import { domainModelsAtDefaultNamespace, type PlanMeta } from "@prisma/orm-framework/contract/types";
 import type { IdbFilterExpr, IdbQueryPlan } from "@prisma-idb/adapter-idb/runtime";
-import { absentAsNull, isValidIdbKey } from "@prisma-idb/target-idb/runtime";
+import { absentAsNull, isValidIdbKey, snapshotJsonFields } from "@prisma-idb/target-idb/runtime";
 import type {
   IdbAggregateAst,
   IdbCountAst,
@@ -647,7 +647,7 @@ export class IdbStoreAccessorImpl<
 
   /** Complete and validate one record, using a transaction when relations need checks. */
   async create(data: MutationCreateInput<TContract, ModelName>): Promise<DefaultModelRow<TContract, ModelName>> {
-    const record = data as Record<string, unknown>;
+    const record = snapshotJsonFields(this.#contract, this.#modelName, data as Record<string, unknown>);
 
     if (hasNestedMutationCallbacks(this.#contract, this.#modelName, record)) {
       const row = await executeNestedCreateMutation({
@@ -844,7 +844,7 @@ export class IdbStoreAccessorImpl<
     const whereExpr = shorthandToFilterExpr(where);
     assertKnownFilterFields(this.#contract, this.#modelName, whereExpr);
     const meta = this.#planMeta(this.#newGroupingKey());
-    const createRecord = args.create as Record<string, unknown>;
+    const createRecord = snapshotJsonFields(this.#contract, this.#modelName, args.create as Record<string, unknown>);
     const resolvedUpdates = resolveFieldUpdates(this.#contract, this.#modelName, args.update);
     const patchRecord = resolvedUpdates.patch;
     const storeName = this.#storeName;
@@ -929,7 +929,12 @@ export class IdbStoreAccessorImpl<
     // default can fill in a foreign key.
     const defaultsCache = createMutationDefaultsCache();
     const records = data.map((d) =>
-      completeCreateRecord(this.#contract, this.#modelName, d as Record<string, unknown>, defaultsCache)
+      completeCreateRecord(
+        this.#contract,
+        this.#modelName,
+        snapshotJsonFields(this.#contract, this.#modelName, d as Record<string, unknown>),
+        defaultsCache
+      )
     );
     if (records.some((row) => hasScalarFkFields(this.#contract, this.#modelName, row))) {
       const executor = requireTransactionExecutor(this.#executor);
