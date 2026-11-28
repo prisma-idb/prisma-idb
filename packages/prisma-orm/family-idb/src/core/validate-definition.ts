@@ -113,6 +113,16 @@ function validateLiteralDefault(
 ): void {
   const at = ["models", model.modelName, "fields", field.name];
   const label = `Field "${model.modelName}.${field.name}"`;
+  const literal = field.literalDefault;
+  // A contract stores a Float default as JSON, which has no number for NaN or an infinity.
+  if (field.codecId === "idb/double@1" && !field.list && typeof literal === "number" && !Number.isFinite(literal)) {
+    report(
+      "IDB_INVALID_DEFAULT_VALUE",
+      `${label} has the default ${literal}, which a contract can't store. Use a finite number.`,
+      [...at, "literalDefault"]
+    );
+    return;
+  }
   if (field.literalDefault !== undefined) {
     const defaultAt = [...at, "literalDefault"];
     if (field.list) {
