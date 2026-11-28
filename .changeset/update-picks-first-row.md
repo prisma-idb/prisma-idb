@@ -2,12 +2,11 @@
 "@prisma-idb/client-idb": patch
 ---
 
-`update()` now changes the first row of the chain, in the order and after the offset that `orderBy()` and `skip()` set. Before, it ignored `orderBy()`, `skip()` and `take()` and changed the first row in key order, so `orderBy({ serial: "desc" }).update(...)` could change the wrong row and `take(0).update(...)` changed a row. Now `orderBy()` and `skip()` pick the row, and after `take(0)` nothing changes and the result is `null`.
+`update()` now changes the row that `first()` would return for the same chain. Before, it ignored `orderBy()`, `skip()` and `take()` and changed the first row in key order.
 
-An update with a relation callback finds its row by the filter alone, so it now throws `IdbRelationUpdateError` on a collection with `orderBy()`, `skip()` or `take()`, as in Prisma 8.
-
-After `take(0)`, `update()` validates its data and throws `IdbRecordValidationError` for an invalid patch. Foreign-key and `onUpdate` checks run only when the update selects a row.
-
-An update after `orderBy()` or `skip()` checks foreign keys on the row it picks, so it throws only when that row is written, as Prisma does. A plain update still checks the foreign keys in its data first, so it can throw for a missing parent when no row matches. `orderBy({})` sorts by nothing and now counts as no order for scalar updates too, as it already did for relation updates.
-
-An update with a relation callback on a collection with no filter, such as `where({})`, now changes the first row in key order, as a scalar update does. Before, it returned `null` without changing anything.
+- `orderBy()` and `skip()` choose the row. For example, `orderBy({ serial: "desc" }).update(...)` changes the row with the highest `serial`.
+- After `take(0)`, no row changes and `update()` returns `null`. Before, it changed a row. It still validates the data and throws `IdbRecordValidationError` for an invalid patch. Foreign-key and `onUpdate` checks run only when a row is picked.
+- An update with a relation callback, such as `posts: (p) => p.connect(...)`, finds its row by the filter alone. It now throws `IdbRelationUpdateError` if the chain has `orderBy()`, `skip()` or `take()`. To fix the error, remove them or filter to one row, such as by `id`.
+- On a chain with `orderBy()` or `skip()`, foreign keys are checked on the row the update picks, so a missing parent throws only when that row is written. A plain update still checks the foreign keys in its data first, so it can throw when no row matches.
+- `orderBy({})` sorts by nothing and counts as no order for every kind of update.
+- An update with a relation callback on an unfiltered chain, such as `where({})`, now changes the first row in key order. Before, it returned `null` and changed nothing.

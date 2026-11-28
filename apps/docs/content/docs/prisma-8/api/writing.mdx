@@ -35,9 +35,33 @@ Use `createCount()` when you only need the number of rows.
 const todo = await db.orm.todo.where({ id: todoId }).update({ done: true });
 ```
 
-It changes the first row of the chain: `orderBy()` and `skip()` pick that row, as they do for `first()`. After `take(0)` no row matches, so it changes nothing and returns `null`, but the data is still validated, so invalid data throws `IdbRecordValidationError` as it does without `take(0)`. Foreign-key and `onUpdate` checks need a row, so they don't run. `first()` ignores `take()`, so it still returns a row there. An update with a relation callback finds its row by the filter alone, so it throws `IdbRelationUpdateError` if the chain has `orderBy()`, `skip()` or `take()`. `orderBy({})` sorts by nothing, so it counts as no order for both kinds of update.
+`update()` changes one row: the first row the chain matches. It returns the updated row, or `null` when no row matches.
 
-An update after `orderBy()` or `skip()` runs the same checks as a plain update on the row it picks: foreign keys, `onUpdate` actions, list operations and `@onUpdate` defaults. The two differ in when foreign keys are checked. A plain update checks the foreign keys in its data before it looks for a row, so it throws for a missing parent even when no row matches. The exceptions are data that sets only part of a compound foreign key and an `@onUpdate` default that gives each row its own value: those are checked per row. An update after `orderBy()` or `skip()` checks them on the row it picks, so when the window selects no row it returns `null` without an error. Prisma raises a foreign-key error only when a row is written.
+`orderBy()` and `skip()` choose that row, as they do for `first()`:
+
+```ts
+// Marks the first open todo, in title order, as done.
+const todo = await db.orm.todo.where({ done: false }).orderBy({ title: "asc" }).update({ done: true });
+```
+
+### Windowed chains
+
+- **`take(0)`** matches no row, so nothing changes and `update()` returns `null`. The data is still validated, so invalid data throws `IdbRecordValidationError`. Foreign-key and `onUpdate` checks don't run, because they need a row. `first()` ignores `take()`, so `take(0).first()` still returns a row.
+- **`orderBy({})`** sorts by nothing, so it counts as no order.
+- **Relation callbacks** (for example `posts: (p) => p.connect(...)`) find their row by the filter alone, and would ignore the order. So an update with a relation callback throws `IdbRelationUpdateError` if the chain has `orderBy()`, `skip()` or `take()`. Remove them, or filter to one row, such as by `id`.
+
+### When foreign keys are checked
+
+Every update runs the same checks on the row it changes: foreign keys, `onUpdate` actions, list operations and `@onUpdate` defaults. The only difference is when foreign keys are checked:
+
+| Chain                          | Foreign keys are checked          | When no row matches                             |
+| ------------------------------ | --------------------------------- | ----------------------------------------------- |
+| Plain `where(...).update(...)` | Before the update looks for a row | Throws if the data names a missing parent       |
+| With `orderBy()` or `skip()`   | On the row the update picks       | Returns `null` without an error, as Prisma does |
+
+A plain update checks two kinds of data per row, like a windowed update: data that sets only part of a compound foreign key, and an `@onUpdate` default that gives each row its own value.
+
+### Update many rows
 
 `updateAll()` changes every matching row in one transaction and returns them. `updateCount()` returns how many changed. Both follow the [rules for bulk writes](#rules-for-bulk-writes).
 
