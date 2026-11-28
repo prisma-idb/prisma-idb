@@ -1,4 +1,4 @@
-import { keyPathFields } from "@prisma-idb/target-idb/pack";
+import { keyPathFields, sameJoinPairs } from "@prisma-idb/target-idb/pack";
 import type { IdbKeyPath } from "@prisma-idb/target-idb/pack";
 import { foreignKeyIndexes } from "./foreign-key-indexes";
 import type {
@@ -346,11 +346,6 @@ function validateAutoIncrement(model: IdbModelNode, report: Report): void {
   }
 }
 
-/** Compare reciprocal join coordinates in the same way as runtime referential-action enforcement. */
-function sameFields(a: readonly string[], b: readonly string[]): boolean {
-  return a.length === b.length && a.every((name, index) => name === b[index]);
-}
-
 /** Validate excluded source fields before checking relations that depend on them. */
 function validateExcludedFields(model: IdbModelNode, report: Report): void {
   const at = ["models", model.modelName];
@@ -394,8 +389,7 @@ function excludedInverse(model: IdbModelNode, relation: IdbRelationNode, definit
       (inverse) =>
         inverse.cardinality !== "1:N" &&
         inverse.to === model.modelName &&
-        sameFields(inverse.localFields, relation.targetFields) &&
-        sameFields(inverse.targetFields, relation.localFields) &&
+        sameJoinPairs(inverse.localFields, inverse.targetFields, relation.targetFields, relation.localFields) &&
         relationHasExclusion(target, inverse, definition)
     ) === true
   );
@@ -432,8 +426,8 @@ function validateRelations(model: IdbModelNode, definition: IdbContractDefinitio
     for (const inverse of target?.relations ?? []) {
       if (
         inverse.to !== model.modelName ||
-        !sameFields(inverse.localFields, relation.targetFields) ||
-        !sameFields(inverse.targetFields, relation.localFields)
+        (relation.cardinality === "N:1" && inverse.cardinality === "N:1") ||
+        !sameJoinPairs(inverse.localFields, inverse.targetFields, relation.targetFields, relation.localFields)
       )
         continue;
       // Report each pair once so reciprocal declarations do not duplicate the same error.

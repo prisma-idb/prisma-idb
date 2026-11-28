@@ -45,9 +45,9 @@ import {
   createMutationDefaultsCache,
   type MutationDefaultsCache,
 } from "./mutation-defaults";
-import { absentAsNull } from "@prisma-idb/target-idb/runtime";
+import { absentAsNull, decimalIdentityToken, isValidIdbKey } from "@prisma-idb/target-idb/runtime";
 import { buildCatalog } from "./planner/catalog";
-import { fieldValueChanged, preserveDecimalKeySpelling } from "./decimal-identity";
+import { fieldValueChanged, IdbDecimalIdentityConflictError, preserveDecimalKeySpelling } from "./decimal-identity";
 import { lowerExists, lowerRows, lowerWrite, type RowsRequest, type WriteRequest } from "./planner/lower";
 import { planQuery } from "./planner/plan";
 import { withMutationScope, type IdbQueryExecutorWithTransaction } from "./mutation-scope";
@@ -64,7 +64,7 @@ import {
   keyEquals,
   keyToken,
 } from "./types";
-import { keyPathFields } from "@prisma-idb/target-idb/pack";
+import { keyPathFields, sameFieldSet, sameJoinPairs } from "@prisma-idb/target-idb/pack";
 import type { IdbTransactionScope } from "@prisma-idb/driver-idb/runtime";
 
 // ── Internal types ─────────────────────────────────────────────────────────────
@@ -242,8 +242,9 @@ function collectStoreNames(
   for (const { relation } of parsed.relationMutations) {
     stores.add(relation.relatedStoreName);
     for (const store of fkParentStoreNames(contract, relation.relatedModelName)) stores.add(store);
-    // Connect and disconnect can also write onUpdate defaults on the children.
-    if (!isChildEnforcementRelation(contract, modelName, relation)) continue;
+    // A connect or disconnect of children writes their foreign key and their
+    // `onUpdate` defaults, whose referential actions may reach further stores.
+    if (!isDeclaredChildRelation(contract, modelName, relation)) continue;
     const childPatch = applyUpdateDefaults(
       contract.execution?.mutations.defaults,
       relation.relatedStoreName,
@@ -709,13 +710,14 @@ async function writeChildRows(
   // into or out of the match set.
   const meta = makePlanMeta(contract);
   const keyPath = getKeyPath(contract, modelName);
+  const decimalParents: DecimalParentConflicts = new Map();
   for (const row of await readMutationRows(scope, contract, modelName, where)) {
     const patch = applyUpdateDefaults(defaults, storeName, setValues, defaultsCache);
     assertValidRecord(contract, modelName, "update", patch);
     // A generated value can be a foreign key, or a field other rows reference,
     // so each row's patch gets the checks and actions of any other update.
     await validateScalarFks(scope, contract, modelName, patch, row);
-    await applyReferentialActionsForRowOnUpdate(scope, contract, modelName, row, patch);
+    await applyReferentialActionsForRowOnUpdate(scope, contract, modelName, row, patch, undefined, decimalParents);
     const key = extractKeyFromRow(row, keyPath);
     await scope.execute({ meta, kind: "update", storeName, key, patch } as IdbAtomicPlan);
   }
@@ -752,33 +754,7 @@ function sameFields(a: readonly string[], b: readonly string[]): boolean {
   return a.length === b.length && a.every((field, index) => field === b[index]);
 }
 
-/**
- * Resolves the referential action for a child-enforcement relation: prefers
- * the action stored directly on this side, falls back to the same action
- * stored on the inverse (FK-owning) side of the relation, and finally to
- * `defaultAction` when neither side declares one.
- *
- * Both branches are live, for different authoring paths. PSL only ever
- * stores the action on the `N:1` (FK-owning) side — enforcement always walks
- * from the parent (`1:N`/non-owning-`1:1`) side, which PSL leaves bare, so
- * the fallback is what actually finds it. TS-DSL relation entries are
- * self-contained (no PSL-style pairing requirement) and typically declare
- * the action directly on the side this function is called for, so the direct
- * check is what fires there — see `contract-builder.ts`'s
- * `validateNoConflictingRelationActions`, which rejects declaring the same
- * action kind on both sides so this fallback never has to arbitrate a real
- * conflict.
- */
-function getReferentialActionForRelation(
-  contract: IdbContract,
-  modelName: string,
-  def: RelationDefinition,
-  kind: ReferentialActionKind
-): EnforcedReferentialAction {
-  return enforcedAction(findDeclaredAction(contract, modelName, def, kind));
-}
-
-/** Find an action on the enforcement side or on its matching inverse relation. */
+/** Find an action declared on the parent-side relation or on its matching foreign-key relation. */
 function findDeclaredAction(
   contract: IdbContract,
   modelName: string,
@@ -788,16 +764,29 @@ function findDeclaredAction(
   const direct = getStoredAction(contract, modelName, def.relationName, kind);
   if (direct !== undefined) return direct;
 
+  let hasOrderedInverse = false;
+  let reorderedAction: IdbReferentialAction | undefined;
   for (const inverse of getRelationDefinitions(contract, def.relatedModelName)) {
-    if (inverse.relatedModelName !== modelName) continue;
-    if (!sameFields(inverse.localFields, def.targetFields)) continue;
-    if (!sameFields(inverse.targetFields, def.localFields)) continue;
-
+    if (!isInverseOf(inverse, modelName, def)) continue;
     const inverseAction = getStoredAction(contract, def.relatedModelName, inverse.relationName, kind);
-    if (inverseAction !== undefined) return inverseAction;
+    if (sameFields(inverse.localFields, def.targetFields) && sameFields(inverse.targetFields, def.localFields)) {
+      hasOrderedInverse = true;
+      if (inverseAction !== undefined) return inverseAction;
+    } else {
+      reorderedAction ??= inverseAction;
+    }
   }
 
-  return undefined;
+  // An ordered inverse with no declared action still carries the default Restrict behavior.
+  return hasOrderedInverse ? undefined : reorderedAction;
+}
+
+/** `true` when `inverse`, declared on `def`'s related model, joins back to `modelName` on the same fields. */
+function isInverseOf(inverse: RelationDefinition, modelName: string, def: RelationDefinition): boolean {
+  return (
+    inverse.relatedModelName === modelName &&
+    sameJoinPairs(inverse.localFields, inverse.targetFields, def.targetFields, def.localFields)
+  );
 }
 
 /** A referential action after defaults are applied and `noAction` is resolved. */
@@ -818,8 +807,85 @@ function enforcedAction(declared: IdbReferentialAction | undefined): EnforcedRef
   return declared === undefined || declared === "noAction" ? "restrict" : declared;
 }
 
-/** Identify relations that need child checks when this model changes. */
-function isChildEnforcementRelation(contract: IdbContract, modelName: string, def: RelationDefinition): boolean {
+/**
+ * A reference from child rows to `modelName`, seen from the parent, with the
+ * actions enforced when a parent row is deleted or its referenced fields change.
+ * `localFields` are the parent's referenced fields; `targetFields` are the
+ * child's foreign key.
+ */
+interface ChildEnforcementEdge extends RelationDefinition {
+  readonly onDelete: EnforcedReferentialAction;
+  readonly onUpdate: EnforcedReferentialAction;
+  readonly needsUniqueParent: boolean;
+  readonly checksDecimalParent: boolean;
+}
+
+const childEdgesCache = new WeakMap<object, Map<string, ChildEnforcementEdge[]>>();
+
+/**
+ * Every reference to `modelName` whose actions a delete or key change must
+ * enforce. The edges come from each model's foreign keys (`N:1` relations), so
+ * a reference is enforced whether or not `modelName` declares the inverse
+ * relation. Parent-side relations that no foreign key covers, such as a
+ * shared-primary-key `1:1`, are enforced from their own declaration.
+ */
+function getChildEnforcementEdges(contract: IdbContract, modelName: string): ChildEnforcementEdge[] {
+  let perContract = childEdgesCache.get(contract);
+  if (!perContract) {
+    perContract = new Map();
+    childEdgesCache.set(contract, perContract);
+  }
+  const cached = perContract.get(modelName);
+  if (cached) return cached;
+
+  const edges: ChildEnforcementEdge[] = [];
+  const catalog = buildCatalog(contract, getStoreName(contract, modelName), modelName);
+  const uniqueSources = [catalog.primaryKey, ...catalog.indexes].filter(
+    (source) => source.unique && !source.multiEntry
+  );
+  const withActions = (
+    def: RelationDefinition,
+    action: (kind: ReferentialActionKind) => IdbReferentialAction | undefined,
+    oneSided = false
+  ) =>
+    edges.push({
+      ...def,
+      onDelete: enforcedAction(action("onDelete")),
+      onUpdate: enforcedAction(action("onUpdate")),
+      needsUniqueParent: oneSided && !uniqueSources.some((source) => sameFieldSet(source.fields, def.localFields)),
+      checksDecimalParent:
+        oneSided && def.localFields.some((field) => catalog.fields[field]?.codecId === "idb/decimal@1"),
+    });
+
+  const declared = getRelationDefinitions(contract, modelName).filter((def) =>
+    isDeclaredChildRelation(contract, modelName, def)
+  );
+  for (const def of declared) {
+    withActions(def, (kind) => findDeclaredAction(contract, modelName, def, kind));
+  }
+  for (const childModelName of Object.keys(domainModelsAtDefaultNamespace(contract.domain))) {
+    for (const fk of getRelationDefinitions(contract, childModelName)) {
+      if (fk.cardinality !== "N:1" || fk.relatedModelName !== modelName) continue;
+      // A declared parent edge already checks this join with its own action.
+      if (declared.some((inverse) => isInverseOf(inverse, childModelName, fk))) continue;
+      const def: RelationDefinition = {
+        relationName: `${childModelName}.${fk.relationName}`,
+        relatedModelName: childModelName,
+        relatedStoreName: getStoreName(contract, childModelName),
+        cardinality: "1:N",
+        localFields: fk.targetFields,
+        targetFields: fk.localFields,
+      };
+      withActions(def, (kind) => getStoredAction(contract, childModelName, fk.relationName, kind), true);
+    }
+  }
+
+  perContract.set(modelName, edges);
+  return edges;
+}
+
+/** Identify parent-side relations declared on this model that need child checks when it changes. */
+function isDeclaredChildRelation(contract: IdbContract, modelName: string, def: RelationDefinition): boolean {
   if (def.cardinality === "1:N") return true;
   if (def.cardinality === "1:1") {
     // Shared-PK 1:1: the non-owning side is the one whose *own* primary key
@@ -843,11 +909,76 @@ async function childExists(
   contract: IdbContract,
   meta: PlanMeta,
   def: RelationDefinition,
-  parentRow: Record<string, unknown>
+  parentRow: Record<string, unknown>,
+  additionalFilter?: IdbRowFilter
 ): Promise<boolean> {
   const values = def.localFields.map((field) => parentRow[field]);
   if (values.some((value) => value === null || value === undefined)) return false;
-  return rowExists(scope, contract, meta, def.relatedModelName, def.targetFields, values);
+  return rowExists(scope, contract, meta, def.relatedModelName, def.targetFields, values, additionalFilter);
+}
+
+/** A one-sided mutating action needs a unique referenced key to identify the parent. */
+async function refuseNonUniqueAction(
+  scope: IdbTransactionScope,
+  contract: IdbContract,
+  meta: PlanMeta,
+  def: RelationDefinition,
+  parentRow: Record<string, unknown>
+): Promise<void> {
+  if (await childExists(scope, contract, meta, def, parentRow)) {
+    throw new Error(
+      `Cannot apply referential action on relation '${def.relationName}': the referenced fields must be unique.`
+    );
+  }
+}
+
+type DecimalParentConflicts = Map<string, Set<string>>;
+
+/** A native unique index can contain legacy spellings of the same Decimal tuple. */
+async function checkDecimalParent(
+  scope: IdbTransactionScope,
+  contract: IdbContract,
+  meta: PlanMeta,
+  modelName: string,
+  def: ChildEnforcementEdge,
+  row: Record<string, unknown>,
+  cache: DecimalParentConflicts
+): Promise<boolean> {
+  const catalog = buildCatalog(contract, getStoreName(contract, modelName), modelName);
+  const tokenFor = (record: Record<string, unknown>) => {
+    const keys = def.localFields.map((field) =>
+      catalog.fields[field]?.codecId === "idb/decimal@1" ? decimalIdentityToken(record[field]) : record[field]
+    );
+    return isValidIdbKey(keys) ? keyToken(keys) : undefined;
+  };
+  const token = tokenFor(row);
+  if (token === undefined) return true;
+
+  const cacheKey = JSON.stringify([modelName, ...def.localFields]);
+  let duplicates = cache.get(cacheKey);
+  if (duplicates === undefined) {
+    duplicates = new Set();
+    const seen = new Set<string>();
+    for (const parent of await readMutationRows(scope, contract, modelName, undefined)) {
+      const key = tokenFor(parent);
+      if (key === undefined) continue;
+      if (seen.has(key)) duplicates.add(key);
+      else seen.add(key);
+    }
+    cache.set(cacheKey, duplicates);
+  }
+  if (!duplicates.has(token)) return true;
+  const values = def.localFields.map((field) => row[field]);
+  if (!(await rowExists(scope, contract, meta, def.relatedModelName, def.targetFields, values))) return true;
+  // Earlier writes in this transaction may have removed one of the aliases.
+  const where = andExpr(def.localFields.map((field, index) => fieldFilter(field, "eq", values[index])));
+  const matches = await readMutationRows(scope, contract, modelName, where, 2);
+  if (matches.length > 1) throw new IdbDecimalIdentityConflictError(modelName);
+  const [current] = matches;
+  const keyPath = catalog.primaryKey.keyPath;
+  if (!current || !keyEquals(extractKeyFromRow(current, keyPath), extractKeyFromRow(row, keyPath))) return false;
+  duplicates.delete(token);
+  return true;
 }
 
 /**
@@ -877,8 +1008,10 @@ async function rowExists(
  * row's values. Shared by `onDelete` cascade (`applyReferentialActionsForRow`)
  * and `onUpdate` cascade (`applyReferentialActionsForRowOnUpdate`).
  */
-function buildChildWhereFromRow(def: RelationDefinition, row: Record<string, unknown>): IdbFilterExpr {
-  return andExpr(def.targetFields.map((field, i) => fieldFilter(field, "eq", row[def.localFields[i]!])));
+function buildChildWhereFromRow(def: RelationDefinition, row: Record<string, unknown>): IdbFilterExpr | undefined {
+  const values = def.localFields.map((field) => row[field]);
+  if (values.some((value) => value === null || value === undefined)) return undefined;
+  return andExpr(def.targetFields.map((field, i) => fieldFilter(field, "eq", values[i])));
 }
 
 /** Reads a field's literal `@default(...)` value from `IdbModelStorage.fieldDefaults`, if declared. */
@@ -990,10 +1123,9 @@ export function collectOnUpdateEnforcementStoreNames(
   const visitedModels = new Set<string>([modelName]);
   let enforces = false;
 
-  for (const def of getRelationDefinitions(contract, modelName)) {
-    if (!isChildEnforcementRelation(contract, modelName, def)) continue;
+  for (const def of getChildEnforcementEdges(contract, modelName)) {
     if (!def.localFields.some((f) => f in data)) continue;
-    const action = getReferentialActionForRelation(contract, modelName, def, "onUpdate");
+    const action = def.onUpdate;
     enforces = true;
     stores.add(def.relatedStoreName);
     if (action === "cascade") addOnUpdateCascadeStores(contract, def.relatedModelName, stores, visitedModels);
@@ -1028,7 +1160,8 @@ export async function applyReferentialActionsForRowOnUpdate(
   modelName: string,
   oldRow: Record<string, unknown>,
   patch: Record<string, unknown>,
-  visited: Set<string> = new Set()
+  visited: Set<string> = new Set(),
+  decimalParents: DecimalParentConflicts = new Map()
 ): Promise<void> {
   const keyPath = getKeyPath(contract, modelName);
   patch = preserveDecimalKeySpelling(contract, modelName, patch, extractKeyFromRow(oldRow, keyPath));
@@ -1037,16 +1170,26 @@ export async function applyReferentialActionsForRowOnUpdate(
   visited.add(rowKey);
 
   const meta = makePlanMeta(contract);
-  for (const def of getRelationDefinitions(contract, modelName)) {
-    if (!isChildEnforcementRelation(contract, modelName, def)) continue;
+  for (const def of getChildEnforcementEdges(contract, modelName)) {
     const changedFields = def.localFields.filter(
       (f) => f in patch && fieldValueChanged(contract, modelName, f, patch[f], oldRow[f])
     );
     if (changedFields.length === 0) continue;
 
-    const action = getReferentialActionForRelation(contract, modelName, def, "onUpdate");
+    const action = def.onUpdate;
+    if (def.needsUniqueParent && action !== "restrict") {
+      await refuseNonUniqueAction(scope, contract, meta, def, oldRow);
+      continue;
+    }
+    if (
+      def.checksDecimalParent &&
+      action !== "restrict" &&
+      !(await checkDecimalParent(scope, contract, meta, modelName, def, oldRow, decimalParents))
+    )
+      continue;
 
     const childWhere = buildChildWhereFromRow(def, oldRow);
+    if (!childWhere) continue;
 
     if (action === "restrict") {
       if (await childExists(scope, contract, meta, def, oldRow)) {
@@ -1068,7 +1211,15 @@ export async function applyReferentialActionsForRowOnUpdate(
       }
       const children = await readMutationRows(scope, contract, def.relatedModelName, childWhere);
       for (const child of children) {
-        await applyReferentialActionsForRowOnUpdate(scope, contract, def.relatedModelName, child, childPatch, visited);
+        await applyReferentialActionsForRowOnUpdate(
+          scope,
+          contract,
+          def.relatedModelName,
+          child,
+          childPatch,
+          visited,
+          decimalParents
+        );
       }
       await writeMutationRows(scope, contract, def.relatedModelName, {
         write: "put-merged",
@@ -1263,10 +1414,9 @@ function addOnUpdateCascadeStores(
 ): void {
   if (visitedModels.has(modelName)) return;
   visitedModels.add(modelName);
-  for (const def of getRelationDefinitions(contract, modelName)) {
-    if (!isChildEnforcementRelation(contract, modelName, def)) continue;
+  for (const def of getChildEnforcementEdges(contract, modelName)) {
     stores.add(def.relatedStoreName);
-    if (getReferentialActionForRelation(contract, modelName, def, "onUpdate") === "cascade") {
+    if (def.onUpdate === "cascade") {
       addOnUpdateCascadeStores(contract, def.relatedModelName, stores, visitedModels);
     }
   }
@@ -1408,6 +1558,7 @@ async function executeScalarUpdates(
     const oldRows = await readMutationRows(scope, contract, modelName, where, take, window);
     const keyPath = getKeyPath(contract, modelName);
     const results: Record<string, unknown>[] = [];
+    const decimalParents: DecimalParentConflicts = new Map();
     for (const oldRow of oldRows) {
       const rowData = defaultsPerRow ? applyUpdateDefaults(defaults, storeName, data, defaultsCache) : patch;
       const rowPatch = applyFieldUpdates(
@@ -1421,7 +1572,17 @@ async function executeScalarUpdates(
       if (windowed || needsRowForFks || defaultsPerRow) {
         await validateScalarFks(scope, contract, modelName, rowPatch, oldRow);
       }
-      if (enforcesOnUpdate) await applyReferentialActionsForRowOnUpdate(scope, contract, modelName, oldRow, rowPatch);
+      if (enforcesOnUpdate) {
+        await applyReferentialActionsForRowOnUpdate(
+          scope,
+          contract,
+          modelName,
+          oldRow,
+          rowPatch,
+          undefined,
+          decimalParents
+        );
+      }
       const key = extractKeyFromRow(oldRow, keyPath);
       const rows = await scope.execute({ meta, kind: "update", storeName, key, patch: rowPatch } as IdbAtomicPlan);
       const updated = rows[0];
@@ -1436,14 +1597,12 @@ async function executeScalarUpdates(
 // ── Delete referential action enforcement ─────────────────────────────────────
 
 /**
- * Returns true if the model has at least one child relation (1:N or parent-side
- * 1:1). Every such relation has an `onDelete` action to enforce: `noAction`
- * behaves like `restrict`, which is also the default.
+ * Returns true if any model references `modelName`, through a foreign key or
+ * a parent-side relation. Every such reference has an `onDelete` action to
+ * enforce: `noAction` behaves like `restrict`, which is also the default.
  */
 export function hasEnforceableChildRelations(contract: IdbContract, modelName: string): boolean {
-  return getRelationDefinitions(contract, modelName).some((def) =>
-    isChildEnforcementRelation(contract, modelName, def)
-  );
+  return getChildEnforcementEdges(contract, modelName).length > 0;
 }
 
 /** The store of `modelName` plus the store of every model it has a relation to, in either direction. */
@@ -1465,24 +1624,35 @@ export function collectRelatedStoreNames(contract: IdbContract, modelName: strin
  * or a cycle of mutually-cascading models.
  */
 export function collectDeleteStoreNames(contract: IdbContract, modelName: string): string[] {
+  return collectDeleteActionScope(contract, modelName).storeNames;
+}
+
+function collectDeleteActionScope(
+  contract: IdbContract,
+  modelName: string
+): { storeNames: string[]; changesRootRows: boolean } {
+  const rootStore = getStoreName(contract, modelName);
   const stores = new Set<string>();
   const visitedModels = new Set<string>();
+  let changesRootRows = false;
 
   /** Collect cascade stores once per model so cyclic relations cannot recurse indefinitely. */
   function walk(mName: string): void {
     if (visitedModels.has(mName)) return;
     visitedModels.add(mName);
     stores.add(getStoreName(contract, mName));
-    for (const def of getRelationDefinitions(contract, mName)) {
-      if (!isChildEnforcementRelation(contract, mName, def)) continue;
-      const action = getReferentialActionForRelation(contract, mName, def, "onDelete");
+    for (const def of getChildEnforcementEdges(contract, mName)) {
+      const action = def.onDelete;
       stores.add(def.relatedStoreName);
+      if (action !== "restrict" && !def.needsUniqueParent && def.relatedStoreName === rootStore) {
+        changesRootRows = true;
+      }
       if (action === "cascade") walk(def.relatedModelName);
     }
   }
 
   walk(modelName);
-  return [...stores];
+  return { storeNames: [...stores], changesRootRows };
 }
 
 /**
@@ -1508,7 +1678,8 @@ export async function applyReferentialActionsForRow(
   contract: IdbContract,
   modelName: string,
   row: Record<string, unknown>,
-  visited: Set<string> = new Set()
+  visited: Set<string> = new Set(),
+  decimalParents: DecimalParentConflicts = new Map()
 ): Promise<void> {
   const keyPath = getKeyPath(contract, modelName);
   const rowKey = `${getStoreName(contract, modelName)}::${keyToken(extractKeyFromRow(row, keyPath))}`;
@@ -1516,14 +1687,27 @@ export async function applyReferentialActionsForRow(
   visited.add(rowKey);
 
   const meta = makePlanMeta(contract);
-  for (const def of getRelationDefinitions(contract, modelName)) {
-    if (!isChildEnforcementRelation(contract, modelName, def)) continue;
-    const action = getReferentialActionForRelation(contract, modelName, def, "onDelete");
+  for (const def of getChildEnforcementEdges(contract, modelName)) {
+    const action = def.onDelete;
+    if (def.needsUniqueParent && action !== "restrict") {
+      await refuseNonUniqueAction(scope, contract, meta, def, row);
+      continue;
+    }
+    if (
+      def.checksDecimalParent &&
+      action !== "restrict" &&
+      !(await checkDecimalParent(scope, contract, meta, modelName, def, row, decimalParents))
+    )
+      continue;
 
     const childWhere = buildChildWhereFromRow(def, row);
+    if (!childWhere) continue;
 
     if (action === "restrict") {
-      if (await childExists(scope, contract, meta, def, row)) {
+      const key = extractKeyFromRow(row, keyPath);
+      const excludesSelf: IdbRowFilter | undefined =
+        def.relatedModelName === modelName ? (child) => !keyEquals(extractKeyFromRow(child, keyPath), key) : undefined;
+      if (await childExists(scope, contract, meta, def, row, excludesSelf)) {
         throw new Error(
           `Cannot delete ${modelName} '${keyToken(extractKeyFromRow(row, keyPath))}': child records exist on relation '${def.relationName}'. ` +
             "Delete those children first, or declare onDelete: Cascade, SetNull or SetDefault on the relation."
@@ -1536,7 +1720,7 @@ export async function applyReferentialActionsForRow(
       const childKeyPath = getKeyPath(contract, def.relatedModelName);
       const children = await readMutationRows(scope, contract, def.relatedModelName, childWhere);
       for (const child of children) {
-        await applyReferentialActionsForRow(scope, contract, def.relatedModelName, child, visited);
+        await applyReferentialActionsForRow(scope, contract, def.relatedModelName, child, visited, decimalParents);
         await scope.execute({
           meta,
           kind: "delete",
@@ -1604,7 +1788,7 @@ export async function executeDeleteAllWithReferentialActions(options: {
   where?: IdbFilterExpr;
 }): Promise<Record<string, unknown>[]> {
   const { executor, contract, modelName, where } = options;
-  const storeNames = collectDeleteStoreNames(contract, modelName);
+  const { storeNames, changesRootRows } = collectDeleteActionScope(contract, modelName);
   return withMutationScope(executor, storeNames, async (scope) => {
     const storeName = getStoreName(contract, modelName);
     const meta = makePlanMeta(contract);
@@ -1617,9 +1801,15 @@ export async function executeDeleteAllWithReferentialActions(options: {
       return deleted.map(absentAsNull(contract, modelName));
     }
     const rows = await readMutationRows(scope, contract, modelName, where);
+    const decimalParents: DecimalParentConflicts = new Map();
     for (const row of rows) {
-      await applyReferentialActionsForRow(scope, contract, modelName, row);
       const key = extractKeyFromRow(row, keyPath);
+      // An earlier cascade can delete or rewrite a row selected by this bulk operation.
+      const current = changesRootRows
+        ? (await scope.execute({ meta, kind: "key-get", storeName, key } as IdbAtomicPlan))[0]
+        : row;
+      if (!current) continue;
+      await applyReferentialActionsForRow(scope, contract, modelName, current, undefined, decimalParents);
       await scope.execute({ meta, kind: "delete", storeName, key } as IdbAtomicPlan);
     }
     return rows;

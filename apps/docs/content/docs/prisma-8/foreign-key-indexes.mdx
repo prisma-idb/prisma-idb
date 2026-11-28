@@ -25,7 +25,7 @@ const relations = {
 } as const;
 ```
 
-Repeat the opt-out for every owning relation whose implicit indexes you want to suppress. If several relations share a field, all of them must opt out. Declared indexes remain in place. Use the opt-out for foreign-key types that IndexedDB cannot index, such as `Boolean`, `BigInt`, or `Json`.
+Repeat the opt-out for every owning relation whose implicit indexes you want to suppress. If several relations share a field, all of them must opt out. Declared indexes remain in place. Use the opt-out for foreign-key types that IndexedDB cannot index, such as `Boolean`, `BigInt`, or `Json`. Without the index, deleting a parent row or changing a field its children reference reads the whole child store to find the children.
 
 A declared index replaces the implicit one only when its name matches the foreign-key field and its key path contains that field alone. Check differently named and compound indexes before assuming that no new indexes will be added. See the [index reference](/docs/prisma-8/contract-authoring#foreign-key-indexes) for the exact rules.
 

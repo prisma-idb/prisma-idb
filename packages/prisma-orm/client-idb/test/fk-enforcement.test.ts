@@ -2179,3 +2179,172 @@ describe("restrict — null in the parent's referenced fields", () => {
     db.close();
   });
 });
+
+describe("referential actions — foreign key without a declared inverse relation", () => {
+  /** `Post.author` owns the foreign key; `User` declares no `posts` relation. */
+  function oneSidedContract(author: { onDelete?: "cascade"; onUpdate?: "cascade" }, unique = true) {
+    return defineContract({
+      family: idbFamilyPack,
+      target: idbTargetPack,
+      models: {
+        User: {
+          store: "users",
+          key: "id",
+          fields: { id: "String", email: "String" },
+          ...(unique ? { indexes: { byEmail: { keyPath: "email", unique: true } } } : {}),
+        },
+        Post: {
+          store: "posts",
+          key: "id",
+          fields: { id: "String", authorEmail: "String" },
+          relations: {
+            author: { to: "User", cardinality: "N:1", on: { local: ["authorEmail"], target: ["email"] }, ...author },
+          },
+        },
+      },
+    });
+  }
+
+  /** Open the stores and indexes the contract declares, including the foreign-key index on `posts`. */
+  async function setupFromStorage(contract: ReturnType<typeof oneSidedContract>) {
+    const name = nextDbName();
+    const stores = contract.storage.stores as Record<
+      string,
+      { keyPath: string; indexes?: Record<string, { keyPath: string; unique?: boolean }> }
+    >;
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const req = indexedDB.open(name, 1);
+      req.onupgradeneeded = () => {
+        for (const [storeName, spec] of Object.entries(stores)) {
+          const store = req.result.createObjectStore(storeName, { keyPath: spec.keyPath });
+          for (const [indexName, index] of Object.entries(spec.indexes ?? {}))
+            store.createIndex(indexName, index.keyPath, { unique: index.unique ?? false });
+        }
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+    const executor = new TestExecutorWithTransaction(createIDBRuntimeDriver(name).create());
+    const orm = idbOrm({ contract, executor }) as unknown as Record<
+      string,
+      {
+        create(d: unknown): Promise<unknown>;
+        delete(k: unknown): Promise<unknown>;
+        where(f: unknown): { update(p: unknown): Promise<unknown> };
+      }
+    >;
+    return { db, orm };
+  }
+
+  it("cascades a delete to the children", async () => {
+    const { db, orm } = await setupFromStorage(oneSidedContract({ onDelete: "cascade" }));
+    await orm["users"]!.create({ id: "u1", email: "a@e.com" });
+    await orm["posts"]!.create({ id: "p1", authorEmail: "a@e.com" });
+    await orm["users"]!.delete("u1");
+    expect(await getAllRows(db, "posts")).toEqual([]);
+    db.close();
+  });
+
+  it("restricts a delete by default instead of leaving a dangling foreign key", async () => {
+    const { db, orm } = await setupFromStorage(oneSidedContract({}));
+    await orm["users"]!.create({ id: "u1", email: "a@e.com" });
+    await orm["posts"]!.create({ id: "p1", authorEmail: "a@e.com" });
+    await expect(orm["users"]!.delete("u1")).rejects.toThrow(/Cannot delete User 'u1'.*'Post\.author'/);
+    expect(await getAllRows(db, "users")).toHaveLength(1);
+    db.close();
+  });
+
+  it("cascades a change to the referenced field", async () => {
+    const { db, orm } = await setupFromStorage(oneSidedContract({ onUpdate: "cascade" }));
+    await orm["users"]!.create({ id: "u1", email: "a@e.com" });
+    await orm["posts"]!.create({ id: "p1", authorEmail: "a@e.com" });
+    await orm["users"]!.where({ id: "u1" }).update({ email: "b@e.com" });
+    expect(await getAllRows(db, "posts")).toEqual([{ id: "p1", authorEmail: "b@e.com" }]);
+    db.close();
+  });
+
+  it("preserves both parents and their child when a one-sided action targets a non-unique key", async () => {
+    const { db, orm } = await setupFromStorage(oneSidedContract({ onDelete: "cascade", onUpdate: "cascade" }, false));
+    try {
+      await orm["users"]!.create({ id: "u1", email: "shared" });
+      await orm["users"]!.create({ id: "u2", email: "shared" });
+      await orm["posts"]!.create({ id: "p1", authorEmail: "shared" });
+
+      await expect(orm["users"]!.delete("u1")).rejects.toThrow(/referenced fields must be unique/);
+      await expect(orm["users"]!.where({ id: "u1" }).update({ email: "new" })).rejects.toThrow(
+        /referenced fields must be unique/
+      );
+      expect(await getAllRows(db, "users")).toHaveLength(2);
+      expect(await getAllRows(db, "posts")).toEqual([{ id: "p1", authorEmail: "shared" }]);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("deletes a row whose only child reference is to itself", async () => {
+    const contract = defineContract({
+      family: idbFamilyPack,
+      target: idbTargetPack,
+      models: {
+        User: {
+          store: "users",
+          key: "id",
+          fields: { id: "String", managerId: "String?" },
+          relations: { manager: { to: "User", cardinality: "N:1", on: { local: ["managerId"], target: ["id"] } } },
+        },
+      },
+    });
+    const { db, orm } = await setupFromStorage(contract as unknown as ReturnType<typeof oneSidedContract>);
+    try {
+      await orm["users"]!.create({ id: "u1" });
+      await orm["users"]!.where({ id: "u1" }).update({ managerId: "u1" });
+      await orm["users"]!.delete("u1");
+      expect(await getAllRows(db, "users")).toEqual([]);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("uses the declared action when the compound inverse orders the same field pairs differently", async () => {
+    const contract = defineContract({
+      family: idbFamilyPack,
+      target: idbTargetPack,
+      models: {
+        User: {
+          store: "users",
+          key: ["tenant", "email"],
+          fields: { tenant: "String", email: "String" },
+          relations: {
+            posts: {
+              to: "Post",
+              cardinality: "1:N",
+              on: { local: ["email", "tenant"], target: ["authorEmail", "tenant"] },
+              onDelete: "cascade",
+            },
+          },
+        },
+        Post: {
+          store: "posts",
+          key: "id",
+          fields: { id: "String", tenant: "String", authorEmail: "String" },
+          relations: {
+            author: {
+              to: "User",
+              cardinality: "N:1",
+              on: { local: ["tenant", "authorEmail"], target: ["tenant", "email"] },
+            },
+          },
+        },
+      },
+    });
+    const { db, orm } = await setupFromStorage(contract as unknown as ReturnType<typeof oneSidedContract>);
+    try {
+      await orm["users"]!.create({ tenant: "t1", email: "a" });
+      await orm["posts"]!.create({ id: "p1", tenant: "t1", authorEmail: "a" });
+      await orm["users"]!.delete(["t1", "a"]);
+      expect(await getAllRows(db, "posts")).toEqual([]);
+    } finally {
+      db.close();
+    }
+  });
+});
