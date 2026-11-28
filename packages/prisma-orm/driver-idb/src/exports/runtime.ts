@@ -52,12 +52,19 @@ export { createTransactionScope } from "../core/transaction-scope";
 export function createIDBRuntimeDriver(
   dbName: string,
   version?: number,
-  options?: { readonly factory?: IDBFactory }
+  options?: {
+    readonly factory?: IDBFactory;
+    /**
+     * `IDBKeyRange` constructor for `factory`. Defaults to `globalThis.IDBKeyRange`.
+     * Pass a matching constructor if the global is missing or belongs to a different IndexedDB implementation.
+     */
+    readonly keyRange?: typeof IDBKeyRange;
+  }
 ): RuntimeDriverDescriptor<"idb", "idb", void, IdbRuntimeDriverInstance> {
   return {
     ...idbDriverDescriptorMeta,
     create(): IdbRuntimeDriverInstance {
-      return new IdbRuntimeDriverInstance(dbName, version, options?.factory);
+      return new IdbRuntimeDriverInstance(dbName, version, options?.factory, options?.keyRange);
     },
   };
 }

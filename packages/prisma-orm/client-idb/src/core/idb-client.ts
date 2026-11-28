@@ -20,6 +20,11 @@ export interface IdbClientOptions<TContract extends IdbContract> {
   // No version — the migration runner owns the IDB version integer (ADR 001).
   /** IDB factory override — primarily for tests and custom browser realms. */
   readonly factory?: IDBFactory;
+  /**
+   * `IDBKeyRange` constructor for `factory`. Defaults to `globalThis.IDBKeyRange`.
+   * Pass a matching constructor if the global is missing or belongs to a different IndexedDB implementation.
+   */
+  readonly keyRange?: typeof IDBKeyRange;
   readonly middleware?: readonly IdbMiddleware[];
 }
 
@@ -96,11 +101,10 @@ export interface IdbClient<TContract extends IdbContract> {
 export function createIdbClient<TContract extends IdbContract>(
   options: IdbClientOptions<TContract>
 ): IdbClient<TContract> {
-  const driver = createIDBRuntimeDriver(
-    options.dbName,
-    undefined,
-    options.factory !== undefined ? { factory: options.factory } : undefined
-  ).create();
+  const driver = createIDBRuntimeDriver(options.dbName, undefined, {
+    ...(options.factory !== undefined ? { factory: options.factory } : {}),
+    ...(options.keyRange !== undefined ? { keyRange: options.keyRange } : {}),
+  }).create();
   const adapter = new IdbAdapter(idbCodecLookup);
   const runtime = createIdbRuntime({
     adapter,

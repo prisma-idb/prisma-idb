@@ -36,6 +36,7 @@ import {
 } from "./error";
 import { keyIdentity } from "./key-identity";
 import { toOptionalIdbKeyRange } from "./key-range";
+import { environmentOf } from "./environment";
 
 /** A record returned by an IDB operation. */
 type Row = Record<string, unknown>;
@@ -99,7 +100,7 @@ function assertUnchangedPrimaryKey(store: IDBObjectStore, plan: IdbAtomicPlan, k
             row
           );
   const nextKey = (typeof keyPath === "string" ? extract(keyPath) : keyPath.map(extract)) as IDBValidKey;
-  if (indexedDB.cmp(key, nextKey) !== 0) {
+  if (environmentOf(store).cmp(key, nextKey) !== 0) {
     throw new IdbExecuteError(
       { code: "PRIMARY_KEY_CHANGE_UNSUPPORTED", planKind: plan.kind, storeName: plan.storeName },
       `Cannot change the primary key of a row in store "${plan.storeName}". Primary keys are immutable. Delete the row and create it again only after handling dependent records. Restrictive relations can block the delete, and cascading relations can delete dependent records.`
@@ -193,7 +194,7 @@ function execGetAll(store: IDBObjectStore, plan: IdbGetAllPlan, onComplete: OnCo
   if (plan.count === 0) return onComplete([]);
 
   const source = plan.indexName !== undefined ? store.index(plan.indexName) : store;
-  const req = source.getAll(toOptionalIdbKeyRange(plan.range), plan.count);
+  const req = source.getAll(toOptionalIdbKeyRange(plan.range, environmentOf(store).keyRange), plan.count);
   req.onsuccess = () => onComplete(req.result as Row[]);
   req.onerror = () => onError(opError("GET_ALL_FAILED", plan, "get-all", req.error, storeTarget(plan)));
 }
@@ -201,7 +202,7 @@ function execGetAll(store: IDBObjectStore, plan: IdbGetAllPlan, onComplete: OnCo
 /** Count a store or index range without materializing record values. */
 function execCount(store: IDBObjectStore, plan: IdbCountPlan, onComplete: OnComplete, onError: OnError): void {
   const source: IDBObjectStore | IDBIndex = plan.indexName !== undefined ? store.index(plan.indexName) : store;
-  const range = toOptionalIdbKeyRange(plan.range);
+  const range = toOptionalIdbKeyRange(plan.range, environmentOf(store).keyRange);
   const req = range !== undefined ? source.count(range) : source.count();
   req.onsuccess = () => onComplete([{ count: req.result }]);
   req.onerror = () => onError(opError("COUNT_FAILED", plan, "count", req.error, storeTarget(plan)));
@@ -211,7 +212,7 @@ function execCount(store: IDBObjectStore, plan: IdbCountPlan, onComplete: OnComp
 function execKeys(store: IDBObjectStore, plan: IdbKeysPlan, onComplete: OnComplete, onError: OnError): void {
   const source: IDBObjectStore | IDBIndex = plan.indexName !== undefined ? store.index(plan.indexName) : store;
   const fail = (cause: unknown) => onError(opError("KEYS_FAILED", plan, "keys read", cause, storeTarget(plan)));
-  const range = toOptionalIdbKeyRange(plan.range);
+  const range = toOptionalIdbKeyRange(plan.range, environmentOf(store).keyRange);
 
   // getKey() requires a query (null/absent throws), so a range-less single-key
   // read is expressed as getAllKeys(undefined, 1) instead.
@@ -251,7 +252,10 @@ function execCursorScan(
   const source: IDBObjectStore | IDBIndex = plan.indexName !== undefined ? store.index(plan.indexName) : store;
 
   // openCursor accepts null to mean "no range restriction".
-  const req = source.openCursor(toOptionalIdbKeyRange(plan.range) ?? null, plan.direction ?? "next");
+  const req = source.openCursor(
+    toOptionalIdbKeyRange(plan.range, environmentOf(store).keyRange) ?? null,
+    plan.direction ?? "next"
+  );
   const collected: Row[] = [];
   let skippedCount = 0;
 
@@ -391,7 +395,7 @@ function execScanWrite(store: IDBObjectStore, plan: IdbScanWritePlan, onComplete
 
   // Cursor must be opened on a readwrite transaction (enforced by planTxMode).
   const source = plan.indexName !== undefined ? store.index(plan.indexName) : store;
-  const req = source.openCursor(toOptionalIdbKeyRange(plan.range) ?? null, "next");
+  const req = source.openCursor(toOptionalIdbKeyRange(plan.range, environmentOf(store).keyRange) ?? null, "next");
   const collected: Row[] = [];
   // An index cursor revisits a record whose indexed field the patch moved forward (or that has several
   // multiEntry entries). Track written primary keys so each record is written and counted once.
