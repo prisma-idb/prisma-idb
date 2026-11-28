@@ -64,7 +64,7 @@ export class IdbRelationUpdateError extends Error {
     const nouns = parts.map((p) => p.noun).join(" and ");
     const calls = parts.map((p) => p.call).join(" and ");
     super(
-      `Cannot update ${modelName} with a relation mutation: the collection has ${nouns}. An update that changes a relation finds its row by the filter alone, so it could change another row than first() returns. Remove ${calls} before update, or filter to the one row, such as by its id.`
+      `Cannot update ${modelName} with a relation mutation: the collection has ${nouns}. An update that changes a relation finds its row by the filter alone, so it could change another row than first() returns. Remove ${calls} before update. To change a specific row, filter to it instead, such as by its id.`
     );
     this.name = "IdbRelationUpdateError";
   }

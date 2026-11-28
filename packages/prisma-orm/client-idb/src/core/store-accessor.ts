@@ -415,6 +415,17 @@ function assertPageArgument(argument: "take" | "skip", value: unknown): void {
 }
 
 /**
+ * Rejects an `orderBy()` argument that is not an object, such as `null` from an untyped caller. Copying `null` would
+ * give an empty spec, and a later update would silently treat it as no order.
+ */
+function assertOrderBySpec(spec: unknown): void {
+  if (typeof spec === "object" && spec !== null && !Array.isArray(spec)) return;
+  throw new TypeError(
+    `orderBy must be an object that maps fields to "asc" or "desc", got ${spec === null ? "null" : Array.isArray(spec) ? "an array" : typeof spec}`
+  );
+}
+
+/**
  * Concrete immutable query builder.
  *
  * Internal details:
@@ -481,6 +492,7 @@ export class IdbStoreAccessorImpl<
   orderBy(
     spec: OrderBySpec<TContract, ModelName>
   ): IdbStoreAccessor<TContract, ModelName, TIncludes, TSelected, TFiltered> {
+    assertOrderBySpec(spec);
     return this.#clone({ orderBy: { ...spec } as Record<string, "asc" | "desc"> });
   }
 

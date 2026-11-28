@@ -48,7 +48,7 @@ const todo = await db.orm.todo.where({ done: false }).orderBy({ title: "asc" }).
 
 - **`take(0)`** matches no row, so nothing changes and `update()` returns `null`. The data is still validated, so invalid data throws `IdbRecordValidationError`. Foreign-key and `onUpdate` checks don't run, because they need a row. `first()` ignores `take()`, so `take(0).first()` still returns a row.
 - **`orderBy({})`** sorts by nothing, so it counts as no order.
-- **Relation callbacks** (for example `posts: (p) => p.connect(...)`) find their row by the filter alone, and would ignore the order. So an update with a relation callback throws `IdbRelationUpdateError` if the chain has `orderBy()`, `skip()` or `take()`. Remove them, or filter to one row, such as by `id`.
+- **Relation callbacks** (for example `posts: (p) => p.connect(...)`) find their row by the filter alone, and would ignore the order. So an update with a relation callback throws `IdbRelationUpdateError` if the chain has `orderBy()`, `skip()` or `take()`. Remove those calls, even when the filter matches one row. To change a specific row, filter to it instead, such as `where({ id })`.
 
 ### When foreign keys are checked
 

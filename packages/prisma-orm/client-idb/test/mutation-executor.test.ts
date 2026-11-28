@@ -318,7 +318,8 @@ describe("ORM nested update", () => {
     await orm_()["users"]!.create({ id: "u1", name: "Alice" } as never);
     await orm_()["users"]!.create({ id: "u2", name: "Bob" } as never);
     await orm_()["posts"]!.create({ id: "p1", authorId: "u1", title: "Post" } as never);
-    const posts = chain(idbOrm({ contract, executor })["posts"]!.where({}) as never);
+    // A filter on the primary key doesn't avoid the error: the guard reads only the order and window.
+    const posts = chain(idbOrm({ contract, executor })["posts"]!.where({ id: "p1" }) as never);
     const update = posts.update({ author: (rel: RelMutator) => rel.connect({ id: "u2" }) } as never);
     await expect(update).rejects.toThrow(IdbRelationUpdateError);
     await expect(update).rejects.toThrow(`the collection has ${noun}`);

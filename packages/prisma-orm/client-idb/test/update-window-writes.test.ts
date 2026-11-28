@@ -93,6 +93,14 @@ describe("windowed update() with foreign keys", () => {
     expect((await rowsOf("post")).map((row) => row["ownerId"])).toEqual(["o1", "o2"]);
   });
 
+  it("rejects an orderBy() argument that isn't an object instead of treating it as no order", async () => {
+    const posts = await seed();
+    for (const bad of [null, undefined, [], "rank"]) {
+      expect(() => posts.orderBy(bad as never)).toThrow(TypeError);
+    }
+    expect(() => posts.orderBy({})).not.toThrow();
+  });
+
   it("treats orderBy({}) as no order, so it checks the foreign key before looking for a row", async () => {
     const posts = await seed();
     for (const chain of [posts.where({ id: "missing" }), posts.where({ id: "missing" }).orderBy({})]) {
