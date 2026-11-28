@@ -1,5 +1,66 @@
 # @prisma-idb/target-idb
 
+## 0.18.0
+
+### Minor Changes
+
+- [#401](https://github.com/prisma-idb/prisma-idb/pull/401) [`587cdff`](https://github.com/prisma-idb/prisma-idb/commit/587cdff582b6b4580d3bb1c072375266858e7185) Thanks [@WhyAsh5114](https://github.com/WhyAsh5114)! - PSL schemas take `@onCreate(fn())` and `@onUpdate(fn())`, as in upstream Prisma 8. The client runs the generator function when a record is created or updated. The functions are `now()` on `DateTime` fields, and `uuid()`, `uuid(7)`, `cuid(2)`, `ulid()`, `nanoid(size?)` and `ksuid()` on `String` fields. Generated values may now sit on optional fields; an explicit `null` still wins.
+
+  Breaking: Prisma 8 removed some Prisma 6 forms, and `contract emit` now refuses them, naming what to write instead:
+
+  - `@default(uuid())` and `@default(cuid())`: write `@onCreate(uuid())` and `@onCreate(cuid(2))` (`PSL_GENERATOR_IN_DEFAULT`).
+  - `@updatedAt` and the `temporal.updatedAt()` type: write `DateTime @onCreate(now()) @onUpdate(now())`.
+
+  TypeScript contracts write the same generators with upstream's `gen` helpers, from `@prisma-idb/family-idb/contract-ts`: `defaults: { id: { onCreate: gen.uuid(7) }, updatedAt: { onCreate: gen.now(), onUpdate: gen.now() } }`. Each call resolves through the same functions as PSL. Breaking: `uuidv4()`, `uuidv7()`, `cuid2()` and `updatedAt()` are removed; write `{ onCreate: gen.uuid() }`, `{ onCreate: gen.uuid(7) }`, `{ onCreate: gen.cuid(2) }` and `{ onCreate: gen.now(), onUpdate: gen.now() }`. `now()` and `autoincrement()` are unchanged.
+
+  A primary key never changes, so any `@onUpdate(...)` on a key field is refused. The code `IDB_TEMPORAL_UPDATED_AT_ON_KEY_FIELD` is renamed `IDB_ON_UPDATE_ON_KEY_FIELD`.
+
+  The rewritten schema or contract emits the same contract, so existing databases need no migration. A schema shared with a SQL sync server now means the same thing on both sides. `@default(now())` and `@default(autoincrement())` are unchanged.
+
+- [#398](https://github.com/prisma-idb/prisma-idb/pull/398) [`d5e1761`](https://github.com/prisma-idb/prisma-idb/commit/d5e176191e3d219451e981af380ce07ba3cb0d4a) Thanks [@WhyAsh5114](https://github.com/WhyAsh5114)! - Upgrade to Prisma `8.0.0-rc.24` (`prisma` CLI `8.0.0-rc.34`, `@prisma/cli-engine` `0.10.0`).
+
+  - IDB codecs follow the new codec model: each data type reads and spells its own JSON form, and `codecValueToJson` and `codecValueFromJson` from `@prisma-idb/target-idb/runtime` replace a codec's `encodeJson` and `decodeJson`.
+  - Value objects live in storage, as Prisma now stores them. `decodeJsonRecord` takes the whole contract instead of its domain.
+  - The CLI migration runner refuses with `MIGRATION.IDB_CLI_UNSUPPORTED`, replacing `IDB-RUNNER-CLI-UNSUPPORTED`.
+  - The Postgres sync config uses Prisma's own `DateTime`, which is now `timestamptz(3)` read as a JavaScript `Date`. An existing server database needs a one-time migration of each `DateTime` column to `timestamptz(3)`; see "Upgrade a database created before 0.10" in the sync server docs. The injected `Changelog.id` uses `@onCreate(uuid(7))`, because SQL `@default` now sets database defaults only.
+  - Postgres clients take `contract: contractFromJson<Contract>(json)` in place of `contractJson`.
+
+### Patch Changes
+
+- [#452](https://github.com/prisma-idb/prisma-idb/pull/452) [`ea12f85`](https://github.com/prisma-idb/prisma-idb/commit/ea12f851c39ebbbc4b0ae6ea4ec35834a138cdda) Thanks [@WhyAsh5114](https://github.com/WhyAsh5114)! - `coerce("int")` in a record transform now accepts only values that convert to a whole number in the `Int` range, from -2147483648 to 2147483647. Any other value aborts the upgrade. `null` and `undefined` still pass through unchanged. A string must be decimal text with an all-zero fraction, if any.
+
+  Before, the transform stored values it should have refused:
+
+  - `"1.5"` became `1.5`, which isn't a valid `Int`.
+  - `""` became `0`, and `"0x10"` became `16`. These are valid `Int`s, but almost certainly not the intended values.
+
+- [#423](https://github.com/prisma-idb/prisma-idb/pull/423) [`a704570`](https://github.com/prisma-idb/prisma-idb/commit/a7045700eddf6b4341b42dccbc60d0d622984c65) Thanks [@WhyAsh5114](https://github.com/WhyAsh5114)! - Relation includes and `groupBy` now treat numerically equal `Decimal` spellings as one value, as foreign-key checks, filters and unique constraints already did. Before, a child with foreign key `"1.00"` passed the foreign-key check against parent `"1"` but its include returned `null`, and grouping `"1"`, `"1.0"` and `"1e0"` gave three groups. `@prisma-idb/target-idb/runtime` exports `decimalIdentityToken`, which gives each Decimal value one spelling for use as a key.
+
+  `groupBy` compares Decimal lists element by element, preserving their order and length. The group key keeps the first matching row's stored spellings.
+
+  Updating a referenced `Decimal` field to a numerically equal spelling, such as `"5"` to `"5.0"`, is no longer treated as a change to the key. Before, `onUpdate: Restrict` refused it when children existed and `onUpdate: Cascade` rewrote the children. Comparing very long Decimal text with long runs of zeros is also linear instead of quadratic.
+
+- [#433](https://github.com/prisma-idb/prisma-idb/pull/433) [`404a816`](https://github.com/prisma-idb/prisma-idb/commit/404a8168729072d1de68ffe5593b39634961549d) Thanks [@WhyAsh5114](https://github.com/WhyAsh5114)! - IndexedDB migrations reject non-finite numeric literals before emit or application, including hand-written transforms and values inside pipes. JSON would otherwise store the non-finite value as null.
+
+- [#488](https://github.com/prisma-idb/prisma-idb/pull/488) [`05fb7d2`](https://github.com/prisma-idb/prisma-idb/commit/05fb7d2bf717c258fd847630ce2f002c0ea4a2d5) Thanks [@WhyAsh5114](https://github.com/WhyAsh5114)! - `createAutoMigratingIdbClient` now refuses to open when the app and an extension, or two extensions, use the same store name. This includes an upgrade in which one space drops a store and another creates a store with the same name. Before, one space's migration could drop or rewrite the other's store. Extension migrations also can't change the `_prisma_next_marker` store, which holds every space's migration marker.
+
+  The error names the store and both contract spaces. The client checks this each time it opens, against the extensions you pass and their pending migrations, before it creates or changes any store. It keeps no record of earlier owners, so it can't protect the stores of an extension you no longer pass.
+
+- [#441](https://github.com/prisma-idb/prisma-idb/pull/441) [`5697d8c`](https://github.com/prisma-idb/prisma-idb/commit/5697d8cea94c49a2e782d3272c660c38e3e17b04) Thanks [@WhyAsh5114](https://github.com/WhyAsh5114)! - `prisma-idb migration preflight` replays the chain through the browser's own upgrade, which also writes each migration's marker. The upgrade fails if the chain omits the `_prisma_next_marker` store or creates it with a key path other than `space`.
+
+  Breaking: `prisma-idb migration preflight` now exits 2 with `IDB-CLI.PREFLIGHT_FAILED` and prints "No migration packages found" when the migrations directory has no packages. Before, it exited 0 with "Nothing to preflight". A CI job that runs preflight before the first `migration plan` must now plan the baseline first, or skip the step. The `prisma-orm-usage` and `prisma-orm-kanban-example` apps already have migration chains, so their scripts are unaffected.
+
+  Generating the contract space reports the file name when `migration.json` or `ops.json` is missing, cannot be read, or contains invalid JSON syntax. It also reports `ops.json` when its top-level value is anything other than an array.
+
+- [#485](https://github.com/prisma-idb/prisma-idb/pull/485) [`34d8322`](https://github.com/prisma-idb/prisma-idb/commit/34d83229dfa7b2a909a92b2e4d8066f2930d7edf) Thanks [@WhyAsh5114](https://github.com/WhyAsh5114)! - Migration planning and `prisma-idb migration preflight` now handle store and index names that match `Object.prototype` members, such as `toString` or `constructor`. Before, both treated these names as always present:
+
+  - Planning skipped creating or dropping such a store or index, or failed with a `TypeError`.
+  - Preflight missed an extra store or index with such a name, and failed with a `TypeError` when one was missing.
+
+  `__proto__` is still a reserved name, and authoring refuses it.
+
+- [#362](https://github.com/prisma-idb/prisma-idb/pull/362) [`f50b91a`](https://github.com/prisma-idb/prisma-idb/commit/f50b91a5681688ba795951a6d2a412e0735b24a0) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Register the PSL `date` tag for `idb/date`. Like upstream's `mongo/date`, it reads an ISO 8601 instant with a UTC offset and stores it as `Date.prototype.toISOString()` writes it.
+
 ## 0.17.0
 
 No changes in this release.

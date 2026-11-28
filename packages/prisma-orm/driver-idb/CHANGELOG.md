@@ -1,5 +1,13 @@
 # @prisma-idb/driver-idb
 
+## 0.18.0
+
+### Patch Changes
+
+- [#440](https://github.com/prisma-idb/prisma-idb/pull/440) [`c5497d2`](https://github.com/prisma-idb/prisma-idb/commit/c5497d28ed9617a09deb964d6863161bef944f54) Thanks [@WhyAsh5114](https://github.com/WhyAsh5114)! - The driver compares primary keys using its IndexedDB factory. Pass the matching `IDBKeyRange` constructor as `keyRange` when the global constructor is missing or comes from a different IndexedDB implementation. The driver uses that constructor for query ranges. You can set it on `createIDBRuntimeDriver`, `createIdbClient`, `createAutoMigratingIdbClient`, `createSyncIdbClient` or `createAutoMigratingSyncIdbClient`.
+
+- [#442](https://github.com/prisma-idb/prisma-idb/pull/442) [`cb03796`](https://github.com/prisma-idb/prisma-idb/commit/cb03796c0e4805729e8447a485cb359ed6a5e73f) Thanks [@WhyAsh5114](https://github.com/WhyAsh5114)! - Breaking: a driver `update` plan on a key with no row now writes nothing and returns no row. Before, it inserted the patch as a new row when the patch repeated the key. `put` is the operation that inserts. This matches the SQL and Mongo drivers, whose `UPDATE` and `updateOne` never insert. The client's own `update` calls read the row first inside the same transaction, so they are unaffected; only code that sends `update` plans straight to the driver changes.
+
 ## 0.17.0
 
 No changes in this release.

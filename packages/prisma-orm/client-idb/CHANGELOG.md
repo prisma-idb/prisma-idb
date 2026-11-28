@@ -1,5 +1,72 @@
 # @prisma-idb/client-idb
 
+## 0.18.0
+
+### Minor Changes
+
+- [#401](https://github.com/prisma-idb/prisma-idb/pull/401) [`587cdff`](https://github.com/prisma-idb/prisma-idb/commit/587cdff582b6b4580d3bb1c072375266858e7185) Thanks [@WhyAsh5114](https://github.com/WhyAsh5114)! - PSL schemas take `@onCreate(fn())` and `@onUpdate(fn())`, as in upstream Prisma 8. The client runs the generator function when a record is created or updated. The functions are `now()` on `DateTime` fields, and `uuid()`, `uuid(7)`, `cuid(2)`, `ulid()`, `nanoid(size?)` and `ksuid()` on `String` fields. Generated values may now sit on optional fields; an explicit `null` still wins.
+
+  Breaking: Prisma 8 removed some Prisma 6 forms, and `contract emit` now refuses them, naming what to write instead:
+
+  - `@default(uuid())` and `@default(cuid())`: write `@onCreate(uuid())` and `@onCreate(cuid(2))` (`PSL_GENERATOR_IN_DEFAULT`).
+  - `@updatedAt` and the `temporal.updatedAt()` type: write `DateTime @onCreate(now()) @onUpdate(now())`.
+
+  TypeScript contracts write the same generators with upstream's `gen` helpers, from `@prisma-idb/family-idb/contract-ts`: `defaults: { id: { onCreate: gen.uuid(7) }, updatedAt: { onCreate: gen.now(), onUpdate: gen.now() } }`. Each call resolves through the same functions as PSL. Breaking: `uuidv4()`, `uuidv7()`, `cuid2()` and `updatedAt()` are removed; write `{ onCreate: gen.uuid() }`, `{ onCreate: gen.uuid(7) }`, `{ onCreate: gen.cuid(2) }` and `{ onCreate: gen.now(), onUpdate: gen.now() }`. `now()` and `autoincrement()` are unchanged.
+
+  A primary key never changes, so any `@onUpdate(...)` on a key field is refused. The code `IDB_TEMPORAL_UPDATED_AT_ON_KEY_FIELD` is renamed `IDB_ON_UPDATE_ON_KEY_FIELD`.
+
+  The rewritten schema or contract emits the same contract, so existing databases need no migration. A schema shared with a SQL sync server now means the same thing on both sides. `@default(now())` and `@default(autoincrement())` are unchanged.
+
+- [#398](https://github.com/prisma-idb/prisma-idb/pull/398) [`d5e1761`](https://github.com/prisma-idb/prisma-idb/commit/d5e176191e3d219451e981af380ce07ba3cb0d4a) Thanks [@WhyAsh5114](https://github.com/WhyAsh5114)! - Upgrade to Prisma `8.0.0-rc.24` (`prisma` CLI `8.0.0-rc.34`, `@prisma/cli-engine` `0.10.0`).
+
+  - IDB codecs follow the new codec model: each data type reads and spells its own JSON form, and `codecValueToJson` and `codecValueFromJson` from `@prisma-idb/target-idb/runtime` replace a codec's `encodeJson` and `decodeJson`.
+  - Value objects live in storage, as Prisma now stores them. `decodeJsonRecord` takes the whole contract instead of its domain.
+  - The CLI migration runner refuses with `MIGRATION.IDB_CLI_UNSUPPORTED`, replacing `IDB-RUNNER-CLI-UNSUPPORTED`.
+  - The Postgres sync config uses Prisma's own `DateTime`, which is now `timestamptz(3)` read as a JavaScript `Date`. An existing server database needs a one-time migration of each `DateTime` column to `timestamptz(3)`; see "Upgrade a database created before 0.10" in the sync server docs. The injected `Changelog.id` uses `@onCreate(uuid(7))`, because SQL `@default` now sets database defaults only.
+  - Postgres clients take `contract: contractFromJson<Contract>(json)` in place of `contractJson`.
+
+### Patch Changes
+
+- [#362](https://github.com/prisma-idb/prisma-idb/pull/362) [`f50b91a`](https://github.com/prisma-idb/prisma-idb/commit/f50b91a5681688ba795951a6d2a412e0735b24a0) Thanks [@whyash-paperclip](https://github.com/whyash-paperclip)! - Decode codec-backed literal defaults when creating records so tagged date defaults produce fresh native Date values after contract JSON serialization.
+
+- [#423](https://github.com/prisma-idb/prisma-idb/pull/423) [`a704570`](https://github.com/prisma-idb/prisma-idb/commit/a7045700eddf6b4341b42dccbc60d0d622984c65) Thanks [@WhyAsh5114](https://github.com/WhyAsh5114)! - Relation includes and `groupBy` now treat numerically equal `Decimal` spellings as one value, as foreign-key checks, filters and unique constraints already did. Before, a child with foreign key `"1.00"` passed the foreign-key check against parent `"1"` but its include returned `null`, and grouping `"1"`, `"1.0"` and `"1e0"` gave three groups. `@prisma-idb/target-idb/runtime` exports `decimalIdentityToken`, which gives each Decimal value one spelling for use as a key.
+
+  `groupBy` compares Decimal lists element by element, preserving their order and length. The group key keeps the first matching row's stored spellings.
+
+  Updating a referenced `Decimal` field to a numerically equal spelling, such as `"5"` to `"5.0"`, is no longer treated as a change to the key. Before, `onUpdate: Restrict` refused it when children existed and `onUpdate: Cascade` rewrote the children. Comparing very long Decimal text with long runs of zeros is also linear instead of quadratic.
+
+- [#440](https://github.com/prisma-idb/prisma-idb/pull/440) [`c5497d2`](https://github.com/prisma-idb/prisma-idb/commit/c5497d28ed9617a09deb964d6863161bef944f54) Thanks [@WhyAsh5114](https://github.com/WhyAsh5114)! - The driver compares primary keys using its IndexedDB factory. Pass the matching `IDBKeyRange` constructor as `keyRange` when the global constructor is missing or comes from a different IndexedDB implementation. The driver uses that constructor for query ranges. You can set it on `createIDBRuntimeDriver`, `createIdbClient`, `createAutoMigratingIdbClient`, `createSyncIdbClient` or `createAutoMigratingSyncIdbClient`.
+
+- [#424](https://github.com/prisma-idb/prisma-idb/pull/424) [`e3990c8`](https://github.com/prisma-idb/prisma-idb/commit/e3990c87ad3400f678d34f5273ef060ba0903b8e) Thanks [@WhyAsh5114](https://github.com/WhyAsh5114)! - `db.transaction()` confirms that IndexedDB committed before reporting `IdbTransactionCommittedEarlyError`. If validation fails after an early commit, the error retains the validation failure as its cause even if the callback caught it. The runner waits on the transaction scope's commit once, so commit hooks run once.
+
+  The sync client emits `outboxwrite` for tracked writes that persisted before a later failure. Both raw transaction APIs also emit `outboxchange` when `markSynced` or `markFailed` commits before the callback throws.
+
+- [#488](https://github.com/prisma-idb/prisma-idb/pull/488) [`05fb7d2`](https://github.com/prisma-idb/prisma-idb/commit/05fb7d2bf717c258fd847630ce2f002c0ea4a2d5) Thanks [@WhyAsh5114](https://github.com/WhyAsh5114)! - `createAutoMigratingIdbClient` now refuses to open when the app and an extension, or two extensions, use the same store name. This includes an upgrade in which one space drops a store and another creates a store with the same name. Before, one space's migration could drop or rewrite the other's store. Extension migrations also can't change the `_prisma_next_marker` store, which holds every space's migration marker.
+
+  The error names the store and both contract spaces. The client checks this each time it opens, against the extensions you pass and their pending migrations, before it creates or changes any store. It keeps no record of earlier owners, so it can't protect the stores of an extension you no longer pass.
+
+- [#422](https://github.com/prisma-idb/prisma-idb/pull/422) [`e052e44`](https://github.com/prisma-idb/prisma-idb/commit/e052e4429fe932015e61f6c2f486702301f67d66) Thanks [@WhyAsh5114](https://github.com/WhyAsh5114)! - A predicate on an unknown field throws `Model "<Model>" has no field "<field>"` in `where()`, a unique `upsert()` lookup, and criteria used by nested relation writes. Shorthand filters omit entries whose value is `undefined`. The query builder copies callback filter nodes so later edits to the original nodes cannot change which fields it tests.
+
+  **Breaking:** Nested writes require a non-empty filter for each criterion they use. An object containing only `undefined` values counts as empty. For N:1 relations, `disconnect()` ignores supplied criteria and clears the foreign key, while `connect()` uses and validates only the first criterion. For 1:N relations, use `disconnect()` or `disconnect([])` to detach all related rows.
+
+- [#404](https://github.com/prisma-idb/prisma-idb/pull/404) [`c1d3b91`](https://github.com/prisma-idb/prisma-idb/commit/c1d3b916c871807af6519266faad874fca5a7578) Thanks [@WhyAsh5114](https://github.com/WhyAsh5114)! - `update()` now changes the row that `first()` would return for the same chain. Before, it ignored `orderBy()`, `skip()` and `take()` and changed the first row in key order.
+
+  - `orderBy()` and `skip()` choose the row. For example, `orderBy({ serial: "desc" }).update(...)` changes the row with the highest `serial`.
+  - `orderBy()` rejects unknown fields and directions other than `"asc"` and `"desc"`.
+  - After `take(0)`, no row changes and `update()` returns `null`. Before, it changed a row. It still validates the data and throws `IdbRecordValidationError` for an invalid patch. Foreign-key and `onUpdate` checks run only when a row is picked.
+  - `take(0).update()` rejects if you use a transaction accessor after its callback ends.
+  - An update with a relation callback, such as `posts: (p) => p.connect(...)`, finds its row by the filter alone. It now throws `IdbRelationUpdateError` if the chain has `orderBy()`, `skip()` or `take()`. To fix the error, remove those calls, even when the filter matches one row. To change a specific row, filter to it instead, such as by `id`.
+  - On a chain with `orderBy()` or `skip()`, foreign keys are checked on the row the update picks, so a missing parent throws only when that row is written. A plain update still checks the foreign keys in its data first, so it can throw when no row matches.
+  - `orderBy({})` sorts by nothing and counts as no order for every kind of update.
+  - An update with a relation callback on an unfiltered chain, such as `where({})`, now changes the first row in key order. Before, it returned `null` and changed nothing.
+
+- [#422](https://github.com/prisma-idb/prisma-idb/pull/422) [`6afa10f`](https://github.com/prisma-idb/prisma-idb/commit/6afa10fb07d028e6a508d1b2674fff0dba9957ae) Thanks [@WhyAsh5114](https://github.com/WhyAsh5114)! - `take()` and `skip()` now throw a `RangeError` unless the value is an integer from 0 to `Number.MAX_SAFE_INTEGER`, using the same numeric bounds as Prisma 8 SQL. The error is also a `RangeError` for nonnumeric JavaScript inputs. Before, a negative value gave different results depending on the access path: `take(-1)` returned no rows from a scan and two rows from a primary-key lookup.
+- Updated dependencies [[`ea12f85`](https://github.com/prisma-idb/prisma-idb/commit/ea12f851c39ebbbc4b0ae6ea4ec35834a138cdda), [`a704570`](https://github.com/prisma-idb/prisma-idb/commit/a7045700eddf6b4341b42dccbc60d0d622984c65), [`c5497d2`](https://github.com/prisma-idb/prisma-idb/commit/c5497d28ed9617a09deb964d6863161bef944f54), [`cb03796`](https://github.com/prisma-idb/prisma-idb/commit/cb03796c0e4805729e8447a485cb359ed6a5e73f), [`404a816`](https://github.com/prisma-idb/prisma-idb/commit/404a8168729072d1de68ffe5593b39634961549d), [`587cdff`](https://github.com/prisma-idb/prisma-idb/commit/587cdff582b6b4580d3bb1c072375266858e7185), [`05fb7d2`](https://github.com/prisma-idb/prisma-idb/commit/05fb7d2bf717c258fd847630ce2f002c0ea4a2d5), [`5697d8c`](https://github.com/prisma-idb/prisma-idb/commit/5697d8cea94c49a2e782d3272c660c38e3e17b04), [`d5e1761`](https://github.com/prisma-idb/prisma-idb/commit/d5e176191e3d219451e981af380ce07ba3cb0d4a), [`34d8322`](https://github.com/prisma-idb/prisma-idb/commit/34d83229dfa7b2a909a92b2e4d8066f2930d7edf), [`f50b91a`](https://github.com/prisma-idb/prisma-idb/commit/f50b91a5681688ba795951a6d2a412e0735b24a0)]:
+  - @prisma-idb/target-idb@0.18.0
+  - @prisma-idb/driver-idb@0.18.0
+  - @prisma-idb/adapter-idb@0.18.0
+  - @prisma-idb/runtime-idb@0.18.0
+
 ## 0.17.0
 
 ### Minor Changes
