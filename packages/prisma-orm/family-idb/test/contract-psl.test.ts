@@ -1456,7 +1456,7 @@ describe("interpretPslDocumentToIdbContract", () => {
       expect(result.ok).toBe(false);
       if (result.ok) return;
       expect(result.failure.diagnostics.map(({ message }) => message)).toEqual([
-        'Field "Post.updatedAt" uses unsupported attribute "@updatedAt"',
+        'Field "Post.updatedAt" uses unsupported attribute "@updatedAt".',
       ]);
     });
 
@@ -1501,8 +1501,7 @@ describe("interpretPslDocumentToIdbContract", () => {
       expect(result.failure.diagnostics).toContainEqual(
         expect.objectContaining({
           code: "PSL_UNSUPPORTED_FIELD_ATTRIBUTE",
-          message:
-            'Field "Post.author" uses unsupported attribute "@updatedAt". Use @onCreate(now()) @onUpdate(now()).',
+          message: 'Field "Post.author" uses unsupported attribute "@updatedAt".',
         })
       );
     });
@@ -1920,6 +1919,226 @@ async function sharedDiagnostics(
   }
   return psl.failure.diagnostics;
 }
+
+describe("attributes IDB doesn't read", () => {
+  const codes = (schema: string, projection?: ContractProjection) => {
+    const result = interpret(schema, projection);
+    return result.ok ? [] : result.failure.diagnostics.map((d) => [d.code, d.message]);
+  };
+
+  // Each case is refused in both projections: excluding a field or model must not hide it.
+  describe.each(["full", "client"] as const)("in the %s projection", (projection) => {
+    it.each([
+      [
+        "an unknown attribute",
+        "name String @madeUp",
+        ["PSL_UNSUPPORTED_FIELD_ATTRIBUTE", 'Field "Item.name" uses unsupported attribute "@madeUp".'],
+      ],
+      [
+        "an unknown attribute on an excluded field",
+        "name String @idb.exclude @madeUp",
+        ["PSL_UNSUPPORTED_FIELD_ATTRIBUTE", 'Field "Item.name" uses unsupported attribute "@madeUp".'],
+      ],
+      [
+        "a second @default",
+        'name String @default("a") @default("b")',
+        ["PSL_DUPLICATE_ATTRIBUTE", '`@default` declared more than once on field "Item.name".'],
+      ],
+      [
+        "a second @default on an excluded field",
+        'name String @idb.exclude @default("a") @default("b")',
+        ["PSL_DUPLICATE_ATTRIBUTE", '`@default` declared more than once on field "Item.name".'],
+      ],
+      [
+        "a second @unique",
+        "name String @unique @unique",
+        ["PSL_DUPLICATE_ATTRIBUTE", '`@unique` declared more than once on field "Item.name".'],
+      ],
+      [
+        "a second @idb.exclude",
+        "name String @idb.exclude @idb.exclude",
+        ["PSL_DUPLICATE_ATTRIBUTE", '`@idb.exclude` declared more than once on field "Item.name".'],
+      ],
+      [
+        "an unknown model attribute",
+        "@@whatever",
+        ["PSL_UNSUPPORTED_MODEL_ATTRIBUTE", 'Model "Item" uses unsupported attribute "@@whatever".'],
+      ],
+      [
+        "an unknown attribute on an excluded model",
+        "@@idb.exclude\n  @@fulltext([id])",
+        ["PSL_UNSUPPORTED_MODEL_ATTRIBUTE", 'Model "Item" uses unsupported attribute "@@fulltext".'],
+      ],
+      [
+        "an unknown field attribute in an excluded model",
+        "name String @madeUp\n  @@idb.exclude",
+        ["PSL_UNSUPPORTED_FIELD_ATTRIBUTE", 'Field "Item.name" uses unsupported attribute "@madeUp".'],
+      ],
+      [
+        "a second @@map",
+        '@@map("a")\n  @@map("b")',
+        ["PSL_DUPLICATE_ATTRIBUTE", '`@@map` declared more than once on model "Item".'],
+      ],
+      [
+        "a second @@idb.exclude",
+        "@@idb.exclude\n  @@idb.exclude",
+        ["PSL_DUPLICATE_ATTRIBUTE", '`@@idb.exclude` declared more than once on model "Item".'],
+      ],
+    ])("refuses %s instead of dropping it", (_, declaration, diagnostic) => {
+      expect(codes(`model Item {\n  id String @id\n  ${declaration}\n}`, projection)).toEqual([diagnostic]);
+    });
+
+    it.each([
+      [
+        "@relation on an excluded scalar",
+        "name String @idb.exclude @relation(fields: [name], references: [id])",
+        [
+          "IDB_INVALID_RELATION",
+          'Field "Item.name" has type "String", which is not a model, so it can\'t declare @relation.',
+        ],
+      ],
+      [
+        "@relation on a scalar in an excluded model",
+        "name String @relation(fields: [name], references: [id])\n  @@idb.exclude",
+        [
+          "IDB_INVALID_RELATION",
+          'Field "Item.name" has type "String", which is not a model, so it can\'t declare @relation.',
+        ],
+      ],
+      [
+        "@updatedAt on an excluded field",
+        "stamp DateTime @idb.exclude @updatedAt",
+        [
+          "PSL_UNSUPPORTED_FIELD_ATTRIBUTE",
+          'Field "Item.stamp" uses unsupported attribute "@updatedAt". Use @onCreate(now()) @onUpdate(now()).',
+        ],
+      ],
+      [
+        "@updatedAt in an excluded model",
+        "stamp DateTime @updatedAt\n  @@idb.exclude",
+        [
+          "PSL_UNSUPPORTED_FIELD_ATTRIBUTE",
+          'Field "Item.stamp" uses unsupported attribute "@updatedAt". Use @onCreate(now()) @onUpdate(now()).',
+        ],
+      ],
+      [
+        "a second @onCreate on an excluded field",
+        "stamp DateTime @idb.exclude @onCreate(now()) @onCreate(now())",
+        ["PSL_DUPLICATE_ATTRIBUTE", '`@onCreate` declared more than once on field "Item.stamp".'],
+      ],
+      [
+        "a second @onUpdate in an excluded model",
+        "stamp DateTime @onUpdate(now()) @onUpdate(now())\n  @@idb.exclude",
+        ["PSL_DUPLICATE_ATTRIBUTE", '`@onUpdate` declared more than once on field "Item.stamp".'],
+      ],
+    ])("refuses %s instead of dropping it", (_, declaration, diagnostic) => {
+      expect(codes(`model Item {\n  id String @id\n  ${declaration}\n}`, projection)).toEqual([diagnostic]);
+    });
+
+    it.each(["stamp DateTime @id @updatedAt", "id String\n stamp DateTime @updatedAt\n @@id([id, stamp])"])(
+      "refuses @updatedAt on a primary-key field without suggesting an onUpdate generator",
+      (declaration) => {
+        expect(codes(`model Item {\n ${declaration}\n}`, projection)).toContainEqual([
+          "PSL_UNSUPPORTED_FIELD_ATTRIBUTE",
+          'Field "Item.stamp" uses unsupported attribute "@updatedAt".',
+        ]);
+      }
+    );
+
+    it.each(["score Int @idb.exclude @default(1) @default(2", "@@madeUp\n score Int @default(2"])(
+      "reports malformed default syntax even when another attribute is refused",
+      (declaration) => {
+        const result = codes(`model Item {\n id String @id\n ${declaration}\n}`, projection);
+        expect(result.filter(([, message]) => message === "The @default argument list is incomplete.")).toEqual([
+          ["PSL_INVALID_ATTRIBUTE_SYNTAX", "The @default argument list is incomplete."],
+        ]);
+      }
+    );
+
+    it("validates the field exclusion marker even when binding the model fails", () => {
+      const result = codes(
+        "model Item {\n id String @id\n label String @idb.exclude(1)\n @@idb.exclude\n @@whatever\n}",
+        projection
+      );
+      expect(result).toContainEqual(["PSL_INVALID_ATTRIBUTE_SYNTAX", expect.stringContaining("idb.exclude")]);
+    });
+
+    it("counts a repeated @onCreate even when the first one fails to bind", () => {
+      expect(
+        codes("model Item {\n  id String @id\n  s String @onCreate(bogus()) @onCreate(uuid())\n}", projection)
+      ).toEqual(
+        expect.arrayContaining([["PSL_DUPLICATE_ATTRIBUTE", '`@onCreate` declared more than once on field "Item.s".']])
+      );
+    });
+
+    it.each(["@unique", "@id", '@default("x")', "@onCreate(uuid())", "@onUpdate(now())"])(
+      "refuses %s on a relation field",
+      (attribute) => {
+        const name = attribute.replace(/\(.*$/, "");
+        expect(
+          codes(
+            `model User {\n  id String @id\n  posts Post[]\n}\nmodel Post {\n  id String @id\n  authorId String\n  author User @relation(fields: [authorId], references: [id]) ${attribute}\n}`,
+            projection
+          )
+        ).toEqual(
+          // The backrelation then has no owning side, which is reported too.
+          expect.arrayContaining([
+            [
+              "PSL_UNSUPPORTED_FIELD_ATTRIBUTE",
+              `Field "Post.author" is a relation field and stores no value, so it can't take "${name}". Put it on the foreign-key field instead.`,
+            ],
+          ])
+        );
+      }
+    );
+
+    it("refuses a second @@id instead of dropping it", () => {
+      expect(codes("model Item {\n  id String\n  @@id([id])\n  @@id([id])\n}", projection)).toEqual([
+        ["PSL_DUPLICATE_ATTRIBUTE", '`@@id` declared more than once on model "Item".'],
+      ]);
+    });
+
+    it("accepts @map and ignores legacy @db.* and @@schema attributes", () => {
+      expect(
+        codes(
+          `model Item {\n  id String @id @db.Uuid\n  name String @map("item_name") @db.VarChar(20)\n  @@schema("public")\n}`,
+          projection
+        )
+      ).toEqual([]);
+    });
+
+    it("reports a refused field attribute even when binding the model fails", () => {
+      expect(codes("model Item {\n id String @id\n name String @madeUp\n @@madeUp\n}", projection)).toEqual([
+        ["PSL_UNSUPPORTED_MODEL_ATTRIBUTE", 'Model "Item" uses unsupported attribute "@@madeUp".'],
+        ["PSL_UNSUPPORTED_FIELD_ATTRIBUTE", 'Field "Item.name" uses unsupported attribute "@madeUp".'],
+      ]);
+    });
+
+    it("refuses a malformed field exclusion inside an excluded model", () => {
+      const result = codes("model Item {\n id String @id\n name String @idb.exclude(1)\n @@idb.exclude\n}", projection);
+      expect(result).toEqual([["PSL_INVALID_ATTRIBUTE_SYNTAX", expect.stringContaining("idb.exclude")]]);
+    });
+
+    it.each(["onCreate", "onUpdate"] as const)("refuses @%s on a relation in an excluded model", (phase) => {
+      const result = codes(
+        `model Parent {\n id String @id\n}\nmodel Child {\n id String @id\n parentId String\n parent Parent @relation(fields: [parentId], references: [id]) @${phase}(uuid())\n @@idb.exclude\n}`,
+        projection
+      );
+      expect(result).toEqual([["PSL_UNSUPPORTED_FIELD_ATTRIBUTE", expect.stringContaining(`can't take "@${phase}"`)]]);
+    });
+  });
+
+  it("refuses @relation on a field whose type isn't a model", () => {
+    expect(
+      codes("model Item {\n  id String @id\n  name String @relation(fields: [name], references: [id])\n}")
+    ).toEqual([
+      [
+        "IDB_INVALID_RELATION",
+        'Field "Item.name" has type "String", which is not a model, so it can\'t declare @relation.',
+      ],
+    ]);
+  });
+});
 
 describe("shared definition diagnostics", () => {
   it.each([

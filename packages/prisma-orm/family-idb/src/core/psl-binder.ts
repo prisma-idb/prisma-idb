@@ -294,7 +294,7 @@ const excludeFieldSpec = fieldAttribute(IDB_EXCLUDE_ATTR, {
 /**
  * Every attribute the IDB interpreter reads, keyed by PSL name. Upstream expects a
  * factory per entry because a spec may depend on the field or model; none of
- * these do. Any attribute not listed here is ignored, as before.
+ * these do. The binder refuses other attributes, except the portable `@map`, `@db.*` and `@@schema`.
  */
 export const idbAttributeSpecs = {
   model: {
@@ -317,6 +317,42 @@ export const idbAttributeSpecs = {
 } satisfies AttributeSpecNamespace;
 
 // ── Binding ────────────────────────────────────────────────────────────────────
+
+/** Model attributes IDB reads at most once per model. `@@index` and `@@unique` may repeat. */
+const SINGLE_MODEL_ATTRIBUTES = new Set(["map", "id", IDB_EXCLUDE_ATTR]);
+
+/**
+ * Model attributes IDB accepts: the indexes it reads, and `@@schema`, which
+ * names a SQL schema in a schema shared with a SQL server. Anything else is
+ * refused rather than dropped.
+ */
+function isPortableModelAttribute(name: string): boolean {
+  return name === "index" || name === "unique" || name === "schema";
+}
+
+/** Field attributes IDB reads, each at most once per field. */
+const SINGLE_FIELD_ATTRIBUTES = new Set([
+  "id",
+  "unique",
+  "default",
+  "onCreate",
+  "onUpdate",
+  "relation",
+  IDB_EXCLUDE_ATTR,
+]);
+
+/** Field attributes that describe a stored value, so a relation field, which stores none, can't take them. */
+const SCALAR_ONLY_FIELD_ATTRIBUTES = new Set(["id", "unique", "default", "onCreate", "onUpdate"]);
+
+/**
+ * Field attributes IDB accepts without reading, so a schema shared with a SQL
+ * server still compiles: `@map` names a SQL column, and `@db.*` a native SQL
+ * type. Records are keyed by field name either way. Anything else is refused
+ * rather than dropped, since dropping it could change what the schema means.
+ */
+function isPortableFieldAttribute(name: string): boolean {
+  return name === "onCreate" || name === "onUpdate" || name === "map" || name.startsWith("db.");
+}
 
 /** One attribute's typed arguments and the source span of the whole attribute. */
 export interface BoundAttribute<Value> {
@@ -354,11 +390,10 @@ export interface BoundGeneratorCall extends TypedFuncCall {
   readonly text: string;
 }
 
-/** The attributes of one field that the interpreter reads. `id`, `unique` and `updatedAt` carry only their span. */
+/** The attributes of one field that the interpreter reads. `id` and `unique` carry only their span. */
 export interface BoundFieldAttributes {
   readonly id: PslSpan | undefined;
   readonly unique: PslSpan | undefined;
-  readonly updatedAt: PslSpan | undefined;
   readonly default: BoundAttribute<IdbDefaultValue> | undefined;
   /** The generator function call of `@onCreate(fn())`, checked against the field's codec. */
   readonly onCreate: BoundAttribute<BoundGeneratorCall> | undefined;
@@ -373,7 +408,7 @@ export interface BoundFieldAttributes {
 export interface IdbAttributeBinder {
   /** Binds a model's `@@map`, `@@id`, `@@index` and `@@unique`, reporting failures once. */
   model(model: ModelSymbol): BoundModelAttributes;
-  /** Binds a field's `@id`, `@unique`, `@updatedAt`, `@default`, `@onCreate`, `@onUpdate` and `@relation`, reporting failures once. */
+  /** Binds a field's `@id`, `@unique`, `@default`, `@onCreate`, `@onUpdate` and `@relation`, reporting failures once. */
   field(model: ModelSymbol, field: FieldSymbol): BoundFieldAttributes;
   /** Validates exclusion markers and retains only key/index presence for a projected-out scalar. */
   excludedField(model: ModelSymbol, field: FieldSymbol): Pick<BoundFieldAttributes, "id" | "unique">;
@@ -446,6 +481,138 @@ export function createIdbAttributeBinder(input: IdbAttributeBinderInput): IdbAtt
 
   const boundModels = new Map<ModelSymbol, BoundModelAttributes>();
 
+  type AttributeSymbol = ModelSymbol["attributes"][number] | FieldSymbol["attributes"][number];
+  const refusedByOwner = new Map<ModelSymbol | FieldSymbol, ReadonlySet<AttributeSymbol>>();
+
+  /**
+   * Reports attributes IDB would otherwise drop: a repeat of a single-use
+   * attribute, which would lose to the first without a word, and an attribute
+   * IDB doesn't support. Excluded fields and models are checked too, so a
+   * schema fails the same way in every projection. Each owner is checked once;
+   * the result is the set of refused attributes, which binding skips.
+   */
+  function refuseAttributes(
+    owner: ModelSymbol | FieldSymbol,
+    attributes: readonly AttributeSymbol[],
+    single: ReadonlySet<string>,
+    isPortable: (name: string) => boolean,
+    describe: { prefix: string; subject: string; unsupportedCode: string; unsupportedMessage: (name: string) => string }
+  ): ReadonlySet<AttributeSymbol> {
+    const cached = refusedByOwner.get(owner);
+    if (cached !== undefined) return cached;
+    const refused = new Set<AttributeSymbol>();
+    const seen = new Set<string>();
+    for (const attribute of attributes) {
+      if (single.has(attribute.name)) {
+        if (!seen.has(attribute.name)) {
+          seen.add(attribute.name);
+          continue;
+        }
+        refused.add(attribute);
+        diagnostics.push({
+          code: "PSL_DUPLICATE_ATTRIBUTE",
+          message: `\`${describe.prefix}${attribute.name}\` declared more than once on ${describe.subject}.`,
+          sourceId,
+          span: attribute.span,
+        });
+      } else if (!isPortable(attribute.name)) {
+        refused.add(attribute);
+        diagnostics.push({
+          code: describe.unsupportedCode,
+          message: describe.unsupportedMessage(attribute.name),
+          sourceId,
+          span: attribute.span,
+        });
+      }
+    }
+    refusedByOwner.set(owner, refused);
+    return refused;
+  }
+
+  function refusedModelAttributes(model: ModelSymbol): ReadonlySet<AttributeSymbol> {
+    return refuseAttributes(model, model.attributes, SINGLE_MODEL_ATTRIBUTES, isPortableModelAttribute, {
+      prefix: "@@",
+      subject: `model "${model.name}"`,
+      unsupportedCode: "PSL_UNSUPPORTED_MODEL_ATTRIBUTE",
+      unsupportedMessage: (name) => `Model "${model.name}" uses unsupported attribute "@@${name}".`,
+    });
+  }
+
+  const modelNames = new Set(
+    Object.values(table.namespaces).flatMap((namespace) => Object.values(namespace.models).map((model) => model.name))
+  );
+
+  /** An onUpdate generator may only target a field outside the primary key. */
+  function canUpdateField(model: ModelSymbol, field: FieldSymbol): boolean {
+    if (field.attributes.some((attribute) => attribute.name === "id")) return false;
+    const id = model.attributes.find((attribute) => attribute.name === "id");
+    if (id === undefined) return true;
+    const result = interpretAttribute(id.node, idModelSpec, { ...base, selfModel: model });
+    return result.ok && !result.value.fields.includes(field.name);
+  }
+
+  /**
+   * Check attribute names, placement, and structural syntax before binding values.
+   * Excluded fields run the same scan.
+   */
+  function refusedFieldAttributes(model: ModelSymbol, field: FieldSymbol): ReadonlySet<AttributeSymbol> {
+    const cached = refusedByOwner.get(field);
+    if (cached !== undefined) return cached;
+    const label = `Field "${model.name}.${field.name}"`;
+    const isRelationField = modelNames.has(field.typeName);
+    const refused = new Set<AttributeSymbol>();
+    const seen = new Set<string>();
+    const refuse = (attribute: AttributeSymbol, code: string, message: string) => {
+      refused.add(attribute);
+      diagnostics.push({ code, message, sourceId, span: attribute.span });
+    };
+    for (const attribute of field.attributes) {
+      const name = attribute.name;
+      if (!hasCompleteDefaultArgs(attribute)) refused.add(attribute);
+      if (name === "updatedAt") {
+        const canUseGenerators =
+          field.typeName === "DateTime" &&
+          !field.list &&
+          canUpdateField(model, field) &&
+          !field.attributes.some((other) => other.name === "onCreate" || other.name === "onUpdate");
+        refuse(
+          attribute,
+          "PSL_UNSUPPORTED_FIELD_ATTRIBUTE",
+          `${label} uses unsupported attribute "@updatedAt".${canUseGenerators ? " Use @onCreate(now()) @onUpdate(now())." : ""}`
+        );
+      } else if (SINGLE_FIELD_ATTRIBUTES.has(name) && seen.has(name)) {
+        refuse(
+          attribute,
+          "PSL_DUPLICATE_ATTRIBUTE",
+          `\`@${name}\` declared more than once on field "${model.name}.${field.name}".`
+        );
+      } else if (!SINGLE_FIELD_ATTRIBUTES.has(name) && !isPortableFieldAttribute(name)) {
+        refuse(attribute, "PSL_UNSUPPORTED_FIELD_ATTRIBUTE", `${label} uses unsupported attribute "@${name}".`);
+      } else {
+        seen.add(name);
+        if (name === IDB_EXCLUDE_ATTR) {
+          if (interpret(excludeFieldSpec, attribute, { ...base, selfModel: model, field }) === undefined) {
+            refused.add(attribute);
+          }
+        } else if (name === "relation" && !isRelationField) {
+          refuse(
+            attribute,
+            "IDB_INVALID_RELATION",
+            `${label} has type "${field.typeName}", which is not a model, so it can't declare @relation.`
+          );
+        } else if (isRelationField && SCALAR_ONLY_FIELD_ATTRIBUTES.has(name)) {
+          refuse(
+            attribute,
+            "PSL_UNSUPPORTED_FIELD_ATTRIBUTE",
+            `${label} is a relation field and stores no value, so it can't take "@${name}". Put it on the foreign-key field instead.`
+          );
+        }
+      }
+    }
+    refusedByOwner.set(field, refused);
+    return refused;
+  }
+
   /** Binds one model's attributes. */
   function bindModel(model: ModelSymbol): BoundModelAttributes {
     const cached = boundModels.get(model);
@@ -456,9 +623,13 @@ export function createIdbAttributeBinder(input: IdbAttributeBinderInput): IdbAtt
     let map: BoundModelAttributes["map"];
     let id: BoundModelAttributes["id"];
     const indexes: BoundIndex[] = [];
+    const refused = refusedModelAttributes(model);
+    for (const field of Object.values(model.fields)) refusedFieldAttributes(model, field);
+    if (refused.size > 0) failed = true;
 
     for (const attribute of model.attributes) {
       const span = attribute.span;
+      if (refused.has(attribute)) continue;
       switch (attribute.name) {
         case "map": {
           const value = interpret(mapModelSpec, attribute, ctx);
@@ -523,10 +694,6 @@ export function createIdbAttributeBinder(input: IdbAttributeBinderInput): IdbAtt
     return expected.length === 0;
   }
 
-  function checkExcludedFieldDefaults(field: FieldSymbol): void {
-    for (const attribute of field.attributes) hasCompleteDefaultArgs(attribute);
-  }
-
   /**
    * What `@onCreate` and `@onUpdate` are checked against. The binder this file
    * creates doesn't resolve field types, so the field's contributed type is read
@@ -565,18 +732,16 @@ export function createIdbAttributeBinder(input: IdbAttributeBinderInput): IdbAtt
     let failed = false;
     let id: PslSpan | undefined;
     let unique: PslSpan | undefined;
-    let updatedAt: PslSpan | undefined;
     let defaultValue: BoundFieldAttributes["default"];
     const generators: { onCreate?: BoundAttribute<BoundGeneratorCall>; onUpdate?: BoundAttribute<BoundGeneratorCall> } =
       {};
     let relation: BoundFieldAttributes["relation"];
+    const refused = refusedFieldAttributes(model, field);
+    if (refused.size > 0) failed = true;
 
     for (const attribute of field.attributes) {
       const span = attribute.span;
-      if (!hasCompleteDefaultArgs(attribute)) {
-        failed = true;
-        continue;
-      }
+      if (refused.has(attribute)) continue;
       switch (attribute.name) {
         case "id":
           if (interpret(idFieldSpec, attribute, ctx) === undefined) failed = true;
@@ -585,11 +750,6 @@ export function createIdbAttributeBinder(input: IdbAttributeBinderInput): IdbAtt
         case "unique":
           if (interpret(uniqueFieldSpec, attribute, ctx) === undefined) failed = true;
           else unique ??= span;
-          break;
-        case "updatedAt":
-          // Prisma 8 removed `@updatedAt`. Only its span is kept, so the
-          // interpreter can refuse it with what to write instead.
-          updatedAt ??= span;
           break;
         case "default": {
           const value = interpret(defaultFieldSpec, attribute, ctx);
@@ -600,16 +760,6 @@ export function createIdbAttributeBinder(input: IdbAttributeBinderInput): IdbAtt
         case "onCreate":
         case "onUpdate": {
           const phase: GeneratorPhase = attribute.name;
-          if (generators[phase] !== undefined) {
-            failed = true;
-            diagnostics.push({
-              code: "PSL_DUPLICATE_ATTRIBUTE",
-              message: `\`@${phase}\` declared more than once on field "${model.name}.${field.name}".`,
-              sourceId,
-              span,
-            });
-            break;
-          }
           const value = interpret(
             typeGeneratorAttributeSpec(phase, generatorSpecContext(model, field)),
             attribute,
@@ -625,15 +775,11 @@ export function createIdbAttributeBinder(input: IdbAttributeBinderInput): IdbAtt
           else relation ??= { value, span };
           break;
         }
-        case IDB_EXCLUDE_ATTR:
-          if (interpret(excludeFieldSpec, attribute, ctx) === undefined) failed = true;
-          break;
       }
     }
     const bound = {
       id,
       unique,
-      updatedAt,
       default: defaultValue,
       onCreate: generators.onCreate,
       onUpdate: generators.onUpdate,
@@ -644,26 +790,28 @@ export function createIdbAttributeBinder(input: IdbAttributeBinderInput): IdbAtt
     return bound;
   }
 
+  function excludedField(model: ModelSymbol, field: FieldSymbol): ReturnType<IdbAttributeBinder["excludedField"]> {
+    refusedFieldAttributes(model, field);
+    return {
+      id: field.attributes.find(({ name }) => name === "id")?.span,
+      unique: field.attributes.find(({ name }) => name === "unique")?.span,
+    };
+  }
+
   return {
     model: bindModel,
     field: bindField,
-    excludedField: (model, field) => {
-      checkExcludedFieldDefaults(field);
-      for (const marker of field.attributes.filter(({ name }) => name === IDB_EXCLUDE_ATTR)) {
-        interpret(excludeFieldSpec, marker, { ...base, selfModel: model, field });
-      }
-      return {
-        id: field.attributes.find(({ name }) => name === "id")?.span,
-        unique: field.attributes.find(({ name }) => name === "unique")?.span,
-      };
-    },
+    excludedField,
     isModelExcluded: (model) => {
+      // An excluded model's attributes go unread, but the schema still fails on the ones IDB refuses.
+      const refused = refusedModelAttributes(model);
+      for (const field of Object.values(model.fields)) refusedFieldAttributes(model, field);
       const markers = model.attributes.filter(({ name }) => name === IDB_EXCLUDE_ATTR);
       if (markers.length === 0) return false;
-      // Validate every marker, not just the first, so a repeated malformed exclusion cannot hide in either projection.
-      // The model stays excluded either way: a malformed exclusion fails the contract through its diagnostic.
-      for (const marker of markers) interpret(excludeModelSpec, marker, { ...base, selfModel: model });
-      for (const field of Object.values(model.fields)) checkExcludedFieldDefaults(field);
+      // The single-use scan reports repeats. Bind the first marker even when the model is excluded.
+      for (const marker of markers) {
+        if (!refused.has(marker)) interpret(excludeModelSpec, marker, { ...base, selfModel: model });
+      }
       return true;
     },
     isFieldExcluded: (field) => field.attributes.some((attribute) => attribute.name === IDB_EXCLUDE_ATTR),

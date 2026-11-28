@@ -361,21 +361,6 @@ function interpretModel(
     const fieldAttributes = attributes.field(model, field);
     if (fieldAttributes.failed) continue;
 
-    // `@updatedAt` is a Prisma 6 attribute that Prisma 8 removed. It is refused on
-    // every field, relation fields included, with upstream's hint unless the field
-    // already writes `@onUpdate(...)`.
-    if (fieldAttributes.updatedAt !== undefined) {
-      const message = `Field "${model.name}.${field.name}" uses unsupported attribute "@updatedAt"`;
-      diagnostics.push({
-        code: "PSL_UNSUPPORTED_FIELD_ATTRIBUTE",
-        message:
-          fieldAttributes.onUpdate === undefined ? `${message}. Use @onCreate(now()) @onUpdate(now()).` : message,
-        sourceId,
-        span: fieldAttributes.updatedAt,
-      });
-      continue;
-    }
-
     // Relation list field (backrelation) — skip for now, resolved in second pass
     if (field.list && modelNames.has(field.typeName)) {
       if (excludedModelNames.has(field.typeName)) {

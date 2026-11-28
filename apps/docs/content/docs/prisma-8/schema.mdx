@@ -124,11 +124,11 @@ A default or generated value only applies when the field is left out; an explici
 
 Prisma 8 removed some Prisma 6 forms, and `contract emit` names the replacement:
 
-| Prisma 6                                        | Prisma 8                                     |
-| ----------------------------------------------- | -------------------------------------------- |
-| `@default(uuid())`, `@default(uuid(7))`         | `@onCreate(uuid())`, `@onCreate(uuid(7))`    |
-| `@default(cuid())`                              | `@onCreate(cuid(2))`                         |
-| `@updatedAt` or the `temporal.updatedAt()` type | `DateTime @onCreate(now()) @onUpdate(now())` |
+| Prisma 6                                        | Prisma 8                                                               |
+| ----------------------------------------------- | ---------------------------------------------------------------------- |
+| `@default(uuid())`, `@default(uuid(7))`         | `@onCreate(uuid())`, `@onCreate(uuid(7))`                              |
+| `@default(cuid())`                              | `@onCreate(cuid(2))`                                                   |
+| `@updatedAt` or the `temporal.updatedAt()` type | `DateTime @onCreate(now()) @onUpdate(now())` on a non-key scalar field |
 
 The contract these produce is unchanged, so an existing database needs no migration.
 
@@ -159,6 +159,10 @@ contract: prismaIdbContract("src/prisma/schema.prisma", { projection: "client" }
 ```
 
 [Client Contracts](/docs/prisma-8/sync/client-contracts) explains the rules, including what happens to a relation that points at an excluded model.
+
+## Attributes in a schema shared with a SQL server
+
+IDB reads the attributes it has a use for and refuses the rest, rather than dropping them and changing what the schema means. IndexedDB accepts `@map` for schemas shared with SQL. It also ignores the legacy `@db.*` and `@@schema` spellings. Prisma 8 SQL uses its own native type and schema syntax. Any other attribute, such as `@@fulltext`, fails to compile with `PSL_UNSUPPORTED_FIELD_ATTRIBUTE` or `PSL_UNSUPPORTED_MODEL_ATTRIBUTE`. Repeating a single-use IndexedDB attribute, such as `@default`, `@onCreate` or `@@map`, fails with `PSL_DUPLICATE_ATTRIBUTE`. A relation field stores no value, so `@id`, `@unique`, `@default`, `@onCreate` and `@onUpdate` on it fail with `PSL_UNSUPPORTED_FIELD_ATTRIBUTE`; put them on the foreign-key field. `@relation` on a field whose type isn't a model fails with `IDB_INVALID_RELATION`. These checks apply to excluded fields and models too. They concern PSL attributes only: a TypeScript model has no attribute syntax, so it has nothing to refuse here.
 
 ## Config
 
