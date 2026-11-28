@@ -139,6 +139,57 @@ export type DefineContractOptions = {
   readonly projection?: ContractProjection;
 };
 
+/** A model's `defaults` and `fieldDefaults`, read once from the authored definition. */
+type CapturedDefaults = {
+  readonly defaults: NonNullable<ModelDef<string>["defaults"]>;
+  readonly fieldDefaults: NonNullable<ModelDef<string>["fieldDefaults"]>;
+};
+
+/**
+ * Copies a `defaults` or `fieldDefaults` map once, reading each entry once. An accessor on
+ * the map or on one of its entries then returns the same value to every check and to
+ * lowering, so a value can't pass a check and be replaced before it is stored. A list
+ * default is copied too. A non-enumerable entry is kept, and stays non-enumerable, only when
+ * a field declares it: nothing else reads an entry that names no field, so it is never evaluated.
+ */
+function captureDefaultMap<Value>(
+  map: Record<string, Value> | undefined,
+  declared: ReadonlySet<string>
+): Record<string, Value> {
+  const captured: Record<string, Value> = Object.create(null);
+  if (map === undefined || map === null) return captured;
+  for (const name of Object.getOwnPropertyNames(map)) {
+    const enumerable = Object.prototype.propertyIsEnumerable.call(map, name);
+    if (!enumerable && !declared.has(name)) continue;
+    const value = map[name] as Value;
+    Object.defineProperty(captured, name, {
+      value: Array.isArray(value) ? [...value] : value,
+      enumerable,
+      writable: true,
+      configurable: true,
+    });
+  }
+  return captured;
+}
+
+/**
+ * Captures every model's default maps, excluded models included. The model definitions
+ * stay as authored, so the properties that projection reads are read as before.
+ */
+function captureModelDefaults(models: Record<string, ModelDef<string>>): Map<string, CapturedDefaults> {
+  const captured = new Map<string, CapturedDefaults>();
+  for (const [modelName, def] of Object.entries(models)) {
+    const { defaults, fieldDefaults, fields } = def;
+    // The fields that lowering sees: it lists them, so a hidden one is not declared.
+    const declared = new Set(Object.keys(fields));
+    captured.set(modelName, {
+      defaults: captureDefaultMap(defaults, declared),
+      fieldDefaults: captureDefaultMap(fieldDefaults, declared),
+    });
+  }
+  return captured;
+}
+
 /** Internal source names survive projection so the shared validator can check exclusions. */
 type ProjectedModelDef = ModelDef<string> & {
   readonly declaredFields?: readonly string[];
@@ -153,7 +204,10 @@ type ProjectedModelDef = ModelDef<string> & {
  * don't cascade on requiredness"). The underlying FK scalar field (if any)
  * is kept, orphaned but inert.
  */
-function projectModelsForClient(models: Record<string, ModelDef<string>>): Record<string, ProjectedModelDef> {
+function projectModelsForClient(
+  models: Record<string, ModelDef<string>>,
+  captured: ReadonlyMap<string, CapturedDefaults>
+): Record<string, ProjectedModelDef> {
   const excludedModelNames = new Set(
     Object.entries(models)
       .filter(([, def]) => def.exclude === true)
@@ -165,12 +219,12 @@ function projectModelsForClient(models: Record<string, ModelDef<string>>): Recor
   for (const [modelName, def] of Object.entries(models)) {
     if (excludedModelNames.has(modelName)) {
       // The projection drops this model before any other check reads it.
-      checkExcludedDefaults(modelName, def, Object.keys(def.fields));
+      checkExcludedDefaults(modelName, def, Object.keys(def.fields), captured.get(modelName)!);
       continue;
     }
 
     const excludedFields = new Set(def.excludeFields ?? []);
-    checkExcludedDefaults(modelName, def, excludedFields);
+    checkExcludedDefaults(modelName, def, excludedFields, captured.get(modelName)!);
     const relations: Record<string, RelationDef> = Object.create(null);
     for (const [relName, rel] of Object.entries(def.relations ?? {})) {
       if (excludedModelNames.has(rel.to)) {
@@ -188,6 +242,8 @@ function projectModelsForClient(models: Record<string, ModelDef<string>>): Recor
 
     result[modelName] = {
       ...def,
+      // Carried explicitly because the spread above drops a getter that a model class defines on its prototype.
+      excludeFields: [...excludedFields],
       fields,
       relations,
       declaredFields: Object.keys(def.fields),
@@ -454,13 +510,13 @@ function lowerFieldDefaults(
  * and fields listed in both maps. Excluded fields stay allowed: a client
  * projection drops them from `fields` but they are still declared.
  */
-function checkDeclaredDefaults(modelName: string, def: ProjectedModelDef): void {
+function checkDeclaredDefaults(modelName: string, def: ProjectedModelDef, captured: CapturedDefaults): void {
   const fail = (name: string, message: string) => failDefault(modelName, name, message);
   for (const [mapName, map] of [
-    ["defaults", def.defaults],
-    ["fieldDefaults", def.fieldDefaults],
+    ["defaults", captured.defaults],
+    ["fieldDefaults", captured.fieldDefaults],
   ] as const) {
-    for (const [name, value] of Object.entries(map ?? {})) {
+    for (const [name, value] of Object.entries(map)) {
       if (!Object.hasOwn(def.fields, name) && !def.excludeFields?.includes(name)) {
         fail(name, `Model "${modelName}" ${mapName} references field "${name}", which is not declared in "fields".`);
       }
@@ -472,8 +528,9 @@ function checkDeclaredDefaults(modelName: string, def: ProjectedModelDef): void 
       }
     }
   }
-  for (const name of Object.keys(def.defaults ?? {})) {
-    if (Object.hasOwn(def.fieldDefaults ?? {}, name)) {
+  // Own names, not enumerable ones: lowering reads a non-enumerable entry, so it can duplicate one too.
+  for (const name of Object.getOwnPropertyNames(captured.defaults)) {
+    if (Object.hasOwn(captured.fieldDefaults, name)) {
       fail(name, `Model "${modelName}" declares a default for field "${name}" in both "defaults" and "fieldDefaults".`);
     }
   }
@@ -495,13 +552,18 @@ function failDefault(modelName: string, name: string, message: string): never {
  * `Float` default is checked here and a client build refuses what a full build refuses. Reading each
  * entry by name finds a non-enumerable one too, as lowering does. Other types are not checked here, as in the shared validator.
  */
-function checkExcludedDefaults(modelName: string, def: ModelDef<string>, names: Iterable<string>): void {
+function checkExcludedDefaults(
+  modelName: string,
+  def: ModelDef<string>,
+  names: Iterable<string>,
+  captured: CapturedDefaults
+): void {
   for (const name of names) {
     const spec = ownEntry(def.fields, name);
     if (spec === undefined) continue;
     const type = parseFieldSpec(spec);
     if (type.typeName !== "Float" || type.many) continue;
-    for (const map of [def.defaults, def.fieldDefaults]) {
+    for (const map of [captured.defaults, captured.fieldDefaults]) {
       checkFiniteDefault(modelName, name, ownEntry(map, name), (field, message) =>
         failDefault(modelName, field, message)
       );
@@ -524,9 +586,16 @@ function checkFiniteDefault(
 }
 
 /** Translate one model declaration into a model node. */
-function lowerModel(modelName: string, def: ProjectedModelDef, enums: EnumDefs): IdbModelNode {
-  checkDeclaredDefaults(modelName, def);
-  const autoIncrementFields = Object.keys(def.fields).filter((name) => isAutoincrement(ownEntry(def.defaults, name)));
+function lowerModel(
+  modelName: string,
+  def: ProjectedModelDef,
+  enums: EnumDefs,
+  captured: CapturedDefaults
+): IdbModelNode {
+  checkDeclaredDefaults(modelName, def, captured);
+  const autoIncrementFields = Object.keys(def.fields).filter((name) =>
+    isAutoincrement(ownEntry(captured.defaults, name))
+  );
   return {
     modelName,
     storeName: def.store,
@@ -545,8 +614,8 @@ function lowerModel(modelName: string, def: ProjectedModelDef, enums: EnumDefs):
     ...(autoIncrementFields.length > 0 ? { autoIncrementFields } : {}),
     fields: Object.entries(def.fields).map(([name, spec]) => {
       const { literalDefault, executionDefault } = lowerFieldDefaults(
-        ownEntry(def.defaults, name),
-        ownEntry(def.fieldDefaults, name),
+        ownEntry(captured.defaults, name),
+        ownEntry(captured.fieldDefaults, name),
         (declared) => lowerGeneratedDefault(modelName, name, spec, enums, declared)
       );
       return lowerField(name, spec, enums, literalDefault, executionDefault);
@@ -574,14 +643,20 @@ export function buildIdbContractDefinition(
 ): IdbContractDefinition {
   const projection: ContractProjection = options?.projection ?? "full";
   const enums: EnumDefs = input.enums ?? {};
+  // Read the model entries once, so capture, projection and lowering all see the same definitions.
+  const declared: Record<string, ModelDef<string>> = Object.create(null);
+  for (const [modelName, def] of Object.entries(input.models)) declared[modelName] = def;
+  const captured = captureModelDefaults(declared);
   const models: Record<string, ProjectedModelDef> =
-    projection === "client" ? projectModelsForClient(input.models) : input.models;
+    projection === "client" ? projectModelsForClient(declared, captured) : declared;
 
   const enumNodes = lowerEnums(enums);
 
   const definition = {
     enums: enumNodes,
-    models: Object.entries(models).map(([modelName, def]) => lowerModel(modelName, def, enums)),
+    models: Object.entries(models).map(([modelName, def]) =>
+      lowerModel(modelName, def, enums, captured.get(modelName)!)
+    ),
   };
   const diagnostics = validateIdbContractDefinition(definition);
   if (diagnostics.length > 0) throw new IdbContractError(diagnostics);

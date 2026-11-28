@@ -214,6 +214,264 @@ describe("non-finite Float defaults", () => {
     expect(interpret(schema, "client").ok).toBe(interpret(schema, "full").ok);
   });
 
+  describe("a default map whose values change on each read", () => {
+    /** Builds `Row` whose map answers each read with the next value, and counts the reads. */
+    function build(key: "defaults" | "fieldDefaults", answers: readonly number[], mapIsGetter: boolean) {
+      let reads = 0;
+      const answer = () => answers[Math.min(reads++, answers.length - 1)]!;
+      const model = { store: "rows", key: "id", fields: { id: "String", f: "Float" } };
+      if (mapIsGetter) {
+        // Defined as a getter so it runs when the builder reads it, not while the fixture is built.
+        Object.defineProperty(model, key, { enumerable: true, get: () => ({ f: answer() }) });
+      } else {
+        Object.defineProperty(model, key, {
+          enumerable: true,
+          value: Object.defineProperty({}, "f", { enumerable: true, get: answer }),
+        });
+      }
+      const run = () =>
+        buildIdbContractDefinition({ family: idbFamilyPack, target: idbTargetPack, models: { Row: model } });
+      return { run, reads: () => reads };
+    }
+
+    it.each(["defaults", "fieldDefaults"] as const)(
+      "refuses a %s value that is non-finite on the first read",
+      (key) => {
+        for (const mapIsGetter of [false, true]) {
+          const { run, reads } = build(key, [Infinity, 1.5], mapIsGetter);
+          expect(run).toThrow(/IDB_INVALID_DEFAULT_VALUE/);
+          expect(reads()).toBe(1);
+        }
+      }
+    );
+
+    it.each(["defaults", "fieldDefaults"] as const)("stores the %s value it validated, read once", (key) => {
+      for (const mapIsGetter of [false, true]) {
+        const { run, reads } = build(key, [1.5, Infinity], mapIsGetter);
+        const field = run().models[0]!.fields.find(({ name }) => name === "f");
+        expect(field?.literalDefault).toBe(1.5);
+        expect(reads()).toBe(1);
+      }
+    });
+
+    it.each(["defaults", "fieldDefaults"] as const)("keeps a non-enumerable %s entry", (key) => {
+      const map = Object.defineProperty({}, "f", { value: 1.5 });
+      for (const projection of ["client", "full"] as const) {
+        const definition = buildIdbContractDefinition(
+          {
+            family: idbFamilyPack,
+            target: idbTargetPack,
+            models: { Row: { store: "rows", key: "id", fields: { id: "String", f: "Float" }, [key]: map } },
+          },
+          { projection }
+        );
+        expect(definition.models[0]!.fields.find(({ name }) => name === "f")?.literalDefault).toBe(1.5);
+      }
+    });
+  });
+
+  it("reads exclusion flags that a model class defines as getters", () => {
+    class Hidden {
+      store = "hidden";
+      key = "id";
+      fields = { id: "String", secret: "String" } as const;
+      get exclude() {
+        return true;
+      }
+    }
+    class Partial {
+      store = "partial";
+      key = "id";
+      fields = { id: "String", secret: "String" } as const;
+      get excludeFields() {
+        return ["secret"];
+      }
+    }
+    const definition = buildIdbContractDefinition(
+      { family: idbFamilyPack, target: idbTargetPack, models: { Hidden: new Hidden(), Partial: new Partial() } },
+      { projection: "client" }
+    );
+    expect(definition.models.map(({ modelName }) => modelName)).toEqual(["Partial"]);
+    expect(definition.models[0]!.fields.map(({ name }) => name)).toEqual(["id"]);
+  });
+
+  it("keeps a non-enumerable entry hidden from the checks that list entries", () => {
+    const map = Object.defineProperty({ f: 1.5 }, "metadata", { value: true });
+    for (const projection of ["client", "full"] as const) {
+      const definition = buildIdbContractDefinition(
+        {
+          family: idbFamilyPack,
+          target: idbTargetPack,
+          models: { Row: { store: "rows", key: "id", fields: { id: "String", f: "Float" }, defaults: map } },
+        },
+        { projection }
+      );
+      expect(definition.models[0]!.fields.find(({ name }) => name === "f")?.literalDefault).toBe(1.5);
+    }
+  });
+
+  it("reads whether a model is excluded once, so a flipping flag can't skip the finite check", () => {
+    let reads = 0;
+    const model = {
+      store: "rows",
+      key: "id",
+      fields: { id: "String", f: "Float" },
+      defaults: { f: Infinity },
+    };
+    Object.defineProperty(model, "exclude", { enumerable: true, get: () => reads++ === 0 });
+    expect(() =>
+      buildIdbContractDefinition(
+        { family: idbFamilyPack, target: idbTargetPack, models: { Row: model } },
+        { projection: "client" }
+      )
+    ).toThrow(/IDB_INVALID_DEFAULT_VALUE/);
+  });
+
+  it("reads the model map once", () => {
+    const model = { store: "rows", key: "id", fields: { id: "String" } };
+    const maps = [{ Row: model }, { Other: model }];
+    let reads = 0;
+    const input = { family: idbFamilyPack, target: idbTargetPack } as Record<string, unknown>;
+    Object.defineProperty(input, "models", { enumerable: true, get: () => maps[Math.min(reads++, 1)] });
+    for (const projection of ["client", "full"] as const) {
+      reads = 0;
+      const definition = buildIdbContractDefinition(
+        input as unknown as Parameters<typeof buildIdbContractDefinition>[0],
+        { projection }
+      );
+      expect(definition.models.map(({ modelName }) => modelName)).toEqual(["Row"]);
+    }
+  });
+
+  it("keeps defaults and exclusions that a model class defines as prototype getters", () => {
+    class Row {
+      store = "rows";
+      key = "id";
+      fields = { id: "String", secret: "Float", rank: "Float" } as const;
+      get excludeFields() {
+        return ["secret"];
+      }
+      get defaults() {
+        return { secret: 1.5, rank: 2.5 };
+      }
+    }
+    const definition = buildIdbContractDefinition(
+      { family: idbFamilyPack, target: idbTargetPack, models: { Row: new Row() } },
+      { projection: "client" }
+    );
+    expect(definition.models[0]!.fields.map(({ name }) => name)).toEqual(["id", "rank"]);
+    expect(definition.models[0]!.fields.find(({ name }) => name === "rank")?.literalDefault).toBe(2.5);
+    expect(definition.models[0]!.exclusions?.fields).toEqual(["secret"]);
+  });
+
+  it("ignores a non-enumerable non-finite entry that no field declares", () => {
+    const map = Object.defineProperty({ f: 1.5 }, "metadata", { value: Infinity });
+    for (const exclusion of [{}, { exclude: true }]) {
+      for (const projection of ["client", "full"] as const) {
+        expect(() =>
+          buildIdbContractDefinition(
+            {
+              family: idbFamilyPack,
+              target: idbTargetPack,
+              models: {
+                Row: { store: "rows", key: "id", fields: { id: "String", f: "Float" }, ...exclusion, defaults: map },
+              },
+            },
+            { projection }
+          )
+        ).not.toThrow();
+      }
+    }
+  });
+
+  it("rejects a field listed in both default maps even when one entry is non-enumerable", () => {
+    const hidden = Object.defineProperty({}, "f", { value: 1.5 });
+    for (const exclusion of [{}, { excludeFields: ["f"] }]) {
+      for (const projection of ["client", "full"] as const) {
+        expect(() =>
+          buildIdbContractDefinition(
+            {
+              family: idbFamilyPack,
+              target: idbTargetPack,
+              models: {
+                Row: {
+                  store: "rows",
+                  key: "id",
+                  fields: { id: "String", f: "Float" },
+                  ...exclusion,
+                  defaults: hidden,
+                  // Finite, so only the duplicate can fail the build.
+                  fieldDefaults: { f: 2.5 },
+                },
+              },
+            },
+            { projection }
+          )
+        ).toThrow(/both "defaults" and "fieldDefaults"/);
+      }
+    }
+  });
+
+  it("never evaluates a non-enumerable entry that no field declares", () => {
+    let reads = 0;
+    const map = Object.defineProperty({ f: 1.5 }, "metadata", {
+      get() {
+        reads++;
+        throw new Error("metadata was read");
+      },
+    });
+    for (const key of ["defaults", "fieldDefaults"] as const) {
+      for (const projection of ["client", "full"] as const) {
+        const definition = buildIdbContractDefinition(
+          {
+            family: idbFamilyPack,
+            target: idbTargetPack,
+            models: { Row: { store: "rows", key: "id", fields: { id: "String", f: "Float" }, [key]: map } },
+          },
+          { projection }
+        );
+        expect(definition.models[0]!.fields.find(({ name }) => name === "f")?.literalDefault).toBe(1.5);
+      }
+    }
+    expect(reads).toBe(0);
+  });
+
+  it("builds from one read of each model entry", () => {
+    const first = { store: "rows", key: "id", fields: { id: "String", f: "Float" }, defaults: { f: 1.5 } };
+    const second = { store: "rows", key: "id", fields: { id: "String", g: "Float" }, defaults: { g: 2.5 } };
+    for (const projection of ["client", "full"] as const) {
+      let reads = 0;
+      const models = {};
+      Object.defineProperty(models, "Row", { enumerable: true, get: () => (reads++ === 0 ? first : second) });
+      const definition = buildIdbContractDefinition(
+        { family: idbFamilyPack, target: idbTargetPack, models: models as Record<string, typeof first> },
+        { projection }
+      );
+      expect(reads).toBe(1);
+      expect(definition.models[0]!.fields.map(({ name }) => name)).toEqual(["id", "f"]);
+      expect(definition.models[0]!.fields[1]!.literalDefault).toBe(1.5);
+    }
+  });
+
+  it("treats a hidden field declaration as undeclared, as lowering does", () => {
+    const fields = Object.defineProperty({ id: "String" }, "meta", { value: "Float" });
+    const hidden = Object.defineProperty({}, "meta", { value: Infinity });
+    for (const exclusion of [{ exclude: true }, {}]) {
+      for (const projection of ["client", "full"] as const) {
+        expect(() =>
+          buildIdbContractDefinition(
+            {
+              family: idbFamilyPack,
+              target: idbTargetPack,
+              models: { Row: { store: "rows", key: "id", fields, ...exclusion, defaults: hidden } },
+            },
+            { projection }
+          )
+        ).not.toThrow();
+      }
+    }
+  });
+
   it("accepts a finite Float default", () => {
     expect(interpret(`model Item {\n  id String @id\n  f Float @default(1.5)\n}`).ok).toBe(true);
   });
