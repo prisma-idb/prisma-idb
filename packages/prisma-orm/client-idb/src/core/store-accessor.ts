@@ -481,7 +481,7 @@ export class IdbStoreAccessorImpl<
   orderBy(
     spec: OrderBySpec<TContract, ModelName>
   ): IdbStoreAccessor<TContract, ModelName, TIncludes, TSelected, TFiltered> {
-    return this.#clone({ orderBy: spec as Record<string, "asc" | "desc"> });
+    return this.#clone({ orderBy: { ...spec } as Record<string, "asc" | "desc"> });
   }
 
   take(n: number): IdbStoreAccessor<TContract, ModelName, TIncludes, TSelected, TFiltered> {
