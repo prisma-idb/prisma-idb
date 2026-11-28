@@ -16,8 +16,13 @@ import idbFamilyPack from "@prisma-idb/family-idb/pack";
 import idbTargetPack from "@prisma-idb/target-idb/pack";
 import { createIDBRuntimeDriver, type IdbRuntimeDriverInstance } from "@prisma-idb/driver-idb/runtime";
 import type { IdbQueryPlan } from "@prisma-idb/adapter-idb/runtime";
-import { idbOrm, IdbRecordValidationError } from "../src/exports/orm";
-import type { IdbQueryExecutor, IdbQueryExecutorWithTransaction, IdbRelationMutator } from "../src/exports/orm";
+import { idbOrm, IdbRecordValidationError, IdbRelationUpdateError } from "../src/exports/orm";
+import type {
+  IdbQueryExecutor,
+  IdbQueryExecutorWithTransaction,
+  IdbRelationMutator,
+  IdbStoreAccessor,
+} from "../src/exports/orm";
 
 // ── Test contract ─────────────────────────────────────────────────────────────
 
@@ -303,6 +308,41 @@ describe("ORM nested update", () => {
       authorId,
     });
     expect(await getAllRows(db, "posts")).toEqual([{ ...post, authorId }]);
+  });
+
+  it.each([
+    ["orderBy()", (q: IdbStoreAccessor<never, never>) => q.orderBy({ id: "desc" } as never), "an order"],
+    ["skip()", (q: IdbStoreAccessor<never, never>) => q.skip(1), "an offset"],
+    ["take()", (q: IdbStoreAccessor<never, never>) => q.take(1), "a limit"],
+  ])("rejects a relation update after %s instead of changing another row", async (_, chain, noun) => {
+    await orm_()["users"]!.create({ id: "u1", name: "Alice" } as never);
+    await orm_()["users"]!.create({ id: "u2", name: "Bob" } as never);
+    await orm_()["posts"]!.create({ id: "p1", authorId: "u1", title: "Post" } as never);
+    // A filter on the primary key doesn't avoid the error: the guard reads only the order and window.
+    const posts = chain(idbOrm({ contract, executor })["posts"]!.where({ id: "p1" }) as never);
+    const update = posts.update({ author: (rel: RelMutator) => rel.connect({ id: "u2" }) } as never);
+    await expect(update).rejects.toThrow(IdbRelationUpdateError);
+    await expect(update).rejects.toThrow(`the collection has ${noun}`);
+    expect((await getAllRows(db, "posts"))[0]?.["authorId"]).toBe("u1");
+  });
+
+  it.each([
+    ["the unfiltered collection", (q: IdbStoreAccessor<never, never>) => q],
+    ["where({})", (q: IdbStoreAccessor<never, never>) => q.where({} as never)],
+    ["orderBy({})", (q: IdbStoreAccessor<never, never>) => q.orderBy({} as never)],
+  ])("updates the first row in key order through %s, as a scalar update does", async (_, chain) => {
+    await orm_()["users"]!.create({ id: "u1", name: "Alice" } as never);
+    await orm_()["users"]!.create({ id: "u2", name: "Bob" } as never);
+    await orm_()["posts"]!.create({ id: "p2", authorId: "u1", title: "Second" } as never);
+    await orm_()["posts"]!.create({ id: "p1", authorId: "u1", title: "First" } as never);
+    const posts = chain(idbOrm({ contract, executor })["posts"]! as never);
+    await expect(
+      posts.update({ title: "Moved", author: (rel: RelMutator) => rel.connect({ id: "u2" }) } as never)
+    ).resolves.toEqual({ id: "p1", authorId: "u2", title: "Moved" });
+    expect(await getAllRows(db, "posts")).toEqual([
+      { id: "p1", authorId: "u2", title: "Moved" },
+      { id: "p2", authorId: "u1", title: "Second" },
+    ]);
   });
 
   it("N:1 connect in update re-links the post to a new user", async () => {

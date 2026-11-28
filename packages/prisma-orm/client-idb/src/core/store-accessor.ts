@@ -1,6 +1,6 @@
 import { type IdbUpdateCallback, resolveFieldUpdates, applyFieldUpdates } from "./field-updates";
 import { AsyncIterableResult } from "@prisma/orm-framework/components/runtime";
-import type { PlanMeta } from "@prisma/orm-framework/contract/types";
+import { domainModelsAtDefaultNamespace, type PlanMeta } from "@prisma/orm-framework/contract/types";
 import type { IdbFilterExpr, IdbQueryPlan } from "@prisma-idb/adapter-idb/runtime";
 import { absentAsNull, isValidIdbKey } from "@prisma-idb/target-idb/runtime";
 import type {
@@ -64,7 +64,7 @@ import { assertUniqueLookup, snapshotLookup } from "./unique-lookup";
 import { applyUpdateDefaults, completeCreateRecord, createMutationDefaultsCache } from "./mutation-defaults";
 import { loadRelation, storeNamesForRead } from "./relation-loader";
 import { OpenTransaction } from "./open-transaction";
-import { assertBulkWriteIgnoresNothing } from "./bulk-write-guard";
+import { assertBulkWriteIgnoresNothing, assertRelationUpdateIgnoresNothing } from "./bulk-write-guard";
 import {
   applyReferentialActionsForRowOnUpdate,
   collectOnUpdateEnforcementStoreNames,
@@ -301,12 +301,15 @@ export interface IdbStoreAccessor<
   delete(key: KeyType<TContract, ModelName>): Promise<DefaultModelRow<TContract, ModelName>>;
 
   /**
-   * Update the first row matching the accumulated `.where()` filter.
-   * Returns the merged row, or `null` if no row matches.
+   * Update the first row of the chain: `orderBy()` and `skip()` pick the
+   * row, as they do for `first()`, and `take(0)` matches none. Returns the
+   * merged row, or `null` if no row matches.
    *
    * Relation fields accept `connect` or `disconnect` callbacks. When any
    * relation callback is present, all writes run in a single multi-store
-   * IDB transaction (requires IdbRuntime).
+   * IDB transaction (requires IdbRuntime). Such an update finds its row by
+   * the filter alone, so it throws `IdbRelationUpdateError` on a collection
+   * with `orderBy()`, `skip()` or `take()`.
    */
   update(
     patch: MutationUpdateInput<TContract, ModelName> | IdbUpdateCallback<TContract, ModelName>
@@ -411,6 +414,25 @@ function assertPageArgument(argument: "take" | "skip", value: unknown): void {
   throw new RangeError(`${argument} must be an integer from 0 to ${Number.MAX_SAFE_INTEGER}${received}`);
 }
 
+/** Capture and validate the sort before it can choose a row for a write. */
+function snapshotOrderBy(spec: unknown, contract: IdbContract, modelName: string): Record<string, "asc" | "desc"> {
+  if (typeof spec !== "object" || spec === null || Array.isArray(spec)) {
+    throw new TypeError(
+      `orderBy must be an object that maps fields to "asc" or "desc", got ${spec === null ? "null" : Array.isArray(spec) ? "an array" : typeof spec}`
+    );
+  }
+  const fields = domainModelsAtDefaultNamespace(contract.domain)[modelName]!.fields;
+  return Object.fromEntries(
+    Object.entries(spec as Record<string, unknown>).map(([field, direction]) => {
+      if (!Object.hasOwn(fields, field)) throw new TypeError(`Model "${modelName}" has no field "${field}"`);
+      if (direction !== "asc" && direction !== "desc") {
+        throw new TypeError(`orderBy direction for field "${field}" must be "asc" or "desc"`);
+      }
+      return [field, direction] as const;
+    })
+  );
+}
+
 /**
  * Concrete immutable query builder.
  *
@@ -478,7 +500,7 @@ export class IdbStoreAccessorImpl<
   orderBy(
     spec: OrderBySpec<TContract, ModelName>
   ): IdbStoreAccessor<TContract, ModelName, TIncludes, TSelected, TFiltered> {
-    return this.#clone({ orderBy: spec as Record<string, "asc" | "desc"> });
+    return this.#clone({ orderBy: snapshotOrderBy(spec, this.#contract, this.#modelName) });
   }
 
   take(n: number): IdbStoreAccessor<TContract, ModelName, TIncludes, TSelected, TFiltered> {
@@ -719,6 +741,7 @@ export class IdbStoreAccessorImpl<
     const patchRecord = resolvedUpdates.patch;
 
     if (hasNestedMutationCallbacks(this.#contract, this.#modelName, patchRecord)) {
+      assertRelationUpdateIgnoresNothing(this.#state, this.#modelName);
       const row = await executeNestedUpdateMutation({
         executor: requireTransactionExecutor(this.#executor),
         contract: this.#contract,
@@ -729,7 +752,10 @@ export class IdbStoreAccessorImpl<
       return row as DefaultModelRow<TContract, ModelName> | null;
     }
 
-    // Always routes through the transaction scope, whether or not the patch
+    // A zero-limit update returns before asking the executor for a transaction scope.
+    if (this.#state.take === 0 && this.#executor instanceof OpenTransaction) this.#executor.assertNotEnded();
+
+    // Writes route through the transaction scope, whether or not the patch
     // touches a scalar FK field — same reasoning as `updateAll()` below: the
     // matched row isn't known until the scan-write actually runs (`.where()`
     // filters on ANY field, not just the primary key), and only the
@@ -755,6 +781,11 @@ export class IdbStoreAccessorImpl<
       filters: this.#state.filters,
       data: patchRecord,
       operations: resolvedUpdates.operations,
+      window: {
+        ...(this.#state.orderBy === undefined ? {} : { orderBy: this.#state.orderBy }),
+        ...(this.#state.skip === undefined ? {} : { skip: this.#state.skip }),
+        ...(this.#state.take === undefined ? {} : { take: this.#state.take }),
+      },
     });
     return row as DefaultModelRow<TContract, ModelName> | null;
   }

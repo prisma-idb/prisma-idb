@@ -92,3 +92,8 @@ export function emptyAccessorState(): IdbAccessorState {
 export function mergeAccessorState(state: IdbAccessorState, overrides: Partial<IdbAccessorState>): IdbAccessorState {
   return { ...state, ...overrides };
 }
+
+/** Whether an `orderBy()` spec sorts by any field. `orderBy({})` keeps the default order, so it doesn't count. */
+export function hasOrderBy(orderBy: Readonly<Record<string, "asc" | "desc">> | undefined): boolean {
+  return orderBy !== undefined && Object.keys(orderBy).length > 0;
+}

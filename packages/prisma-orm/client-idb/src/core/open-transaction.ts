@@ -41,6 +41,13 @@ export class OpenTransaction implements IdbQueryExecutorWithTransaction, IdbTran
     this.#ended = true;
   }
 
+  /** Reject operations once the transaction callback has settled. */
+  assertNotEnded(): void {
+    if (this.#ended) {
+      throw new Error("This transaction has ended. Do not use `tx` after the db.transaction() callback finishes.");
+    }
+  }
+
   /** The operation failure or inactive probe that led to a rollback request. */
   get failure(): Readonly<{ cause: unknown }> | undefined {
     return this.#failure;
@@ -71,7 +78,7 @@ export class OpenTransaction implements IdbQueryExecutorWithTransaction, IdbTran
 
   /** Reuse the outer scope after verifying that the requested stores were declared. */
   async transaction(storeNames: string[]): Promise<IdbTransactionScope> {
-    this.#assertNotEnded();
+    this.assertNotEnded();
     try {
       this.#assertStoresListed(storeNames);
     } catch (error) {
@@ -83,7 +90,7 @@ export class OpenTransaction implements IdbQueryExecutorWithTransaction, IdbTran
 
   /** Run one operation in the scope and abort the transaction when it fails. */
   async execute(plan: IdbAtomicPlan): Promise<Row[]> {
-    this.#assertNotEnded();
+    this.assertNotEnded();
     try {
       this.#assertStoresListed([plan.storeName]);
       return await this.#scope.execute(plan);
@@ -149,12 +156,6 @@ export class OpenTransaction implements IdbQueryExecutorWithTransaction, IdbTran
     } catch (error) {
       this.#recordFailure(error);
       throw error;
-    }
-  }
-
-  #assertNotEnded(): void {
-    if (this.#ended) {
-      throw new Error("This transaction has ended. Do not use `tx` after the db.transaction() callback finishes.");
     }
   }
 

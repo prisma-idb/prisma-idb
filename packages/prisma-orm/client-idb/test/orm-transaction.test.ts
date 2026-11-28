@@ -58,6 +58,7 @@ type LooseAccessor = {
   delete(key: string): Promise<Row>;
   all(): PromiseLike<Row[]> & { toArray(): Promise<Row[]> };
   where(filter: Row): { all(): { toArray(): Promise<Row[]> } };
+  take(count: number): { update(data: Row): Promise<Row | null> };
   include(relation: string): { all(): { toArray(): Promise<Row[]> } };
 };
 type LooseTx = Record<"users" | "posts" | "tags", LooseAccessor>;
@@ -418,6 +419,15 @@ describe("db.transaction()", () => {
 
       await expect(leaked.users.create({ id: "u1", name: "Alice" })).rejects.toThrow(/transaction has ended/);
       expect(await userIds()).toEqual([]);
+    });
+
+    it("rejects a zero-limit update after the transaction callback has finished", async () => {
+      const leaked = await db.transaction(["users"], async (tx) => {
+        expect(await tx.users.take(0).update({ name: "Skipped" })).toBeNull();
+        return tx;
+      });
+
+      await expect(leaked.users.take(0).update({ name: "Skipped" })).rejects.toThrow(/transaction has ended/);
     });
 
     it("exposes only the listed models", async () => {

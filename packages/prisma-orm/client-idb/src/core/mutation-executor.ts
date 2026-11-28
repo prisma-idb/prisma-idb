@@ -31,6 +31,7 @@ import { domainModelsAtDefaultNamespace } from "@prisma/orm-framework/contract/t
 import type { IdbAtomicPlan, IdbPlanBody, IdbRowFilter } from "@prisma-idb/driver-idb/runtime";
 import { andExpr, fieldFilter, shorthandToFilterExpr } from "@prisma-idb/adapter-idb/runtime";
 import { assertKnownFilterFields } from "./filter-fields";
+import { hasOrderBy } from "./store-state";
 import type { IdbFilterExpr } from "@prisma-idb/adapter-idb/runtime";
 import type { IdbReferentialAction } from "@prisma-idb/target-idb/pack";
 import type { IdbQueryExecutor } from "./executor";
@@ -47,7 +48,7 @@ import {
 import { absentAsNull } from "@prisma-idb/target-idb/runtime";
 import { buildCatalog } from "./planner/catalog";
 import { fieldValueChanged, preserveDecimalKeySpelling } from "./decimal-identity";
-import { lowerExists, lowerRows, lowerWrite, type WriteRequest } from "./planner/lower";
+import { lowerExists, lowerRows, lowerWrite, type RowsRequest, type WriteRequest } from "./planner/lower";
 import { planQuery } from "./planner/plan";
 import { withMutationScope, type IdbQueryExecutorWithTransaction } from "./mutation-scope";
 import { createRelationMutator, isRelationMutationCallback, isRelationMutationDescriptor } from "./relation-mutator";
@@ -597,15 +598,15 @@ function assertNoNestedCallbacks(modelName: string, data: Record<string, unknown
   }
 }
 
-/** Find the first parent selected by the nested-update filters. */
+/** Find the first parent selected by the nested-update filters. No filter selects the first row, as a scalar update does. */
 async function findFirstByFilters(
   scope: IdbTransactionScope,
   contract: IdbContract,
   modelName: string,
   filters: readonly IdbFilterExpr[]
 ): Promise<Record<string, unknown> | null> {
-  if (filters.length === 0) return null;
-  return (await readMutationRows(scope, contract, modelName, andExpr(filters), 1))[0] ?? null;
+  const where = filters.length === 0 ? undefined : andExpr(filters);
+  return (await readMutationRows(scope, contract, modelName, where, 1))[0] ?? null;
 }
 
 /** Execute lowered atomic operations without leaving the transaction's microtask chain. */
@@ -626,10 +627,16 @@ export async function readMutationRows(
   contract: IdbContract,
   modelName: string,
   where: IdbFilterExpr | undefined,
-  take?: number
+  take?: number,
+  window: RowWindow = {}
 ): Promise<Record<string, unknown>[]> {
   const catalog = buildCatalog(contract, getStoreName(contract, modelName), modelName);
-  const request = { ...(where === undefined ? {} : { where }), ...(take === undefined ? {} : { take }) };
+  const request: RowsRequest = {
+    ...(where === undefined ? {} : { where }),
+    ...(window.orderBy === undefined ? {} : { orderBy: window.orderBy }),
+    ...(window.skip === undefined ? {} : { skip: window.skip }),
+    ...(take === undefined ? {} : { take }),
+  };
   const lowered = lowerRows(catalog, planQuery(catalog, request), makePlanMeta(contract), request);
   return lowered.finish(await executeMutationPlan(scope, lowered.idbPlan));
 }
@@ -1297,6 +1304,12 @@ function collectUpdateStoreNames(
   };
 }
 
+/** The order and offset that pick the row a single-row update changes, as `first()` would. */
+export interface RowWindow {
+  readonly orderBy?: Readonly<Record<string, "asc" | "desc">>;
+  readonly skip?: number;
+}
+
 /** The executor, contract, filters, and scalar patch for a validated update. */
 interface ScalarUpdateOptions {
   readonly operations?: readonly IdbFieldOperation[];
@@ -1307,11 +1320,31 @@ interface ScalarUpdateOptions {
   readonly data: Record<string, unknown>;
 }
 
-/** Updates the first matching row with FK validation and referential actions. */
+/**
+ * Updates the first row of the chain, with FK validation and referential actions. The order and offset pick
+ * the row, as they do for `first()`; a limit of 0 matches no row, so nothing is written.
+ */
 export async function executeScalarUpdateWithFkValidation(
-  options: ScalarUpdateOptions
+  options: ScalarUpdateOptions & { readonly window?: RowWindow & { readonly take?: number } }
 ): Promise<Record<string, unknown> | null> {
-  const rows = await executeScalarUpdates(options, 1);
+  if (options.window?.take === 0) {
+    // No row is selected, but the data is still checked, because Prisma rejects
+    // invalid data before it looks for a row. Checks that need a row or the
+    // store (foreign keys, `onUpdate` actions) have nothing to run on.
+    const { contract, modelName, data, filters } = options;
+    const storeName = getStoreName(contract, modelName);
+    const patch = applyUpdateDefaults(
+      contract.execution?.mutations.defaults,
+      storeName,
+      data,
+      createMutationDefaultsCache()
+    );
+    assertEnumValues(contract, modelName, patch);
+    assertValidRecord(contract, modelName, "update", patch);
+    if (filters.length > 0) planQuery(buildCatalog(contract, storeName, modelName), { where: andExpr(filters) });
+    return null;
+  }
+  const rows = await executeScalarUpdates(options, 1, options.window);
   return rows[0] ?? null;
 }
 
@@ -1332,7 +1365,11 @@ export async function executeBulkUpdateWithFkValidation(
 }
 
 /** Shares validation and atomic writes; only single-row updates limit the scan. */
-async function executeScalarUpdates(options: ScalarUpdateOptions, take?: 1): Promise<Record<string, unknown>[]> {
+async function executeScalarUpdates(
+  options: ScalarUpdateOptions,
+  take?: 1,
+  window: RowWindow = {}
+): Promise<Record<string, unknown>[]> {
   const { executor, contract, modelName, filters, data } = options;
   const storeName = getStoreName(contract, modelName);
   const defaults = contract.execution?.mutations.defaults;
@@ -1348,13 +1385,16 @@ async function executeScalarUpdates(options: ScalarUpdateOptions, take?: 1): Pro
   assertValidRecord(contract, modelName, "update", patch);
   const { storeNames, enforcesOnUpdate } = collectUpdateStoreNames(contract, modelName, patch);
   const needsRowForFks = fkCheckNeedsExistingRow(contract, modelName, patch);
+  // The same rule as the relation-update guard, so `orderBy({})` picks no row either way.
+  const windowed = hasOrderBy(window.orderBy) || window.skip !== undefined;
   const updatedRows = await withMutationScope(executor, storeNames, async (scope) => {
     // With defaults resolved per row, the first resolution is never written; each
     // row's own patch is checked in the loop below.
-    if (!needsRowForFks && !defaultsPerRow) await validateScalarFks(scope, contract, modelName, patch);
+    if (!windowed && !needsRowForFks && !defaultsPerRow) await validateScalarFks(scope, contract, modelName, patch);
     const meta = makePlanMeta(contract);
     const where = filters.length === 0 ? undefined : andExpr(filters);
-    if (!enforcesOnUpdate && !needsRowForFks && !options.operations?.length && !defaultsPerRow) {
+    // A cursor write visits rows in key order, so an order or offset needs the rows read first.
+    if (!windowed && !enforcesOnUpdate && !needsRowForFks && !options.operations?.length && !defaultsPerRow) {
       return writeMutationRows(scope, contract, modelName, {
         write: "put-merged",
         patch,
@@ -1365,7 +1405,7 @@ async function executeScalarUpdates(options: ScalarUpdateOptions, take?: 1): Pro
 
     // Enforcement needs the preimage for changed referenced fields and for
     // compound foreign keys whose other fields are absent from the patch.
-    const oldRows = await readMutationRows(scope, contract, modelName, where, take);
+    const oldRows = await readMutationRows(scope, contract, modelName, where, take, window);
     const keyPath = getKeyPath(contract, modelName);
     const results: Record<string, unknown>[] = [];
     for (const oldRow of oldRows) {
@@ -1378,7 +1418,9 @@ async function executeScalarUpdates(options: ScalarUpdateOptions, take?: 1): Pro
       );
       assertEnumValues(contract, modelName, rowPatch);
       assertValidRecord(contract, modelName, "update", rowPatch);
-      if (needsRowForFks || defaultsPerRow) await validateScalarFks(scope, contract, modelName, rowPatch, oldRow);
+      if (windowed || needsRowForFks || defaultsPerRow) {
+        await validateScalarFks(scope, contract, modelName, rowPatch, oldRow);
+      }
       if (enforcesOnUpdate) await applyReferentialActionsForRowOnUpdate(scope, contract, modelName, oldRow, rowPatch);
       const key = extractKeyFromRow(oldRow, keyPath);
       const rows = await scope.execute({ meta, kind: "update", storeName, key, patch: rowPatch } as IdbAtomicPlan);
