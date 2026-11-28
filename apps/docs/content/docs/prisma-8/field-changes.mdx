@@ -127,6 +127,8 @@ The DSL also has no transform that fills only `null`. `defaultIfMissing(...)` pr
 
 Numbers passed to `setLiteral(...)` and `defaultIfMissing(...)` must be finite.
 
+`setLiteral(...)` overwrites stored rows and full queued creates. Queued update patches keep their original values. For a synced field that changes type, use `coerce(...)` when it supports the conversion. Sync outstanding updates before shipping a type change that uses a literal reset.
+
 Add the needed imports to the generated file and remove unused ones. Keep its `describe()` hashes and unrelated operations. Regenerate the package, then bundle and check it:
 
 ```bash
@@ -165,6 +167,10 @@ You can also write `renameFields` by hand in an existing migration. Run the edit
 - `--backfill` needs a required field that is new or was optional. A field that was already required has a value in every row, and planning refuses the statement. Omit `--backfill` for a new field with a supported literal default. The planner already uses that default to fill existing records.
 - Both flags require the model to keep its existing store. Primary-key fields are excluded.
 - A statement that names a model or field missing from the contract is refused, so a typo never plans silently.
+
+If you change a field to an incompatible enum, run planning without `--convert` and fill the generated placeholder. The statement resolver sees both enum fields as using the string codec.
+
+New or changed indexes on a rewritten store are built after its records are transformed. A unique index checks the resulting values.
 
 ## Remove a field
 

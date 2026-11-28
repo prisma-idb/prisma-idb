@@ -7,6 +7,7 @@ import type { IdbSchemaDiffInput } from "./schema-diff";
 export interface StoreStatementPlan {
   /** `{ newName: oldName }` for each renamed field. */
   readonly renameFields: Record<string, string>;
+  readonly renamedFrom: Set<string>;
   /** Fields whose values the author fills in by hand: backfills, conversions, and renames to an incompatible type. */
   readonly authored: Set<string>;
   /** The positions, in the statements list, of the statements this store carries out. */
@@ -61,6 +62,7 @@ export function planStatements(
     if (entry === undefined) {
       entry = {
         renameFields: Object.create(null) as Record<string, string>,
+        renamedFrom: new Set(),
         authored: new Set(),
         statementIndexes: [],
       };
@@ -125,7 +127,23 @@ export function planStatements(
         return;
       }
       const entry = entryFor(after.name);
+      const repeated = entry.renamedFrom.has(fromField)
+        ? "the origin field already appears in a rename"
+        : Object.hasOwn(entry.renameFields, toField)
+          ? "the destination field already appears in a rename"
+          : undefined;
+      if (repeated !== undefined) {
+        conflicts.push(
+          refused(
+            statement,
+            `Cannot rename field ${label}: ${repeated}.`,
+            "Use each field once on each side of a rename."
+          )
+        );
+        return;
+      }
       entry.renameFields[toField] = fromField;
+      entry.renamedFrom.add(fromField);
       entry.statementIndexes.push(index);
       return;
     }

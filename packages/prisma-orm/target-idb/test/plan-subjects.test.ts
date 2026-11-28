@@ -6,7 +6,7 @@ import { keepInternalSpecifiers } from "@prisma/orm-framework/components/emissio
 import type { ResolvedMigrationStatement } from "@prisma/orm-framework/components/control";
 import { describe, expect, it } from "vitest";
 import { openAndUpgrade } from "../src/core/apply-ddl-op";
-import type { IdbDdlOp } from "../src/core/migration-factories";
+import { setLiteral, type IdbDdlOp } from "../src/core/migration-factories";
 import type { IdbIndexDefinition, IdbRecordField } from "../src/core/idb-contract-types";
 import { IdbMigrationPlanner } from "../src/core/migration-planner";
 
@@ -166,6 +166,60 @@ describe("plan statements", () => {
     } finally {
       db.close();
     }
+  });
+
+  it("builds a new unique index over transformed values", async () => {
+    const before = contract({ score: { ...string, nullable: true } });
+    const after = contract({ score: { ...int, nullable: true } }, ["users"], {
+      byScore: { keyPath: "score", unique: true },
+    });
+    const migration = plan(before, after, [
+      { kind: "convert", entity: "field", field: { namespaceId, model: "User", field: "score" } },
+    ]);
+    if (migration.kind !== "success") throw new Error(JSON.stringify(migration.conflicts));
+    const ops = (migration.plan.operations as readonly IdbDdlOp[]).map((op) =>
+      op.kind === "transformRecords" ? { ...op, fields: { score: setLiteral(null) } } : op
+    );
+
+    const factory = new IDBFactory();
+    const dbName = "convert-before-unique-index";
+    const initial = factory.open(dbName, 1);
+    initial.onupgradeneeded = () => {
+      const users = initial.result.createObjectStore("users", { keyPath: "id" });
+      users.add({ id: "1", score: "unknown" });
+      users.add({ id: "2", score: "unknown" });
+    };
+    (await requestResult(initial)).close();
+
+    await openAndUpgrade({ factory, dbName, targetVersion: 2, ops });
+    const db = await requestResult(factory.open(dbName));
+    try {
+      const users = db.transaction("users").objectStore("users");
+      expect(users.index("byScore").unique).toBe(true);
+      await expect(requestResult(users.getAll())).resolves.toEqual([
+        { id: "1", score: null },
+        { id: "2", score: null },
+      ]);
+    } finally {
+      db.close();
+    }
+  });
+
+  it.each([
+    ["origin", { first: string }, { one: string, two: string }, ["first", "one"], ["first", "two"]],
+    ["destination", { first: string, second: string }, { one: string }, ["first", "one"], ["second", "one"]],
+  ] as const)("refuses a repeated rename %s in resolved statements", (side, before, after, first, second) => {
+    const repeated = fieldRename(second[0], second[1]);
+    expect(plan(contract(before), contract(after), [fieldRename(first[0], first[1]), repeated])).toMatchObject({
+      kind: "failure",
+      conflicts: [
+        {
+          kind: "statementRefused",
+          refusedStatement: repeated,
+          summary: expect.stringContaining(`the ${side} field already appears in a rename`),
+        },
+      ],
+    });
   });
 
   it("asks for a value transform when a field is renamed to a type its values don't fit", () => {

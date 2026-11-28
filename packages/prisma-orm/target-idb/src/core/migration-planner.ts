@@ -378,9 +378,8 @@ function planStoreRecordTransform(
 ): IdbDdlOp | undefined {
   const fields: Record<string, IdbValueTransform> = Object.create(null);
   const renameFields = statements?.renameFields ?? {};
-  const renamedFrom = new Set(Object.values(renameFields));
   const removeFields = Object.keys(oldRecord.fields).filter(
-    (name) => !Object.hasOwn(newRecord.fields, name) && !renamedFrom.has(name)
+    (name) => !Object.hasOwn(newRecord.fields, name) && !statements?.renamedFrom.has(name)
   );
   for (const [name, field] of Object.entries(newRecord.fields)) {
     // A renamed field's old value moves here, so it is checked against its old declaration.
@@ -511,7 +510,16 @@ export class IdbMigrationPlanner implements MigrationPlanner<"idb", "idb"> {
     if (!statementPlan.ok) return { kind: "failure", conflicts: statementPlan.conflicts };
     const recordDiff = diffRecordShapes(fromSchema, toSchema, contract as Contract, statementPlan.plan);
     if (recordDiff.conflicts.length > 0) return { kind: "failure", conflicts: recordDiff.conflicts };
-    const ops = [...diffIdbSchema(fromSchema, toSchema), ...recordDiff.ops];
+    const rewrittenStores = new Set(recordDiff.ops.map((op) => op.storeName));
+    const beforeRewrites: IdbDdlOp[] = [];
+    const afterRewrites: IdbDdlOp[] = [];
+    for (const op of diffIdbSchema(fromSchema, toSchema)) {
+      // Build new indexes over the rewritten values. Old values can violate a new unique index.
+      const destination =
+        op.kind === "createIndex" && rewrittenStores.has(op.storeName) ? afterRewrites : beforeRewrites;
+      destination.push(op);
+    }
+    const ops = [...beforeRewrites, ...recordDiff.ops, ...afterRewrites];
 
     // On first migration (fresh database), create the internal
     // _prisma_next_marker store so the runtime can verify the
