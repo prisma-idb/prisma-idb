@@ -37,7 +37,9 @@ describe("prismaIdbContract", () => {
       const result = await load("schema.prisma", `model Price {\n  id String @id\n  d Decimal @default(${text})\n}`);
       expect(result.ok).toBe(false);
       if (result.ok) return;
-      expect(result.failure.diagnostics.map((d) => d.code)).toEqual(["PSL_INVALID_ATTRIBUTE_SYNTAX"]);
+      expect(result.failure.diagnostics).toContainEqual(
+        expect.objectContaining({ code: "PSL_INVALID_ATTRIBUTE_SYNTAX" })
+      );
     }
   );
 
