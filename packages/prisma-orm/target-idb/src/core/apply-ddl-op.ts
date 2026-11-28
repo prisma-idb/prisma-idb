@@ -2,8 +2,10 @@ import type { ContractMarkerRecord } from "@prisma/orm-framework/contract/types"
 import { transformRecord } from "./transform-records";
 import type { IdbKeyPath } from "./idb-contract-types";
 import {
+  assertFiniteTransformLiterals,
   assertNoMigrationPlaceholders,
   IDB_MARKER_STORE,
+  snapshotRecordTransform,
   type IdbDdlOp,
   type TransformRecordsOp,
 } from "./migration-factories";
@@ -81,6 +83,7 @@ export function applyOneDdlOp(
       break;
     }
     case "transformRecords": {
+      assertFiniteTransformLiterals(op);
       const store = tx.objectStore(op.storeName);
       const keys = typeof store.keyPath === "string" ? [store.keyPath] : (store.keyPath ?? []);
       const fields = [
@@ -264,7 +267,8 @@ export function openAndUpgrade(input: {
   readonly onTransformRecords?: (tx: IDBTransaction, op: TransformRecordsOp, onDone: (error?: unknown) => void) => void;
 }): Promise<number> {
   return new Promise((resolve, reject) => {
-    assertNoMigrationPlaceholders(input.ops);
+    const ops = input.ops.map((op) => (op.kind === "transformRecords" ? snapshotRecordTransform(op) : op));
+    assertNoMigrationPlaceholders(ops);
     const request = input.factory.open(input.dbName, input.targetVersion);
 
     // `onblocked` fires when another connection is open at an older version and
@@ -308,7 +312,7 @@ export function openAndUpgrade(input: {
        */
       const runNext = (index: number): void => {
         try {
-          const op = input.ops[index];
+          const op = ops[index];
           if (op) {
             input.onOperationStart?.(op);
             applyOneDdlOp(
@@ -365,7 +369,7 @@ export function openAndUpgrade(input: {
       clearBlocked();
       const db = (event.target as IDBOpenDBRequest).result;
       db.close();
-      resolve(input.ops.length);
+      resolve(ops.length);
     };
 
     request.onerror = (event) => {

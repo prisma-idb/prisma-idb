@@ -68,6 +68,23 @@ const upgrade = (factory: IDBFactory, ops: readonly IdbDdlOp[]) =>
   });
 
 describe("transformRecords upgrades", () => {
+  it("preserves a store definition whose key path comes from a getter", async () => {
+    class StoreDefinition {
+      get keyPath() {
+        return "id";
+      }
+    }
+    const factory = new IDBFactory();
+    await openAndUpgrade({
+      factory,
+      dbName: "records",
+      targetVersion: 1,
+      ops: [createMarkerStoreOp(), createObjectStoreOp("users", new StoreDefinition())],
+      markers: [{ space: "app", storageHash: "old" }],
+    });
+    expect(await snapshot(factory)).toMatchObject({ version: 1, records: [] });
+  });
+
   it("rejects unfilled slots before opening an empty database or advancing its version", async () => {
     const factory = new IDBFactory();
     const openSpy = vi.spyOn(factory, "open");
@@ -79,6 +96,22 @@ describe("transformRecords upgrades", () => {
       meta: { slot: "User.role" },
     });
     expect(openSpy).not.toHaveBeenCalled();
+  });
+
+  it("aborts an upgrade with a non-finite raw transform even when the store is empty", async () => {
+    const factory = new IDBFactory();
+    await openAndUpgrade({
+      factory,
+      dbName: "records",
+      targetVersion: 1,
+      ops: [createMarkerStoreOp(), createObjectStoreOp("users", { keyPath: "id" })],
+      markers: [{ space: "app", storageHash: "old" }],
+    });
+    const raw = JSON.parse('{"kind":"setLiteral","value":1e999}') as ReturnType<typeof setLiteral>;
+    const op = { ...transformRecordsOp("users", {}), fields: { score: pipe(raw) } };
+
+    await expect(upgrade(factory, [op])).rejects.toThrow(/setLiteral.*users\.score.*transformRecords.*finite number/);
+    expect(await snapshot(factory)).toMatchObject({ version: 1, marker: { storageHash: "old" }, records: [] });
   });
 
   it("renames, retypes, backfills and removes records before writing the marker", async () => {
@@ -97,6 +130,31 @@ describe("transformRecords upgrades", () => {
       { id: 1, tenant: "a", profile: { id: 1 }, status: "true", role: "member" },
       { id: 2, tenant: "a", profile: { id: 2 }, status: "invalid", role: "member" },
     ]);
+  });
+
+  it("stores the same migration literal that was checked before the cursor ran", async () => {
+    const factory = await seed();
+    let reads = 0;
+    const op = {
+      ...transformRecordsOp("users", {}),
+      fields: {
+        score: {
+          kind: "setLiteral" as const,
+          get value() {
+            return ++reads <= 2 ? 42 : Infinity;
+          },
+        },
+      },
+    };
+    await upgrade(factory, [op]);
+    expect(await snapshot(factory)).toMatchObject({
+      version: 2,
+      marker: { storageHash: "new" },
+      records: [
+        { id: 1, score: 42 },
+        { id: 2, score: 42 },
+      ],
+    });
   });
 
   it("finishes the transform hook before applying the next operation", async () => {

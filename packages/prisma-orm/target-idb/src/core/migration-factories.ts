@@ -186,13 +186,44 @@ export function transformRecordsOp(
   storeName: string,
   options: Pick<TransformRecordsOp, "fields" | "renameFields" | "removeFields">
 ): TransformRecordsOp {
-  return {
+  const op: TransformRecordsOp = {
     kind: "transformRecords",
     id: `object-store.${storeName}.transform-records`,
     label: `Transform records in "${storeName}"`,
     operationClass: "data",
     storeName,
     ...options,
+  };
+  assertFiniteTransformLiterals(op);
+  return op;
+}
+
+/** Capture transform values before validation, row writes, and migration hooks. */
+export function snapshotRecordTransform(op: TransformRecordsOp): TransformRecordsOp {
+  function snapshotValue(transform: IdbValueTransform): IdbValueTransform {
+    const kind = transform.kind;
+    switch (kind) {
+      case "defaultIfMissing":
+      case "setLiteral":
+        return { kind, value: structuredClone(transform.value) };
+      case "pipe":
+        return { kind: "pipe", steps: transform.steps.map(snapshotValue) };
+      case "coerce":
+        return { kind: "coerce", to: transform.to };
+      case "placeholder":
+        return { kind: "placeholder", slot: transform.slot };
+    }
+  }
+  // Copy every property, including ones this type doesn't name, so a re-emit keeps the operation's metadata and
+  // its hash. Only the nested values that a later change could reach are replaced.
+  const { fields, renameFields, removeFields } = op;
+  return {
+    ...op,
+    ...(fields && {
+      fields: Object.fromEntries(Object.entries(fields).map(([name, value]) => [name, snapshotValue(value)])),
+    }),
+    ...(renameFields && { renameFields: { ...renameFields } }),
+    ...(removeFields && { removeFields: [...removeFields] }),
   };
 }
 
@@ -201,13 +232,53 @@ export function coerce(to: Extract<IdbValueTransform, { kind: "coerce" }>["to"])
   return { kind: "coerce", to };
 }
 
+/** Migration artifacts store literals as JSON numbers, which must be finite. */
+export function assertFiniteLiteral(value: IdbJsonLiteral): void {
+  assertFiniteTree(value, new Set());
+}
+
+/** Walks a hand-written literal to any depth, because JSON parsing can nest arrays the type doesn't allow. */
+function assertFiniteTree(value: unknown, seen: Set<object>): void {
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) {
+      throw new Error(`A migration literal is stored as JSON. Use a finite number in place of ${value}.`);
+    }
+    return;
+  }
+  if (typeof value !== "object" || value === null || seen.has(value)) return;
+  seen.add(value);
+  for (const member of Object.values(value)) assertFiniteTree(member, seen);
+}
+
+/** Checks literals throughout an operation, including inside nested pipes. */
+export function assertFiniteTransformLiterals(op: TransformRecordsOp): void {
+  function check(field: string, transform: IdbValueTransform): void {
+    if (transform.kind === "defaultIfMissing" || transform.kind === "setLiteral") {
+      try {
+        assertFiniteLiteral(transform.value);
+      } catch (cause) {
+        if (!(cause instanceof Error)) throw cause;
+        throw new Error(
+          `The ${transform.kind} transform for "${op.storeName}.${field}" in ${op.kind} has an invalid literal. ${cause.message}`,
+          { cause }
+        );
+      }
+    } else if (transform.kind === "pipe") {
+      for (const step of transform.steps) check(field, step);
+    }
+  }
+  for (const [field, transform] of Object.entries(op.fields ?? {})) check(field, transform);
+}
+
 /** Backfill an undefined field without replacing null or an existing value. */
 export function defaultIfMissing(value: IdbJsonLiteral): IdbValueTransform {
+  assertFiniteLiteral(value);
   return { kind: "defaultIfMissing", value };
 }
 
 /** Replace a field with a constant. */
 export function setLiteral(value: IdbJsonLiteral): IdbValueTransform {
+  assertFiniteLiteral(value);
   return { kind: "setLiteral", value };
 }
 
