@@ -164,6 +164,62 @@ it("preserves the action on each parent alias of the same join", async () => {
   expect(await rows("posts")).toEqual([{ id: "p1", authorId: "u1" }]);
 });
 
+it.each([undefined, "restrict"] as const)(
+  "uses the ordered inverse action (%s) before a reordered compound join",
+  async (action) => {
+    const db = await open(
+      defineContract({
+        family: idbFamilyPack,
+        target: idbTargetPack,
+        models: {
+          Parent: {
+            store: "parents",
+            key: "id",
+            fields: { id: "String", group: "String", code: "String" },
+            indexes: { byGroupCode: { keyPath: ["group", "code"], unique: true } },
+            relations: {
+              children: {
+                to: "Child",
+                cardinality: "1:N",
+                on: { local: ["group", "code"], target: ["parentGroup", "parentCode"] },
+              },
+            },
+          },
+          Child: {
+            store: "children",
+            key: "id",
+            fields: { id: "String", parentGroup: "String", parentCode: "String" },
+            relations: {
+              cascadeAlias: {
+                to: "Parent",
+                cardinality: "N:1",
+                on: { local: ["parentCode", "parentGroup"], target: ["code", "group"] },
+                onDelete: "cascade",
+                onUpdate: "cascade",
+              },
+              ordered: {
+                to: "Parent",
+                cardinality: "N:1",
+                on: { local: ["parentGroup", "parentCode"], target: ["group", "code"] },
+                ...(action === undefined ? {} : { onDelete: action, onUpdate: action }),
+              },
+            },
+          },
+        },
+      })
+    );
+    const parent = { id: "p", group: "g", code: "old" };
+    const child = { id: "c", parentGroup: "g", parentCode: "old" };
+    await db.orm["parents"]!.create(parent);
+    await db.orm["children"]!.create(child);
+
+    await expect(db.orm["parents"]!.where({ id: "p" }).update({ code: "new" })).rejects.toThrow(/would orphan/);
+    await expect(db.orm["parents"]!.delete("p")).rejects.toThrow(/child records exist/);
+    expect(await rows("parents")).toEqual([parent]);
+    expect(await rows("children")).toEqual([child]);
+  }
+);
+
 it("preserves the rows when a one-sided action targets an ambiguous legacy Decimal key", async () => {
   const db = await open(
     defineContract({

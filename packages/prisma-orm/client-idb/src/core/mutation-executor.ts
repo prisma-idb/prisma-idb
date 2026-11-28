@@ -764,13 +764,21 @@ function findDeclaredAction(
   const direct = getStoredAction(contract, modelName, def.relationName, kind);
   if (direct !== undefined) return direct;
 
+  let hasOrderedInverse = false;
+  let reorderedAction: IdbReferentialAction | undefined;
   for (const inverse of getRelationDefinitions(contract, def.relatedModelName)) {
     if (!isInverseOf(inverse, modelName, def)) continue;
     const inverseAction = getStoredAction(contract, def.relatedModelName, inverse.relationName, kind);
-    if (inverseAction !== undefined) return inverseAction;
+    if (sameFields(inverse.localFields, def.targetFields) && sameFields(inverse.targetFields, def.localFields)) {
+      hasOrderedInverse = true;
+      if (inverseAction !== undefined) return inverseAction;
+    } else {
+      reorderedAction ??= inverseAction;
+    }
   }
 
-  return undefined;
+  // An ordered inverse with no declared action still carries the default Restrict behavior.
+  return hasOrderedInverse ? undefined : reorderedAction;
 }
 
 /** `true` when `inverse`, declared on `def`'s related model, joins back to `modelName` on the same fields. */
